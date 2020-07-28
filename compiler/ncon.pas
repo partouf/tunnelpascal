@@ -1067,6 +1067,7 @@ implementation
                 begin
                   pw:=pcompilerwidestring(value_str);
                   l2:=len;
+                  { returns room for terminating 0 }
                   l:=UnicodeToUtf8(nil,0,PUnicodeChar(pw^.data),l2);
                   getmem(pc,l);
                   UnicodeToUtf8(pc,l,PUnicodeChar(pw^.data),l2);
@@ -1079,6 +1080,7 @@ implementation
                   pw:=pcompilerwidestring(value_str);
                   getmem(pc,getlengthwidestring(pw)+1);
                   unicode2ascii(pw,pc,cp1);
+                  pc[getlengthwidestring(pw)]:=#0;
                   donewidestring(pw);
                   value_str:=pc;
                 end;
@@ -1117,14 +1119,15 @@ implementation
                             end;
                           initwidestring(pw);
                           setlengthwidestring(pw,len);
-                          { returns room for terminating 0 }
+                          { returns room for terminating 0, Utf8ToUnicode does not write terminating 0 }
                           l:=Utf8ToUnicode(PUnicodeChar(pw^.data),len,value_str,len);
-                          if (l<>getlengthwidestring(pw)) then
+                          if (l-1<>len) then
                             begin
-                              setlengthwidestring(pw,l);
+                              setlengthwidestring(pw,l-1);
                               ReAllocMem(value_str,l);
                             end;
                           unicode2ascii(pw,value_str,cp1);
+                          value_str[l-1]:=#0;
                           len:=l-1;
                           donewidestring(pw);
                         end
@@ -1142,10 +1145,10 @@ implementation
                           ascii2unicode(value_str,len,cp2,pw);
                           { returns room for terminating 0 }
                           l:=UnicodeToUtf8(nil,0,PUnicodeChar(pw^.data),len);
-                          if l<>len then
+                          if (l-1<>len) then
                             ReAllocMem(value_str,l);
+                          UnicodeToUtf8(value_str,l,PUnicodeChar(pw^.data),len);
                           len:=l-1;
-                          UnicodeToUtf8(value_str,PUnicodeChar(pw^.data),l);
                           donewidestring(pw);
                         end
                       else
