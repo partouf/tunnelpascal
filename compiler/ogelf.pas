@@ -1557,9 +1557,10 @@ implementation
         if shdrs[shstrndx].sh_type<>SHT_STRTAB then
           InternalError(2012060202);
         shstrtablen:=shdrs[shstrndx].sh_size;
-        GetMem(shstrtab,shstrtablen);
+        GetMem(shstrtab,shstrtablen+1);
         FReader.seek(shdrs[shstrndx].sh_offset);
         FReader.read(shstrtab^,shstrtablen);
+        shstrtab[shstrtablen]:=#0;
         FLoaded[shstrndx]:=True;
 
         { Locate the symtable, it is typically at the end so loop backwards.
@@ -1580,9 +1581,10 @@ implementation
             if shdrs[strndx].sh_type<>SHT_STRTAB then
               InternalError(2012062703);
             strtablen:=shdrs[strndx].sh_size;
-            GetMem(strtab,strtablen);
+            GetMem(strtab,strtablen+1);
             FReader.seek(shdrs[strndx].sh_offset);
             FReader.read(strtab^,strtablen);
+            strtab[strtablen]:=#0;
 
             symtaboffset:=shdrs[i].sh_offset;
             syms:=shdrs[i].sh_size div sizeof(TElfSymbol);
