@@ -5,7 +5,7 @@ unit FPHTTPStatus;
 interface
 
 uses
-  SysUtils, fphttpserver, HTTPDefs;
+  SysUtils, fphttpserver, httpprotocol, HTTPDefs;
 
 (* construct and return the default error message for a given
  * HTTP defined error code
@@ -186,7 +186,7 @@ var
   title: string;
   h1: string;
 begin
-  h1 := HTTPStatusText(status);
+  h1 := GetHTTPStatusText(status);
   title := Format('%d %s', [status, h1]);
 
   Result := '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">' +

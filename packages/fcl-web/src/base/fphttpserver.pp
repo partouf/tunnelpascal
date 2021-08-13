@@ -20,7 +20,7 @@ unit fphttpserver;
 interface
 
 uses
-  Classes, SysUtils, sockets, sslbase, sslsockets, ssockets, resolve, httpdefs;
+  Classes, SysUtils, sockets, sslbase, sslsockets, ssockets, resolve, httpprotocol, httpdefs;
 
 Const
   ReadBufLen = 4096;
@@ -236,7 +236,7 @@ Type
 
   EHTTPServer = Class(EHTTP);
 
-  Function GetStatusCode (ACode: Integer) : String; deprecated 'Use HTTPStatusText from unit httpdefs';
+  Function GetStatusCode (ACode: Integer) : String; deprecated 'Use GetHTTPStatusText from unit httpprotocol';
 
 implementation
 
@@ -250,7 +250,7 @@ resourcestring
 Function GetStatusCode (ACode: Integer) : String;
 
 begin
-  Result := HTTPStatusText(ACode);
+  Result := GetHTTPStatusText(ACode);
 end;
 
 Function GetHostNameByAddress(const AnAddress: String): String;
@@ -298,7 +298,7 @@ Var
   S : String;
   I : Integer;
 begin
-  S:=Format('HTTP/1.1 %3d %s'#13#10,[Code,HTTPStatusText(Code)]);
+  S:=Format('HTTP/1.1 %3d %s'#13#10,[Code,GetHTTPStatusText(Code)]);
   For I:=0 to Headers.Count-1 do
     S:=S+Headers[i]+#13#10;
   // Last line in headers is empty.
