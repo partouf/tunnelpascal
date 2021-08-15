@@ -1218,6 +1218,7 @@ implementation
 {$ifdef DEBUG_NODE_XML}
     procedure TStringConstNode.XMLPrintNodeData(var T: Text);
       var
+        l: longint;
         OutputStr: ansistring;
       begin
         inherited XMLPrintNodeData(T);
@@ -1249,8 +1250,9 @@ implementation
         cst_widestring, cst_unicodestring:
           begin
             { value_str is of type PCompilerWideString }
-            SetLength(OutputStr, len);
-            UnicodeToUtf8(PChar(OutputStr), PUnicodeChar(PCompilerWideString(value_str)^.data), len + 1); { +1 for the null terminator }
+            l := UnicodeToUtf8(nil, 0, PUnicodeChar(PCompilerWideString(value_str)^.data), len);
+            SetLength(OutputStr, l - 1);
+            UnicodeToUtf8(PChar(OutputStr), l, PUnicodeChar(PCompilerWideString(value_str)^.data), len);
           end;
         else
           OutputStr := ansistring(value_str);
