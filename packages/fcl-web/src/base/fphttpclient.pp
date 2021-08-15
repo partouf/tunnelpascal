@@ -1280,14 +1280,20 @@ begin
     If Not IsConnected Then
       ConnectToServer(CHost,CPort,AIsHttps);
     Try
-      if not Terminated then
+      if Terminated then
+        break;
+      try
         SendRequest(AMethod,AURI);
-      if not Terminated then
-        begin
+        if Terminated then
+          break;
         T := ReadResponse(AStream,AAllowedResponseCodes,AHeadersOnly);
-        If Not T Then
-          ReconnectToServer(CHost,CPort,AIsHttps);
-        end;
+      except
+        // failed socket operations raise exceptions - e.g. if ReadString() fails
+        // try to reconnect also in this case
+        T:=False;
+      end;
+      If Not T Then
+        ReconnectToServer(CHost,CPort,AIsHttps);
     Finally
       // On terminate, we close the request
       If HasConnectionClose or Terminated Then
