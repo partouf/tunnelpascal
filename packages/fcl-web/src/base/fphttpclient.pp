@@ -379,6 +379,7 @@ Type
     Property Password;
     Property OnPassword;
     Property OnDataReceived;
+    Property OnDataSent;
     Property OnHeaders;
     Property OnGetSocketHandler;
     Property Proxy;
