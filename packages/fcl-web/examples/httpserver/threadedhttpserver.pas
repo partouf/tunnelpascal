@@ -50,8 +50,8 @@ begin
 {$ifdef unix}
   FServ.MimeTypesFile:='/etc/mime.types';
 {$endif}
-  FServ.KeepAliveEnabled := True;
-  FServ.KeepAliveTimeout := 60*1000;
+  FServ.KeepConnections := True;
+  FServ.KeepConnectionTimeout := 60*1000;
   FServ.Threaded:=True;
   FServ.Port:=8080;
   FServ.WriteInfo := @WriteInfo;

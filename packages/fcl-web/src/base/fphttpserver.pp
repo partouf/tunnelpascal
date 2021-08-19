@@ -25,7 +25,7 @@ uses
 
 Const
   ReadBufLen = 4096;
-  DefaultKeepaliveTimeout = 50; // Ms
+  DefaultKeepConnectionTimeout = 50; // Ms
 
 Type
   TFPHTTPConnection = Class;
@@ -72,9 +72,9 @@ Type
     FSocket: TSocketStream;
     FIsSocketSetup : Boolean;
     FBuffer : Ansistring;
-    FKeepAliveEnabled : Boolean;
+    FKeepConnections : Boolean;
     FKeepAlive : Boolean;
-    FKeepAliveTimeout : Integer;
+    FKeepConnectionTimeout : Integer;
     procedure InterPretHeader(ARequest: TFPHTTPConnectionRequest; const AHeader: String);
     function ReadString: String;
     Function GetLookupHostNames : Boolean;
@@ -125,9 +125,9 @@ Type
     // Look up host names to map IP -> hostname ?
     Property LookupHostNames : Boolean Read GetLookupHostNames;
     // Set to true if you want to support HTTP 1.1 connection: keep-alive - only available for threaded server
-    Property KeepAliveEnabled : Boolean read FKeepAliveEnabled write FKeepAliveEnabled;
+    Property KeepConnections : Boolean read FKeepConnections write FKeepConnections;
     // time-out for keep-alive: how many ms should the server keep the connection alive after a request has been handled
-    Property KeepAliveTimeout: Integer read FKeepAliveTimeout write FKeepAliveTimeout;
+    Property KeepConnectionTimeout: Integer read FKeepConnectionTimeout write FKeepConnectionTimeout;
     // is the current connection set up for KeepAlive?
     Property KeepAlive: Boolean read FKeepAlive;
   end;
@@ -264,8 +264,8 @@ Type
     FAdminName: string;
     FAfterSocketHandlerCreated: TSocketHandlerCreatedEvent;
     FCertificateData: TCertificateData;
-    FKeepAliveEnabled: Boolean;
-    FKeepAliveTimeout: Integer;
+    FKeepConnections: Boolean;
+    FKeepConnectionTimeout: Integer;
     FOnAcceptIdle: TNotifyEvent;
     FOnAllowConnect: TConnectQuery;
     FOnGetSocketHandler: TGetSocketHandlerEvent;
@@ -354,9 +354,9 @@ Type
     // Port to listen on.
     Property Port : Word Read FPort Write SetPort Default 80;
     // Set to true if you want to support HTTP 1.1 connection: keep-alive - only available for threaded server
-    Property KeepAliveEnabled: Boolean read FKeepAliveEnabled write FKeepAliveEnabled;
+    Property KeepConnections: Boolean read FKeepConnections write FKeepConnections;
     // time-out for keep-alive: how many ms should the server keep the connection alive after a request has been handled
-    Property KeepAliveTimeout: Integer read FKeepAliveTimeout write FKeepAliveTimeout;
+    Property KeepConnectionTimeout: Integer read FKeepConnectionTimeout write FKeepConnectionTimeout;
     // Max connections on queue (for Listen call)
     Property QueueSize : Word Read FQueueSize Write SetQueueSize Default 5;
     // Called when deciding whether to accept a connection.
@@ -405,8 +405,8 @@ Type
     Property OnRequestError;
     Property OnAcceptIdle;
     Property AcceptIdleTimeout;
-    Property KeepaliveEnabled;
-    Property KeepaliveTimeout;
+    Property KeepConnections;
+    Property KeepConnectionTimeout;
   end;
 
   EHTTPServer = Class(EHTTP);
@@ -953,12 +953,12 @@ end;
 
 function TFPHTTPConnection.AllowNewRequest: Boolean;
 begin
-  Result:=not Busy and KeepAliveEnabled and KeepAlive and (Socket.LastError=0);
+  Result:=not Busy and KeepConnections and KeepAlive and (Socket.LastError=0);
 end;
 
 function TFPHTTPConnection.RequestPending: Boolean;
 begin
-  Result:=Socket.CanRead(KeepAliveTimeout);
+  Result:=Socket.CanRead(KeepConnectionTimeout);
 end;
 
 constructor TFPHTTPConnection.Create(AServer: TFPCustomHttpServer; ASocket: TSocketStream);
@@ -966,7 +966,7 @@ begin
   FIsSocketSetup:=False;
   FSocket:=ASocket;
   FServer:=AServer;
-  KeepAliveTimeout:=DefaultKeepaliveTimeout;
+  KeepConnectionTimeout:=DefaultKeepConnectionTimeout;
   AllocateConnectionID;
 end;
 
@@ -1011,7 +1011,7 @@ begin
     If Req.ContentLength>0 then
       ReadRequestContent(Req);
     Req.InitRequestVars;
-    if KeepAliveEnabled then
+    if KeepConnections then
       begin
       // Read out keep-alive
       FKeepAlive:=Req.HttpVersion='1.1'; // keep-alive is default on HTTP 1.1
@@ -1295,8 +1295,8 @@ begin
   Con.FServer:=Self;
   Con.OnRequestError:=@HandleRequestError;
   Con.OnUnexpectedError:=@HandleUnexpectedError;
-  Con.KeepAliveEnabled:=Self.KeepAliveEnabled;
-  Con.KeepAliveTimeout:=Self.KeepAliveTimeout;
+  Con.KeepConnections:=Self.KeepConnections;
+  Con.KeepConnectionTimeout:=Self.KeepConnectionTimeout;
   FConnectionHandler.HandleConnection(Con);
 end;
 
@@ -1362,8 +1362,8 @@ begin
   FQueueSize:=5;
   FServerBanner := 'FreePascal';
   FCertificateData:=CreateCertificateData;
-  FKeepAliveEnabled:=False;
-  FKeepAliveTimeout:=DefaultKeepaliveTimeout;
+  FKeepConnections:=False;
+  FKeepConnectionTimeout:=DefaultKeepConnectionTimeout;
 end;
 
 
