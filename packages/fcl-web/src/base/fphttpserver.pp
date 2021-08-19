@@ -66,7 +66,8 @@ Type
   private
     FBusy: Boolean;
     FConnectionID: String;
-    FOnError: TRequestErrorHandler;
+    FOnRequestError: TRequestErrorHandler;
+    FOnUnexpectedError: TRequestErrorHandler;
     FServer: TFPCustomHTTPServer;
     FSocket: TSocketStream;
     FIsSocketSetup : Boolean;
@@ -86,6 +87,8 @@ Type
     procedure UnknownHeader(ARequest: TFPHTTPConnectionRequest; const AHeader: String); virtual;
     // Handle request error, calls OnRequestError
     procedure HandleRequestError(E : Exception); virtual;
+    // Handle unexpected error, calls OnUnexpectedError
+    procedure HandleUnexpectedError(E : Exception); virtual;
     // Setup socket
     Procedure SetupSocket; virtual;
     // Mark connection as busy with request
@@ -116,7 +119,9 @@ Type
     // The server that created this connection
     Property Server : TFPCustomHTTPServer Read FServer;
     // Handler to call when an error occurs.
-    Property OnRequestError : TRequestErrorHandler Read FOnError Write FOnError;
+    Property OnRequestError : TRequestErrorHandler Read FOnRequestError Write FOnRequestError;
+    // Called when an unexpected error occurs outside the request.
+    Property OnUnexpectedError : TRequestErrorHandler Read FOnUnexpectedError Write FOnUnexpectedError;
     // Look up host names to map IP -> hostname ?
     Property LookupHostNames : Boolean Read GetLookupHostNames;
     // Set to true if you want to support HTTP 1.1 connection: keep-alive - only available for threaded server
@@ -266,6 +271,7 @@ Type
     FOnGetSocketHandler: TGetSocketHandlerEvent;
     FOnRequest: THTTPServerRequestHandler;
     FOnRequestError: TRequestErrorHandler;
+    FOnUnexpectedError: TRequestErrorHandler;
     FAddress: string;
     FPort: Word;
     FQueueSize: Word;
@@ -295,7 +301,6 @@ Type
     procedure SetupSocket;
     procedure SetupConnectionHandler;
   Protected
-    Class procedure HandleUnexpectedError(E : Exception); virtual;
     // Override this to create descendent
     function CreateSSLSocketHandler: TSocketHandler;
     // Override this to create descendent
@@ -332,6 +337,8 @@ Type
                             Var AResponse : TFPHTTPConnectionResponse); virtual;
     // Called when a connection encounters an unexpected error. Will call OnRequestError when set.
     procedure HandleRequestError(Sender: TObject; E: Exception); virtual;
+    // Called when a connection encounters an error outside the request. Will call OnUnexpectedError when set.
+    procedure HandleUnexpectedError(Sender: TObject; E : Exception); virtual;
     // Connection Handler
     Property Connectionhandler : TFPHTTPServerConnectionHandler Read FConnectionHandler;
     // Connection count. Convenience shortcut for Connectionhandler.GetActiveConnectionCount;
@@ -362,6 +369,8 @@ Type
     Property OnRequest : THTTPServerRequestHandler Read FOnRequest Write FOnRequest;
     // Called when an unexpected error occurs during handling of the request. Sender is the TFPHTTPConnection.
     Property OnRequestError : TRequestErrorHandler Read FOnRequestError Write FOnRequestError;
+    // Called when an unexpected error occurs outside the request. Sender is either the TFPHTTPConnection or TFPCustomHttpServer
+    Property OnUnexpectedError : TRequestErrorHandler Read FOnUnexpectedError Write FOnUnexpectedError;
     // Called when there are no connections waiting.
     Property OnAcceptIdle : TNotifyEvent Read FOnAcceptIdle Write SetIdle;
     // If >0, when no new connection appeared after timeout, OnAcceptIdle is called.
@@ -450,7 +459,7 @@ begin
       FOnDone(Connection);
   except
     On E : Exception do
-      TFPCustomHttpServer.HandleUnexpectedError(E);
+      Connection.HandleUnexpectedError(E);
   end;
 end;
 
@@ -793,13 +802,19 @@ end;
 
 procedure TFPHTTPConnection.HandleRequestError(E: Exception);
 begin
-  If Assigned(FOnError) then
+  If Assigned(FOnRequestError) then
     try
-      FOnError(Self,E);
+      FOnRequestError(Self,E);
     except
       On E : exception do
-        TFPCustomHttpServer.HandleUnexpectedError(E);
+        HandleUnexpectedError(E);
     end;
+end;
+
+procedure TFPHTTPConnection.HandleUnexpectedError(E: Exception);
+begin
+  If Assigned(FOnUnexpectedError) then
+    FOnUnexpectedError(Self,E);
 end;
 
 procedure TFPHTTPConnection.SetupSocket;
@@ -1064,7 +1079,7 @@ begin
         Connection.HandleRequest;
   except
     on E : Exception do
-      TFPCustomHttpServer.HandleUnexpectedError(E);
+      Connection.HandleUnexpectedError(E);
   end;
   If Assigned(FOnDone) then
     FOnDone(Connection);
@@ -1078,7 +1093,7 @@ begin
     try
       FOnRequestError(Sender,E);
     except
-      TFPCustomHttpServer.HandleUnexpectedError(E);
+      HandleUnexpectedError(Self, E);
     end
 end;
 
@@ -1121,7 +1136,7 @@ begin
     FConnectionHandler.CheckRequests;
   except
     On E : Exception do
-      HandleUnexpectedError(E);
+      HandleUnexpectedError(Self, E);
   end;
 end;
 
@@ -1279,6 +1294,7 @@ begin
   Con:=CreateConnection(Data);
   Con.FServer:=Self;
   Con.OnRequestError:=@HandleRequestError;
+  Con.OnUnexpectedError:=@HandleUnexpectedError;
   Con.KeepAliveEnabled:=Self.KeepAliveEnabled;
   Con.KeepAliveTimeout:=Self.KeepAliveTimeout;
   FConnectionHandler.HandleConnection(Con);
@@ -1298,10 +1314,10 @@ begin
   FConnectionHandler:=CreateConnectionHandler();
 end;
 
-class procedure TFPCustomHttpServer.HandleUnexpectedError(E: Exception);
+procedure TFPCustomHttpServer.HandleUnexpectedError(Sender: TObject; E: Exception);
 begin
-  if Assigned(E) then;
-  // Do nothing.
+  If Assigned(FOnUnexpectedError) then
+    FOnUnexpectedError(Sender,E);
 end;
 
 procedure TFPCustomHttpServer.CreateServerSocket;
