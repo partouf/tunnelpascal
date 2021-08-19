@@ -72,9 +72,9 @@ Type
     FSocket: TSocketStream;
     FIsSocketSetup : Boolean;
     FBuffer : Ansistring;
-    FKeepConnections : Boolean;
     FKeepAlive : Boolean;
-    FKeepConnectionTimeout : Integer;
+    function GetKeepConnections: Boolean;
+    function GetKeepConnectionTimeout: Integer;
     procedure InterPretHeader(ARequest: TFPHTTPConnectionRequest; const AHeader: String);
     function ReadString: String;
     Function GetLookupHostNames : Boolean;
@@ -103,6 +103,10 @@ Type
     Function RequestPending : Boolean;
     // True if we're handling a request. Needed to be able to schedule properly.
     Property Busy : Boolean Read FBusy;
+    // The server supports HTTP 1.1 connection: keep-alive
+    Property KeepConnections : Boolean read GetKeepConnections;
+    // time-out for keep-alive: how many ms should the server keep the connection alive after a request has been handled
+    Property KeepConnectionTimeout: Integer read GetKeepConnectionTimeout;
   Public
     Type
       TConnectionIDAllocator = Procedure(out aID : String) of object;
@@ -124,10 +128,6 @@ Type
     Property OnUnexpectedError : TRequestErrorHandler Read FOnUnexpectedError Write FOnUnexpectedError;
     // Look up host names to map IP -> hostname ?
     Property LookupHostNames : Boolean Read GetLookupHostNames;
-    // Set to true if you want to support HTTP 1.1 connection: keep-alive - only available for threaded server
-    Property KeepConnections : Boolean read FKeepConnections write FKeepConnections;
-    // time-out for keep-alive: how many ms should the server keep the connection alive after a request has been handled
-    Property KeepConnectionTimeout: Integer read FKeepConnectionTimeout write FKeepConnectionTimeout;
     // is the current connection set up for KeepAlive?
     Property KeepAlive: Boolean read FKeepAlive;
   end;
@@ -966,7 +966,6 @@ begin
   FIsSocketSetup:=False;
   FSocket:=ASocket;
   FServer:=AServer;
-  KeepConnectionTimeout:=DefaultKeepConnectionTimeout;
   AllocateConnectionID;
 end;
 
@@ -1036,6 +1035,22 @@ begin
     FreeAndNil(Resp);
     FreeAndNil(Req);
   end;
+end;
+
+function TFPHTTPConnection.GetKeepConnections: Boolean;
+begin
+  if Assigned(FServer) then
+    Result := FServer.KeepConnections
+  else
+    Result := False;
+end;
+
+function TFPHTTPConnection.GetKeepConnectionTimeout: Integer;
+begin
+  if Assigned(FServer) then
+    Result := FServer.KeepConnectionTimeout
+  else
+    Result := 0;
 end;
 
 procedure TFPHTTPConnection.HandleRequest;
@@ -1295,8 +1310,6 @@ begin
   Con.FServer:=Self;
   Con.OnRequestError:=@HandleRequestError;
   Con.OnUnexpectedError:=@HandleUnexpectedError;
-  Con.KeepConnections:=Self.KeepConnections;
-  Con.KeepConnectionTimeout:=Self.KeepConnectionTimeout;
   FConnectionHandler.HandleConnection(Con);
 end;
 
