@@ -52,7 +52,7 @@ begin
 {$endif}
   FServ.KeepConnections := True;
   FServ.KeepConnectionTimeout := 60*1000;
-  FServ.Threaded:=True;
+  FServ.ThreadMode:=tmThread;
   FServ.Port:=8080;
   FServ.WriteInfo := @WriteInfo;
   FServ.AcceptIdleTimeout := 1000;
