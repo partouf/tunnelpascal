@@ -89,6 +89,7 @@ begin
   else
     begin
     AResponse.Code:=404;
+    AResponse.ContentLength:=0;
     AResponse.SendContent;
     end;
   Inc(FCount);
