@@ -62,7 +62,7 @@ Type
 
   TFPHTTPConnection = Class(TObject)
   private
-    Class var _ConnectionCount : Int64;
+    Class var _ConnectionCount : Cardinal;
   private
     FBusy: Boolean;
     FConnectionID: String;
@@ -391,6 +391,7 @@ Type
     Property QueueSize;
     Property OnAllowConnect;
     property Threaded;
+    property ThreadMode;
     Property OnRequest;
     Property OnRequestError;
     Property OnAcceptIdle;
@@ -514,7 +515,7 @@ Var
 
 begin
   P:=TFPSimpleThreadPool.Create;
-  P.AddWaitInterval:=10;
+  //P.AddWaitInterval:=10;
   P.AddTimeout:=30;
   Result:=P;
 end;
@@ -975,7 +976,7 @@ begin
   if Assigned(IDAllocator) then
     IDAllocator(FConnectionID);
   if FConnectionID='' then
-    FConnectionID:=IntToStr(InterlockedIncrement64(_ConnectionCount))
+    FConnectionID:=IntToStr(InterlockedIncrement(_ConnectionCount))
 end;
 
 procedure TFPHTTPConnection.DoHandleRequest;

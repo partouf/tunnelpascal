@@ -34,9 +34,7 @@ Type
 function THTTPServer.CreateConnection(Data: TSocketStream): TFPHTTPConnection;
 begin
   Result := inherited CreateConnection(Data);
-  Result.Socket.IOTimeout := 15*1000;
-  Result.EnableKeepAlive := True;
-  Result.KeepAliveTimeout := 60*1000;
+  Result.Socket.IOTimeout := 180*1000;
 end;
 
 { TServerThread }
@@ -52,6 +50,8 @@ begin
 {$ifdef unix}
   FServ.MimeTypesFile:='/etc/mime.types';
 {$endif}
+  FServ.KeepAliveEnabled := True;
+  FServ.KeepAliveTimeout := 60*1000;
   FServ.Threaded:=True;
   FServ.Port:=8080;
   FServ.WriteInfo := @WriteInfo;
