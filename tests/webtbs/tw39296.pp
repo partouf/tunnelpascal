@@ -7,7 +7,8 @@ asm
   cmpl $5, %edi
   seteb %al
   cmpl $-3, %esi
-  seteb %al
+  seteb %dl
+  andb %dl, %al
 end;
 
 var
