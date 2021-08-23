@@ -3863,7 +3863,7 @@ F*0*_Only options valid for the default or selected platform are listed.
 **0*_Put + after a boolean switch option to enable it, - to disable it.
 **1@<x>_Read compiler options from <x> in addition to the default fpc.cfg
 # Assembler related options
-**1a_The compiler does not delete the generated assembler file
+**1a_The compiler does not delete the generated assembler file, automatically switches to external assembler if internal assembler was used
 **2a5_Don't generate Big Obj COFF files for GNU Binutils older than 2.25 (Windows, NativeNT)
 **2al_List sourcecode lines in assembler file
 **2an_List node info in assembler file (-dEXTDEBUG compiler)
@@ -3873,7 +3873,6 @@ F*0*_Only options valid for the default or selected platform are listed.
 **2at_List temp allocation/release info in assembler file
 # Choice of assembler used
 **1A<x>_Output format:
-**2Adefault_Use default assembler
 3*2Aas_Assemble using GNU AS
 3*2Aas-darwin_Assemble Darwin Mach-O using GNU GAS
 3*2Amacho_Mach-O (Darwin, Intel 32 bit) using internal writer
@@ -4126,7 +4125,7 @@ F*2P<x>_Set target CPU (aarch64,arm,avr,i386,i8086,jvm,m68k,mips,mipsel,powerpc,
 **2Sv_Support vector processing (use CPU vector extensions if available)
 **2Sx_Enable exception keywords (default in Delphi/ObjFPC modes)
 **2Sy_@<pointer> returns a typed pointer, same as $T+
-**1s_Do not call assembler and linker
+**1s_Do not call assembler and linker, automatically switches to external assembler writer if internal assembler was used
 **2sh_Generate script to link on host
 **2st_Generate script to assemble and link on target
 **2sr_Skip register allocation phase (use with -alr)
