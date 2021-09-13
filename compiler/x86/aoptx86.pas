@@ -2212,6 +2212,43 @@ unit aoptx86;
         PreMessage, RegName1, RegName2, InputVal, MaskNum: string;
         NewSize: topsize;
         CurrentReg, ActiveReg: TRegister;
+        OldVal, NewVal: TCGInt;
+        X, Range: Integer;
+
+        { Nested function depends on NewVal and hp2.  Use local parameters to
+          minimise reads from the stack }
+        function CheckConstantShifts(LocalOld: TCGInt; Shift: Integer): Boolean;
+          begin
+            Result := False;
+            if (LocalOld shl Shift) = NewVal then
+              begin
+                DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(LocalOld) + ' shl ' + tostr(Shift) + '; changed to reduce code size without speed loss (Mov2Shl)', hp2);
+
+                taicpu(hp2).opcode := A_SHL;
+                taicpu(hp2).oper[0]^.val := Shift;
+
+                Result := True;
+              end
+            else if (LocalOld shr Shift) = NewVal then
+              begin
+                DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(LocalOld) + ' shr ' + tostr(Shift) + '; changed to reduce code size without speed loss (Mov2Shr)', hp2);
+
+                taicpu(hp2).opcode := A_SHR;
+                taicpu(hp2).oper[0]^.val := Shift;
+
+                Result := True;
+              end
+            else if SarInt64(LocalOld, Shift) = NewVal then
+              begin
+                DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(LocalOld) + ' sar ' + tostr(Shift) + '; changed to reduce code size without speed loss (Mov2Sar)', hp2);
+
+                taicpu(hp2).opcode := A_SAR;
+                taicpu(hp2).oper[0]^.val := Shift;
+
+                Result := True;
+              end;
+          end;
+
       begin
         Result:=false;
 
