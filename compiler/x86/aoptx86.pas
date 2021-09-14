@@ -2211,7 +2211,7 @@ unit aoptx86;
         GetNextInstruction_p, TempRegUsed, CrossJump: Boolean;
         PreMessage, RegName1, RegName2, InputVal, MaskNum: string;
         NewSize: topsize;
-        CurrentReg: TRegister;
+        CurrentReg, ActiveReg: TRegister;
         OldVal, NewVal: TCGInt;
         X, Range: Integer;
 
@@ -3070,13 +3070,16 @@ unit aoptx86;
             { Initialise CrossJump (if it becomes True at any point, it will remain True) }
             CrossJump := False;
 
-            while GetNextInstructionUsingRegCond(hp3,hp2,taicpu(p).oper[1]^.reg,CrossJump) and
+            { Saves on a large number of dereferences }
+            ActiveReg := taicpu(p).oper[1]^.reg;
+
+            while GetNextInstructionUsingRegCond(hp3,hp2,ActiveReg,CrossJump) and
               { GetNextInstructionUsingRegCond only searches one instruction ahead unless -O3 is specified }
               (hp2.typ=ait_instruction) do
               begin
                 case taicpu(hp2).opcode of
                   A_MOV:
-                    if MatchOperand(taicpu(hp2).oper[0]^,taicpu(p).oper[1]^.reg) and
+                    if MatchOperand(taicpu(hp2).oper[0]^,ActiveReg) and
                       ((taicpu(p).oper[0]^.typ=top_const) or
                        ((taicpu(p).oper[0]^.typ=top_reg) and
                         not(RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp2))
@@ -3098,8 +3101,8 @@ unit aoptx86;
 
                         TempRegUsed :=
                           CrossJump { Assume the register is in use if it crossed a conditional jump } or
-                          RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp2, TmpUsedRegs) or
-                          RegReadByInstruction(taicpu(p).oper[1]^.reg, hp1);
+                          RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs) or
+                          RegReadByInstruction(ActiveReg, hp1);
 
                         case taicpu(p).oper[0]^.typ Of
                           top_reg:
@@ -3204,90 +3207,103 @@ unit aoptx86;
                           end;
                       end
                     else
-                      if MatchOperand(taicpu(hp2).oper[1]^, taicpu(p).oper[1]^.reg) and
-                        (taicpu(p).oper[0]^.typ = top_const) and
-                        (taicpu(hp2).oper[0]^.typ = top_const) then
+                      if MatchOperand(taicpu(hp2).oper[1]^, ActiveReg) then
                         begin
-                          TransferUsedRegs(TmpUsedRegs);
-                          hp3 := p;
-                          { Make sure the flags register is properly tracked up to hp2 }
-                          repeat
-                            TmpUsedRegs[R_SPECIALREGISTER].Update(tai(hp3.Next));
-
-                            if not GetNextInstruction(hp3, hp3) then
-                              InternalError(2021091301);
-                          until hp3 = hp2;
-
-                          OldVal := taicpu(p).oper[0]^.val;
-                          NewVal := taicpu(hp2).oper[0]^.val;
-                          if OldVal = NewVal then
+                          if not CrossJump and
+                            RegModifiedBetween(ActiveReg, hp1, hp2) and
+                            RegReadByInstruction(ActiveReg, hp2) then
                             begin
-                              { Same value - register hasn't changed }
-                              DebugMsg(SPeepholeOptimization + 'Mov2Nop 2 done', hp2);
-                              RemoveInstruction(hp2);
+                              { Register is not used before it is overwritten }
+                              DebugMsg(SPeepholeOptimization + 'Mov2Nop 3a done',p);
+                              RemoveCurrentp(p, hp1);
                               Result := True;
-
-                              { See if there's more we can optimise }
-                              Continue;
+                              Exit;
                             end;
 
-                          { mov 0,%reg can be efficiently encoded as xor %reg,%reg later }
-                          if (NewVal <> 0) and not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                          if (taicpu(p).oper[0]^.typ = top_const) and
+                            (taicpu(hp2).oper[0]^.typ = top_const) then
                             begin
-                              Range := tcgsize2size[reg_cgsize(taicpu(p).oper[1]^.reg)] * 4; { Half way }
-                              if Range > 8 then { Only a saving for 32-bit and 64-bit really }
+                              TransferUsedRegs(TmpUsedRegs);
+                              hp3 := p;
+                              { Make sure the flags register is properly tracked up to hp2 }
+                              repeat
+                                TmpUsedRegs[R_SPECIALREGISTER].Update(tai(hp3.Next));
+
+                                if not GetNextInstruction(hp3, hp3) then
+                                  InternalError(2021091301);
+                              until hp3 = hp2;
+
+                              OldVal := taicpu(p).oper[0]^.val;
+                              NewVal := taicpu(hp2).oper[0]^.val;
+                              if OldVal = NewVal then
                                 begin
-                                  { For the first half of the bit range, check for SHL, SHR, SAR, ROL and ROR permutations }
-                                  for X := 1 to Range - 1 do
+                                  { Same value - register hasn't changed }
+                                  DebugMsg(SPeepholeOptimization + 'Mov2Nop 2 done', hp2);
+                                  RemoveInstruction(hp2);
+                                  Result := True;
+
+                                  { See if there's more we can optimise }
+                                  Continue;
+                                end;
+
+                              { mov 0,%reg can be efficiently encoded as xor %reg,%reg later }
+                              if (NewVal <> 0) and not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                                begin
+                                  Range := tcgsize2size[reg_cgsize(ActiveReg)] * 4; { Half way }
+                                  if Range > 8 then { Only a saving for 32-bit and 64-bit really }
                                     begin
-
-                                      { Check SHL, SHR and SAR }
-                                      if CheckConstantShifts(OldVal, X) then
+                                      { For the first half of the bit range, check for SHL, SHR, SAR, ROL and ROR permutations }
+                                      for X := 1 to Range - 1 do
                                         begin
-                                          Result := True;
-                                          Exit;
+
+                                          { Check SHL, SHR and SAR }
+                                          if CheckConstantShifts(OldVal, X) then
+                                            begin
+                                              Result := True;
+                                              Exit;
+                                            end;
+
+                                          if RolQWord(QWord(OldVal), X) = NewVal then
+                                            begin
+                                              DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(OldVal) + ' rol ' + tostr(X) + '; changed to reduce code size without speed loss (Mov2Rol)', hp2);
+
+                                              taicpu(hp2).opcode := A_ROL;
+                                              taicpu(hp2).oper[0]^.val := X;
+
+                                              Result := True;
+                                              Exit;
+                                            end;
+
+                                          if RorQWord(QWord(OldVal), X) = NewVal then
+                                            begin
+                                              DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(OldVal) + ' ror ' + tostr(X) + '; changed to reduce code size without speed loss (Mov2Ror)', hp2);
+
+                                              taicpu(hp2).opcode := A_ROR;
+                                              taicpu(hp2).oper[0]^.val := X;
+
+                                              Result := True;
+                                              Exit;
+                                            end;
                                         end;
 
-                                      if RolQWord(QWord(OldVal), X) = NewVal then
-                                        begin
-                                          DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(OldVal) + ' rol ' + tostr(X) + '; changed to reduce code size without speed loss (Mov2Rol)', hp2);
-
-                                          taicpu(hp2).opcode := A_ROL;
-                                          taicpu(hp2).oper[0]^.val := X;
-
-                                          Result := True;
-                                          Exit;
-                                        end;
-
-                                      if RorQWord(QWord(OldVal), X) = NewVal then
-                                        begin
-                                          DebugMsg(SPeepholeOptimization + tostr(NewVal) + ' = ' + tostr(OldVal) + ' ror ' + tostr(X) + '; changed to reduce code size without speed loss (Mov2Ror)', hp2);
-
-                                          taicpu(hp2).opcode := A_ROR;
-                                          taicpu(hp2).oper[0]^.val := X;
-
-                                          Result := True;
-                                          Exit;
-                                        end;
+                                      { Don't check for ROR and ROL for the remainder of the range, since the
+                                        instructions overlap in the first half (e.g. rorq $33,%reg = rolq $31,%reg }
+                                      Range := Range shl 1;
+                                      for X := (Range shr 2) to Range - 1 do
+                                        { Check SHL, SHR and SAR }
+                                        if CheckConstantShifts(OldVal, X) then
+                                          begin
+                                            Result := True;
+                                            Exit;
+                                          end;
                                     end;
-
-                                  { Don't check for ROR and ROL for the remainder of the range, since the
-                                    instructions overlap in the first half (e.g. rorq $33,%reg = rolq $31,%reg }
-                                  Range := Range shl 1;
-                                  for X := (Range shr 2) to Range - 1 do
-                                    { Check SHL, SHR and SAR }
-                                    if CheckConstantShifts(OldVal, X) then
-                                      begin
-                                        Result := True;
-                                        Exit;
-                                      end;
                                 end;
                             end;
                         end;
                   A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif x86_64}:
                     if MatchOpType(taicpu(hp2), top_reg, top_reg) and
-                      MatchOperand(taicpu(hp2).oper[0]^, taicpu(p).oper[1]^.reg) and
-                      SuperRegistersEqual(taicpu(hp2).oper[1]^.reg, taicpu(p).oper[1]^.reg) then
+                      MatchOperand(taicpu(hp2).oper[0]^, ActiveReg) and
+                      SuperRegistersEqual(taicpu(hp2).oper[1]^.reg, ActiveReg) then
                       begin
                         {
                           Change from:
@@ -3322,7 +3338,6 @@ unit aoptx86;
                   else
                     if MatchOpType(taicpu(p), top_reg, top_reg) then
                       begin
-                        CurrentReg := taicpu(p).oper[1]^.reg;
                         TransferUsedRegs(TmpUsedRegs);
                         TmpUsedRegs[R_INTREGISTER].Update(tai(p.Next));
                         if
@@ -3332,7 +3347,7 @@ unit aoptx86;
                           begin
                             { Just in case something didn't get modified (e.g. an
                               implicit register) }
-                            if not RegReadByInstruction(CurrentReg, hp2) and
+                            if not RegReadByInstruction(ActiveReg, hp2) and
                               { If a conditional jump was crossed, do not delete
                                 the original MOV no matter what }
                               not CrossJump then
@@ -3344,8 +3359,8 @@ unit aoptx86;
                                 if
                                   { Make sure the original register isn't still present
                                     and has been written to (e.g. with SHRX) }
-                                  RegLoadedWithNewValue(CurrentReg, hp2) or
-                                  not RegUsedAfterInstruction(CurrentReg, hp2, TmpUsedRegs) then
+                                  RegLoadedWithNewValue(ActiveReg, hp2) or
+                                  not RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs) then
                                   begin
                                     RegUsedAfterInstruction(CurrentReg, hp2, TmpUsedRegs);
                                     { We can remove the original MOV }
