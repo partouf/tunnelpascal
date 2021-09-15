@@ -3173,8 +3173,8 @@ unit aoptx86;
                       if MatchOperand(taicpu(hp2).oper[1]^, ActiveReg) then
                         begin
                           if not CrossJump and
-                            RegModifiedBetween(ActiveReg, hp1, hp2) and
-                            RegReadByInstruction(ActiveReg, hp2) then
+                            not RegModifiedBetween(ActiveReg, hp1, hp2) and
+                            not RegReadByInstruction(ActiveReg, hp2) then
                             begin
                               { Register is not used before it is overwritten }
                               DebugMsg(SPeepholeOptimization + 'Mov2Nop 3a done',p);
