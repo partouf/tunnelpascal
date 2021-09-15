@@ -3173,7 +3173,7 @@ unit aoptx86;
                       if MatchOperand(taicpu(hp2).oper[1]^, ActiveReg) then
                         begin
                           if not CrossJump and
-                            not RegModifiedBetween(ActiveReg, hp1, hp2) and
+                            not RegModifiedBetween(ActiveReg, p, hp2) and
                             not RegReadByInstruction(ActiveReg, hp2) then
                             begin
                               { Register is not used before it is overwritten }
