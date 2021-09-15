@@ -3174,7 +3174,8 @@ unit aoptx86;
                         begin
                           if not CrossJump and
                             not RegUsedBetween(ActiveReg, p, hp2) and
-                            not RegReadByInstruction(ActiveReg, hp2) then
+                            not RegReadByInstruction(ActiveReg, hp2) and
+                            (taicpu(p).oper[0]^.typ = top_reg) then
                             begin
                               { Register is not used before it is overwritten }
                               DebugMsg(SPeepholeOptimization + 'Mov2Nop 3a done',p);
