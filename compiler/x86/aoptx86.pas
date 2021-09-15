@@ -3019,8 +3019,8 @@ unit aoptx86;
               { mov x,reg1; mov y,reg1 -> mov y,reg1 is handled by the Mov2Nop 5 optimisation }
           end;
 
-        { search further than the next instruction for a mov }
-        if
+        { search further than the next instruction for a mov (as long as it's not a jump) }
+        if not is_calljmpuncond(taicpu(hp1).opcode) and
           { check as much as possible before the expensive GetNextInstructionUsingRegCond call }
           (taicpu(p).oper[1]^.typ = top_reg) and
           (taicpu(p).oper[0]^.typ in [top_reg,top_const]) and
@@ -3031,7 +3031,7 @@ unit aoptx86;
             hp3 := hp1;
 
             { Initialise CrossJump (if it becomes True at any point, it will remain True) }
-            CrossJump := False;
+            CrossJump := (taicpu(hp1).opcode = A_Jcc);
 
             { Saves on a large number of dereferences }
             ActiveReg := taicpu(p).oper[1]^.reg;
@@ -3174,8 +3174,7 @@ unit aoptx86;
                         begin
                           if not CrossJump and
                             not RegUsedBetween(ActiveReg, p, hp2) and
-                            not RegReadByInstruction(ActiveReg, hp2) and
-                            (taicpu(p).oper[0]^.typ = top_reg) then
+                            not RegReadByInstruction(ActiveReg, hp2) then
                             begin
                               { Register is not used before it is overwritten }
                               DebugMsg(SPeepholeOptimization + 'Mov2Nop 3a done',p);
