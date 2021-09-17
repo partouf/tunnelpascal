@@ -85,11 +85,11 @@ unit aoptx86;
         class function IsMOVZXAcceptable: Boolean; static; inline;
 
         { Attempts to allocate a volatile integer register for use between p and hp,
-          using UsedRegs for the current register usage information.  Returns NR_NO
+          using AUsedRegs for the current register usage information.  Returns NR_NO
           if no free register could be found }
         function GetIntRegisterBetween(RegSize: TSubRegister; var AUsedRegs: TAllUsedRegs; p, hp: tai): TRegister;
         { Attempts to allocate a volatile MM register for use between p and hp,
-          using UsedRegs for the current register usage information.  Returns NR_NO
+          using AUsedRegs for the current register usage information.  Returns NR_NO
           if no free register could be found }
         function GetMMRegisterBetween(RegSize: TSubRegister; var AUsedRegs: TAllUsedRegs; p, hp: tai): TRegister;
 
@@ -1014,7 +1014,7 @@ unit aoptx86;
 
 
     { Attempts to allocate a volatile integer register for use between p and hp,
-      using UsedRegs for the current register usage information.  Returns NR_NO
+      using AUsedRegs for the current register usage information.  Returns NR_NO
       if no free register could be found }
     function TX86AsmOptimizer.GetIntRegisterBetween(RegSize: TSubRegister; var AUsedRegs: TAllUsedRegs; p, hp: tai): TRegister;
       var
@@ -1024,7 +1024,7 @@ unit aoptx86;
         Currentp: tai;
         Breakout: Boolean;
       begin
-        { TODO: Currently, only the volatile registers are checked }
+        { TODO: Currently, only the volatile registers are checked - can this be extended to use any register the procedure has preserved? }
         Result := NR_NO;
         RegSet := paramanager.get_volatile_registers_int(current_procinfo.procdef.proccalloption);
         for CurrentSuperReg := Low(RegSet) to High(RegSet) do
@@ -1071,7 +1071,7 @@ unit aoptx86;
 
 
     { Attempts to allocate a volatile MM register for use between p and hp,
-      using UsedRegs for the current register usage information.  Returns NR_NO
+      using AUsedRegs for the current register usage information.  Returns NR_NO
       if no free register could be found }
     function TX86AsmOptimizer.GetMMRegisterBetween(RegSize: TSubRegister; var AUsedRegs: TAllUsedRegs; p, hp: tai): TRegister;
       var
@@ -1081,7 +1081,7 @@ unit aoptx86;
         Currentp: tai;
         Breakout: Boolean;
       begin
-        { TODO: Currently, only the volatile registers are checked }
+        { TODO: Currently, only the volatile registers are checked - can this be extended to use any register the procedure has preserved? }
         Result := NR_NO;
         RegSet := paramanager.get_volatile_registers_mm(current_procinfo.procdef.proccalloption);
         for CurrentSuperReg := Low(RegSet) to High(RegSet) do
