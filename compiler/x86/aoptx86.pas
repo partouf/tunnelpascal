@@ -3260,7 +3260,7 @@ unit aoptx86;
                                   RegLoadedWithNewValue(ActiveReg, hp2) or
                                   not RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs) then
                                   begin
-                                    RegUsedAfterInstruction(CurrentReg, hp2, TmpUsedRegs);
+                                    RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs);
                                     { We can remove the original MOV }
                                     DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
                                     RemoveCurrentp(p, hp1);
