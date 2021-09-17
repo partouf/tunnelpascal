@@ -22,17 +22,15 @@
     </PublishOptions>
     <RunParams>
       <local>
-        <CommandLineParams Value="-a -Mfpc -O4 -Fi../../rtl/inc -Fi../../rtl/x86_64 -FE. -Sg -Fi../../rtl/win -Fu../../rtl/win -Fi../../rtl/x86_64 -Fu../../rtl/win64 -Fi../../rtl/win64 -Fi../../rtl/win64/x86_64 -Fi../../rtl/win/wininc -Fu../../rtl/objpas -Fi../../rtl/objpas/classes -Fi../../rtl/objpas/sysutils -Fu../../rtl/inc -Fu..\..\packages\rtl-objpas\src\inc -CriotR -B bdiv.pp"/>
+        <CommandLineParams Value="\tmp\tasm2.pp"/>
         <LaunchingApplication PathPlusParams="\usr\X11R6\bin\xterm -T 'Lazarus Run Output' -e $(LazarusDir)\tools\runwait.sh $(TargetCmdLine)"/>
-        <WorkingDirectory Value="C:\Users\garet\Documents\programming\fpc\tests\bench"/>
       </local>
       <FormatVersion Value="2"/>
       <Modes Count="1">
         <Mode0 Name="default">
           <local>
-            <CommandLineParams Value="-a -Mfpc -O4 -Fi../../rtl/inc -Fi../../rtl/x86_64 -FE. -Sg -Fi../../rtl/win -Fu../../rtl/win -Fi../../rtl/x86_64 -Fu../../rtl/win64 -Fi../../rtl/win64 -Fi../../rtl/win64/x86_64 -Fi../../rtl/win/wininc -Fu../../rtl/objpas -Fi../../rtl/objpas/classes -Fi../../rtl/objpas/sysutils -Fu../../rtl/inc -Fu..\..\packages\rtl-objpas\src\inc -CriotR -B bdiv.pp"/>
+            <CommandLineParams Value="\tmp\tasm2.pp"/>
             <LaunchingApplication PathPlusParams="\usr\X11R6\bin\xterm -T 'Lazarus Run Output' -e $(LazarusDir)\tools\runwait.sh $(TargetCmdLine)"/>
-            <WorkingDirectory Value="C:\Users\garet\Documents\programming\fpc\tests\bench"/>
           </local>
         </Mode0>
       </Modes>
