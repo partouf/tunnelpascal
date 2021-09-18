@@ -2222,7 +2222,10 @@ const
            allows Windows to move code segments around (in order to defragment
            memory) and then walk through the stacks of all running programs and
            update the segment values of the segment that has moved. }
-        'Use odd BP for far procs' {ts_x86_far_procs_push_odd_bp}
+        'Use odd BP for far procs', {ts_x86_far_procs_push_odd_bp}
+        'No exception support', {ts_wasm_no_exceptions}
+        'JavaScript-based exception support', {ts_wasm_js_exceptions}
+        'Native WebAssembly exceptions support' {ts_wasm_native_exceptions}
        );
     moduleswitchname : array[tmoduleswitch] of string[40] =
        ('Module None', {cs_modulenone,}
@@ -2446,7 +2449,8 @@ const
          'cs_opt_forcenostackframe',
          'cs_opt_use_load_modify_store',
          'cs_opt_unused_para',
-         'cs_opt_consts'
+         'cs_opt_consts',
+         'cs_opt_forloop'
        );
     var
          globalswitch  : tglobalswitch;

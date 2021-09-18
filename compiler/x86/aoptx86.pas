@@ -4691,6 +4691,7 @@ unit aoptx86;
           MatchInstruction(hp1,A_MOV,A_LEA,[]) and
           MatchOpType(taicpu(hp1), top_ref, top_reg) and
           (taicpu(p).oper[1]^.reg=taicpu(hp1).oper[0]^.ref^.index) and
+          (taicpu(p).oper[1]^.reg<>taicpu(hp1).oper[0]^.ref^.base) and
           (taicpu(hp1).oper[0]^.ref^.scalefactor in [0,1]) then
           begin
             TransferUsedRegs(TmpUsedRegs);
@@ -9658,23 +9659,6 @@ unit aoptx86;
                   { and in case of carry for A(E)/B(E)/C/NC                  }
                   (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) then
                   begin
-                    case taicpu(hp1).opcode of
-                      A_DEC, A_INC:
-                        { replace inc/dec with add/sub 1, because inc/dec doesn't set the carry flag }
-                        begin
-                          case taicpu(hp1).opcode Of
-                            A_DEC: taicpu(hp1).opcode := A_SUB;
-                            A_INC: taicpu(hp1).opcode := A_ADD;
-                            else
-                              ;
-                          end;
-                          taicpu(hp1).loadoper(1,taicpu(hp1).oper[0]^);
-                          taicpu(hp1).loadConst(0,1);
-                          taicpu(hp1).ops:=2;
-                        end;
-                      else
-                        ;
-                    end;
                     RemoveCurrentP(p, hp2);
                     Result:=true;
                     Exit;
