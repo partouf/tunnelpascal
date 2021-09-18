@@ -1046,7 +1046,7 @@ unit aoptx86;
 
                             end;
                           { Cannot allocate across an unconditional jump }
-                          if is_calljmpuncond(taicpu(Currentp).opcode) then
+                          if is_calljmpuncondret(taicpu(Currentp).opcode) then
                             Exit;
                         end;
                       ait_marker:
@@ -1103,7 +1103,7 @@ unit aoptx86;
 
                             end;
                           { Cannot allocate across an unconditional jump }
-                          if is_calljmpuncond(taicpu(Currentp).opcode) then
+                          if is_calljmpuncondret(taicpu(Currentp).opcode) then
                             Exit;
                         end;
                       ait_marker:
