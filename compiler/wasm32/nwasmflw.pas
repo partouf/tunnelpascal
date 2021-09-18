@@ -54,6 +54,7 @@ interface
       twasmraisenode = class(tcgraisenode)
       private
         function pass_1_no_exceptions : tnode;
+        function pass_1_native_exceptions : tnode;
       public
         function pass_1 : tnode;override;
       end;
@@ -281,10 +282,69 @@ implementation
       end;
 
 
+    function twasmraisenode.pass_1_native_exceptions : tnode;
+      var
+        statements : tstatementnode;
+        //current_addr : tlabelnode;
+        raisenode : tcallnode;
+      begin
+        result:=internalstatements(statements);
+
+        if assigned(left) then
+          begin
+            { first para must be a class }
+            firstpass(left);
+            { insert needed typeconvs for addr,frame }
+            if assigned(right) then
+              begin
+                { addr }
+                firstpass(right);
+                { frame }
+                if assigned(third) then
+                  firstpass(third)
+                else
+                  third:=cpointerconstnode.Create(0,voidpointertype);
+              end
+            else
+              begin
+                third:=cinlinenode.create(in_get_frame,false,nil);
+                //current_addr:=clabelnode.create(cnothingnode.create,clabelsym.create('$raiseaddr'));
+                //addstatement(statements,current_addr);
+                //right:=caddrnode.create(cloadnode.create(current_addr.labsym,current_addr.labsym.owner));
+                right:=cnilnode.create;
+
+                { raise address off by one so we are for sure inside the action area for the raise }
+                if tf_use_psabieh in target_info.flags then
+                  right:=caddnode.create_internal(addn,right,cordconstnode.create(1,sizesinttype,false));
+              end;
+
+            raisenode:=ccallnode.createintern('fpc_raiseexception',
+              ccallparanode.create(third,
+              ccallparanode.create(right,
+              ccallparanode.create(left,nil)))
+              );
+            include(raisenode.callnodeflags,cnf_call_never_returns);
+            addstatement(statements,raisenode);
+          end
+        else
+          begin
+            addstatement(statements,ccallnode.createintern('fpc_popaddrstack',nil));
+            raisenode:=ccallnode.createintern('fpc_reraise',nil);
+            include(raisenode.callnodeflags,cnf_call_never_returns);
+            addstatement(statements,raisenode);
+          end;
+        left:=nil;
+        right:=nil;
+        third:=nil;
+      end;
+
+
     function twasmraisenode.pass_1 : tnode;
       begin
         if ts_wasm_no_exceptions in current_settings.targetswitches then
           result:=pass_1_no_exceptions
+        else if ts_wasm_native_exceptions in current_settings.targetswitches then
+          result:=pass_1_native_exceptions
         else
           result:=inherited;
       end;
@@ -306,7 +366,8 @@ implementation
 
     procedure twasmtryexceptnode.pass_generate_code_native_exceptions;
       begin
-        internalerror(2021091707);
+        location_reset(location,LOC_VOID,OS_NO);
+        secondpass(left);
       end;
 
     procedure twasmtryexceptnode.pass_generate_code;
@@ -363,6 +424,7 @@ implementation
         continuefinallylabel:=nil;
         breakfinallylabel:=nil;
         oldLoopBreakBr:=0;
+        oldLoopContBr:=0;
 
         in_loop:=assigned(current_procinfo.CurrBreakLabel);
 
@@ -548,6 +610,8 @@ implementation
         oldContinueLabel:=nil;
         continuefinallylabel:=nil;
         breakfinallylabel:=nil;
+        oldLoopBreakBr:=0;
+        oldLoopContBr:=0;
 
         in_loop:=assigned(current_procinfo.CurrBreakLabel);
 
@@ -627,9 +691,14 @@ implementation
         hlcg.g_exception_reason_save_const(current_asmdata.CurrAsmList,exceptionreasontype,0,excepttemps.reasonbuf);
         current_asmdata.CurrAsmList.concat(taicpu.op_const(a_br,4)); // jump to the 'finally' section
 
+        current_asmdata.CurrAsmList.concat(taicpu.op_none(a_catch));
+        thlcgwasm(hlcg).decblock;
+        { exceptionreason:=1 (exception) }
+        hlcg.g_exception_reason_save_const(current_asmdata.CurrAsmList,exceptionreasontype,1,excepttemps.reasonbuf);
+        current_asmdata.CurrAsmList.concat(taicpu.op_const(a_br,3)); // jump to the 'finally' section
+
         { exit the inner 'try..end_try' block }
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_try));
-        thlcgwasm(hlcg).decblock;
 
         { exit the 'continue' block }
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_block));
