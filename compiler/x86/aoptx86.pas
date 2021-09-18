@@ -2974,7 +2974,7 @@ unit aoptx86;
 
                                   Inc(SourceRef.offset, 8);
 
-                                  if current_settings.optimizecputype >= cpu_core_avx then
+                                  if UseAVX then
                                     begin
                                       MovAligned :=  A_VMOVDQA;
                                       MovUnaligned := A_VMOVDQU;
