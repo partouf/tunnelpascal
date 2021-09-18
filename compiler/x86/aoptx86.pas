@@ -2337,6 +2337,7 @@ unit aoptx86;
         NewSize: topsize;
         CurrentReg, ActiveReg: TRegister;
         SourceRef, TargetRef: TReference;
+        MovAligned, MovUnaligned: TAsmOp;
       begin
         Result:=false;
 
@@ -2975,6 +2976,17 @@ unit aoptx86;
 
                                   if RefsEqual(SourceRef, taicpu(hp2).oper[0]^.ref^) then
                                     begin
+                                      if current_settings.optimizecputype >= cpu_core_avx then
+                                        begin
+                                          MovAligned :=  A_VMOVDQA;
+                                          MovUnaligned := A_VMOVDQU;
+                                        end
+                                      else
+                                        begin
+                                          MovAligned := A_MOVDQA;
+                                          MovUnaligned := A_MOVDQU;
+                                        end;
+
                                       UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
                                       Inc(TargetRef.offset, 8);
                                       if GetNextInstruction(hp2, hp3) and
@@ -2990,19 +3002,9 @@ unit aoptx86;
                                               if (SourceRef.base = NR_FRAME_POINTER_REG) and (SourceRef.index = NR_NO)
                                                 and (SourceRef.scalefactor <= 1) and ((SourceRef.offset mod 16) = 8) then
                                                 { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
-                                                begin
-                                                  if current_settings.optimizecputype >= cpu_core_avx then
-                                                    taicpu(p).opcode := A_VMOVDQA
-                                                  else
-                                                    taicpu(p).opcode := A_MOVDQA;
-                                                end
+                                                taicpu(p).opcode := MovAligned
                                               else
-                                                begin
-                                                  if current_settings.optimizecputype >= cpu_core_avx then
-                                                    taicpu(p).opcode := A_VMOVDQU
-                                                  else
-                                                    taicpu(p).opcode := A_MOVDQU;
-                                                end;
+                                                taicpu(p).opcode := MovUnaligned;
 
                                               taicpu(p).opsize := S_XMM;
                                               taicpu(p).oper[1]^.reg := CurrentReg;
@@ -3010,19 +3012,9 @@ unit aoptx86;
                                               if (TargetRef.base = NR_FRAME_POINTER_REG) and (TargetRef.index = NR_NO)
                                                 and (TargetRef.scalefactor <= 1) and ((TargetRef.offset mod 16) = 8) then
                                                 { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
-                                                begin
-                                                  if current_settings.optimizecputype >= cpu_core_avx then
-                                                    taicpu(hp1).opcode := A_VMOVDQA
-                                                  else
-                                                    taicpu(hp1).opcode := A_MOVDQA;
-                                                end
+                                                taicpu(hp1).opcode := MovAligned
                                               else
-                                                begin
-                                                  if current_settings.optimizecputype >= cpu_core_avx then
-                                                    taicpu(hp1).opcode := A_VMOVDQU
-                                                  else
-                                                    taicpu(hp1).opcode := A_MOVDQU;
-                                                end;
+                                                taicpu(hp1).opcode := MovUnaligned;
 
                                               taicpu(hp1).opsize := S_XMM;
                                               taicpu(hp1).oper[0]^.reg := CurrentReg;
@@ -3058,19 +3050,9 @@ unit aoptx86;
                                                   if (SourceRef.base = NR_FRAME_POINTER_REG) and (SourceRef.index = NR_NO)
                                                     and (SourceRef.scalefactor <= 1) and ((SourceRef.offset mod 16) = 0) then
                                                     { Base pointer is always aligned (stack pointer won't be if there's a stack frame) }
-                                                    begin
-                                                      if current_settings.optimizecputype >= cpu_core_avx then
-                                                        taicpu(hp2).opcode := A_VMOVDQA
-                                                      else
-                                                        taicpu(hp2).opcode := A_MOVDQA;
-                                                    end
+                                                    taicpu(hp2).opcode := MovAligned
                                                   else
-                                                    begin
-                                                      if current_settings.optimizecputype >= cpu_core_avx then
-                                                        taicpu(hp2).opcode := A_VMOVDQU
-                                                      else
-                                                        taicpu(hp2).opcode := A_MOVDQU;
-                                                    end
+                                                    taicpu(hp2).opcode := MovUnaligned;
 
                                                   taicpu(hp2).opsize := S_XMM;
                                                   taicpu(hp2).oper[1]^.reg := CurrentReg;
@@ -3078,19 +3060,9 @@ unit aoptx86;
                                                   if (TargetRef.base = NR_FRAME_POINTER_REG) and (TargetRef.index = NR_NO)
                                                     and (TargetRef.scalefactor <= 1) and ((TargetRef.offset mod 16) = 0) then
                                                     { Base pointer is always aligned (stack pointer won't be if there's a stack frame) }
-                                                    begin
-                                                      if current_settings.optimizecputype >= cpu_core_avx then
-                                                        taicpu(hp3).opcode := A_VMOVDQA
-                                                      else
-                                                        taicpu(hp3).opcode := A_MOVDQA;
-                                                    end
+                                                    taicpu(hp3).opcode := MovAligned
                                                   else
-                                                    begin
-                                                      if current_settings.optimizecputype >= cpu_core_avx then
-                                                        taicpu(hp3).opcode := A_VMOVDQA
-                                                      else
-                                                        taicpu(hp3).opcode := A_MOVDQA;
-                                                    end
+                                                    taicpu(hp3).opcode := MovUnaligned;
 
                                                   taicpu(hp3).opsize := S_XMM;
                                                   taicpu(hp3).oper[0]^.reg := CurrentReg;
