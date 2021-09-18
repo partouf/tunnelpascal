@@ -2974,19 +2974,19 @@ unit aoptx86;
 
                                   Inc(SourceRef.offset, 8);
 
+                                  if current_settings.optimizecputype >= cpu_core_avx then
+                                    begin
+                                      MovAligned :=  A_VMOVDQA;
+                                      MovUnaligned := A_VMOVDQU;
+                                    end
+                                  else
+                                    begin
+                                      MovAligned := A_MOVDQA;
+                                      MovUnaligned := A_MOVDQU;
+                                    end;
+
                                   if RefsEqual(SourceRef, taicpu(hp2).oper[0]^.ref^) then
                                     begin
-                                      if current_settings.optimizecputype >= cpu_core_avx then
-                                        begin
-                                          MovAligned :=  A_VMOVDQA;
-                                          MovUnaligned := A_VMOVDQU;
-                                        end
-                                      else
-                                        begin
-                                          MovAligned := A_MOVDQA;
-                                          MovUnaligned := A_MOVDQU;
-                                        end;
-
                                       UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
                                       Inc(TargetRef.offset, 8);
                                       if GetNextInstruction(hp2, hp3) and
