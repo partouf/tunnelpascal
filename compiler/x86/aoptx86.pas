@@ -8823,35 +8823,6 @@ unit aoptx86;
                         exit;
                       end;
 
-                  A_CMP:
-                    if (PopCnt(DWord(taicpu(p).oper[0]^.val)) = 1) and { Only 1 bit set }
-                      MatchOperand(taicpu(hp1).oper[0]^, taicpu(p).oper[0]^.val) and
-                      MatchOperand(taicpu(hp1).oper[1]^, taicpu(p).oper[1]^.reg) and
-                      { Just check that the condition on the next instruction is compatible }
-                      GetNextInstruction(hp1, hp2) and
-                      (hp2.typ = ait_instruction) and
-                      (taicpu(hp2).condition in [C_Z, C_E, C_NZ, C_NE])
-                      then
-                        { change
-                            and  2^n, reg
-                            cmp  2^n, reg
-                            j(c) / set(c) / cmov(c)   (c is equal or not equal)
-                          to
-                            and  2^n, reg
-                            test reg, reg
-                            j(~c) / set(~c) / cmov(~c)
-                        }
-                      begin
-                        { Keep TEST instruction in, rather than remove it, because
-                          it may trigger other optimisations such as MovAndTest2Test }
-                        taicpu(hp1).loadreg(0, taicpu(hp1).oper[1]^.reg);
-                        taicpu(hp1).opcode := A_TEST;
-                        DebugMsg(SPeepholeOptimization + 'AND/CMP/J(c) -> AND/J(~c) with power of 2 constant', p);
-                        taicpu(hp2).condition := inverse_cond(taicpu(hp2).condition);
-                        Result := True;
-                        Exit;
-                      end;
-
                   A_MOVZX:
                     if MatchOpType(taicpu(hp1),top_reg,top_reg) and
                       SuperRegistersEqual(taicpu(p).oper[1]^.reg,taicpu(hp1).oper[1]^.reg) and
