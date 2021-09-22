@@ -65,6 +65,20 @@ begin
     RunError(231);
 end;
 
+procedure SaveExceptionState(var State: TExceptionState);
+begin
+  State.ExceptAddressStack := ExceptAddrStack;
+  State.ExceptObjectStack := ExceptObjectStack;
+  State.ExceptTryLevel := ExceptTryLevel;
+end;
+
+procedure RestoreExceptionState(constref State: TExceptionState);
+begin
+  ExceptAddrStack := State.ExceptAddressStack;
+  ExceptObjectStack := State.ExceptObjectStack;
+  ExceptTryLevel := State.ExceptTryLevel;
+end;
+
 
 Function fpc_PushExceptAddr (Ft: {$ifdef CPU16}SmallInt{$else}Longint{$endif};_buf,_newaddr : pointer): PJmp_buf ;
   [Public, Alias : 'FPC_PUSHEXCEPTADDR'];compilerproc;

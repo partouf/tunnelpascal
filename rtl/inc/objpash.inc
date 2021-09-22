@@ -456,6 +456,12 @@
          Property Flag : Boolean Read FFlag;
          Property Name : String Read FName; 
        end;
+
+       TExceptionState = record
+         ExceptAddressStack: Pointer;
+         ExceptObjectStack: Pointer;
+         ExceptTryLevel: Integer;
+       end;
        
   
     Const
@@ -485,6 +491,24 @@
       goes into your "property" and you need to free it manually.
       Calling this method is only valid within an except block. }
     procedure ReleaseExceptionObject;
+
+    { @abstract(stores the exception state)
+      FPC maintains an exception state at all times tracking
+      where the last except block is, the chain of raised exceptions
+      and how deep try-except blocks are nested.
+      This procedure stores the current state of the exception
+      handling in the @link(TExceptState) record passed as State.
+      To restore the exception state later on call
+      @link(RestoreExceptionState) }
+    procedure SaveExceptionState(var State: TExceptionState);
+
+    { @abstract(restores the exception state)
+      FPC maintains an exception state at all times tracking
+      where the last except block is, the chain of raised exceptions
+      and how deep try-except blocks are nested.
+      This procedure restores this state saved via a previous call to
+      @link(SaveExceptionState) }
+    procedure RestoreExceptionState(constref State: TExceptionState);
 
   const
     { for safe as operator support }
