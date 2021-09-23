@@ -2963,7 +2963,6 @@ unit aoptx86;
                               SourceRef := taicpu(p).oper[0]^.ref^;
                               TargetRef := taicpu(hp1).oper[1]^.ref^;
                               if (taicpu(p).opsize = S_Q) and
-                                (SourceRef.refaddr = addr_no) and (TargetRef.refaddr = addr_no) and
                                 GetNextInstruction(hp1, hp2) and
                                 MatchInstruction(hp2, A_MOV, [taicpu(p).opsize]) and
                                 MatchOpType(taicpu(hp2), top_ref, top_reg) then
@@ -2999,7 +2998,13 @@ unit aoptx86;
                                           CurrentReg := GetMMRegisterBetween(R_SUBMMX, UsedRegs, p, hp3);
                                           if CurrentReg <> NR_NO then
                                             begin
-                                              if ((SourceRef.alignment + SourceRef.offset) mod 16) = 0 then
+                                              { Remember that the offsets are 8 ahead }
+                                              if ((SourceRef.offset mod 16) = 8) and
+                                                (
+                                                  { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
+                                                  (SourceRef.base = current_procinfo.framepointer) or
+                                                  ((SourceRef.alignment >= 16) and ((SourceRef.alignment mod 16) = 0))
+                                                ) then
                                                 taicpu(p).opcode := MovAligned
                                               else
                                                 taicpu(p).opcode := MovUnaligned;
@@ -3007,7 +3012,12 @@ unit aoptx86;
                                               taicpu(p).opsize := S_XMM;
                                               taicpu(p).oper[1]^.reg := CurrentReg;
 
-                                              if ((TargetRef.alignment + TargetRef.offset) mod 16) = 0 then
+                                              if ((TargetRef.offset mod 16) = 8) and
+                                                (
+                                                  { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
+                                                  (TargetRef.base = current_procinfo.framepointer) or
+                                                  ((TargetRef.alignment >= 16) and ((TargetRef.alignment mod 16) = 0))
+                                                ) then
                                                 taicpu(hp1).opcode := MovAligned
                                               else
                                                 taicpu(hp1).opcode := MovUnaligned;
@@ -3032,7 +3042,7 @@ unit aoptx86;
                                       if RefsEqual(SourceRef, taicpu(hp2).oper[0]^.ref^) then
                                         begin
                                           UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
-                                          Dec(TargetRef.offset, 8);
+                                          Dec(TargetRef.offset, 8); { Only 8, not 16, as it wasn't incremented unlike SourceRef }
                                           if GetNextInstruction(hp2, hp3) and
                                             MatchInstruction(hp3, A_MOV, [taicpu(p).opsize]) and
                                             MatchOpType(taicpu(hp3), top_reg, top_ref) and
@@ -3043,9 +3053,13 @@ unit aoptx86;
                                               CurrentReg := GetMMRegisterBetween(R_SUBMMX, UsedRegs, p, hp3);
                                               if CurrentReg <> NR_NO then
                                                 begin
-                                                  if (SourceRef.base = NR_FRAME_POINTER_REG) and (SourceRef.index = NR_NO)
-                                                    and (SourceRef.scalefactor <= 1) and ((SourceRef.offset mod 16) = 0) then
-                                                    { Base pointer is always aligned (stack pointer won't be if there's a stack frame) }
+                                                  { hp2 and hp3 are the starting offsets, so mod 0 this time }
+                                                  if ((SourceRef.offset mod 16) = 0) and
+                                                    (
+                                                      { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
+                                                      (SourceRef.base = current_procinfo.framepointer) or
+                                                      ((SourceRef.alignment >= 16) and ((SourceRef.alignment mod 16) = 0))
+                                                    ) then
                                                     taicpu(hp2).opcode := MovAligned
                                                   else
                                                     taicpu(hp2).opcode := MovUnaligned;
@@ -3053,9 +3067,12 @@ unit aoptx86;
                                                   taicpu(hp2).opsize := S_XMM;
                                                   taicpu(hp2).oper[1]^.reg := CurrentReg;
 
-                                                  if (TargetRef.base = NR_FRAME_POINTER_REG) and (TargetRef.index = NR_NO)
-                                                    and (TargetRef.scalefactor <= 1) and ((TargetRef.offset mod 16) = 0) then
-                                                    { Base pointer is always aligned (stack pointer won't be if there's a stack frame) }
+                                                  if ((TargetRef.offset mod 16) = 0) and
+                                                    (
+                                                      { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
+                                                      (TargetRef.base = current_procinfo.framepointer) or
+                                                      ((TargetRef.alignment >= 16) and ((TargetRef.alignment mod 16) = 0))
+                                                    ) then
                                                     taicpu(hp3).opcode := MovAligned
                                                   else
                                                     taicpu(hp3).opcode := MovUnaligned;
