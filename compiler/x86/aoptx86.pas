@@ -2999,9 +2999,7 @@ unit aoptx86;
                                           CurrentReg := GetMMRegisterBetween(R_SUBMMX, UsedRegs, p, hp3);
                                           if CurrentReg <> NR_NO then
                                             begin
-                                              if (SourceRef.base = NR_FRAME_POINTER_REG) and (SourceRef.index = NR_NO)
-                                                and (SourceRef.scalefactor <= 1) and ((SourceRef.offset mod 16) = 8) then
-                                                { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
+                                              if ((SourceRef.alignment + SourceRef.offset) mod 16) = 0 then
                                                 taicpu(p).opcode := MovAligned
                                               else
                                                 taicpu(p).opcode := MovUnaligned;
@@ -3009,9 +3007,7 @@ unit aoptx86;
                                               taicpu(p).opsize := S_XMM;
                                               taicpu(p).oper[1]^.reg := CurrentReg;
 
-                                              if (TargetRef.base = NR_FRAME_POINTER_REG) and (TargetRef.index = NR_NO)
-                                                and (TargetRef.scalefactor <= 1) and ((TargetRef.offset mod 16) = 8) then
-                                                { Base pointer is always aligned (stack pointer won't be if there's no stack frame) }
+                                              if ((TargetRef.alignment + TargetRef.offset) mod 16) = 0 then
                                                 taicpu(hp1).opcode := MovAligned
                                               else
                                                 taicpu(hp1).opcode := MovUnaligned;
