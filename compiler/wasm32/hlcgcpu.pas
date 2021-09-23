@@ -295,6 +295,7 @@ implementation
     begin
       fevalstackheight:=0;
       fmaxevalstackheight:=0;
+      br_blocks:=0;
       fntypelookup:=TWasmProcTypeLookup.Create;
     end;
 
@@ -318,6 +319,13 @@ implementation
 
   procedure thlcgwasm.incstack(list: TAsmList; slots: longint);
     begin
+      if (fevalstackheight<0) and
+         not(cs_no_regalloc in current_settings.globalswitches) then
+{$ifdef DEBUG_WASMSTACK}
+        list.concat(tai_comment.Create(strpnew('!!! stack underflow')));
+{$else DEBUG_WASMSTACK}
+        internalerror(2010120501);
+{$endif DEBUG_WASMSTACK}
       if slots=0 then
         exit;
       inc(fevalstackheight,slots);
@@ -334,7 +342,11 @@ implementation
       dec(fevalstackheight,slots);
       if (fevalstackheight<0) and
          not(cs_no_regalloc in current_settings.globalswitches) then
+{$ifdef DEBUG_WASMSTACK}
+        list.concat(tai_comment.Create(strpnew('!!! stack underflow')));
+{$else DEBUG_WASMSTACK}
         internalerror(2010120501);
+{$endif DEBUG_WASMSTACK}
       if cs_asm_regalloc in current_settings.globalswitches then
         list.concat(tai_comment.Create(strpnew('    freed '+tostr(slots)+', stack height = '+tostr(fevalstackheight))));
     end;
@@ -2036,7 +2048,11 @@ implementation
       list.concat(taicpu.op_none(a_end_block));
       decblock;
       if fevalstackheight<>0 then
+{$ifdef DEBUG_WASMSTACK}
         list.concat(tai_comment.Create(strpnew('!!! values remaining on stack at end of block !!!')));
+{$else DEBUG_WASMSTACK}
+        internalerror(2021091801);
+{$endif DEBUG_WASMSTACK}
       inherited;
     end;
 
@@ -2375,8 +2391,6 @@ implementation
       else
         ft:=tcpuprocdef(pd).create_functype;
       totalremovesize:=Length(ft.params)-Length(ft.results);
-      if Length(ft.results)=0 then
-        dec(totalremovesize);
       { remove parameters from internal evaluation stack counter (in case of
         e.g. no parameters and a result, it can also increase) }
       if totalremovesize>0 then

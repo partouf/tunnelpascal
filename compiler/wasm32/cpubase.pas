@@ -93,12 +93,15 @@ uses
 
       { TWasmFuncType }
 
+      PWasmFuncType = ^TWasmFuncType;
       TWasmFuncType = class
         params: TWasmResultType;
         results: TWasmResultType;
         constructor Create(aparams, aresults: TWasmResultType);
+        constructor Create(afunctype: TWasmFuncType);
         procedure add_param(param: TWasmBasicType);
         procedure add_result(res: TWasmBasicType);
+        function Equals(Obj: TObject): boolean; override;
       end;
 
       {# This should define the array of instructions as string }
@@ -404,6 +407,13 @@ uses
         results:=aresults;
       end;
 
+    constructor TWasmFuncType.Create(afunctype: TWasmFuncType);
+      begin
+        inherited Create;
+        params:=afunctype.params;
+        results:=afunctype.results;
+      end;
+
     procedure TWasmFuncType.add_param(param: TWasmBasicType);
       begin
         SetLength(params,Length(params)+1);
@@ -414,6 +424,27 @@ uses
       begin
         SetLength(results,Length(results)+1);
         results[High(results)]:=res;
+      end;
+
+    function TWasmFuncType.Equals(Obj: TObject): boolean;
+      var
+        O: TWasmFuncType;
+      begin
+        if Obj=Self then
+          exit(true)
+        else if (Obj<>nil) and (Obj is TWasmFuncType) then
+          begin
+            O:=TWasmFuncType(Obj);
+            if (Length(params)<>Length(O.params)) or (Length(results)<>Length(O.results)) then
+              exit(false);
+            if (Length(params)>0) and (CompareByte(params[0],O.params[0],Length(params)*SizeOf(params[0]))<>0) then
+              exit(false);
+            if (Length(results)>0) and (CompareByte(results[0],O.results[0],Length(results)*SizeOf(results[0]))<>0) then
+              exit(false);
+            Result:=true;
+          end
+        else
+          Result:=inherited Equals(Obj);
       end;
 
 end.
