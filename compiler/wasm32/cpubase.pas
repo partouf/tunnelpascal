@@ -295,6 +295,8 @@ uses
         implementation's runtime call stack (which includes return addresses and
         function parameters) is not visible in linear memory. }
       STACK_POINTER_SYM = '__stack_pointer';
+      { The exception tag symbol, used for FPC exceptions }
+      FPC_EXCEPTION_TAG_SYM = '__FPC_exception';
 
 {*****************************************************************************
                                   Helpers
@@ -316,6 +318,9 @@ uses
       to compile (but it won't execute it).
     }
     function inverse_cond(const c: TAsmCond): Tasmcond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+
+    function natural_alignment_for_load_store(op: TAsmOp): shortint;
+    function encode_wasm_basic_type(wbt: TWasmBasicType): Byte;
 
 implementation
 
@@ -394,6 +399,58 @@ uses
       begin
         result:=C_None;
         internalerror(2015082701);
+      end;
+
+    function natural_alignment_for_load_store(op: TAsmOp): shortint;
+      begin
+        case op of
+          a_i32_load8_s,
+          a_i32_load8_u,
+          a_i64_load8_s,
+          a_i64_load8_u,
+          a_i32_store8,
+          a_i64_store8:
+            result:=0;
+
+          a_i32_load16_s,
+          a_i32_load16_u,
+          a_i64_load16_s,
+          a_i64_load16_u,
+          a_i32_store16,
+          a_i64_store16:
+            result:=1;
+
+          a_i32_load,
+          a_f32_load,
+          a_i64_load32_s,
+          a_i64_load32_u,
+          a_i32_store,
+          a_f32_store,
+          a_i64_store32:
+            result:=2;
+
+          a_i64_load,
+          a_f64_load,
+          a_i64_store,
+          a_f64_store:
+            result:=3;
+          else
+            internalerror(2021092614);
+        end;
+      end;
+
+    function encode_wasm_basic_type(wbt: TWasmBasicType): Byte;
+      begin
+        case wbt of
+          wbt_i32:
+            result:=$7F;
+          wbt_i64:
+            result:=$7E;
+          wbt_f32:
+            result:=$7D;
+          wbt_f64:
+            result:=$7C;
+        end;
       end;
 
 {*****************************************************************************
