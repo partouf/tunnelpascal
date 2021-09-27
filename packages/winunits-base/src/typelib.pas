@@ -33,6 +33,27 @@ unit typelib;
   along with this library; if not, write to the Free Software Foundation,
   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 }
+{
+  Contains six bug fixes for
+  https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39012
+  TypeLib importer ignores the [optional] and [defaultvalue()] parameter attributes
+  https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39013
+  TypeLib importer ignores all [in] parameters of properties except the first parameter
+  https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39014
+  TypeLib importer reintroduces all members of IUnknown and IDispatch in descendant interfaces
+  https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39016
+  TypeLib importer imports enum as LongWord instead of Integer
+  https://gitlab.com/freepascal.org/fpc/source/-/issues/39320
+  Compiler error "It is not possible to define a default value for a parameter of type OleVariant"
+  https://gitlab.com/freepascal.org/fpc/source/-/issues/39340
+  fpc refuses to compile more than one default property with same name
+
+  Two following bugs require changes to the fpc compiler:
+  https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39015
+  TypeLib importer never makes a property default if it has no [in] parameters
+  https://gitlab.com/freepascal.org/fpc/source/-/issues/39358
+  type helper for dispinterface fails to compile property
+}
 
 interface
 
@@ -94,6 +115,7 @@ Type
     FEventImplementations: TStrings;
     FAXClasses: TStrings;
     FAXImages: TStrings;
+    FOverloadedItems: TStrings;
     function GetDependencies: TStrings;
     function GetUnitSource: TStrings;
     function GetPackageSource: TStrings;
@@ -130,6 +152,8 @@ Type
     procedure CreateCoClasses(const TL: ITypeLib; TICount: Integer); virtual;
     procedure CreateForwards(const TL: ITypeLib; TICount: Integer); virtual;
     procedure CreateInterfaces(const TL: ITypeLib; TICount: Integer); virtual;
+    procedure CreateHelpers(iName, iDoc: string; TI: ITypeInfo; TA: LPTYPEATTR;
+      bIsDispatch,bCreateEvents:boolean);
     procedure CreateRecordsUnionsAliases(const TL: ITypeLib; TICount: Integer); virtual;
     procedure CreateUnitHeader(const TL: ITypeLib; const LA: lpTLIBATTR); virtual;
     procedure ImportEnums(const TL: ITypeLib; TICount: Integer); virtual;
@@ -170,6 +194,9 @@ Type
 
 
 implementation
+
+uses
+  variants, strutils;
 
 Resourcestring
   SErrInvalidUnitName = 'Invalid unit name : %s';
@@ -460,6 +487,7 @@ type
     sParam,
     sDefault,
     sPutSuffix:string;
+    overloads:integer;
   end;
 
 var
@@ -467,18 +495,19 @@ var
   TIref: ITypeInfo;
   BstrName,BstrNameRef,BstrDocString : WideString;
   s,sl,sPropDispIntfc,sType,sConv,sFunc,sPar,sVarName,sMethodName,
-  sPropParam,sPropParam2,sPropParam3,tmp: string;
+  sPropParam,sPropParam2,sPropParam3,tmp,sOverl: string;
   sEventSignatures,sEventFunctions,sEventProperties,sEventImplementations:string;
   i,j,k:integer;
   FD: lpFUNCDESC;
   BL : array[0..99] of TBstr;
   cnt:LongWord;
   TD: TYPEDESC;
-  bPropHasParam,bIsFunction,bParamByRef:boolean;
+  bPropHasParam,bIsFunction,bParamByRef,bDispWritten:boolean;
   VD: lpVARDESC;
   aPropertyDefs:array of TPropertyDef;
-  Propertycnt,iType:integer;
+  Propertycnt,iType,usedProps,optParams,reqOverloads:integer;
   Modifier: string;
+  vType: TVarType;
 
   function findProperty(ireqdispid:integer):integer;
   var i:integer;
@@ -508,6 +537,7 @@ var
       sParam:='';
       sDefault:='';
       sPutSuffix:='';
+      overloads:=0;
       end;
   end;
 
@@ -520,7 +550,33 @@ var
       result:='Param'+inttostr(i);
   end;
 
+  procedure CollectOverload(text: string);
+  var
+    i: integer;
+    line: string;
+    prefix: string = '';
+  begin
+    i:=Length(text)-2;
+    while text[i]<>#10 do
+      Dec(i);
+    line:=Copy(text,i+1,Length(text)); // this line needs to be overloaded
+    if Pos('property ', TrimLeft(line)) = 0 then
+      case FD^.invkind of
+        INVOKE_PROPERTYGET:
+          prefix:='propget ';
+        INVOKE_PROPERTYPUT,INVOKE_PROPERTYPUTREF:
+          prefix:='propput ';
+      end;
+    FOverloadedItems.Add(format('%s%s',[prefix, line]));
+  end;
+
+  function ParamIsPointer(p: ELEMDESC): Boolean;
+  begin
+    Result := p.tdesc.vt in [VT_DISPATCH, VT_UNKNOWN, VT_VOID, VT_PTR, VT_SAFEARRAY, VT_CARRAY, VT_LPSTR, VT_LPWSTR];
+  end;
+
 begin
+  FOverloadedItems.Clear;
   FillMemory(@TD,Sizeof(TD),0);
   TD.vt:=VT_ILLEGAL;
   Propertycnt:=0;
@@ -529,6 +585,7 @@ begin
   sEventFunctions:='';
   sEventProperties:='';
   sEventImplementations:='';
+  bDispWritten:=false;
   if not bIsDispatch then
     begin
     // find base class
@@ -606,10 +663,17 @@ begin
       sConv:='cdecl';
     // get info
     OleCheck(TI.GetDocumentation(FD^.memid, @BstrName, @BstrDocString, nil, nil));
+    reqOverloads:=0;
     case FD^.invkind of
       // build function/procedure
       INVOKE_FUNC :
         begin
+{        https://docs.microsoft.com/en-us/windows/win32/api/oaidl/ne-oaidl-funcflags
+        FUNCFLAG_FRESTRICTED: The function should not be accessible from macro languages.
+        This flag is intended for system-level functions or functions that type browsers should not display.
+        FUNCFLAG_FRESTRICTED applies to all methods of IUnknown and IDispatch.}
+        if FD^.wFuncFlags=FUNCFLAG_FRESTRICTED then // do not import
+          Continue;
         if not MakeValidId(BstrName,sMethodName) then
           AddToHeader('//  Warning: renamed method ''%s'' in %s to ''%s''',[BstrName,iname,sMethodName],True);
         bIsFunction:=(bIsDispatch and (FD^.elemdescFunc.tdesc.vt<>VT_VOID)) or
@@ -635,6 +699,7 @@ begin
                    '          On%s(Self,',[FD^.memid,sMethodName,sMethodName]);
           end;
         // parameters
+        optParams:=0;
         for k:=0 to FD^.cParams-1 do
           begin
           if (FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FRETVAL ) <>0 then  //return type
@@ -663,7 +728,40 @@ begin
             end;
           if not MakeValidId(GetName(k+1),sVarName) then
             AddToHeader('//  Warning: renamed parameter ''%s'' in %s.%s to ''%s''',[GetName(k+1),iname,sMethodName,sVarName],True);
-          sPar:=sPar+format('%s:%s;',[sVarName,sl]);
+          sPar:=sPar+format('%s: %s',[sVarName,sl]); // do not finish parameter yet because it can have attribute "optional" or "defaultvalue"
+          if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then // parameter with default value
+          begin
+            if AnsiEndsText('OleVariant', sl) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant. remember the desired default value for overloading
+              if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+                sPar:=sPar+format(' {= %s}',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+              else
+                sPar:=sPar+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
+            else if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+              sPar:=sPar+format(' = %s',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+            else if ParamIsPointer(FD^.lprgelemdescParam[k]) then
+              sPar:=sPar+' = nil'
+            else if (FD^.lprgelemdescParam[k].tdesc.vt = VT_VARIANT) then // remember the desired default value for overloading
+              sPar:=sPar+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
+            else
+              sPar:=sPar+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
+            optParams:=0;
+          end
+          else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
+            and (sl='OleVariant') then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+          begin
+            sPar:=sPar+' {= EmptyParam}'; // remember the desired default value for overloading
+            optParams:=optParams+1;
+          end
+          else
+            optParams:=0;
+          if (((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) and
+            (FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue.vt = VT_VARIANT))
+            or
+            (AnsiEndsText('OleVariant',sl) and // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+            (((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) or
+            ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0))) then
+            reqOverloads:=reqOverloads+1;
+          sPar:=sPar+'; '; // finish parameter now
           sFunc:=sFunc+sPar;
           if bCreateEvents then
             begin
@@ -720,7 +818,8 @@ begin
               sEventImplementations:=sEventImplementations+format(' OleVariant(Params.rgvarg[%d]),',[FD^.cParams-1-k]);
             end;
           end;
-        // finish interface and dispinterface
+        // finish method
+        sFunc := TrimRight(sFunc);
         if sFunc[length(sFunc)]=';' then
           sFunc[length(sFunc)]:=')'
         else  // no params
@@ -734,30 +833,87 @@ begin
           end;
         if bIsFunction then
           if (sConv<>'safecall') then
-            sFunc:=sFunc+':HRESULT'
+            sFunc:=sFunc+': HRESULT'
           else
-            sFunc:=sFunc+format(':%s',[sType]);
-        if bIsDispatch then
-          s:=s+sFunc+format(';dispid %d;'#13#10,[FD^.memid])
+            sFunc:=sFunc+format(': %s',[sType]);
+        if reqOverloads>0 then
+          sOverl:=' overload;'
         else
-          s:=s+sFunc+format(';%s;'#13#10,[sConv]);
+          sOverl:='';
+        if bIsDispatch then
+          s:=s+sFunc+format('; dispid %d;%s'#13#10,[FD^.memid,sOverl])
+        else
+          s:=s+sFunc+format('; %s;%s'#13#10,[sConv,sOverl]);
+        if reqOverloads>0 then
+          CollectOverload(s);
         end;
       INVOKE_PROPERTYGET,INVOKE_PROPERTYPUT,INVOKE_PROPERTYPUTREF :
         // build properties. Use separate string to group properties at end of interface declaration.
         begin
         if not MakeValidId(BstrName,sMethodName) then
           AddToHeader('//  Warning: renamed property ''%s'' in %s to ''%s''',[BstrName,iname,sMethodName]);
-        bPropHasParam:=(((FD^.invkind=INVOKE_PROPERTYGET) and (FD^.cParams>0)) or (FD^.cParams>1))
-            and ((FD^.lprgelemdescParam[0].paramdesc.wParamFlags and PARAMFLAG_FIN) = PARAMFLAG_FIN) ;
-        if (FD^.memid=0) and  bPropHasParam then sl:=' default;' else sl:='';
+        usedProps:=FD^.cParams;
+        if (not bIsDispatch) // ignore the last parameter of interface property ([in] for PUT and PUTREF / [retval] for GET)
+          or not (FD^.invkind=INVOKE_PROPERTYGET) then // ignore the last parameter of dispinterface PUT and PUTREF property
+          usedProps:=usedProps-1;
+        bPropHasParam:=usedProps>0;
+        if FD^.memid=0 then
+          sl:=' default;'
+        else
+          sl:=''; // default depends only on DISP_ID = 0
+        {$IFDEF fpc}
+        if not bPropHasParam then
+          sl:=''; // in fpc a default property must have parameters https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39015
+        {$ENDIF}
         sPropParam:='';
         sPropParam2:='';
+        optParams:=0;
         if bPropHasParam then
+          for k:=0 to usedProps-1 do // property can have any number of parameters
           begin
-          if not MakeValidId(GetName(1),sPropParam) then
-            AddToHeader('//  Warning: renamed property index  ''%s'' in %s.%s to ''%s''',[GetName(1),iname,sMethodName,sPropParam]);
-          sPropParam:=sPropParam+':'+TypeToString(TI,FD^.lprgelemdescParam[0].tdesc);
+            if not MakeValidId(GetName(k+1),sVarName) then
+              AddToHeader('//  Warning: renamed property parameter ''%s'' in %s.%s to ''%s''',[GetName(k+1),iname,sMethodName,sVarName]);
+            sPropParam:=sPropParam+sVarName+': '+TypeToString(TI,FD^.lprgelemdescParam[k].tdesc);
+            if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then
+            begin
+              if AnsiEndsText('OleVariant', TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant. remember the desired default value for overloading
+                if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+                  sPropParam:=sPropParam+format(' {= %s}',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+                else
+                  sPropParam:=sPropParam+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
+              else if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+                sPropParam:=sPropParam+format(' = %s',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+              else if ParamIsPointer(FD^.lprgelemdescParam[k]) then
+                sPropParam:=sPropParam+' = nil'
+              else if FD^.lprgelemdescParam[k].tdesc.vt = VT_VARIANT then
+                sPropParam:=sPropParam+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
+              else
+                sPropParam:=sPropParam+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
+              optParams:=0; // reset counter in case a defaultvalue parameter comes after an optional parameter (which is invalid according to IDL)
+            end
+            else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
+              and (TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)='OleVariant') then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+            begin
+              sPropParam:=sPropParam+' {= EmptyParam}'; // remember the desired default value for overloading
+              optParams:=optParams+1;
+            end
+            else
+              optParams:=0; // reset counter in case a normal parameter comes after an optional parameter (which is invalid according to IDL)
+            if (((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) and
+              (FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue.vt = VT_VARIANT))
+              or
+              ((AnsiEndsText('OleVariant',TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)) or
+              ((FD^.invkind=INVOKE_PROPERTYPUT) or (FD^.invkind=INVOKE_PROPERTYPUTREF))) and
+              (((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) or
+              ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0))) then
+              reqOverloads:=reqOverloads+1;
+            if k<usedProps-1 then
+              sPropParam:=sPropParam+'; ' // finish parameter now, more to come
           end;
+        if reqOverloads>0 then
+          sOverl:=' overload;'
+        else
+          sOverl:='';
         if bIsDispatch then
           begin
           if (TD.vt<>VT_VOID) and (not bIsAutomatable or (sType='POleVariant')) then
@@ -774,13 +930,27 @@ begin
               sType:=sType+'  readonly'
             else
               sType:=sType+' writeonly';
-            sPropDispIntfc:=sPropDispIntfc+format('    // %s : %s '#13#10'   property %s%s:%s dispid %d;%s'#13#10,
+            sPropDispIntfc:=sPropDispIntfc+format('    // %s : %s '#13#10'   property %s%s: %s dispid %d;%s'#13#10,
               [BstrName,BstrDocString,sMethodName,sPropParam,sType,FD^.memid,sl]);
+            if reqOverloads>0 then
+              CollectOverload(sPropDispIntfc);
             end
           else //remove readonly or writeonly
+            begin
             // make sure writeonly isn't delete twice (put and putref !!)
             if pos(format('only dispid %d;',[FD^.memid]),sPropDispIntfc)>0 then
               delete(sPropDispIntfc,i-11,10);   //10= length('  readonly')
+            if FOverloadedItems.Count > 0 then
+            begin
+              i:=pos(format('only dispid %d;',[FD^.memid]),FOverloadedItems[FOverloadedItems.Count-1]);
+              if i>0 then
+                begin
+                tmp:=FOverloadedItems[FOverloadedItems.Count-1];
+                delete(tmp,i-6,10);   //10= length('  readonly')
+                FOverloadedItems[FOverloadedItems.Count-1]:=tmp;
+                end;
+              end;
+            end;
           end
         else
           begin
@@ -790,13 +960,15 @@ begin
           not((FD^.lprgelemdescParam[0].tdesc.lptdesc^.vt=VT_USERDEFINED) and bIsInterface);// but not pointer to interface
           if bPropHasParam then
             begin
-            sPropParam2:='('+sPropParam+')';
-            sPropParam3:=sPropParam+'; const par'+sMethodName;
-            sPropParam:='['+sPropParam+']';
+            sPropParam2:='('+sPropParam+')'; // property read accessor
+            sPropParam3:=sPropParam+'; par'+sMethodName+': '+sType; // property write accessor
+            sPropParam:='['+sPropParam+']'; // property
             end;
           if FD^.invkind=INVOKE_PROPERTYGET then
             begin
-            s:=s+format('   function Get_%s%s : %s; %s;'#13#10,[sMethodName,sPropParam2,sType,sConv]);
+            s:=s+format('   function Get_%s%s : %s; %s;%s'#13#10,[sMethodName,sPropParam2,sType,sConv,sOverl]);
+            if reqOverloads>0 then
+              CollectOverload(s);
             with aPropertyDefs[findProperty(FD^.memid)] do
               begin
               bget:=true;
@@ -806,6 +978,7 @@ begin
               sdoc:=BstrDocString;
               sParam:=sPropParam;
               sDefault:=sl;
+              overloads:=reqOverloads;
               end;
             end
           else
@@ -836,17 +1009,21 @@ begin
                   sdoc:=BstrDocString;
                   sParam:=sPropParam;
                   sDefault:=sl;
+                  overloads:=reqOverloads;
                 end;
               end;
-            tmp:='   procedure Set_%s(%s %s:%s); %s;'#13#10;
-            if not bParamByRef then 
+            if not bParamByRef then
               Modifier:='const'
             else
               Modifier:='var';
             if bPropHasParam then
-              s:=s+format(tmp,[sMethodName,Modifier,sPropParam3,sType,sConv])
+            begin
+              s:=s+format('   procedure Set_%s(%s %s); %s;%s'#13#10,[sMethodName,Modifier,sPropParam3,sConv,sOverl]);
+              if reqOverloads>0 then
+                CollectOverload(s);
+            end
             else
-              s:=s+format(tmp,[sMethodName,Modifier,sVarName,sType,sConv]);
+              s:=s+format('   procedure Set_%s(%s %s: %s); %s;'#13#10,[sMethodName,Modifier,sVarName,sType,sConv]);
             end;
           end;
         end;
@@ -864,7 +1041,7 @@ begin
         if not MakeValidId(BstrName,sMethodName) then
           AddToHeader('//  Warning: renamed property ''%s'' in %s to ''%s''',[BstrName,iname,sMethodName]);
         sType:=TypeToString(TI,VD^.ElemdescVar.tdesc);
-        sPropDispIntfc:=sPropDispIntfc+format('    // %s : %s '#13#10'   property %s:%s  dispid %d;'#13#10,
+        sPropDispIntfc:=sPropDispIntfc+format('    // %s : %s '#13#10'   property %s: %s  dispid %d;'#13#10,
           [BstrName,BstrDocString,sMethodName,sType,VD^.memId]);
         end;
       end;
@@ -888,24 +1065,34 @@ begin
       if not bget then //setter only
         begin
         if bput then
-          s:=s+format('    // %s : %s '#13#10'   property %s%s:%s write Set_%s;%s'#13#10,
+          s:=s+format('    // %s : %s '#13#10'   property %s%s: %s write Set_%s;%s'#13#10,
             [sorgname,sdoc,pname,sParam,sptype,pname,sDefault])
         else
-          s:=s+format('    // %s : %s '#13#10'   property %s%s:%s write Set_%s;%s'#13#10,
+          s:=s+format('    // %s : %s '#13#10'   property %s%s: %s write Set_%s;%s'#13#10,
             [sorgname,sdoc,prname,sParam,sprtype,prname,sDefault]);
+        if overloads>0 then
+          CollectOverload(s);
         end
       else if not (bput or bputref) then //getter only
-        s:=s+format('    // %s : %s '#13#10'   property %s%s:%s read Get_%s;%s'#13#10,
-          [sorgname,sdoc,name,sParam,sgtype,name,sDefault])
+        begin
+        s:=s+format('    // %s : %s '#13#10'   property %s%s: %s read Get_%s;%s'#13#10,
+          [sorgname,sdoc,name,sParam,sgtype,name,sDefault]);
+        if overloads>0 then
+          CollectOverload(s);
+        end
       else if bput and (sptype=sgtype) then //don't create property if no matching type.
         begin
-        s:=s+format('    // %s : %s '#13#10'   property %s%s:%s read Get_%s write Set_%s;%s'#13#10,
+        s:=s+format('    // %s : %s '#13#10'   property %s%s: %s read Get_%s write Set_%s;%s'#13#10,
           [sorgname,sdoc,name,sParam,sptype,name,pname,sDefault]);
+        if overloads>0 then
+          CollectOverload(s);
         end
         else if bputref and (sprtype=sgtype) then //don't create property if no matching type.
           begin
-          s:=s+format('    // %s : %s '#13#10'   property %s%s:%s read Get_%s write Set_%s;%s'#13#10,
+          s:=s+format('    // %s : %s '#13#10'   property %s%s: %s read Get_%s write Set_%s;%s'#13#10,
             [sorgname,sdoc,name,sParam,sprtype,name,prname,sDefault]);
+          if overloads>0 then
+            CollectOverload(s);
           end;
     result:=s+'  end;'#13#10;
     end;
@@ -1099,14 +1286,15 @@ begin
       bDuplicate:=false;
       if not MakeValidId(BstrName,senum) then
         AddToHeader('//  Warning: renamed enum type ''%s'' to ''%s''',[BstrName,senum],True);
-      if (InterfaceSection.IndexOf(Format('  %s =LongWord;',[senum]))<>-1) then  // duplicate enums fe. AXVCL.dll 1.0
+      if (InterfaceSection.IndexOf(Format('  %s =Integer;',[senum]))<>-1) then  // duplicate enums fe. AXVCL.dll 1.0
         begin
         senum:=senum+IntToStr(i); // index is unique in this typelib
         AddToHeader('//  Warning: duplicate enum ''%s''. Renamed to ''%s''. consts appended with %d',[BstrName,senum,i]);
         bDuplicate:=true;
         end;
       AddToInterface('Type');
-      AddToInterface('  %s =LongWord;',[senum]);
+      AddToInterface('  %s = Integer;',[senum]); // Objects of type enum are int types, and their size is system-dependent.
+      // https://docs.microsoft.com/en-us/windows/win32/midl/enum
       FTypes.Add(senum);
       FDeclared.Add(senum);
       AddToInterface('Const');
@@ -1129,6 +1317,7 @@ begin
             end;
           end;
         end;
+      AddToInterface('');
       end;
     TI.ReleaseTypeAttr(TA);
     end;
@@ -1435,13 +1624,18 @@ begin
             else
               begin
               AddToInterface(interfacedeclaration(sl,BstrDocString,TIref,TAref,false,false));
+              CreateHelpers(sl,BstrDocString,TIref,TAref,false,false);
               AddToInterface(interfacedeclaration(sl,BstrDocString,TI,TA,true,false));
+              CreateHelpers(sl,BstrDocString,TI,TA,true,false);
               ReleasePendingType(sl);
               end;
             TIref.ReleaseTypeAttr(TAref);
             end
           else
+            begin
             AddToInterface(interfacedeclaration(sl,BstrDocString,TI,TA,true,true));
+            CreateHelpers(sl,BstrDocString,TI,TA,true,true);
+            end;
           end
         else
           begin
@@ -1462,6 +1656,7 @@ begin
           else
             begin
             AddToInterface(interfacedeclaration(sl,BstrDocString,TI,TA,false,false));
+            CreateHelpers(sl,BstrDocString,TI,TA,false,false);
             ReleasePendingType(sl);
             end;
           end;
@@ -1478,6 +1673,233 @@ begin
     slDeferredPendingType.Free;
     slDeferredType.Free;
     slDeclaredType.Free;
+  end;
+end;
+
+// create type helpers for overloading properties and methods which have parameters of type OleVariant with defaultvalue or optional attribute
+procedure TTypeLibImporter.CreateHelpers(iName,iDoc:string;TI:ITypeInfo;TA:LPTYPEATTR;
+  bIsDispatch,bCreateEvents:boolean);
+var
+  i,j,k,m,loopCount:integer;
+  line,par,def,part1,part2,linePrefix,output:string;
+  isProp,isSet,isGet,isDefaultProp,isDefaultOrOptional,isOptional,isDefault,isString,
+  bMakeOverload,createdOverload,createdOLImpl,hasRegularMethods,regularMethodsCompleted,abort:Boolean;
+  paramBegin,paramEnd,defBegin,defEnd:integer;
+  bracketOpen,bracketClose,defClose:char;
+
+begin
+  abort:=false;
+  regularMethodsCompleted:=false;
+  if FOverloadedItems.Count=0 then
+    exit;
+  if bIsDispatch then
+    iName:=iName+'Disp';
+  loopCount:=0;
+  createdOverload:=false;
+  createdOLImpl:=false;
+  while not abort do
+  begin
+    repeat
+      hasRegularMethods:=false;
+      for i:=0 to FOverloadedItems.Count-1 do
+      begin
+        line:=FOverloadedItems[i];
+        if Length(line)=0 then
+          Continue
+        else
+          line:=StringReplace(line,#13#10,'',[rfReplaceAll]);
+        isProp:=Pos('property ',TrimLeft(line))=1;
+        if isProp then
+        begin
+          isSet:=false;
+          isGet:=false;
+        end
+        else
+        begin
+          isSet:=Pos('propput ',line)=1;
+          isGet:=Pos('propget ',line)=1;
+        end;
+        if not regularMethodsCompleted and (isGet or isSet or isProp) then
+          Continue; // first overload all non- getters/setters/properties, then the getters + setters + properties
+        if isProp then
+        begin
+          isDefaultProp:=Pos(' default;',line)>0;
+          bracketOpen:='[';
+          bracketClose:=']';
+        end
+        else
+        begin
+          bracketOpen:='(';
+          bracketClose:=')';
+        end;
+        if bIsDispatch and isProp then
+        begin
+          FOverloadedItems[i]:=''; // type helper for dispinterface fails to compile property https://gitlab.com/freepascal.org/fpc/source/-/issues/39358
+          Continue;
+        end;
+        paramEnd:=Length(line);
+        while line[paramEnd]<>bracketClose do
+          Dec(paramEnd);
+        if isSet then // ignore the last parameter of a property writer
+          while line[paramEnd]<>';' do
+            Dec(paramEnd);
+        paramBegin:=paramEnd-1;
+        while (line[paramBegin]<>';') and (line[paramBegin]<>bracketOpen) do
+          Dec(paramBegin);
+        par:=Copy(line,paramBegin,paramEnd-paramBegin);
+        defBegin:=Pos('=',par);
+        isDefaultOrOptional:=defBegin>0;
+        isOptional:=Pos(' {= ',par)>0;
+        isDefault:=isDefaultOrOptional and not isOptional;
+        bMakeOverload:=isOptional or ((isSet or isProp) and isDefaultOrOptional);
+        if bMakeOverload then
+        begin
+          if not (isGet or isSet or isProp) then
+            hasRegularMethods:=true;
+          if not createdOverload then // create header of interface
+          begin
+            createdOverload:=true;
+            Inc(loopCount);
+            output:=format('  { T%sHelper%d }',[iName,loopCount]);
+            AddToInterface(output);
+            AddToInterface('');
+            if (loopCount>1) then
+              def:=format('(T%sHelper%d)',[iName,loopCount-1])
+            else
+              def:='';
+            output:=format('  T%sHelper%d = type helper%s for %s',[iName,loopCount,def,iName]);
+            AddToInterface(output);
+          end;
+          //extract default value
+          isString:=par[defBegin+2]='''';
+          if isString then
+            defClose:=''''
+          else if isOptional then
+            defClose:='}'
+          else if isSet then
+            defClose:=';'
+          else if isProp then
+            defClose:=']'
+          else
+            defClose:=')';
+          defEnd:=Length(par);
+          while par[defEnd]<>defClose do
+            Dec(defEnd);
+          defBegin:=defBegin+2;
+          def:=Copy(par,defBegin,defEnd-defBegin);
+          if isString then
+            def:=QuotedStr(def);
+          if not isProp then // prepare implementation of overload
+          begin
+            part2:=TrimRight(Copy(line,paramEnd,Length(line)));
+            j:=Pos(')',part2);
+            part2:=Copy(part2,1,j);
+            while (j>1) and (part2[j]<>':') do
+              Dec(j);
+            part2:=Copy(part2,1,j-1);
+            part2:=StringReplace(part2,';',',',[rfReplaceAll]);
+            if isGet or isSet then
+              part1:=TrimLeft(Copy(line,9,paramBegin-8))
+            else
+              part1:=TrimLeft(Copy(line,1,paramBegin));
+            j:=Pos(' ',part1);
+            part1:=Copy(part1,j+1,Length(part1));
+            k:=Pos('(',part1);
+            while Pos(':',part1,k)>0 do
+            begin
+              j:=Pos(' ',part1,k);
+              m:=Pos(':',part1,k);
+              if j<m then // parameter has attribute
+              begin
+                Dec(j);
+                while part1[j] in ['a'..'z'] do
+                  Dec(j);
+                Delete(part1,j+1,Pos(' ',part1,k)-j); // delete parameter attribute
+                Inc(k);
+              end
+              else // parameter has type, perhaps also default value
+              begin
+                j:=Pos(';',part1,k);
+                if j>0 then
+                  Delete(part1,m,j-m); // delete parameter type (and default value)
+                k:=m+2;
+              end;
+            end;
+            part1:=StringReplace(part1,';',',',[rfReplaceAll]);
+          end;
+          // remove parameter from interface
+          if line[paramBegin]=bracketOpen then // remove last remaining non-setting parameter
+          begin
+            Delete(line,paramEnd,1);
+            if isProp and isDefaultProp then
+              Delete(line,Length(line)-8,9); // remove default property attribute
+          end;
+          if (line[paramBegin]=bracketOpen) and isSet then // remove last remaining non-setting parameter
+            Delete(line,paramBegin+1,paramEnd-paramBegin)
+          else
+            Delete(line,paramBegin,paramEnd-paramBegin);
+          if isGet or isSet then
+            AddToInterface(Copy(line,9,Length(line)))
+          else
+            AddToInterface(line);
+          FOverloadedItems[i]:=line;
+          if not isProp then // create implementation of overloaded method
+          begin
+            if not createdOLImpl then // create header of implementation
+            begin
+              createdOLImpl:=true;
+              output:=format('{ T%sHelper%d }',[iName,loopCount]);
+              AddToImplementation(output);
+              AddToImplementation('');
+            end;
+            if isGet or isSet then
+              Delete(line,1,8);
+            line:=TrimLeft(line);
+            j:=Pos(' ',line);
+            linePrefix:=Copy(line,1,j-1);
+            line:=Copy(line,j+1,Length(line));
+            if bIsDispatch then
+            begin
+              j:=Pos('; dispid ',line);
+              k:=Pos(';',line,j+1);
+              Delete(line,j,k-j);
+            end;
+            output:=format('%s T%sHelper%d.%s',[linePrefix,iName,loopCount,line]);
+            AddToImplementation(output);
+            AddToImplementation('begin');
+            if Pos('function',linePrefix)>0 then
+            begin
+              output:=format('  Result := %s %s);',[part1,def]);
+              AddToImplementation(output);
+            end
+            else
+            begin
+              output:=format('  %s %s%s);',[part1,def,part2]);
+              AddToImplementation(output);
+            end;
+            AddToImplementation('end;');
+            AddToImplementation('');
+          end;
+        end
+        else
+          FOverloadedItems[i]:='';
+      end;
+    until (not hasRegularMethods) or regularMethodsCompleted;
+    if regularMethodsCompleted then
+    begin
+      if createdOverload then
+      begin
+        AddToInterface('  end;');
+        AddToInterface('');
+        if createdOLImpl then
+          AddToImplementation('');
+      end
+      else
+        abort:=true;
+      createdOverload:=false;
+      createdOLImpl:=false;
+    end;
+    regularMethodsCompleted:=true;
   end;
 end;
 
@@ -1503,10 +1925,10 @@ Var
 begin
   //CoClasses
   AddToInterface('//CoClasses');
-  AddToImplementation('implementation');
-  AddToImplementation('');
-  AddToImplementation('uses comobj;');
-  AddToImplementation('');
+  //AddToImplementation('implementation');
+  //AddToImplementation('');
+  //AddToImplementation('uses comobj;');
+  //AddToImplementation('');
   for i:=0 to TIcount-1 do
     begin
     OleCheck(TL.GetTypeInfoType(i, TIT));
@@ -1782,6 +2204,7 @@ begin
   AddToHeader('//  Imported %s on %s from %s',[BstrName,DateTimeToStr(Now()),InputFilename],True);
   AddToHeader('',true);
   AddToHeader('{$mode delphi}{$H+}',true);
+  AddToHeader('{$modeswitch typehelpers}',true);
   AddToHeader('',true);
   AddToHeader('interface',true);
   AddToHeader('',true);
@@ -1790,6 +2213,7 @@ begin
   FUses.Add('Classes');
   //FUses.Add('OleServer');
   FUses.Add('Variants');
+  AddToInterface('');
   AddToInterface('Const');
   AddToInterface('  %sMajorVersion = %d;',[BstrName,LA^.wMajorVerNum]);
   AddToInterface('  %sMinorVersion = %d;',[BstrName,LA^.wMinorVerNum]);
@@ -1818,6 +2242,10 @@ begin
     ImportEnums(TL,TICount);
     CreateForwards(TL,TICount);
     CreateRecordsUnionsAliases(TL,TICount);
+    AddToImplementation('implementation');
+    AddToImplementation('');
+    AddToImplementation('uses comobj;');
+    AddToImplementation('');
     CreateInterFaces(TL,TICount);
     CreateCoClasses(TL,TICount);
   finally
@@ -1967,6 +2395,7 @@ begin
   FEventImplementations:=TStringList.Create;
   FAXClasses:=TStringList.Create;
   FAXImages:=TStringList.Create;
+  FOverloadedItems:=TStringList.Create;
   try
     DoImportTypeLib;
     If (OutputFileName<>'') then
@@ -1974,6 +2403,7 @@ begin
     If (CreatePackage) then
       DoBuildPackage;
   finally
+    FreeAndNil(FOverloadedItems);
     FreeAndNil(FAXImages);
     FreeAndNil(FAXClasses);
     FreeAndNil(FEventImplementations);
@@ -1992,4 +2422,3 @@ begin
 end;
 
 end.
-
