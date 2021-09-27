@@ -118,6 +118,41 @@ type
   {$EXTERNALSYM UQUAD}
 
 //
+// The following types are guaranteed to be signed and 64 bits wide.
+//
+
+  LONG64 = Int64;
+  {$EXTERNALSYM LONG64}
+  PLONG64 = ^LONG64;
+  {$EXTERNALSYM PLONG64}
+
+  PINT64 = ^Int64;
+  {$EXTERNALSYM PINT64}
+
+//
+// The following types are guaranteed to be unsigned and 64 bits wide.
+//
+
+  {$IF not Declared(UInt64)}
+  {$IF Declared(QWord)}
+  UINT64 = QWord;
+  {$ELSE}
+  UINT64 = Int64;
+  {$IFEND}
+  {$EXTERNALSYM UINT64}
+  PUINT64 = ^UINT64;
+  {$EXTERNALSYM PUINT64}
+  {$IFEND}
+  ULONG64 = UInt64;
+  {$EXTERNALSYM ULONG64}
+  PULONG64 = ^ULONG64;
+  {$EXTERNALSYM PULONG64}
+  DWORD64 = UInt64;
+  {$EXTERNALSYM DWORD64}
+  PDWORD64 = ^DWORD64;
+  {$EXTERNALSYM PDWORD64}
+
+//
 // __int64 is only supported by 2.0 and later midl.
 // __midl is set by the 2.0 midl and not by 1.0 midl.
 //
@@ -125,7 +160,7 @@ type
 type
   LONGLONG = {$IFDEF USE_DELPHI_TYPES} Windows.LONGLONG {$ELSE} Int64 {$ENDIF};
   {$EXTERNALSYM LONGLONG}
-  ULONGLONG = Int64;
+  ULONGLONG = UInt64;
   {$EXTERNALSYM ULONGLONG}
 
 const
@@ -604,8 +639,8 @@ type
 type
   PFloat128 = ^TFloat128;
   _FLOAT128 = record
-    LowPart: Int64;
-    HighPart: Int64;
+    LowPart: UInt64;
+    HighPart: UInt64;
   end;
   {$EXTERNALSYM _FLOAT128}
   FLOAT128 = _FLOAT128;
@@ -1586,35 +1621,6 @@ type
   {$EXTERNALSYM DWORD_PTR}
   PDWORD_PTR = ^DWORD_PTR;
   {$EXTERNALSYM PDWORD_PTR}
-
-//
-// The following types are guaranteed to be signed and 64 bits wide.
-//
-
-  LONG64 = Int64;
-  {$EXTERNALSYM LONG64}
-  PLONG64 = ^LONG64;
-  {$EXTERNALSYM PLONG64}
-
-  PINT64 = ^Int64;
-  {$EXTERNALSYM PINT64}
-
-//
-// The following types are guaranteed to be unsigned and 64 bits wide.
-//
-
-  ULONG64 = Int64;
-  {$EXTERNALSYM ULONG64}
-  PULONG64 = ^ULONG64;
-  {$EXTERNALSYM PULONG64}
-  DWORD64 = Int64;
-  {$EXTERNALSYM DWORD64}
-  PDWORD64 = ^DWORD64;
-  {$EXTERNALSYM PDWORD64}
-  UINT64 = Int64;
-  {$EXTERNALSYM UINT64}
-  PUINT64 = ^UINT64;
-  {$EXTERNALSYM PUINT64}
 
 const
   MAXUINT_PTR   = not UINT_PTR(0);
