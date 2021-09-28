@@ -159,7 +159,7 @@ implementation
     procedure twasminlinenode.second_throw_fpcexception;
       begin
         location_reset(location,LOC_VOID,OS_NO);
-        current_asmdata.CurrAsmList.Concat(taicpu.op_sym(a_throw,current_asmdata.RefAsmSymbol(FPC_EXCEPTION_TAG_SYM,AT_WASM_EXCEPTION_TAG)));
+        current_asmdata.CurrAsmList.Concat(taicpu.op_sym(a_throw,current_asmdata.WeakRefAsmSymbol(FPC_EXCEPTION_TAG_SYM,AT_WASM_EXCEPTION_TAG)));
       end;
 
 
@@ -185,6 +185,11 @@ implementation
               resultdef:=u32inttype;
             end;
           in_wasm32_unreachable:
+            begin
+              CheckParameters(0);
+              resultdef:=voidtype;
+            end;
+          in_wasm32_throw_fpcexception:
             begin
               CheckParameters(0);
               resultdef:=voidtype;

@@ -328,7 +328,7 @@ implementation
           end
         else
           begin
-            addstatement(statements,ccallnode.createintern('fpc_popaddrstack',nil));
+            //addstatement(statements,ccallnode.createintern('fpc_popaddrstack',nil));
             raisenode:=ccallnode.createintern('fpc_reraise',nil);
             include(raisenode.callnodeflags,cnf_call_never_returns);
             addstatement(statements,raisenode);
@@ -604,6 +604,21 @@ implementation
           thlcgwasm(hlcg).decblock;
         end;
 
+      procedure generate_exceptreason_throw(reason: tcgint);
+        var
+          reasonreg : tregister;
+        begin
+          reasonreg:=hlcg.getintregister(current_asmdata.CurrAsmList,exceptionreasontype);
+          hlcg.g_exception_reason_load(current_asmdata.CurrAsmList,exceptionreasontype,exceptionreasontype,excepttemps.reasonbuf,reasonreg);
+          thlcgwasm(hlcg).a_cmp_const_reg_stack(current_asmdata.CurrAsmList,exceptionreasontype,OC_EQ,reason,reasonreg);
+          current_asmdata.CurrAsmList.concat(taicpu.op_none(a_if));
+          thlcgwasm(hlcg).incblock;
+          thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,1);
+          current_asmdata.CurrAsmList.Concat(taicpu.op_sym(a_throw,current_asmdata.WeakRefAsmSymbol(FPC_EXCEPTION_TAG_SYM,AT_WASM_EXCEPTION_TAG)));
+          current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_if));
+          thlcgwasm(hlcg).decblock;
+        end;
+
       begin
         location_reset(location,LOC_VOID,OS_NO);
         oldBreakLabel:=nil;
@@ -691,14 +706,14 @@ implementation
         hlcg.g_exception_reason_save_const(current_asmdata.CurrAsmList,exceptionreasontype,0,excepttemps.reasonbuf);
         current_asmdata.CurrAsmList.concat(taicpu.op_const(a_br,4)); // jump to the 'finally' section
 
-        current_asmdata.CurrAsmList.concat(taicpu.op_sym(a_catch,current_asmdata.RefAsmSymbol(FPC_EXCEPTION_TAG_SYM,AT_WASM_EXCEPTION_TAG)));
-        thlcgwasm(hlcg).decblock;
+        current_asmdata.CurrAsmList.concat(taicpu.op_sym(a_catch,current_asmdata.WeakRefAsmSymbol(FPC_EXCEPTION_TAG_SYM,AT_WASM_EXCEPTION_TAG)));
         { exceptionreason:=1 (exception) }
         hlcg.g_exception_reason_save_const(current_asmdata.CurrAsmList,exceptionreasontype,1,excepttemps.reasonbuf);
-        current_asmdata.CurrAsmList.concat(taicpu.op_const(a_br,3)); // jump to the 'finally' section
+        current_asmdata.CurrAsmList.concat(taicpu.op_const(a_br,4)); // jump to the 'finally' section
 
         { exit the inner 'try..end_try' block }
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_try));
+        thlcgwasm(hlcg).decblock;
 
         { exit the 'continue' block }
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_block));
@@ -750,6 +765,7 @@ implementation
           generate_exceptreason_check_br(3,thlcgwasm(hlcg).br_blocks-oldLoopBreakBr);
         if fc_continue in finallyexceptionstate.newflowcontrol then
           generate_exceptreason_check_br(4,thlcgwasm(hlcg).br_blocks-oldLoopContBr);
+        generate_exceptreason_throw(1);
 
         cexceptionstatehandler.unget_exception_temps(current_asmdata.CurrAsmList,excepttemps);
 
