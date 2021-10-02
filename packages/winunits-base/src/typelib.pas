@@ -610,6 +610,12 @@ begin
       // build function/procedure
       INVOKE_FUNC :
         begin
+{        https://docs.microsoft.com/en-us/windows/win32/api/oaidl/ne-oaidl-funcflags
+        FUNCFLAG_FRESTRICTED: The function should not be accessible from macro languages.
+        This flag is intended for system-level functions or functions that type browsers should not display.
+        FUNCFLAG_FRESTRICTED applies to all methods of IUnknown and IDispatch.}
+        if FD^.wFuncFlags=FUNCFLAG_FRESTRICTED then // do not import
+          Continue;
         if not MakeValidId(BstrName,sMethodName) then
           AddToHeader('//  Warning: renamed method ''%s'' in %s to ''%s''',[BstrName,iname,sMethodName],True);
         bIsFunction:=(bIsDispatch and (FD^.elemdescFunc.tdesc.vt<>VT_VOID)) or
