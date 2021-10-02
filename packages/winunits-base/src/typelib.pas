@@ -171,6 +171,9 @@ Type
 
 implementation
 
+uses
+  variants;
+
 Resourcestring
   SErrInvalidUnitName = 'Invalid unit name : %s';
 
@@ -520,6 +523,11 @@ var
       result:='Param'+inttostr(i);
   end;
 
+  function ParamIsPointer(p: ELEMDESC): Boolean;
+  begin
+    Result := p.tdesc.vt in [VT_DISPATCH, VT_UNKNOWN, VT_VOID, VT_PTR, VT_SAFEARRAY, VT_CARRAY, VT_LPSTR, VT_LPWSTR];
+  end;
+
 begin
   FillMemory(@TD,Sizeof(TD),0);
   TD.vt:=VT_ILLEGAL;
@@ -663,7 +671,17 @@ begin
             end;
           if not MakeValidId(GetName(k+1),sVarName) then
             AddToHeader('//  Warning: renamed parameter ''%s'' in %s.%s to ''%s''',[GetName(k+1),iname,sMethodName,sVarName],True);
-          sPar:=sPar+format('%s:%s;',[sVarName,sl]);
+          sPar:=sPar+format('%s: %s',[sVarName,sl]); // do not finish parameter yet because it can have attribute "optional" or "defaultvalue"
+          if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then // parameter with default value
+          begin
+            if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+              sPar:=sPar+format(' = %s',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+            else if ParamIsPointer(FD^.lprgelemdescParam[k]) then
+              sPar:=sPar+' = nil'
+            else
+              sPar:=sPar+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
+          end;
+          sPar:=sPar+'; '; // finish parameter now
           sFunc:=sFunc+sPar;
           if bCreateEvents then
             begin
@@ -720,7 +738,8 @@ begin
               sEventImplementations:=sEventImplementations+format(' OleVariant(Params.rgvarg[%d]),',[FD^.cParams-1-k]);
             end;
           end;
-        // finish interface and dispinterface
+        // finish method
+        sFunc := TrimRight(sFunc);
         if sFunc[length(sFunc)]=';' then
           sFunc[length(sFunc)]:=')'
         else  // no params
@@ -754,9 +773,19 @@ begin
         sPropParam2:='';
         if bPropHasParam then
           begin
+          k:=0;
           if not MakeValidId(GetName(1),sPropParam) then
             AddToHeader('//  Warning: renamed property index  ''%s'' in %s.%s to ''%s''',[GetName(1),iname,sMethodName,sPropParam]);
           sPropParam:=sPropParam+':'+TypeToString(TI,FD^.lprgelemdescParam[0].tdesc);
+            if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then
+            begin
+              if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+                sPropParam:=sPropParam+format(' = %s',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+              else if ParamIsPointer(FD^.lprgelemdescParam[k]) then
+                sPropParam:=sPropParam+' = nil'
+              else
+                sPropParam:=sPropParam+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
+            end;
           end;
         if bIsDispatch then
           begin
