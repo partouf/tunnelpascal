@@ -1099,14 +1099,15 @@ begin
       bDuplicate:=false;
       if not MakeValidId(BstrName,senum) then
         AddToHeader('//  Warning: renamed enum type ''%s'' to ''%s''',[BstrName,senum],True);
-      if (InterfaceSection.IndexOf(Format('  %s =LongWord;',[senum]))<>-1) then  // duplicate enums fe. AXVCL.dll 1.0
+      if (InterfaceSection.IndexOf(Format('  %s = Integer;',[senum]))<>-1) then  // duplicate enums fe. AXVCL.dll 1.0
         begin
         senum:=senum+IntToStr(i); // index is unique in this typelib
         AddToHeader('//  Warning: duplicate enum ''%s''. Renamed to ''%s''. consts appended with %d',[BstrName,senum,i]);
         bDuplicate:=true;
         end;
       AddToInterface('Type');
-      AddToInterface('  %s =LongWord;',[senum]);
+      AddToInterface('  %s = Integer;',[senum]); // Objects of type enum are int types, and their size is system-dependent.
+      // https://docs.microsoft.com/en-us/windows/win32/midl/enum
       FTypes.Add(senum);
       FDeclared.Add(senum);
       AddToInterface('Const');
@@ -1992,4 +1993,3 @@ begin
 end;
 
 end.
-
