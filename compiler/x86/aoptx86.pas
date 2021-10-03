@@ -188,7 +188,13 @@ unit aoptx86;
         procedure ConvertJumpToRET(const p: tai; const ret_p: tai);
 
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
-        function TrySwapMovCmp(var p, hp1: tai): Boolean;
+        function SwapMovCmp(var p, hp1: tai): Boolean;
+
+        { If an instruction modifies the flags, this instruction attempts to convert
+          it into a form that preserves their state.  Returns True if successful
+          (or nothing needed to be done), and False if the instruction could not
+          be modified) }
+        function RemoveFlagDependence(var p: tai): Boolean;
 
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
@@ -740,6 +746,16 @@ unit aoptx86;
               Result:=([Ch_W0IntFlag,Ch_W1IntFlag,Ch_WFlags]*insprop[taicpu(p1).opcode].Ch)<>[];
             R_SUBFLAGDIRECTION:
               Result:=([Ch_RDirFlag,Ch_W0DirFlag,Ch_W1DirFlag,Ch_WFlags]*insprop[taicpu(p1).opcode].Ch)<>[];
+            R_SUBW,R_SUBD,R_SUBQ:
+              { Everything except the direction bits }
+              Result:=
+                ([Ch_RCarryFlag,Ch_RParityFlag,Ch_RAuxiliaryFlag,Ch_RZeroFlag,Ch_RSignFlag,Ch_ROverflowFlag,
+                Ch_WCarryFlag,Ch_WParityFlag,Ch_WAuxiliaryFlag,Ch_WZeroFlag,Ch_WSignFlag,Ch_WOverflowFlag,
+                Ch_W0CarryFlag,Ch_W0ParityFlag,Ch_W0AuxiliaryFlag,Ch_W0ZeroFlag,Ch_W0SignFlag,Ch_W0OverflowFlag,
+                Ch_W1CarryFlag,Ch_W1ParityFlag,Ch_W1AuxiliaryFlag,Ch_W1ZeroFlag,Ch_W1SignFlag,Ch_W1OverflowFlag,
+                Ch_WUCarryFlag,Ch_WUParityFlag,Ch_WUAuxiliaryFlag,Ch_WUZeroFlag,Ch_WUSignFlag,Ch_WUOverflowFlag,
+                Ch_RWCarryFlag,Ch_RWParityFlag,Ch_RWAuxiliaryFlag,Ch_RWZeroFlag,Ch_RWSignFlag,Ch_RWOverflowFlag
+                ]*insprop[taicpu(p1).opcode].Ch)<>[];
             else
               ;
           end;
@@ -4090,7 +4106,7 @@ unit aoptx86;
         Result := False;
 
         if GetNextInstruction(p, hp1) and
-          TrySwapMovCmp(p, hp1) then
+          SwapMovCmp(p, hp1) then
           begin
             Result := True;
             Exit;
@@ -5623,7 +5639,7 @@ unit aoptx86;
                end;
            end;
 
-         if TrySwapMovCmp(p, hp1) then
+         if SwapMovCmp(p, hp1) then
            begin
              Result := True;
              Exit;
@@ -6169,7 +6185,87 @@ unit aoptx86;
     end;
 
 
-  function TX86AsmOptimizer.TrySwapMovCmp(var p, hp1: tai): Boolean;
+  function TX86AsmOptimizer.RemoveFlagDependence(var p: tai): Boolean;
+    var
+      hp: taicpu absolute p;
+      NewRef: TReference;
+    begin
+      if (p.typ <> ait_instruction) or not RegInInstruction(NR_DEFAULTFLAGS, p) then
+        { Nothing needs to be done }
+        Exit(True);
+
+      Result := False;
+
+      case hp.opcode of
+        A_ADD:
+          if (hp.opsize in [S_W, S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
+            (hp.oper[1]^.typ = top_reg) and
+            (
+              (hp.oper[0]^.typ = top_reg) or
+              (
+                (hp.oper[0]^.typ = top_const) and
+                (hp.oper[0]^.val >= -2147483648) and (hp.oper[0]^.val < 2147483647)
+              )
+            ) then
+            begin
+              reference_reset(NewRef, 1, []);
+              NewRef.scalefactor := 1;
+              NewRef.base := hp.oper[1]^.reg;
+              if hp.oper[0]^.typ = top_reg then
+                NewRef.index := hp.oper[0]^.reg
+              else
+                NewRef.offset := ASizeInt(hp.oper[0]^.val);
+
+              hp.opcode := A_LEA;
+              hp.loadref(0, NewRef);
+
+              DebugMsg(SPeepholeOptimization + 'Changed ADD to LEA to remove flag dependency', p);
+
+              Result := True;
+              Exit;
+            end;
+        A_SUB:
+          if (hp.opsize in [S_W, S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
+            MatchOpType(hp, top_const, top_reg) and
+            (hp.oper[0]^.val >= -2147483647) and (hp.oper[0]^.val < 2147483647) then
+            begin
+              reference_reset(NewRef, 1, []);
+              NewRef.base := hp.oper[1]^.reg;
+              NewRef.offset := ASizeInt(-hp.oper[0]^.val);
+              NewRef.scalefactor := 1;
+
+              hp.opcode := A_LEA;
+              hp.loadref(0, NewRef);
+
+              DebugMsg(SPeepholeOptimization + 'Changed SUB to LEA to remove flag dependency', p);
+
+              Result := True;
+              Exit;
+            end;
+        A_SHL, A_SAL:
+          if (hp.opsize in [S_W, S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
+            MatchOpType(hp, top_const, top_reg) and
+            (hp.oper[0]^.val in [1, 2, 3]) then
+            begin
+              reference_reset(NewRef, 1, []);
+              NewRef.base := hp.oper[1]^.reg;
+              NewRef.scalefactor := 1 shl Byte(hp.oper[0]^.val);
+
+              hp.opcode := A_LEA;
+              hp.loadref(0, NewRef);
+
+              DebugMsg(SPeepholeOptimization + 'Changed SHL to LEA to remove flag dependency', p);
+
+              Result := True;
+              Exit;
+            end;
+        else
+          ;
+      end;
+    end;
+
+
+  function TX86AsmOptimizer.SwapMovCmp(var p, hp1: tai): Boolean;
     var
       hp2: tai;
       X: Integer;
@@ -6179,89 +6275,100 @@ unit aoptx86;
         [Ch_Wop2, Ch_RWop2, Ch_Mop2],
         [Ch_Wop3, Ch_RWop3, Ch_Mop3],
         [Ch_Wop4, Ch_RWop4, Ch_Mop4]);
+
+      RegWriteFlags: array[0..7] of set of TInsChange = (
+        { The order is important: EAX, ECX, EDX, EBX, ESI, EDI, EBP, ESP }
+        [Ch_WEAX, Ch_RWEAX, Ch_MEAX{$ifdef x86_64}, Ch_WRAX, Ch_RWRAX, Ch_MRAX{$endif x86_64}],
+        [Ch_WECX, Ch_RWECX, Ch_MECX{$ifdef x86_64}, Ch_WRCX, Ch_RWRCX, Ch_MRCX{$endif x86_64}],
+        [Ch_WEDX, Ch_RWEDX, Ch_MEDX{$ifdef x86_64}, Ch_WRDX, Ch_RWRDX, Ch_MRDX{$endif x86_64}],
+        [Ch_WEBX, Ch_RWEBX, Ch_MEBX{$ifdef x86_64}, Ch_WRBX, Ch_RWRBX, Ch_MRBX{$endif x86_64}],
+        [Ch_WESI, Ch_RWESI, Ch_MESI{$ifdef x86_64}, Ch_WRSI, Ch_RWRSI, Ch_MRSI{$endif x86_64}],
+        [Ch_WEDI, Ch_RWEDI, Ch_MEDI{$ifdef x86_64}, Ch_WRDI, Ch_RWRDI, Ch_MRDI{$endif x86_64}],
+        [Ch_WEBP, Ch_RWEBP, Ch_MEBP{$ifdef x86_64}, Ch_WRBP, Ch_RWRBP, Ch_MRBP{$endif x86_64}],
+        [Ch_WESP, Ch_RWESP, Ch_MESP{$ifdef x86_64}, Ch_WRSP, Ch_RWRSP, Ch_MRSP{$endif x86_64}]);
+
     begin
+      { If we have something like:
+          cmp ###,%reg1
+          mov 0,%reg2
+
+        And no modified registers are shared, move the instruction to before
+        the comparison as this means it can be optimised without worrying
+        about the FLAGS register. (CMP/MOV is generated by
+        "J(c)Mov1JmpMov0 -> Set(~c)", among other things).
+
+        As long as the second instruction doesn't use the flags or one of the
+        registers used by CMP or TEST (also check any references that use the
+        registers), then it can be moved prior to the comparison.
+      }
+
       Result := False;
-      if hp1.typ <> ait_instruction or
-        RegModifiedByInstruction(NR_DEFAULTFLAGS, hp1) then
+      if (hp1.typ <> ait_instruction) or
+        taicpu(hp1).is_jmp or
+        RegInInstruction(NR_DEFAULTFLAGS, hp1) then
         Exit;
+
+      if (taicpu(hp1).opcode = A_MOVSS) and
+        (taicpu(hp1).ops = 0) then
+        { Wrong MOVSS }
+        Exit;
+
+      { Check for writes to specific registers first }
+      { EAX, ECX, EDX, EBX, ESI, EDI, EBP, ESP in that order }
+      for X := 0 to 7 do
+        if (RegWriteFlags[X] * InsProp[taicpu(hp1).opcode].Ch <> [])
+          and RegInInstruction(newreg(R_INTREGISTER, TSuperRegister(X), R_SUBWHOLE), p) then
+          Exit;
 
       for X := 0 to taicpu(hp1).ops - 1 do
         begin
-          case taicpu(hp1).oper[X]^.typ of
-            top_ref:
-              if MatchOperand(taicpu(hp1).oper[X]^, taicpu(p)
-            else
-              ;
-          end;
+          { Check to see if this operand writes to something }
+          if ((WriteOp[X] * InsProp[taicpu(hp1).opcode].Ch) <> []) and
+            { And matches something in the CMP/TEST instruction }
+            (
+              MatchOperand(taicpu(hp1).oper[X]^, taicpu(p).oper[0]^) or
+              MatchOperand(taicpu(hp1).oper[X]^, taicpu(p).oper[1]^) or
+              (
+                { If it's a register, make sure the register written to doesn't
+                  appear in the cmp instruction as part of a reference }
+                (taicpu(hp1).oper[X]^.typ = top_reg) and
+                RegInInstruction(taicpu(hp1).oper[X]^.reg, p)
+              )
+            ) then
+            Exit;
         end;
 
-      if (
-          (taicpu(p).oper[0]^.typ = top_reg) and
-          RegInInstruction(taicpu(p).oper[0]^.reg, hp1) and
-          RegModifiedByInstructionZ
-        ) or
-        (
-          (taicpu(p).oper[1]^.typ = top_reg) and
-          RegInInstruction(taicpu(p).oper[1]^.reg, hp1)
-        ) then
-        Exit;
+      { The instruction can be safely moved }
+      asml.Remove(hp1);
 
-      if MatchInstruction(hp1,[A_LEA,A_MOV,A_MOVZX,A_MOVSX{$ifdef x86_64},A_MOVSXD{$endif x86_64}],[]) and
-        (
-          (taicpu(hp1).ops = 0) or
-          (
-            { Make sure the register written to doesn't appear in the
-              cmp instruction (in a reference, say) }
-            (taicpu(hp1).oper[taicpu(hp1).ops - 1]^.typ <> top_reg) or
-            not RegInInstruction(taicpu(hp1).oper[1]^.reg, p)
-          )
-        ) then
-        begin
-          { Check each operand }
-          for X := 0 to taicpu(hp1).ops - 1 do
+      { Try to insert after the last instructions where the FLAGS register is not yet in use }
+      if not GetLastInstruction(p, hp2) then
+        asml.InsertBefore(hp1, p)
+      else
+        asml.InsertAfter(hp1, hp2);
+
+      DebugMsg(SPeepholeOptimization + 'Swapped ' + debug_op2str(taicpu(p).opcode) + ' and ' + debug_op2str(taicpu(hp1).opcode) + ' instructions to improve optimisation potential', hp1);
+
+      for X := 0 to taicpu(hp1).ops - 1 do
+        case taicpu(hp1).oper[X]^.typ of
+          top_reg:
+            AllocRegBetween(taicpu(hp1).oper[X]^.reg, hp1, p, UsedRegs);
+          top_ref:
             begin
+              if taicpu(hp1).oper[X]^.ref^.base <> NR_NO then
+                AllocRegBetween(taicpu(hp1).oper[X]^.ref^.base, hp1, p, UsedRegs);
+              if taicpu(hp1).oper[X]^.ref^.index <> NR_NO then
+                AllocRegBetween(taicpu(hp1).oper[X]^.ref^.index, hp1, p, UsedRegs);
             end;
-
-          { If we have something like:
-              cmp ###,%reg1
-              mov 0,%reg2
-
-            And no registers are shared, move the MOV command to before the
-            comparison as this means it can be optimised without worrying
-            about the FLAGS register. (This combination is generated by
-            "J(c)Mov1JmpMov0 -> Set(~c)", among other things).
-          }
-          asml.Remove(hp1);
-
-          { Try to insert after the last instructions where the FLAGS register is not yet in use }
-          if not GetLastInstruction(p, hp2) then
-            asml.InsertBefore(hp1, p)
           else
-            asml.InsertAfter(hp1, hp2);
-
-          DebugMsg(SPeepholeOptimization + 'Swapped ' + debug_op2str(taicpu(p).opcode) + ' and mov instructions to improve optimisation potential', hp1);
-
-          for X := 0 to taicpu(hp1).ops - 1 do
-            case taicpu(hp1).oper[X]^.typ of
-              top_reg:
-                AllocRegBetween(taicpu(hp1).oper[X]^.reg, hp1, p, UsedRegs);
-              top_ref:
-                begin
-                  if taicpu(hp1).oper[X]^.ref^.base <> NR_NO then
-                    AllocRegBetween(taicpu(hp1).oper[X]^.ref^.base, hp1, p, UsedRegs);
-                  if taicpu(hp1).oper[X]^.ref^.index <> NR_NO then
-                    AllocRegBetween(taicpu(hp1).oper[X]^.ref^.index, hp1, p, UsedRegs);
-                end;
-              else
-                ;
-            end;
-
-          if taicpu(hp1).opcode = A_LEA then
-            { The flags will be overwritten by the CMP/TEST instruction }
-            ConvertLEA(taicpu(hp1));
-
-          Result := True;
+            ;
         end;
+
+      if taicpu(hp1).opcode = A_LEA then
+        { The flags will be overwritten by the CMP/TEST instruction }
+        ConvertLEA(taicpu(hp1));
+
+      Result := True;
     end;
 
 
