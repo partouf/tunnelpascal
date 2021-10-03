@@ -190,12 +190,6 @@ unit aoptx86;
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
         function SwapMovCmp(var p, hp1: tai): Boolean;
 
-        { If an instruction modifies the flags, this instruction attempts to convert
-          it into a form that preserves their state.  Returns True if successful
-          (or nothing needed to be done), and False if the instruction could not
-          be modified) }
-        function RemoveFlagDependence(var p: tai): Boolean;
-
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
       end;
@@ -6186,86 +6180,6 @@ unit aoptx86;
                 InternalError(2021040710);
             end;
         end;
-    end;
-
-
-  function TX86AsmOptimizer.RemoveFlagDependence(var p: tai): Boolean;
-    var
-      hp: taicpu absolute p;
-      NewRef: TReference;
-    begin
-      if (p.typ <> ait_instruction) or not RegInInstruction(NR_DEFAULTFLAGS, p) then
-        { Nothing needs to be done }
-        Exit(True);
-
-      Result := False;
-
-      case hp.opcode of
-        A_ADD:
-          if (hp.opsize in [S_W, S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
-            (hp.oper[1]^.typ = top_reg) and
-            (
-              (hp.oper[0]^.typ = top_reg) or
-              (
-                (hp.oper[0]^.typ = top_const) and
-                (hp.oper[0]^.val >= -2147483648) and (hp.oper[0]^.val < 2147483647)
-              )
-            ) then
-            begin
-              reference_reset(NewRef, 1, []);
-              NewRef.scalefactor := 1;
-              NewRef.base := hp.oper[1]^.reg;
-              if hp.oper[0]^.typ = top_reg then
-                NewRef.index := hp.oper[0]^.reg
-              else
-                NewRef.offset := ASizeInt(hp.oper[0]^.val);
-
-              hp.opcode := A_LEA;
-              hp.loadref(0, NewRef);
-
-              DebugMsg(SPeepholeOptimization + 'Changed ADD to LEA to remove flag dependency', p);
-
-              Result := True;
-              Exit;
-            end;
-        A_SUB:
-          if (hp.opsize in [S_W, S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
-            MatchOpType(hp, top_const, top_reg) and
-            (hp.oper[0]^.val >= -2147483647) and (hp.oper[0]^.val < 2147483647) then
-            begin
-              reference_reset(NewRef, 1, []);
-              NewRef.base := hp.oper[1]^.reg;
-              NewRef.offset := ASizeInt(-hp.oper[0]^.val);
-              NewRef.scalefactor := 1;
-
-              hp.opcode := A_LEA;
-              hp.loadref(0, NewRef);
-
-              DebugMsg(SPeepholeOptimization + 'Changed SUB to LEA to remove flag dependency', p);
-
-              Result := True;
-              Exit;
-            end;
-        A_SHL, A_SAL:
-          if (hp.opsize in [S_W, S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
-            MatchOpType(hp, top_const, top_reg) and
-            (hp.oper[0]^.val in [1, 2, 3]) then
-            begin
-              reference_reset(NewRef, 1, []);
-              NewRef.base := hp.oper[1]^.reg;
-              NewRef.scalefactor := 1 shl Byte(hp.oper[0]^.val);
-
-              hp.opcode := A_LEA;
-              hp.loadref(0, NewRef);
-
-              DebugMsg(SPeepholeOptimization + 'Changed SHL to LEA to remove flag dependency', p);
-
-              Result := True;
-              Exit;
-            end;
-        else
-          ;
-      end;
     end;
 
 
