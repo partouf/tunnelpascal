@@ -195,12 +195,6 @@ unit aoptx86;
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
         function TrySwapMovCmp(var p, hp1: tai): Boolean;
 
-        { If an instruction modifies the flags, this instruction attempts to convert
-          it into a form that preserves their state.  Returns True if successful
-          (or nothing needed to be done), and False if the instruction could not
-          be modified) }
-        function RemoveFlagDependence(var p: tai): Boolean;
-
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
       end;
@@ -6547,6 +6541,16 @@ unit aoptx86;
             Exit;
         end;
 
+      { The instruction can be safely moved }
+      asml.Remove(hp1);
+
+      { Try to insert after the last instructions where the FLAGS register is not yet in use }
+      if not GetLastInstruction(p, hp2) then
+        asml.InsertBefore(hp1, p)
+      else
+        asml.InsertAfter(hp1, hp2);
+
+      DebugMsg(SPeepholeOptimization + 'Swapped ' + debug_op2str(taicpu(p).opcode) + ' and ' + debug_op2str(taicpu(hp1).opcode) + ' instructions to improve optimisation potential', hp1);
 
       for X := 0 to taicpu(hp1).ops - 1 do
         case taicpu(hp1).oper[X]^.typ of
@@ -6562,12 +6566,6 @@ unit aoptx86;
           else
             ;
         end;
-
-      if taicpu(hp1).opcode = A_LEA then
-        { The flags will be overwritten by the CMP/TEST instruction }
-        ConvertLEA(taicpu(hp1));
-
-      Result := True;
 
       if taicpu(hp1).opcode = A_LEA then
         { The flags will be overwritten by the CMP/TEST instruction }
