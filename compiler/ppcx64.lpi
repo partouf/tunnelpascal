@@ -22,15 +22,17 @@
     </PublishOptions>
     <RunParams>
       <local>
-        <CommandLineParams Value="\tmp\tasm2.pp"/>
+        <CommandLineParams Value="-O4 -a -B -Fi../rtl/inc -Fi../rtl/x86_64 -FE. -Sg -Fi../rtl/win -Fu../rtl/win -Fi../rtl/x86_64 -Fu../rtl/win64 -Fu../rtl/charmaps -Fi../rtl/win64 -Fi../rtl/win64/x86_64 -Fi../rtl/win/wininc -Fu../rtl/objpas -Fi../rtl/objpas/classes -Fi../rtl/objpas/sysutils -Fu../rtl/inc -Fux86_64;x86;systems -Fix86_64 -FUx86_64\lazbuild -dx86_64 pp.pas"/>
         <LaunchingApplication PathPlusParams="\usr\X11R6\bin\xterm -T 'Lazarus Run Output' -e $(LazarusDir)\tools\runwait.sh $(TargetCmdLine)"/>
+        <WorkingDirectory Value="C:\Users\garet\Documents\programming\fpc-opts\compiler"/>
       </local>
       <FormatVersion Value="2"/>
       <Modes Count="1">
         <Mode0 Name="default">
           <local>
-            <CommandLineParams Value="\tmp\tasm2.pp"/>
+            <CommandLineParams Value="-O4 -a -B -Fi../rtl/inc -Fi../rtl/x86_64 -FE. -Sg -Fi../rtl/win -Fu../rtl/win -Fi../rtl/x86_64 -Fu../rtl/win64 -Fu../rtl/charmaps -Fi../rtl/win64 -Fi../rtl/win64/x86_64 -Fi../rtl/win/wininc -Fu../rtl/objpas -Fi../rtl/objpas/classes -Fi../rtl/objpas/sysutils -Fu../rtl/inc -Fux86_64;x86;systems -Fix86_64 -FUx86_64\lazbuild -dx86_64 pp.pas"/>
             <LaunchingApplication PathPlusParams="\usr\X11R6\bin\xterm -T 'Lazarus Run Output' -e $(LazarusDir)\tools\runwait.sh $(TargetCmdLine)"/>
+            <WorkingDirectory Value="C:\Users\garet\Documents\programming\fpc-opts\compiler"/>
           </local>
         </Mode0>
       </Modes>
