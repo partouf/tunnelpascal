@@ -6032,6 +6032,8 @@ unit aoptx86;
       if not UseAVX then
         InternalError(2021100501);
 
+      Result := False;
+
       { Look for the following to simplify:
 
           vmovdqa/u x(mem1), %xmmreg
