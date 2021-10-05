@@ -6056,7 +6056,7 @@ unit aoptx86;
         GetNextInstruction(p, hp1) and
         MatchInstruction(hp1, A_VMOVDQA, A_VMOVDQU, [S_XMM]) and
         MatchOpType(taicpu(hp1), top_reg, top_ref) and
-        not RegUsedAfterInstruction(taicpu(hp2).oper[1]^.reg, hp1, TmpUsedRegs) then
+        not RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp1, TmpUsedRegs) then
         begin
           SourceRef := taicpu(p).oper[0]^.ref^;
           TargetRef := taicpu(hp1).oper[1]^.ref^;
