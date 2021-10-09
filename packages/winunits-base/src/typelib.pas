@@ -119,6 +119,7 @@ Type
     // utility functions
     function interfacedeclaration(iName, iDoc: string; TI: ITypeInfo; TA: LPTYPEATTR;
       bIsDispatch,bCreateEvents:boolean): string;
+    function TypeHelpers(iName: string; bIsDispatch:boolean; var implement: string): string;
     function VarTypeIsAutomatable(ParamType: integer): boolean; virtual;
     function VarTypeToStr(ParamType: integer): string; virtual;
     function TypeToString(TI: ITypeInfo; TD: TYPEDESC): string; virtual;
@@ -131,8 +132,6 @@ Type
     procedure CreateCoClasses(const TL: ITypeLib; TICount: Integer); virtual;
     procedure CreateForwards(const TL: ITypeLib; TICount: Integer); virtual;
     procedure CreateInterfaces(const TL: ITypeLib; TICount: Integer); virtual;
-    procedure CreateHelpers(iName, iDoc: string; TI: ITypeInfo; TA: LPTYPEATTR;
-      bIsDispatch,bCreateEvents:boolean);
     procedure CreateRecordsUnionsAliases(const TL: ITypeLib; TICount: Integer); virtual;
     procedure CreateUnitHeader(const TL: ITypeLib; const LA: lpTLIBATTR); virtual;
     procedure ImportEnums(const TL: ITypeLib; TICount: Integer); virtual;
@@ -1499,7 +1498,7 @@ Var
   //TAref2 : LPTYPEATTR;
   TIT : TYPEKIND;
   RTIT : HREFTYPE;
-  sl: string;
+  sl,typeHelpersImplementation: string;
   slDeclaredType,slDeferredType,slDeferredPendingType,slDeferredDeclaration: Tstrings;
   bDeferred:boolean;
 
@@ -1528,6 +1527,7 @@ begin
   slDeferredType:=TStringList.Create;
   slDeferredPendingType:=TStringList.Create;
   slDeferredDeclaration:=TStringList.Create;
+  typeHelpersImplementation:='';
   slDeclaredType.Add('IDispatch');
   slDeclaredType.Add('IUnknown');
   try
@@ -1561,15 +1561,17 @@ begin
               begin
               slDeferredType.Add(sl);
               slDeferredPendingType.Add(BstrNameRef);
-              slDeferredDeclaration.Add(interfacedeclaration(sl,BstrDocString,TIref,TAref,false,false)+
-                interfacedeclaration(sl,BstrDocString,TI,TA,true,false));
+              slDeferredDeclaration.Add(interfacedeclaration(sl,BstrDocString,TIref,TAref,false,false)+#13#10+
+                TypeHelpers(sl,false,typeHelpersImplementation)+
+                interfacedeclaration(sl,BstrDocString,TI,TA,true,false)+#13#10+
+                TypeHelpers(sl,true,typeHelpersImplementation));
               end
             else
               begin
               AddToInterface(interfacedeclaration(sl,BstrDocString,TIref,TAref,false,false));
-              CreateHelpers(sl,BstrDocString,TIref,TAref,false,false);
+              AddToInterface(TypeHelpers(sl,false,typeHelpersImplementation));
               AddToInterface(interfacedeclaration(sl,BstrDocString,TI,TA,true,false));
-              CreateHelpers(sl,BstrDocString,TI,TA,true,false);
+              AddToInterface(TypeHelpers(sl,true,typeHelpersImplementation));
               ReleasePendingType(sl);
               end;
             TIref.ReleaseTypeAttr(TAref);
@@ -1577,7 +1579,7 @@ begin
           else
             begin
             AddToInterface(interfacedeclaration(sl,BstrDocString,TI,TA,true,true));
-            CreateHelpers(sl,BstrDocString,TI,TA,true,true);
+            AddToInterface(TypeHelpers(sl,true,typeHelpersImplementation));
             end;
           end
         else
@@ -1594,12 +1596,13 @@ begin
             begin
             slDeferredType.Add(sl);
             slDeferredPendingType.Add(BstrNameRef);
-            slDeferredDeclaration.Add(interfacedeclaration(sl,BstrDocString,TI,TA,false,false));
+            slDeferredDeclaration.Add(interfacedeclaration(sl,BstrDocString,TI,TA,false,false)+#13#10+
+              TypeHelpers(sl,false,typeHelpersImplementation));
             end
           else
             begin
             AddToInterface(interfacedeclaration(sl,BstrDocString,TI,TA,false,false));
-            CreateHelpers(sl,BstrDocString,TI,TA,false,false);
+            AddToInterface(TypeHelpers(sl,false,typeHelpersImplementation));
             ReleasePendingType(sl);
             end;
           end;
@@ -1611,6 +1614,7 @@ begin
       AddToInterface('// should not happen');
       AddToInterface(slDeferredDeclaration[i]);
       end;
+    AddToImplementation(typeHelpersImplementation);
   finally
     slDeferredDeclaration.Free;
     slDeferredPendingType.Free;
@@ -1620,8 +1624,7 @@ begin
 end;
 
 // create type helpers for overloading properties and methods which have parameters of type OleVariant with defaultvalue or optional attribute
-procedure TTypeLibImporter.CreateHelpers(iName,iDoc:string;TI:ITypeInfo;TA:LPTYPEATTR;
-  bIsDispatch,bCreateEvents:boolean);
+function TTypeLibImporter.TypeHelpers(iName: string; bIsDispatch: boolean; var implement: string): string;
 var
   i,j,k,m,loopCount:integer;
   line,par,def,part1,part2,linePrefix,output:string;
@@ -1631,6 +1634,7 @@ var
   bracketOpen,bracketClose,defClose:char;
 
 begin
+  Result:='';
   abort:=false;
   regularMethodsCompleted:=false;
   if FOverloadedItems.Count=0 then
@@ -1703,15 +1707,14 @@ begin
           begin
             createdOverload:=true;
             Inc(loopCount);
-            output:=format('  { T%sHelper%d }',[iName,loopCount]);
-            AddToInterface(output);
-            AddToInterface('');
+            output:=format('  { T%sHelper%d }'#13#10,[iName,loopCount]);
+            Result:=Result+output+#13#10;
             if (loopCount>1) then
               def:=format('(T%sHelper%d)',[iName,loopCount-1])
             else
               def:='';
-            output:=format('  T%sHelper%d = type helper%s for %s',[iName,loopCount,def,iName]);
-            AddToInterface(output);
+            output:=format('  T%sHelper%d = type helper%s for %s'#13#10,[iName,loopCount,def,iName]);
+            Result:=Result+output;
           end;
           //extract default value
           isString:=par[defBegin+2]='''';
@@ -1782,18 +1785,17 @@ begin
           else
             Delete(line,paramBegin,paramEnd-paramBegin);
           if isGet or isSet then
-            AddToInterface(Copy(line,9,Length(line)))
+            Result:=Result+Copy(line,9,Length(line))+#13#10
           else
-            AddToInterface(line);
+            Result:=Result+line+#13#10;
           FOverloadedItems[i]:=line;
           if not isProp then // create implementation of overloaded method
           begin
             if not createdOLImpl then // create header of implementation
             begin
               createdOLImpl:=true;
-              output:=format('{ T%sHelper%d }',[iName,loopCount]);
-              AddToImplementation(output);
-              AddToImplementation('');
+              output:=format('{ T%sHelper%d }'#13#10,[iName,loopCount]);
+              implement:=implement+output+#13#10;
             end;
             if isGet or isSet then
               Delete(line,1,8);
@@ -1807,21 +1809,20 @@ begin
               k:=Pos(';',line,j+1);
               Delete(line,j,k-j);
             end;
-            output:=format('%s T%sHelper%d.%s',[linePrefix,iName,loopCount,line]);
-            AddToImplementation(output);
-            AddToImplementation('begin');
+            output:=format('%s T%sHelper%d.%s'#13#10,[linePrefix,iName,loopCount,line]);
+            implement:=implement+output;
+            implement:=implement+'begin'#13#10;
             if Pos('function',linePrefix)>0 then
             begin
-              output:=format('  Result := %s %s);',[part1,def]);
-              AddToImplementation(output);
+              output:=format('  Result := %s %s);'#13#10,[part1,def]);
+              implement:=implement+output;
             end
             else
             begin
-              output:=format('  %s %s%s);',[part1,def,part2]);
-              AddToImplementation(output);
+              output:=format('  %s %s%s);'#13#10,[part1,def,part2]);
+              implement:=implement+output;
             end;
-            AddToImplementation('end;');
-            AddToImplementation('');
+            implement:=implement+'end;'#13#10#13#10;
           end;
         end
         else
@@ -1832,10 +1833,9 @@ begin
     begin
       if createdOverload then
       begin
-        AddToInterface('  end;');
-        AddToInterface('');
+        Result:=Result+'  end;'#13#10#13#10;
         if createdOLImpl then
-          AddToImplementation('');
+          implement:=implement+#13#10;
       end
       else
         abort:=true;
