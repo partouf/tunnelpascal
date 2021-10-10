@@ -585,7 +585,7 @@ interface
          constructor op_sym_ofs_reg(op : tasmop;_size : topsize;_op1 : tasmsymbol;_op1ofs:longint;_op2 : tregister);
          constructor op_sym_ofs_ref(op : tasmop;_size : topsize;_op1 : tasmsymbol;_op1ofs:longint;const _op2 : treference);
 
-         procedure changeopsize(siz:topsize);
+         procedure changeopsize(siz:topsize); {$ifdef USEINLINE}inline;{$endif USELINE}
 
          function  GetString:string;
 
@@ -1000,7 +1000,7 @@ implementation
                                  Taicpu Constructors
 *****************************************************************************}
 
-    procedure taicpu.changeopsize(siz:topsize);
+    procedure taicpu.changeopsize(siz:topsize); {$ifdef USEINLINE}inline;{$endif USELINE}
       begin
         opsize:=siz;
       end;
