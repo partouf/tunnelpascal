@@ -6514,7 +6514,7 @@ unit aoptx86;
       { NOP is a pipeline fence, likely marking the beginning of the function
         epilogue, so drop out.  Similarly, drop out if POP or RET are
         encountered }
-      if (taicpu(hp1).opcode in [A_NOP, A_POP, A_RET]) then
+      if MatchInstruction(hp1, A_NOP, A_POP, []) then
         Exit;
 
       if (taicpu(hp1).opcode = A_MOVSS) and
