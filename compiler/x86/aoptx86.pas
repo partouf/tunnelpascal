@@ -191,7 +191,7 @@ unit aoptx86;
         procedure ConvertJumpToRET(const p: tai; const ret_p: tai);
 
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
-        function SwapMovCmp(var p, hp1: tai): Boolean;
+        function TrySwapMovCmp(var p, hp1: tai): Boolean;
 
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
@@ -6280,7 +6280,7 @@ unit aoptx86;
     end;
 
 
-  function TX86AsmOptimizer.SwapMovCmp(var p, hp1: tai): Boolean;
+  function TX86AsmOptimizer.TrySwapMovCmp(var p, hp1: tai): Boolean;
     var
       hp2: tai;
       X: Integer;
