@@ -4158,7 +4158,7 @@ unit aoptx86;
         Result := False;
 
         if GetNextInstruction(p, hp1) and
-          SwapMovCmp(p, hp1) then
+          TrySwapMovCmp(p, hp1) then
           begin
             Result := True;
             Exit;
@@ -5692,7 +5692,7 @@ unit aoptx86;
                end;
            end;
 
-         if SwapMovCmp(p, hp1) then
+         if TrySwapMovCmp(p, hp1) then
            begin
              Result := True;
              Exit;
