@@ -193,12 +193,6 @@ unit aoptx86;
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
         function TrySwapMovCmp(var p, hp1: tai): Boolean;
 
-        { If an instruction modifies the flags, this instruction attempts to convert
-          it into a form that preserves their state.  Returns True if successful
-          (or nothing needed to be done), and False if the instruction could not
-          be modified) }
-        function RemoveFlagDependence(var p: tai): Boolean;
-
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
       end;
@@ -4160,7 +4154,7 @@ unit aoptx86;
         Result := False;
 
         if GetNextInstruction(p, hp1) and
-          SwapMovCmp(p, hp1) then
+          TrySwapMovCmp(p, hp1) then
           begin
             Result := True;
             Exit;
@@ -5694,7 +5688,7 @@ unit aoptx86;
                end;
            end;
 
-         if SwapMovCmp(p, hp1) then
+         if TrySwapMovCmp(p, hp1) then
            begin
              Result := True;
              Exit;
