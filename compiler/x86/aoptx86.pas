@@ -6323,6 +6323,12 @@ unit aoptx86;
         RegInInstruction(NR_DEFAULTFLAGS, hp1) then
         Exit;
 
+      { NOP is a pipeline fence, likely marking the beginning of the function
+        epilogue, so drop out.  Similarly, drop out if POP or RET are
+        encountered }
+      if (taicpu(hp1).opcode in [A_NOP, A_POP, A_RET]) then
+        Exit;
+
       if (taicpu(hp1).opcode = A_MOVSS) and
         (taicpu(hp1).ops = 0) then
         { Wrong MOVSS }
