@@ -409,6 +409,10 @@ const
     {$ifdef HasInt64}
     ,btInt64,btComp
     {$endif}];
+  btAllUnsignedInteger = [btByte,btWord,btUIntSingle,btLongWord,btUIntDouble
+    {$ifdef HasInt64}
+    ,btQWord
+    {$endif}];
   btAllChars = [btChar,{$ifdef FPC_HAS_CPSTRING}btAnsiChar,{$endif}btWideChar];
   btAllStrings = [btString,
     {$ifdef FPC_HAS_CPSTRING}btAnsiString,btShortString,btRawByteString,{$endif}
