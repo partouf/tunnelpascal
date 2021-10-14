@@ -3364,6 +3364,9 @@ unit aoptx86;
             { Saves on a large number of dereferences }
             ActiveReg := taicpu(p).oper[1]^.reg;
 
+            TransferUsedRegs(TmpUsedRegs);
+            UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+
             while GetNextInstructionUsingRegCond(hp3,hp2,ActiveReg,CrossJump) and
               { GetNextInstructionUsingRegCond only searches one instruction ahead unless -O3 is specified }
               (hp2.typ=ait_instruction) do
@@ -3382,9 +3385,6 @@ unit aoptx86;
                             mov %treg, y
                         }
 
-                        TransferUsedRegs(TmpUsedRegs);
-                        TmpUsedRegs[R_INTREGISTER].Update(tai(p.Next));
-
                         { We don't need to call UpdateUsedRegs for every instruction between
                           p and hp2 because the register we're concerned about will not
                           become deallocated (otherwise GetNextInstructionUsingReg would
@@ -3394,7 +3394,6 @@ unit aoptx86;
                           CrossJump { Assume the register is in use if it crossed a conditional jump } or
                           RegReadByInstruction(ActiveReg, hp3) OR
                           RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs);
-
 
                         case taicpu(p).oper[0]^.typ Of
                           top_reg:
@@ -3577,8 +3576,6 @@ unit aoptx86;
                       begin
                         Result := True;
 
-                        CurrentReg := taicpu(p).oper[1]^.reg;
-
                         { Just in case something didn't get modified (e.g. an
                           implicit register).  Also, if it does read from this
                           register, then there's no longer an advantage to
@@ -3588,12 +3585,23 @@ unit aoptx86;
                             { If a conditional jump was crossed, do not delete
                               the original MOV no matter what }
                             if not CrossJump and
-                              { RegEndOfLife returns True if the register is
-                                deallocated before the next instruction or has
-                                been loaded with a new value }
-                              RegEndOfLife(CurrentReg, taicpu(hp2)) then
+                              (
+                                (
+                                  { Frame pointer needs different handling, namely
+                                    a version that doesn't require searching for
+                                    tai_regallocs. }
+                                  (ActiveReg = current_procinfo.framepointer) and
+                                  (
+                                    RegLoadedWithNewValue(CurrentReg, hp2) or
+                                    not RegUsedAfterInstruction(CurrentReg, hp2, TmpUsedRegs)
+                                  )
+                                ) or
+                                { RegEndOfLife returns True if the register is
+                                  deallocated before the next instruction or has
+                                  been loaded with a new value }
+                                RegEndOfLife(ActiveReg, taicpu(hp2))
+                              ) then
                               begin
-                                RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs);
                                 { We can remove the original MOV }
                                 DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
                                 RemoveCurrentp(p, hp1);
