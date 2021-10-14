@@ -3372,6 +3372,21 @@ unit aoptx86;
               (hp2.typ=ait_instruction) do
               begin
                 case taicpu(hp2).opcode of
+                  A_POP:
+                    if MatchOperand(taicpu(hp2).oper[0]^,ActiveReg) then
+                      begin
+                        if not CrossJump then
+                          begin
+                            { We can remove the original MOV since the register
+                              wasn't used between it and its popping from the stack }
+                            DebugMsg(SPeepholeOptimization + 'Mov2Nop 3c done',p);
+                            RemoveCurrentp(p, hp1);
+                            Result := True;
+                            Exit;
+                          end;
+                        { Can't go any further }
+                        Break;
+                      end;
                   A_MOV:
                     if MatchOperand(taicpu(hp2).oper[0]^,ActiveReg) and
                       ((taicpu(p).oper[0]^.typ=top_const) or
@@ -3392,7 +3407,7 @@ unit aoptx86;
 
                         TempRegUsed :=
                           CrossJump { Assume the register is in use if it crossed a conditional jump } or
-                          RegReadByInstruction(ActiveReg, hp3) OR
+                          RegReadByInstruction(ActiveReg, hp3) or
                           RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs);
 
                         case taicpu(p).oper[0]^.typ Of
@@ -3572,7 +3587,7 @@ unit aoptx86;
                     if
                       not RegModifiedByInstruction(CurrentReg, hp3) and
                       not RegModifiedBetween(CurrentReg, hp3, hp2) and
-                      DeepMovOpt(taicpu(p), taicpu(hp2)) then
+                      DeepMOVOpt(taicpu(p), taicpu(hp2)) then
                       begin
                         Result := True;
 
@@ -3585,22 +3600,10 @@ unit aoptx86;
                             { If a conditional jump was crossed, do not delete
                               the original MOV no matter what }
                             if not CrossJump and
-                              (
-                                (
-                                  { Frame pointer needs different handling, namely
-                                    a version that doesn't require searching for
-                                    tai_regallocs. }
-                                  (ActiveReg = current_procinfo.framepointer) and
-                                  (
-                                    RegLoadedWithNewValue(CurrentReg, hp2) or
-                                    not RegUsedAfterInstruction(CurrentReg, hp2, TmpUsedRegs)
-                                  )
-                                ) or
-                                { RegEndOfLife returns True if the register is
-                                  deallocated before the next instruction or has
-                                  been loaded with a new value }
-                                RegEndOfLife(ActiveReg, taicpu(hp2))
-                              ) then
+                              { RegEndOfLife returns True if the register is
+                                deallocated before the next instruction or has
+                                been loaded with a new value }
+                              RegEndOfLife(ActiveReg, taicpu(hp2)) then
                               begin
                                 { We can remove the original MOV }
                                 DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
