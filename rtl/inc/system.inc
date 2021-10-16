@@ -642,8 +642,14 @@ type
   begin
     s0 := state[0];
     s1 := state[1];
-    s2 := state[2] xor s0;
-    s3 := state[3] xor s1;
+    s2 := state[2];
+    s3 := state[3];
+  {$ifdef FPC_HAS_FEATURE_THREADING}
+    if s0 or s1 or s2 or s3 = 0 then
+      s0 := 1;
+  {$endif}
+    s2 := s2 xor s0;
+    s3 := s3 xor s1;
     result := RolDWord(s1 * 5, 7) * 9;
 
     state[0] := s0 xor s3;
