@@ -3377,7 +3377,8 @@ unit aoptx86;
                   A_POP:
                     if MatchOperand(taicpu(hp2).oper[0]^,ActiveReg) then
                       begin
-                        if not CrossJump then
+                        if not CrossJump and
+                          not RegUsedBetween(ActiveReg, p, hp2) then
                           begin
                             { We can remove the original MOV since the register
                               wasn't used between it and its popping from the stack }
