@@ -465,8 +465,6 @@ unit FPPas2Js;
 {$IFOPT Q+}{$DEFINE OverflowCheckOn}{$ENDIF}
 {$IFOPT R+}{$DEFINE RangeCheckOn}{$ENDIF}
 
-{$define VerbosePas2JS}
-
 interface
 
 uses
@@ -2249,15 +2247,16 @@ type
     Function ConvertCharToInt(Arg: TJSElement; PosEl: TPasElement; ArgContext: TConvertContext): TJSElement; virtual;
     Function ConvertIntToInt(Arg: TJSElement; FromBT, ToBT: TResolverBaseType; PosEl: TPasElement; ArgContext: TConvertContext): TJSElement; virtual;
     Function CreateBitwiseAnd(El: TPasElement; Value: TJSElement; const Mask: TMaxPrecInt): TJSElement; virtual;
+    Function CreateBitwiseXor(El: TPasElement; Value: TJSElement; const Mask: TMaxPrecInt): TJSElement; virtual;
     Function CreateBitwiseShiftLeftRight(El: TPasElement; Value: TJSElement; Shift: integer): TJSElement; virtual;
-    function CreateByteBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
-    function CreateShortIntBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
-    function CreateWordBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
-    function CreateSmallIntBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
-    function CreateLongwordBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
-    function CreateLongIntBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
-    function CreateIntegerBitFix(El: TPasElement; Value: TJSElement; ToType : TResolverBaseType): TJSElement;
-    function CreateIntegerBitFixAuto(El: TPasElement; AContext: TConvertContext; Value: TJSElement): TJSElement; virtual;
+    Function CreateByteBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
+    Function CreateShortIntBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
+    Function CreateWordBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
+    Function CreateSmallIntBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
+    Function CreateLongwordBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
+    Function CreateLongIntBitFix(El: TPasElement; Value: TJSElement): TJSElement; virtual;
+    Function CreateIntegerBitFix(El: TPasElement; Value: TJSElement; ToType : TResolverBaseType): TJSElement;
+    Function CreateIntegerBitFixAuto(El: TPasElement; AContext: TConvertContext; Value: TJSElement): TJSElement; virtual;
     Function ConvertParamsExpr(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertArrayParams(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
     Function ConvertFuncParams(El: TParamsExpr; AContext: TConvertContext): TJSElement; virtual;
@@ -8803,6 +8802,7 @@ Var
   U : TJSUnaryExpression;
   E : TJSElement;
   ResolvedEl: TPasResolverResult;
+  ResolvedType : TResolverBaseType;
   BitwiseNot: Boolean;
   aResolver: TPas2JSResolver;
   TypeEl, SubTypeEl: TPasType;
@@ -8830,13 +8830,20 @@ begin
       begin
       E:=ConvertExpression(El.Operand,AContext);
       BitwiseNot:=true;
+      ResolvedType:=btNone;
       if aResolver<>nil then
         begin
         aResolver.ComputeElement(El.Operand,ResolvedEl,[]);
-        BitwiseNot:=ResolvedEl.BaseType in btAllJSInteger;
+        ResolvedType:=ResolvedEl.BaseType;
+        BitwiseNot:=ResolvedType in btAllJSInteger;
         end;
       if BitwiseNot then
         begin
+        if ResolvedType = btByte then
+          exit(CreateBitwiseXor(El,E,$ff));
+        if ResolvedType = btWord then
+          exit(CreateBitwiseXor(El,E,$ffff));
+
         U:=TJSUnaryInvExpression(CreateElement(TJSUnaryInvExpression,El));
         U.A:=E;
         exit(CreateIntegerBitFixAuto(El,AContext,U));
@@ -11085,11 +11092,71 @@ begin
     end;
   end;
 
-  AndEx:=TJSBitwiseAndExpression(CreateElement(TJSBitwiseAndExpression,El));
-  Result:=AndEx;
-  AndEx.A:=Value;
-  AndEx.B:=CreateLiteralNumber(El,Mask);
+  AndEx := TJSBitwiseAndExpression(CreateElement(TJSBitwiseAndExpression,El));
+  Result := AndEx;
+  AndEx.A := Value;
+  AndEx.B := CreateLiteralNumber(El, Mask);
   SetNumberCustomValue(TJSLiteral(AndEx.B), Mask);
+end;
+
+function TPasToJSConverter.CreateBitwiseXor(El: TPasElement; Value: TJSElement;
+  const Mask: TMaxPrecInt): TJSElement;
+
+  procedure SetNumberCustomValue(V: TJSLiteral; const Value: TMaxPrecInt);
+  var
+    Hex: String;
+    i: Integer;
+  begin
+    if Value>999999 then
+    begin
+      Hex:=HexStr(Value,8);
+      i:=1;
+      while i<8 do
+        if Hex[i]='0' then
+          inc(i)
+        else
+          break;
+      Hex:=Copy(Hex,i,8);
+      V.Value.CustomValue:=TJSString('0x'+Hex);
+    end
+    else
+      V.Value.CustomValue:=TJSString('');
+  end;
+
+var
+  XorEx: TJSBitwiseXorExpression;
+  Int: TMaxPrecInt;
+begin
+  if IsLiteralInteger(Value,Int) then
+  begin
+    TJSLiteral(Value).Value.AsNumber := Int xor Mask;
+    SetNumberCustomValue(TJSLiteral(Value), Int xor Mask);
+    exit(Value);
+  end
+  else
+  if Value is TJSBitwiseXorExpression then
+  begin
+    XorEx := TJSBitwiseXorExpression(Value);
+    if IsLiteralInteger(XorEx.A,Int) then
+    begin
+      TJSLiteral(XorEx.A).Value.AsNumber := Int xor Mask;
+      SetNumberCustomValue(TJSLiteral(XorEx.A), Int xor Mask);
+      exit(Value);
+    end;
+
+    if IsLiteralInteger(XorEx.B,Int) then
+    begin
+      TJSLiteral(XorEx.B).Value.AsNumber := Int xor Mask;
+      SetNumberCustomValue(TJSLiteral(XorEx.B), Int xor Mask);
+      exit(Value);
+    end;
+  end;
+
+  XorEx := TJSBitwiseXorExpression(CreateElement(TJSBitwiseXorExpression,El));
+  Result := XorEx;
+  XorEx.A := Value;
+  XorEx.B := CreateLiteralNumber(El, Mask);
+  SetNumberCustomValue(TJSLiteral(XorEx.B), Mask);
 end;
 
 Function TPasToJSConverter.CreateBitwiseShiftLeftRight(El: TPasElement; Value: TJSElement; Shift: integer): TJSElement;
@@ -11271,10 +11338,8 @@ var
   ParamsEl : TParamsExpr;
   PropertyEl : TPasProperty;
   ToType, LeftResolvedType, RightResolvedType : TResolverBaseType;
-  Int: TMaxPrecInt;
-  AndEx : TJSBitwiseAndExpression;
   AssignContext : TAssignContext;
-  NeedBitFix, ParentWillFix, ParentAllowSignificantOverflow, IsArrayIndexExpr : Boolean;
+  NeedBitFix, ParentWillFixOverflow, ParentAllowSignificantOverflow, IsArrayIndexExpr : Boolean;
 begin
   if AContext=nil then ;
   aResolver:=AContext.Resolver;
@@ -11285,49 +11350,64 @@ begin
   {$ENDIF}
   ToType := btNone;
   NeedBitFix := false;
-  ParentWillFix := false;
+  ParentWillFixOverflow := false;
   ParentAllowSignificantOverflow := false;
   IsArrayIndexExpr := false;
 
   // checking where current expression is used to decide whether we need to fix integer value now or we can leave it for the parent expression
-  if El.Parent <> nil then
+  if (El.Parent <> nil) { todo: disable this if optimization is disabled } then
   begin
     if El.Parent is TUnaryExpr then
     begin
       UnaryEl := TUnaryExpr(El.Parent);
-      if UnaryEl.OpCode in [eopSubtract, eopNot] then
-        ParentWillFix := true;
-      if UnaryEl.OpCode = eopNot then
-        ParentAllowSignificantOverflow := true;
+      if UnaryEl.OpCode = eopSubtract then
+        ParentWillFixOverflow := true
+      else if UnaryEl.OpCode = eopNot then
+      begin
+        if aResolver <> nil then
+        begin
+          aResolver.ComputeElement(UnaryEl.Operand,ResolvedEl,[]);
+          ToType := ResolvedEl.BaseType;
+        end;
+
+        // for Byte and Word the "not" operation is implemented using bitwise xor, so there is no need to fix bits but also it won't fix the overflow
+        if not (ToType in [btNone, btByte, btWord]) then
+        begin
+          ParentWillFixOverflow := true;
+          ParentAllowSignificantOverflow := true;
+        end;
+      end;
     end
     else if El.Parent is TBinaryExpr then
     begin
       BinaryEl := TBinaryExpr(El.Parent);
-      if aResolver <> nil then
+      if (aResolver <> nil) and (BinaryEl.OpCode in [eopAdd, eopSubtract, eopAnd, eopOr, eopXor, eopShr, eopShl]) then
       begin
-        if BinaryEl.Left = El then
-        begin
-          aResolver.ComputeElement(BinaryEl.Left,LeftResolved,[]);
-          ToType := LeftResolved.BaseType;
-        end
-        else
-        begin
-          aResolver.ComputeElement(BinaryEl.Right,RightResolved,[]);
-          ToType := RightResolved.BaseType;
-        end;
+        aResolver.ComputeElement(BinaryEl.Left,LeftResolved,[]);
+        LeftResolvedType := LeftResolved.BaseType;
+
+        aResolver.ComputeElement(BinaryEl.Right,RightResolved,[]);
+        RightResolvedType := RightResolved.BaseType;
+
+        aResolver.ComputeBinaryExprRes(BinaryEl,ResolvedEl,[],LeftResolved,RightResolved);
 
         if BinaryEl.OpCode in [eopShl, eopShr] then
         begin
-          ParentWillFix := (BinaryEl.Left = El);
-          ParentAllowSignificantOverflow := ParentWillFix;
+          ParentWillFixOverflow := (BinaryEl.Left = El) and (ResolvedEl.BaseType in [btLongInt,btLongWord]);
+          ParentAllowSignificantOverflow := ParentWillFixOverflow;
         end
         else if BinaryEl.OpCode in [eopAnd, eopOr, eopXor] then
         begin
-          ParentWillFix := true;
-          ParentAllowSignificantOverflow := true;
+          ParentWillFixOverflow := ResolvedEl.BaseType in [btLongInt,btLongWord];
+          ParentAllowSignificantOverflow := ParentWillFixOverflow;
         end
         else if BinaryEl.OpCode in [eopAdd, eopSubtract] then
-          ParentWillFix := true;
+          ParentWillFixOverflow := true;
+
+        if BinaryEl.Left = El then
+          ToType := LeftResolvedType
+        else
+          ToType := RightResolvedType;
       end;
     end
     else if El.Parent is TPasImplAssign then
@@ -11345,7 +11425,7 @@ begin
         // select smallest type by size
         if UseLeftTypeForAssignment(LeftResolvedType, RightResolvedType) then
         begin
-          ParentWillFix := true;
+          ParentWillFixOverflow := true;
           ParentAllowSignificantOverflow := true;
           ToType := LeftResolvedType;
         end
@@ -11368,11 +11448,8 @@ begin
   if El is TUnaryExpr then
   begin
     UnaryEl := TUnaryExpr(El);
-    if UnaryEl.OpCode in [eopAdd, eopSubtract, eopNot] then
+    if UnaryEl.OpCode in [eopSubtract, eopNot] then
     begin
-      if ParentWillFix then
-        Exit;
-
       if (ToType = btNone) and (aResolver <> nil) then
       begin
         aResolver.ComputeElement(UnaryEl.Operand,ResolvedEl,[]);
@@ -11381,18 +11458,27 @@ begin
 
       if ToType in [btByte,btShortInt,btWord,btSmallInt,btLongWord,btLongInt] then
       begin
-        // if the expression is used as the array index, then for LongInt and LongWord type we can ignore the possibility of integer overflow
-        if IsArrayIndexExpr and (ToType in [btLongInt,btLongWord]) then
-          Exit;
+        if UnaryEl.OpCode = eopSubtract then
+        begin
+          if ParentWillFixOverflow then
+            exit;
 
-        // no need to fix value for "add" operation
-        // no need to fix value for "not" operation for LongInt
-        if (UnaryEl.OpCode = eopNot) and (ToType <> btLongint) then
-          NeedBitFix := true
-        // no need to fix value for "subtract" operation and constant
-        else if (UnaryEl.OpCode = eopSubtract) and 
-                not ((UnaryEl.Operand is TPrimitiveExpr) and (TPrimitiveExpr(UnaryEl.Operand).Kind = pekNumber)) then
+          // if the expression is used as the array index, then for LongInt and LongWord types we can ignore the possibility of integer overflow
+          if IsArrayIndexExpr and (ToType in [btLongInt,btLongWord]) then
+            exit;
+
+          // no need to fix value for "subtract" operation and constant
+          if (UnaryEl.Operand is TPrimitiveExpr) and (TPrimitiveExpr(UnaryEl.Operand).Kind = pekNumber) then
+            exit;
+
           NeedBitFix := true;
+        end
+        else // UnaryEl.OpCode = eopNot
+        begin
+          // no need to fix value for "not" operation for Byte, Word and LongInt. Also overflow automatically will be fixed for LongInt.
+          if (UnaryEl.OpCode = eopNot) and (ToType in [btShortInt,btSmallInt,btLongWord]) then
+            NeedBitFix := true;
+        end;
       end;
     end;
   end
@@ -11410,13 +11496,13 @@ begin
 
     if ToType in [btByte,btShortInt,btWord,btSmallInt,btLongWord,btLongInt] then
     begin
-      // if the expression is used as the array index, then for LongInt and LongWord type we can ignore the possibility of integer overflow
+      // if the expression is used as the array index, then for LongInt and LongWord types we can ignore the possibility of integer overflow
       if IsArrayIndexExpr and (ToType in [btLongInt,btLongWord]) then
         exit;
 
       if BinaryEl.OpCode in [eopMultiply, eopPower (*, eopDiv, eopMod*)] then
       begin
-        if ParentWillFix and ParentAllowSignificantOverflow then
+        if ParentWillFixOverflow and ParentAllowSignificantOverflow then
           exit;
 
         NeedBitFix := true;
@@ -11424,17 +11510,18 @@ begin
       else
       if BinaryEl.OpCode in [eopAdd, eopSubtract, eopAnd, eopOr, eopXor, eopShr, eopShl] then
       begin
-        if ParentWillFix then
+        if ParentWillFixOverflow then
           exit;
 
-        // no need to fix value for "shr" operation or LongInt type and bitwise operation
-        if (BinaryEl.OpCode in [eopAdd, eopSubtract]) or
-           ((BinaryEl.OpCode in [eopAnd, eopOr, eopXor]) and (ToType <> btLongint)) then
+        if (BinaryEl.OpCode in [eopAdd, eopSubtract]) then
+          NeedBitFix := true
+        // no need to fix value for bitwise operation for everything except LongWord
+        else if (BinaryEl.OpCode in [eopAnd, eopOr, eopXor]) and (ToType = btLongWord) then
           NeedBitFix := true
         // "shl" operation expanded to 32-bit
-        else
-        if (BinaryEl.OpCode = eopShl) and (ToType = btLongWord) then
+        else if (BinaryEl.OpCode = eopShl) and (ToType = btLongWord) then
           NeedBitFix := true;
+        // no need to fix value for "shr" operation
       end;
     end;
   end
@@ -14083,7 +14170,6 @@ begin
           AddJS:=TJSAdditiveExpressionPlus(CreateElement(TJSAdditiveExpressionPlus,SrcEl))
         else
           AddJS:=TJSAdditiveExpressionMinus(CreateElement(TJSAdditiveExpressionMinus,SrcEl));
-        Call.AddArg(AddJS);
         // create "ref.get()"
         AddJS.A:=TJSCallExpression(CreateElement(TJSCallExpression,SrcEl));
         TJSCallExpression(AddJS.A).Expr:=CreateDotNameExpr(SrcEl,
@@ -14091,8 +14177,12 @@ begin
           TJSString(TempRefObjGetterName));
         // add "b"
         AddJS.B:=ValueJS;
-        ValueJS:=nil;
+        if ExprResolved.BaseType in [btByte,btShortInt,btWord,btSmallInt,btLongInt,btLongWord] then
+          Call.AddArg(CreateIntegerBitFix(El,AddJS,ExprResolved.BaseType))
+        else
+          Call.AddArg(AddJS);
 
+        ValueJS:=nil;
         Result:=Call;
         exit;
         end;
@@ -14124,17 +14214,41 @@ begin
         RaiseInconsistency(20180622211919,El);
       end;
 
-    // convert inc(avar,b)  to  a+=b
-    if IsInc then
-      AssignSt:=TJSAddEqAssignStatement(CreateElement(TJSAddEqAssignStatement,SrcEl))
-    else
-      AssignSt:=TJSSubEqAssignStatement(CreateElement(TJSSubEqAssignStatement,SrcEl));
+    if ExprResolved.BaseType in [btByte,btShortInt,btWord,btSmallInt,btLongInt,btLongWord] then
+    begin
+      // convert  inc(avar,b)  to  a=a+b
 
-    AssignSt.LHS:=LHS;
-    LHS:=nil;
-    AssignSt.Expr:=AssignContext.RightSide;
-    AssignContext.RightSide:=nil;
-    Result:=AssignSt;
+      AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,SrcEl));
+      AssignSt.LHS:=LHS;
+      LHS:=ConvertExpression(Expr,AssignContext);
+
+      // create "+"
+      if IsInc then
+        AddJS:=TJSAdditiveExpressionPlus(CreateElement(TJSAdditiveExpressionPlus,SrcEl))
+      else
+        AddJS:=TJSAdditiveExpressionMinus(CreateElement(TJSAdditiveExpressionMinus,SrcEl));
+
+      AssignSt.Expr:=CreateIntegerBitFix(El,AddJS,ExprResolved.BaseType);     
+      AddJS.A:=LHS;
+      LHS:=nil;
+      AddJS.B:=AssignContext.RightSide;
+      AssignContext.RightSide:=nil;
+      Result:=AssignSt;
+    end
+    else
+    begin
+      // convert inc(avar,b)  to  a+=b
+      if IsInc then
+        AssignSt:=TJSAddEqAssignStatement(CreateElement(TJSAddEqAssignStatement,SrcEl))
+      else
+        AssignSt:=TJSSubEqAssignStatement(CreateElement(TJSSubEqAssignStatement,SrcEl));
+  
+      AssignSt.LHS:=LHS;
+      LHS:=nil;
+      AssignSt.Expr:=AssignContext.RightSide;
+      AssignContext.RightSide:=nil;
+      Result:=AssignSt;
+    end;
   finally
     ValueJS.Free;
     if Result=nil then
