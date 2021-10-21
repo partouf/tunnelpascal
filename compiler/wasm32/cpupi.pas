@@ -26,7 +26,7 @@ unit cpupi;
 interface
 
   uses
-    cutils,globtype,
+    cutils,globtype,aasmdata,
     procinfo,cpuinfo, symtype,aasmbase,cgbase,
     psub, cclasses;
 
@@ -38,6 +38,7 @@ interface
     public
       function calc_stackframe_size : longint;override;
       procedure setup_eh; override;
+      procedure generate_exit_label(list: tasmlist); override;
       procedure postprocess_code; override;
       procedure set_first_temp_offset;override;
     end;
@@ -45,7 +46,7 @@ interface
 implementation
 
     uses
-      systems,verbose,globals,cpubase,tgcpu,aasmdata,aasmcpu,aasmtai,cgexcept,
+      systems,verbose,globals,cpubase,tgcpu,aasmcpu,aasmtai,cgexcept,
       tgobj,paramgr,symconst,symdef,symtable,symcpu,cgutils,pass_2,parabase,
       fmodule,hlcgobj,hlcgcpu,defutil;
 
@@ -336,6 +337,13 @@ implementation
           internalerror(2021091701);
       end;
 
+    procedure tcpuprocinfo.generate_exit_label(list: tasmlist);
+      begin
+        list.concat(taicpu.op_none(a_end_block));
+        thlcgwasm(hlcg).decblock;
+        inherited generate_exit_label(list);
+      end;
+
     procedure tcpuprocinfo.postprocess_code;
 
       function findfirst_tai_functype(asmlist: TAsmList): tai_functype;
@@ -379,6 +387,151 @@ implementation
             end;
         end;
 
+      function FindNextInstruction(hp: tai): taicpu;
+        begin
+          result:=nil;
+          if not assigned(hp) then
+            exit;
+          repeat
+            hp:=tai(hp.next);
+          until not assigned(hp) or (hp.typ=ait_instruction);
+          if assigned(hp) then
+            result:=taicpu(hp);
+        end;
+
+      procedure resolve_labels_pass1(asmlist: TAsmList);
+        var
+          hp: tai;
+          lastinstr, nextinstr: taicpu;
+          cur_nesting_depth: longint;
+          lbl: tai_label;
+        begin
+          cur_nesting_depth:=0;
+          lastinstr:=nil;
+          hp:=tai(asmlist.first);
+          while assigned(hp) do
+            begin
+              case hp.typ of
+                ait_instruction:
+                  begin
+                    lastinstr:=taicpu(hp);
+                    case lastinstr.opcode of
+                      a_block,
+                      a_loop,
+                      a_if,
+                      a_try:
+                        inc(cur_nesting_depth);
+
+                      a_end_block,
+                      a_end_loop,
+                      a_end_if,
+                      a_end_try:
+                        begin
+                          dec(cur_nesting_depth);
+                          if cur_nesting_depth<0 then
+                            internalerror(2021102001);
+                        end;
+
+                      else
+                        ;
+                    end;
+                  end;
+                ait_label:
+                  begin
+                    lbl:=tai_label(hp);
+                    lbl.labsym.nestingdepth:=-1;
+                    nextinstr:=FindNextInstruction(hp);
+
+                    if assigned(nextinstr) and (nextinstr.opcode in [a_end_block,a_end_try,a_end_if]) then
+                      lbl.labsym.nestingdepth:=cur_nesting_depth
+                    else if assigned(lastinstr) and (lastinstr.opcode=a_loop) then
+                      lbl.labsym.nestingdepth:=cur_nesting_depth
+                    else if assigned(lastinstr) and (lastinstr.opcode in [a_end_block,a_end_try,a_end_if]) then
+                      lbl.labsym.nestingdepth:=cur_nesting_depth+1
+                    else if assigned(nextinstr) and (nextinstr.opcode=a_loop) then
+                      lbl.labsym.nestingdepth:=cur_nesting_depth+1;
+                  end;
+                else
+                  ;
+              end;
+              hp:=tai(hp.Next);
+            end;
+          if cur_nesting_depth<>0 then
+            internalerror(2021102002);
+        end;
+
+      procedure resolve_labels_pass2(asmlist: TAsmList);
+        var
+          hp: tai;
+          instr: taicpu;
+          cur_nesting_depth: longint;
+        begin
+          cur_nesting_depth:=0;
+          hp:=tai(asmlist.first);
+          while assigned(hp) do
+            begin
+              if hp.typ=ait_instruction then
+                begin
+                  instr:=taicpu(hp);
+                  case instr.opcode of
+                    a_block,
+                    a_loop,
+                    a_if,
+                    a_try:
+                      inc(cur_nesting_depth);
+
+                    a_end_block,
+                    a_end_loop,
+                    a_end_if,
+                    a_end_try:
+                      begin
+                        dec(cur_nesting_depth);
+                        if cur_nesting_depth<0 then
+                          internalerror(2021102003);
+                      end;
+
+                    a_br,
+                    a_br_if:
+                      begin
+                        if instr.ops<>1 then
+                          internalerror(2021102004);
+                        if instr.oper[0]^.typ=top_ref then
+                          begin
+                            if not assigned(instr.oper[0]^.ref^.symbol) then
+                              internalerror(2021102005);
+                            if (instr.oper[0]^.ref^.base<>NR_NO) or
+                               (instr.oper[0]^.ref^.index<>NR_NO) or
+                               (instr.oper[0]^.ref^.offset<>0) then
+                              internalerror(2021102006);
+                            if instr.oper[0]^.ref^.symbol.nestingdepth<>-1 then
+                              instr.loadconst(0,cur_nesting_depth-instr.oper[0]^.ref^.symbol.nestingdepth)
+                            else
+                              begin
+{$ifndef EXTDEBUG}
+                                internalerror(2021102007);
+{$endif EXTDEBUG}
+                              end;
+                          end;
+                      end;
+
+                    else
+                      ;
+                  end;
+                end;
+              hp:=tai(hp.Next);
+            end;
+          if cur_nesting_depth<>0 then
+            internalerror(2021102008);
+        end;
+
+      procedure resolve_labels(asmlist: TAsmList);
+        begin
+          if not assigned(asmlist) then
+            exit;
+          resolve_labels_pass1(asmlist);
+          resolve_labels_pass2(asmlist);
+        end;
+
       var
        templist : TAsmList;
        l : TWasmLocal;
@@ -403,6 +556,8 @@ implementation
         templist.Free;
 
         replace_local_frame_pointer(aktproccode);
+
+        resolve_labels(aktproccode);
 
         inherited postprocess_code;
       end;

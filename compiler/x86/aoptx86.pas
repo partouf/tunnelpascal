@@ -115,7 +115,7 @@ unit aoptx86;
 
         { Returns true if the reference only refers to ESP or EBP (or their 64-bit equivalents),
           or writes to a global symbol }
-        class function IsRefSafe(const ref: PReference): Boolean; static; inline;
+        class function IsRefSafe(const ref: PReference): Boolean; static;
 
 
         { Returns true if the given MOV instruction can be safely converted to CMOV }
@@ -193,7 +193,7 @@ unit aoptx86;
         procedure ConvertJumpToRET(const p: tai; const ret_p: tai);
 
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
-        procedure SwapMovCmp(var p, hp1: tai);
+        function TrySwapMovCmp(var p, hp1: tai): Boolean;
 
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
@@ -772,6 +772,16 @@ unit aoptx86;
               Result:=([Ch_W0IntFlag,Ch_W1IntFlag,Ch_WFlags]*insprop[taicpu(p1).opcode].Ch)<>[];
             R_SUBFLAGDIRECTION:
               Result:=([Ch_RDirFlag,Ch_W0DirFlag,Ch_W1DirFlag,Ch_WFlags]*insprop[taicpu(p1).opcode].Ch)<>[];
+            R_SUBW,R_SUBD,R_SUBQ:
+              { Everything except the direction bits }
+              Result:=
+                ([Ch_RCarryFlag,Ch_RParityFlag,Ch_RAuxiliaryFlag,Ch_RZeroFlag,Ch_RSignFlag,Ch_ROverflowFlag,
+                Ch_WCarryFlag,Ch_WParityFlag,Ch_WAuxiliaryFlag,Ch_WZeroFlag,Ch_WSignFlag,Ch_WOverflowFlag,
+                Ch_W0CarryFlag,Ch_W0ParityFlag,Ch_W0AuxiliaryFlag,Ch_W0ZeroFlag,Ch_W0SignFlag,Ch_W0OverflowFlag,
+                Ch_W1CarryFlag,Ch_W1ParityFlag,Ch_W1AuxiliaryFlag,Ch_W1ZeroFlag,Ch_W1SignFlag,Ch_W1OverflowFlag,
+                Ch_WUCarryFlag,Ch_WUParityFlag,Ch_WUAuxiliaryFlag,Ch_WUZeroFlag,Ch_WUSignFlag,Ch_WUOverflowFlag,
+                Ch_RWCarryFlag,Ch_RWParityFlag,Ch_RWAuxiliaryFlag,Ch_RWZeroFlag,Ch_RWSignFlag,Ch_RWOverflowFlag
+                ]*insprop[taicpu(p1).opcode].Ch)<>[];
             else
               ;
           end;
@@ -785,6 +795,14 @@ unit aoptx86;
 
 
     function TX86AsmOptimizer.RegModifiedByInstruction(Reg: TRegister; p1: tai): boolean;
+      const
+        WriteOps: array[0..3] of set of TInsChange =
+          ([CH_RWOP1,CH_WOP1,CH_MOP1],
+           [Ch_RWOP2,Ch_WOP2,Ch_MOP2],
+           [Ch_RWOP3,Ch_WOP3,Ch_MOP3],
+           [Ch_RWOP4,Ch_WOP4,Ch_MOP4]);
+      var
+        OperIdx: Integer;
       begin
         Result := False;
         if p1.typ <> ait_instruction then
@@ -909,26 +927,16 @@ unit aoptx86;
                       end;
                 end;
               end;
-            if ([CH_RWOP1,CH_WOP1,CH_MOP1]*Ch<>[]) and reginop(reg,taicpu(p1).oper[0]^) then
-              begin
-                Result := true;
-                exit
-              end;
-            if ([Ch_RWOP2,Ch_WOP2,Ch_MOP2]*Ch<>[]) and reginop(reg,taicpu(p1).oper[1]^) then
-              begin
-                Result := true;
-                exit
-              end;
-            if ([Ch_RWOP3,Ch_WOP3,Ch_MOP3]*Ch<>[]) and reginop(reg,taicpu(p1).oper[2]^) then
-              begin
-                Result := true;
-                exit
-              end;
-            if ([Ch_RWOP4,Ch_WOP4,Ch_MOP4]*Ch<>[]) and reginop(reg,taicpu(p1).oper[3]^) then
-              begin
-                Result := true;
-                exit
-              end;
+
+            for OperIdx := 0 to taicpu(p1).ops - 1 do
+              if (WriteOps[OperIdx]*Ch<>[]) and
+                { The register doesn't get modified inside a reference }
+                (taicpu(p1).oper[OperIdx]^.typ = top_reg) and
+                SuperRegistersEqual(reg,taicpu(p1).oper[OperIdx]^.reg) then
+                begin
+                  Result := true;
+                  exit
+                end;
           end;
       end;
 
@@ -2199,33 +2207,39 @@ unit aoptx86;
         Result := False;
 
         for OperIdx := 0 to p.ops - 1 do
-          if (ReadFlag[OperIdx] in InsProp[p.Opcode].Ch) and
-          { The shift and rotate instructions can only use CL }
-          not (
-            (OperIdx = 0) and
-            { This second condition just helps to avoid unnecessarily
-              calling MatchInstruction for 10 different opcodes }
-            (p.oper[0]^.reg = NR_CL) and
-            MatchInstruction(p, [A_RCL, A_RCR, A_ROL, A_ROR, A_SAL, A_SAR, A_SHL, A_SHLD, A_SHR, A_SHRD], [])
-          ) then
+          if (ReadFlag[OperIdx] in InsProp[p.Opcode].Ch) then
+            begin
+            { The shift and rotate instructions can only use CL }
+              if not (
+                  (OperIdx = 0) and
+                  { This second condition just helps to avoid unnecessarily
+                    calling MatchInstruction for 10 different opcodes }
+                  (p.oper[0]^.reg = NR_CL) and
+                  MatchInstruction(p, [A_RCL, A_RCR, A_ROL, A_ROR, A_SAL, A_SAR, A_SHL, A_SHLD, A_SHR, A_SHRD], [])
+                ) then
+                  Result := ReplaceRegisterInOper(p, OperIdx, AOldReg, ANewReg) or Result;
+            end
+          else if p.oper[OperIdx]^.typ = top_ref then
+            { It's okay to replace registers in references that get written to }
             Result := ReplaceRegisterInOper(p, OperIdx, AOldReg, ANewReg) or Result;
       end;
 
 
-    class function TX86AsmOptimizer.IsRefSafe(const ref: PReference): Boolean; inline;
+    class function TX86AsmOptimizer.IsRefSafe(const ref: PReference): Boolean;
       begin
-        Result :=
-          (ref^.index = NR_NO) and
-          (
-{$ifdef x86_64}
+        with ref^ do
+          Result :=
+            (index = NR_NO) and
             (
-              (ref^.base = NR_RIP) and
-              (ref^.refaddr in [addr_pic, addr_pic_no_got])
-            ) or
+{$ifdef x86_64}
+              (
+                (base = NR_RIP) and
+                (refaddr in [addr_pic, addr_pic_no_got])
+              ) or
 {$endif x86_64}
-            (ref^.base = NR_STACK_POINTER_REG) or
-            (ref^.base = current_procinfo.framepointer)
-          );
+              (base = NR_STACK_POINTER_REG) or
+              (base = current_procinfo.framepointer)
+            );
       end;
 
 
@@ -2416,6 +2430,9 @@ unit aoptx86;
             if RegReadByInstruction(CurrentReg, hp1) and
               DeepMOVOpt(taicpu(p), taicpu(hp1)) then
               begin
+                { A change has occurred, just not in p }
+                Result := True;
+
                 TransferUsedRegs(TmpUsedRegs);
                 UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
 
@@ -3359,11 +3376,30 @@ unit aoptx86;
             { Saves on a large number of dereferences }
             ActiveReg := taicpu(p).oper[1]^.reg;
 
+            TransferUsedRegs(TmpUsedRegs);
+            UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+
             while GetNextInstructionUsingRegCond(hp3,hp2,ActiveReg,CrossJump) and
               { GetNextInstructionUsingRegCond only searches one instruction ahead unless -O3 is specified }
               (hp2.typ=ait_instruction) do
               begin
                 case taicpu(hp2).opcode of
+                  A_POP:
+                    if MatchOperand(taicpu(hp2).oper[0]^,ActiveReg) then
+                      begin
+                        if not CrossJump and
+                          not RegUsedBetween(ActiveReg, p, hp2) then
+                          begin
+                            { We can remove the original MOV since the register
+                              wasn't used between it and its popping from the stack }
+                            DebugMsg(SPeepholeOptimization + 'Mov2Nop 3c done',p);
+                            RemoveCurrentp(p, hp1);
+                            Result := True;
+                            Exit;
+                          end;
+                        { Can't go any further }
+                        Break;
+                      end;
                   A_MOV:
                     if MatchOperand(taicpu(hp2).oper[0]^,ActiveReg) and
                       ((taicpu(p).oper[0]^.typ=top_const) or
@@ -3377,9 +3413,6 @@ unit aoptx86;
                             mov %treg, y
                         }
 
-                        TransferUsedRegs(TmpUsedRegs);
-                        TmpUsedRegs[R_INTREGISTER].Update(tai(p.Next));
-
                         { We don't need to call UpdateUsedRegs for every instruction between
                           p and hp2 because the register we're concerned about will not
                           become deallocated (otherwise GetNextInstructionUsingReg would
@@ -3387,8 +3420,8 @@ unit aoptx86;
 
                         TempRegUsed :=
                           CrossJump { Assume the register is in use if it crossed a conditional jump } or
-                          RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs) or
-                          RegReadByInstruction(ActiveReg, hp1);
+                          RegReadByInstruction(ActiveReg, hp3) or
+                          RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs);
 
                         case taicpu(p).oper[0]^.typ Of
                           top_reg:
@@ -3557,49 +3590,49 @@ unit aoptx86;
                         Exit;
                       end;
                   else
-                    if MatchOpType(taicpu(p), top_reg, top_reg) then
-                      begin
-                        TransferUsedRegs(TmpUsedRegs);
-                        TmpUsedRegs[R_INTREGISTER].Update(tai(p.Next));
-                        if
-                          not RegModifiedByInstruction(taicpu(p).oper[0]^.reg, hp1) and
-                          not RegModifiedBetween(taicpu(p).oper[0]^.reg, hp1, hp2) and
-                          DeepMovOpt(taicpu(p), taicpu(hp2)) then
-                          begin
-                            { Just in case something didn't get modified (e.g. an
-                              implicit register) }
-                            if not RegReadByInstruction(ActiveReg, hp2) and
-                              { If a conditional jump was crossed, do not delete
-                                the original MOV no matter what }
-                              not CrossJump then
-                              begin
-                                TransferUsedRegs(TmpUsedRegs);
-                                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
-                                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+                    { Move down to the MatchOpType if-block below };
+                end;
 
-                                if
-                                  { Make sure the original register isn't still present
-                                    and has been written to (e.g. with SHRX) }
-                                  RegLoadedWithNewValue(ActiveReg, hp2) or
-                                  not RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs) then
-                                  begin
-                                    RegUsedAfterInstruction(ActiveReg, hp2, TmpUsedRegs);
-                                    { We can remove the original MOV }
-                                    DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
-                                    RemoveCurrentp(p, hp1);
-                                    Result := True;
-                                    Exit;
-                                  end
-                                else
-                                  begin
-                                    { See if there's more we can optimise }
-                                    hp3 := hp2;
-                                    Continue;
-                                  end;
+                { Also catches MOV/S/Z instructions that aren't modified }
+                if taicpu(p).oper[0]^.typ = top_reg then
+                  begin
+                    CurrentReg := taicpu(p).oper[0]^.reg;
+                    if
+                      not RegModifiedByInstruction(CurrentReg, hp3) and
+                      not RegModifiedBetween(CurrentReg, hp3, hp2) and
+                      DeepMOVOpt(taicpu(p), taicpu(hp2)) then
+                      begin
+                        Result := True;
+
+                        { Just in case something didn't get modified (e.g. an
+                          implicit register).  Also, if it does read from this
+                          register, then there's no longer an advantage to
+                          changing the register on subsequent instructions.}
+                        if not RegReadByInstruction(ActiveReg, hp2) then
+                          begin
+                            { If a conditional jump was crossed, do not delete
+                              the original MOV no matter what }
+                            if not CrossJump and
+                              { RegEndOfLife returns True if the register is
+                                deallocated before the next instruction or has
+                                been loaded with a new value }
+                              RegEndOfLife(ActiveReg, taicpu(hp2)) then
+                              begin
+                                { We can remove the original MOV }
+                                DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
+                                RemoveCurrentp(p, hp1);
+                                Exit;
+                              end;
+
+                            if not RegModifiedByInstruction(ActiveReg, hp2) then
+                              begin
+                                { See if there's more we can optimise }
+                                hp3 := hp2;
+                                Continue;
                               end;
                           end;
                       end;
-                end;
+                  end;
 
                 { Break out of the while loop under normal circumstances }
                 Break;
@@ -4148,33 +4181,8 @@ unit aoptx86;
         Result := False;
 
         if GetNextInstruction(p, hp1) and
-          MatchInstruction(hp1,A_MOV,[]) and
-          (
-            (taicpu(p).oper[0]^.typ <> top_reg) or
-            not RegInInstruction(taicpu(p).oper[0]^.reg, hp1)
-          ) and
-          (
-            (taicpu(p).oper[1]^.typ <> top_reg) or
-            not RegInInstruction(taicpu(p).oper[1]^.reg, hp1)
-          ) and
-          (
-            { Make sure the register written to doesn't appear in the
-              test instruction (in a reference, say) }
-            (taicpu(hp1).oper[1]^.typ <> top_reg) or
-            not RegInInstruction(taicpu(hp1).oper[1]^.reg, p)
-          ) then
+          TrySwapMovCmp(p, hp1) then
           begin
-            { If we have something like:
-                test %reg1,%reg1
-                mov  0,%reg2
-
-              And no registers are shared (the two %reg1's can be different, as
-              long as neither of them are also %reg2), move the MOV command to
-              before the comparison as this means it can be optimised without
-              worrying about the FLAGS register. (This combination is generated
-              by "J(c)Mov1JmpMov0 -> Set(~c)", among other things).
-            }
-            SwapMovCmp(p, hp1);
             Result := True;
             Exit;
           end;
@@ -5707,32 +5715,8 @@ unit aoptx86;
                end;
            end;
 
-         if MatchInstruction(hp1,A_MOV,[]) and
-           (
-             (taicpu(p).oper[0]^.typ <> top_reg) or
-             not RegInInstruction(taicpu(p).oper[0]^.reg, hp1)
-           ) and
-           (
-             (taicpu(p).oper[1]^.typ <> top_reg) or
-             not RegInInstruction(taicpu(p).oper[1]^.reg, hp1)
-           ) and
-           (
-             { Make sure the register written to doesn't appear in the
-               cmp instruction (in a reference, say) }
-             (taicpu(hp1).oper[1]^.typ <> top_reg) or
-             not RegInInstruction(taicpu(hp1).oper[1]^.reg, p)
-           ) then
+         if TrySwapMovCmp(p, hp1) then
            begin
-             { If we have something like:
-                 cmp ###,%reg1
-                 mov 0,%reg2
-
-               And no registers are shared, move the MOV command to before the
-               comparison as this means it can be optimised without worrying
-               about the FLAGS register. (This combination is generated by
-               "J(c)Mov1JmpMov0 -> Set(~c)", among other things).
-             }
-             SwapMovCmp(p, hp1);
              Result := True;
              Exit;
            end;
@@ -6501,11 +6485,86 @@ unit aoptx86;
     end;
 
 
-  procedure TX86AsmOptimizer.SwapMovCmp(var p, hp1: tai);
+  function TX86AsmOptimizer.TrySwapMovCmp(var p, hp1: tai): Boolean;
     var
       hp2: tai;
       X: Integer;
+    const
+      WriteOp: array[0..3] of set of TInsChange = (
+        [Ch_Wop1, Ch_RWop1, Ch_Mop1],
+        [Ch_Wop2, Ch_RWop2, Ch_Mop2],
+        [Ch_Wop3, Ch_RWop3, Ch_Mop3],
+        [Ch_Wop4, Ch_RWop4, Ch_Mop4]);
+
+      RegWriteFlags: array[0..7] of set of TInsChange = (
+        { The order is important: EAX, ECX, EDX, EBX, ESI, EDI, EBP, ESP }
+        [Ch_WEAX, Ch_RWEAX, Ch_MEAX{$ifdef x86_64}, Ch_WRAX, Ch_RWRAX, Ch_MRAX{$endif x86_64}],
+        [Ch_WECX, Ch_RWECX, Ch_MECX{$ifdef x86_64}, Ch_WRCX, Ch_RWRCX, Ch_MRCX{$endif x86_64}],
+        [Ch_WEDX, Ch_RWEDX, Ch_MEDX{$ifdef x86_64}, Ch_WRDX, Ch_RWRDX, Ch_MRDX{$endif x86_64}],
+        [Ch_WEBX, Ch_RWEBX, Ch_MEBX{$ifdef x86_64}, Ch_WRBX, Ch_RWRBX, Ch_MRBX{$endif x86_64}],
+        [Ch_WESI, Ch_RWESI, Ch_MESI{$ifdef x86_64}, Ch_WRSI, Ch_RWRSI, Ch_MRSI{$endif x86_64}],
+        [Ch_WEDI, Ch_RWEDI, Ch_MEDI{$ifdef x86_64}, Ch_WRDI, Ch_RWRDI, Ch_MRDI{$endif x86_64}],
+        [Ch_WEBP, Ch_RWEBP, Ch_MEBP{$ifdef x86_64}, Ch_WRBP, Ch_RWRBP, Ch_MRBP{$endif x86_64}],
+        [Ch_WESP, Ch_RWESP, Ch_MESP{$ifdef x86_64}, Ch_WRSP, Ch_RWRSP, Ch_MRSP{$endif x86_64}]);
+
     begin
+      { If we have something like:
+          cmp ###,%reg1
+          mov 0,%reg2
+
+        And no modified registers are shared, move the instruction to before
+        the comparison as this means it can be optimised without worrying
+        about the FLAGS register. (CMP/MOV is generated by
+        "J(c)Mov1JmpMov0 -> Set(~c)", among other things).
+
+        As long as the second instruction doesn't use the flags or one of the
+        registers used by CMP or TEST (also check any references that use the
+        registers), then it can be moved prior to the comparison.
+      }
+
+      Result := False;
+      if (hp1.typ <> ait_instruction) or
+        taicpu(hp1).is_jmp or
+        RegInInstruction(NR_DEFAULTFLAGS, hp1) then
+        Exit;
+
+      { NOP is a pipeline fence, likely marking the beginning of the function
+        epilogue, so drop out.  Similarly, drop out if POP or RET are
+        encountered }
+      if MatchInstruction(hp1, A_NOP, A_POP, []) then
+        Exit;
+
+      if (taicpu(hp1).opcode = A_MOVSS) and
+        (taicpu(hp1).ops = 0) then
+        { Wrong MOVSS }
+        Exit;
+
+      { Check for writes to specific registers first }
+      { EAX, ECX, EDX, EBX, ESI, EDI, EBP, ESP in that order }
+      for X := 0 to 7 do
+        if (RegWriteFlags[X] * InsProp[taicpu(hp1).opcode].Ch <> [])
+          and RegInInstruction(newreg(R_INTREGISTER, TSuperRegister(X), R_SUBWHOLE), p) then
+          Exit;
+
+      for X := 0 to taicpu(hp1).ops - 1 do
+        begin
+          { Check to see if this operand writes to something }
+          if ((WriteOp[X] * InsProp[taicpu(hp1).opcode].Ch) <> []) and
+            { And matches something in the CMP/TEST instruction }
+            (
+              MatchOperand(taicpu(hp1).oper[X]^, taicpu(p).oper[0]^) or
+              MatchOperand(taicpu(hp1).oper[X]^, taicpu(p).oper[1]^) or
+              (
+                { If it's a register, make sure the register written to doesn't
+                  appear in the cmp instruction as part of a reference }
+                (taicpu(hp1).oper[X]^.typ = top_reg) and
+                RegInInstruction(taicpu(hp1).oper[X]^.reg, p)
+              )
+            ) then
+            Exit;
+        end;
+
+      { The instruction can be safely moved }
       asml.Remove(hp1);
 
       { Try to insert after the last instructions where the FLAGS register is not yet in use }
@@ -6514,9 +6573,9 @@ unit aoptx86;
       else
         asml.InsertAfter(hp1, hp2);
 
-      DebugMsg(SPeepholeOptimization + 'Swapped ' + debug_op2str(taicpu(p).opcode) + ' and mov instructions to improve optimisation potential', hp1);
+      DebugMsg(SPeepholeOptimization + 'Swapped ' + debug_op2str(taicpu(p).opcode) + ' and ' + debug_op2str(taicpu(hp1).opcode) + ' instructions to improve optimisation potential', hp1);
 
-      for X := 0 to 1 do
+      for X := 0 to taicpu(hp1).ops - 1 do
         case taicpu(hp1).oper[X]^.typ of
           top_reg:
             AllocRegBetween(taicpu(hp1).oper[X]^.reg, hp1, p, UsedRegs);
@@ -6530,6 +6589,12 @@ unit aoptx86;
           else
             ;
         end;
+
+      if taicpu(hp1).opcode = A_LEA then
+        { The flags will be overwritten by the CMP/TEST instruction }
+        ConvertLEA(taicpu(hp1));
+
+      Result := True;
     end;
 
 
