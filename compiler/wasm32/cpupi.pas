@@ -36,6 +36,10 @@ interface
 
     tcpuprocinfo=class(tcgprocinfo)
     public
+      { label to the nearest local exception handler }
+      CurrRaiseLabel : tasmlabel;
+
+      constructor create(aparent: tprocinfo); override;
       function calc_stackframe_size : longint;override;
       procedure setup_eh; override;
       procedure generate_exit_label(list: tasmlist); override;
@@ -213,7 +217,6 @@ implementation
         thlcgwasm(hlcg).a_cmp_const_reg_stack(list, fpc_catches_res.def, OC_NE, 0, exceptloc.register);
 
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_if));
-        thlcgwasm(hlcg).incblock;
         thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,1);
 
         paraloc1.done;
@@ -225,7 +228,6 @@ implementation
     class procedure twasmexceptionstatehandler_nativeexceptions.end_catch(list: TAsmList);
       begin
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_if));
-        thlcgwasm(hlcg).decblock;
       end;
 
 {*****************************************************************************
@@ -298,7 +300,6 @@ implementation
         thlcgwasm(hlcg).a_cmp_const_reg_stack(list, fpc_catches_res.def, OC_NE, 0, exceptloc.register);
 
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_if));
-        thlcgwasm(hlcg).incblock;
         thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,1);
 
         paraloc1.done;
@@ -310,12 +311,49 @@ implementation
     class procedure twasmexceptionstatehandler_bfexceptions.end_catch(list: TAsmList);
       begin
         current_asmdata.CurrAsmList.concat(taicpu.op_none(a_end_if));
-        thlcgwasm(hlcg).decblock;
+      end;
+
+{*****************************************************************************
+                             twasmblockitem
+*****************************************************************************}
+
+    type
+
+      { twasmblockitem }
+
+      twasmblockitem = class(TLinkedListItem)
+        blockstart: taicpu;
+        elseinstr: taicpu;
+        constructor Create(ablockstart: taicpu);
+      end;
+
+      constructor twasmblockitem.Create(ablockstart: taicpu);
+        begin
+          blockstart:=ablockstart;
+        end;
+
+{*****************************************************************************
+                             twasmblockstack
+*****************************************************************************}
+
+    type
+
+      { twasmblockstack }
+
+      twasmblockstack = class(tlinkedlist)
+
       end;
 
 {*****************************************************************************
                            tcpuprocinfo
 *****************************************************************************}
+
+    constructor tcpuprocinfo.create(aparent: tprocinfo);
+      begin
+        inherited create(aparent);
+        if ts_wasm_bf_exceptions in current_settings.targetswitches then
+          current_asmdata.getjumplabel(CurrRaiseLabel);
+      end;
 
     function tcpuprocinfo.calc_stackframe_size: longint;
       begin
@@ -340,7 +378,6 @@ implementation
     procedure tcpuprocinfo.generate_exit_label(list: tasmlist);
       begin
         list.concat(taicpu.op_none(a_end_block));
-        thlcgwasm(hlcg).decblock;
         inherited generate_exit_label(list);
       end;
 
@@ -405,7 +442,10 @@ implementation
           lastinstr, nextinstr: taicpu;
           cur_nesting_depth: longint;
           lbl: tai_label;
+          blockstack: twasmblockstack;
+          cblock: twasmblockitem;
         begin
+          blockstack:=twasmblockstack.create;
           cur_nesting_depth:=0;
           lastinstr:=nil;
           hp:=tai(asmlist.first);
@@ -420,7 +460,20 @@ implementation
                       a_loop,
                       a_if,
                       a_try:
-                        inc(cur_nesting_depth);
+                        begin
+                          blockstack.Concat(twasmblockitem.create(lastinstr));
+                          inc(cur_nesting_depth);
+                        end;
+
+                      a_else:
+                        begin
+                          cblock:=twasmblockitem(blockstack.Last);
+                          if (cblock=nil) or
+                             (cblock.blockstart.opcode<>a_if) or
+                             assigned(cblock.elseinstr) then
+                            internalerror(2021102302);
+                          cblock.elseinstr:=lastinstr;
+                        end;
 
                       a_end_block,
                       a_end_loop,
@@ -430,6 +483,14 @@ implementation
                           dec(cur_nesting_depth);
                           if cur_nesting_depth<0 then
                             internalerror(2021102001);
+                          cblock:=twasmblockitem(blockstack.GetLast);
+                          if (cblock=nil) or
+                             ((cblock.blockstart.opcode=a_block) and (lastinstr.opcode<>a_end_block)) or
+                             ((cblock.blockstart.opcode=a_loop) and (lastinstr.opcode<>a_end_loop)) or
+                             ((cblock.blockstart.opcode=a_if) and (lastinstr.opcode<>a_end_if)) or
+                             ((cblock.blockstart.opcode=a_try) and (lastinstr.opcode<>a_end_try)) then
+                            internalerror(2021102301);
+                          cblock.free;
                         end;
 
                       else
@@ -458,6 +519,7 @@ implementation
             end;
           if cur_nesting_depth<>0 then
             internalerror(2021102002);
+          blockstack.free;
         end;
 
       procedure resolve_labels_pass2(asmlist: TAsmList);
@@ -503,7 +565,8 @@ implementation
                                (instr.oper[0]^.ref^.index<>NR_NO) or
                                (instr.oper[0]^.ref^.offset<>0) then
                               internalerror(2021102006);
-                            if instr.oper[0]^.ref^.symbol.nestingdepth<>-1 then
+                            if (instr.oper[0]^.ref^.symbol.nestingdepth<>-1) and
+                               (cur_nesting_depth>=instr.oper[0]^.ref^.symbol.nestingdepth) then
                               instr.loadconst(0,cur_nesting_depth-instr.oper[0]^.ref^.symbol.nestingdepth)
                             else
                               begin
