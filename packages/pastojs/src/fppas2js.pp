@@ -1415,7 +1415,8 @@ type
     coRTLVersionCheckMain, // insert rtl version check into main
     coRTLVersionCheckSystem, // insert rtl version check into system unit init
     coRTLVersionCheckUnit, // insert rtl version check into every unit init
-    coShortRefGlobals // use short local variables for global identifiers
+    coShortRefGlobals, // use short local variables for global identifiers
+    coTruncateIntegersOnOverflow // whether to truncate integers in case of overflow or not) is not
     );
   TPasToJsConverterOptions = set of TPasToJsConverterOption;
 const
@@ -3016,6 +3017,8 @@ begin
     HandleBoolean(coUseStrict,true);
   'jsshortrefglobals':
     HandleBoolean(coShortRefGlobals,true);
+  'jstruncateintegersonoverflow':
+    HandleBoolean(coTruncateIntegersOnOverflow,true);
   else
     DoLog(mtWarning,nWarnIllegalCompilerDirectiveX,sWarnIllegalCompilerDirectiveX,['optimization '+OptName]);
   end;
@@ -5755,9 +5758,32 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
     end;
   end;
 
+  function GetPrimitiveExprSmallestIntegerBaseTypeNeg(PrimExpr : TPrimitiveExpr) : TResolverBaseType;
+  var
+    Value: TResEvalValue;
+    Int: TMaxPrecInt;
+  begin
+    Value:=Eval(PrimExpr,[]);
+    if Value=nil then
+      RaiseInternalError(20211011142903);
+    try
+      case Value.Kind of
+        revkInt:
+        begin
+          Int:=-(TResEvalInt(Value).Int + 1); // not
+          Result:=GetSmallestIntegerBaseType(Int,Int);
+        end;
+        else
+      	  RaiseInternalError(20211011142904);
+      end;
+    finally
+      ReleaseEvalValue(Value);
+    end;
+  end;
+
   procedure SetIntValueExpr(Flags: TPasResolverResultFlags);
   var
-    LeftBaseType, RightBaseType: TResolverBaseType;
+    LeftBaseType, RightBaseType, LeftBaseTypeNeg, RightBaseTypeNeg: TResolverBaseType;
   begin
     {$IFDEF VerbosePas2JS}
     writeln('TPas2JSResolver.ComputeBinaryExprRes LeftClass=',GetClassAncestorsDbg(TPasClassType(LeftResolved.LoTypeEl)),', RightClass=',GetClassAncestorsDbg(TPasClassType(RightResolved.LoTypeEl)),', OpCode: ',OpcodeStrings[Bin.OpCode]);
@@ -5765,6 +5791,8 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
 
     LeftBaseType := LeftResolved.BaseType;
     RightBaseType := RightResolved.BaseType;
+    LeftBaseTypeNeg := btNone;
+    RightBaseTypeNeg := btNone;
     if Bin.OpCode in [eopAdd, eopSubtract, eopMultiply, eopDiv, eopMod, eopPower] then
     begin
       if (RightBaseType = btLongWord) and (LeftBaseType = btLongInt) and (Bin.Left is TPrimitiveExpr) and
@@ -5826,8 +5854,9 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
          (LeftResolved.ExprEl is TPrimitiveExpr) and (TPrimitiveExpr(LeftResolved.ExprEl).Kind = pekNumber) then
       begin
         LeftBaseType := GetPrimitiveExprSmallestIntegerBaseType(TPrimitiveExpr(LeftResolved.ExprEl));
+        LeftBaseTypeNeg := GetPrimitiveExprSmallestIntegerBaseTypeNeg(TPrimitiveExpr(LeftResolved.ExprEl));
         {$IFDEF VerbosePas2JS}
-        writeln('TPas2JSResolver.ComputeBinaryExprRes Left is Primitive type=',BaseTypeNames[LeftBaseType]);
+        writeln('TPas2JSResolver.ComputeBinaryExprRes Left is Primitive type=',BaseTypeNames[LeftBaseType],' type2=',BaseTypeNames[LeftBaseTypeNeg]);
         {$ENDIF}
       end;
 
@@ -5835,8 +5864,9 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
          (RightResolved.ExprEl is TPrimitiveExpr) and (TPrimitiveExpr(RightResolved.ExprEl).Kind = pekNumber) then
       begin
         RightBaseType := GetPrimitiveExprSmallestIntegerBaseType(TPrimitiveExpr(RightResolved.ExprEl));
+        RightBaseTypeNeg := GetPrimitiveExprSmallestIntegerBaseTypeNeg(TPrimitiveExpr(RightResolved.ExprEl));
         {$IFDEF VerbosePas2JS}
-        writeln('TPas2JSResolver.ComputeBinaryExprRes Right is Primitive type=',BaseTypeNames[RightBaseType]);
+        writeln('TPas2JSResolver.ComputeBinaryExprRes Right is Primitive type=',BaseTypeNames[RightBaseType],' type2=',BaseTypeNames[RightBaseTypeNeg]);
         {$ENDIF}
       end;
 
@@ -5847,12 +5877,18 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
          (RightBaseType in [btByte, btWord]) then
         SetBaseType(btWord,Flags)
       else
-      if (LeftBaseType in [btByte, btShortInt, btSmallInt]) and
-         (RightBaseType in [btByte, btShortInt, btSmallInt]) then
+      // bitwise operation of ShortInt with constant gives ShortInt
+      if ((LeftBaseType = btShortInt) and (Bin.Right is TPrimitiveExpr) and ((RightBaseType = btShortInt) or (RightBaseTypeNeg = btShortInt))) or
+         ((RightBaseType = btShortInt) and (Bin.Left is TPrimitiveExpr) and ((LeftBaseType = btShortInt) or (LeftBaseTypeNeg = btShortInt))) then
+        SetBaseType(btShortInt,Flags)
+      else
+      // also taking into account the case when constant could be either Word or SmallInt
+      if ((LeftBaseType in [btByte, btShortInt, btSmallInt]) or (LeftBaseTypeNeg = btSmallInt)) and
+         ((RightBaseType in [btByte, btShortInt, btSmallInt]) or (RightBaseTypeNeg = btSmallInt)) then
         SetBaseType(btSmallInt,Flags)
       else 
-      if (LeftBaseType in [btByte, btShortInt, btWord, btSmallInt, btLongInt]) and
-         (RightBaseType in [btByte, btShortInt, btWord, btSmallInt, btLongInt]) then
+      if ((LeftBaseType in [btByte, btShortInt, btWord, btSmallInt, btLongInt]) or (LeftBaseTypeNeg = btLongInt)) and
+         ((RightBaseType in [btByte, btShortInt, btWord, btSmallInt, btLongInt]) or (RightBaseTypeNeg = btLongInt)) then
         SetBaseType(btLongInt,Flags)
       else
       if (LeftBaseType in [btByte, btShortInt, btWord, btSmallInt, btLongInt, btLongWord]) and
@@ -5870,6 +5906,7 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
         // default behavior
         SetBaseType(LeftBaseType, Flags);
     end;
+
     {$IFDEF VerbosePas2JS}
     writeln('TPas2JSResolver.ComputeBinaryExprRes Result=',GetClassAncestorsDbg(TPasClassType(ResolvedEl.LoTypeEl)));
     {$endif}
@@ -8911,7 +8948,6 @@ begin
   if El is TJSLiteral then
     exit(IsLiteralInteger(El, Number));
 
-  // TODO: check overflow
   if El is TJSUnaryMinusExpression then
   begin
     Result := IsLiteralIntegerExpr(TJSUnaryMinusExpression(El).A, Number);
@@ -11225,6 +11261,47 @@ begin
   writeln('TPasToJSConverter.CreateIntegerBitFixAuto Value=',Value.ClassName,', El.Parent=', El.Parent.ClassName, ', Context=', AContext.ClassName);
   {$ENDIF}
   ToType := btNone;
+
+  if not (coTruncateIntegersOnOverflow in Options) then
+  begin
+    // for backward compatibility applying fix only for LongWord type and bitwise operations
+    if El is TUnaryExpr then
+    begin
+      UnaryEl := TUnaryExpr(El);
+      if UnaryEl.OpCode = eopNot then
+      begin
+        if aResolver <> nil then
+        begin
+          aResolver.ComputeElement(UnaryEl.Operand,ResolvedEl,[]);
+          ToType := ResolvedEl.BaseType;
+        end;
+
+        if ToType = btLongWord then
+          Result := CreateLongwordBitFix(El, Result);
+      end;
+    end
+    else
+    if El is TBinaryExpr then
+    begin
+      BinaryEl := TBinaryExpr(El);
+      if BinaryEl.OpCode in [eopAnd, eopOr, eopXor, eopShr, eopShl] then
+      begin
+        if aResolver <> nil then
+        begin
+          aResolver.ComputeElement(BinaryEl.Left,LeftResolved,[]);
+          aResolver.ComputeElement(BinaryEl.Right,RightResolved,[]);
+          aResolver.ComputeBinaryExprRes(BinaryEl,ResolvedEl,[],LeftResolved,RightResolved);
+          ToType := ResolvedEl.BaseType;
+        end;
+
+        if ToType = btLongWord then
+          Result := CreateLongwordBitFix(El, Result);
+      end;
+    end;
+
+    exit;
+  end;
+
   NeedBitFix := false;
   ParentWillFixOverflow := false;
   ParentAllowSignificantOverflow := false;
@@ -11246,8 +11323,8 @@ begin
           ToType := ResolvedEl.BaseType;
         end;
 
-        // for Byte and Word the "not" operation is implemented using bitwise xor, so there is no need to fix bits but also it won't fix the overflow
-        if not (ToType in [btNone, btByte, btWord]) then
+        // for Byte, Word, ShortInt, SmallInt there is no need to fix bits but also it won't fix the overflow
+        if ToType in [btLongInt, btLongWord] then
         begin
           ParentWillFixOverflow := true;
           ParentAllowSignificantOverflow := true;
@@ -11351,8 +11428,8 @@ begin
         end
         else // UnaryEl.OpCode = eopNot
         begin
-          // no need to fix value for "not" operation for Byte, Word and LongInt. Also overflow automatically will be fixed for LongInt.
-          if (UnaryEl.OpCode = eopNot) and (ToType in [btShortInt,btSmallInt,btLongWord]) then
+          // fixing value for "not" operation only for LongWord. Also overflow automatically will be fixed for LongInt.
+          if (UnaryEl.OpCode = eopNot) and (ToType = btLongWord) then
             NeedBitFix := true;
         end;
       end;
@@ -11362,7 +11439,8 @@ begin
   if El is TBinaryExpr then
   begin
     BinaryEl := TBinaryExpr(El);
-    if (ToType = btNone) and (aResolver <> nil) then
+    if (ToType = btNone) and (aResolver <> nil) and
+       (BinaryEl.OpCode in [eopMultiply, eopPower, eopAdd, eopSubtract, eopAnd, eopOr, eopXor, eopShr, eopShl]) then
     begin
       aResolver.ComputeElement(BinaryEl.Left,LeftResolved,[]);
       aResolver.ComputeElement(BinaryEl.Right,RightResolved,[]);
