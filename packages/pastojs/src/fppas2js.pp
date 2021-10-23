@@ -1416,7 +1416,7 @@ type
     coRTLVersionCheckSystem, // insert rtl version check into system unit init
     coRTLVersionCheckUnit, // insert rtl version check into every unit init
     coShortRefGlobals, // use short local variables for global identifiers
-    coTruncateIntegersOnOverflow // whether to truncate integers in case of overflow or not) is not
+    coTruncateIntegersOnOverflow // whether to truncate integers in case of overflow
     );
   TPasToJsConverterOptions = set of TPasToJsConverterOption;
 const
