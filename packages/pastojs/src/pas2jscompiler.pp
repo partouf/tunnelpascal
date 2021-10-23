@@ -139,6 +139,7 @@ type
     coKeepNotUsedPrivates, // -O-
     coKeepNotUsedDeclarationsWPO, // -O-
     coShortRefGlobals, // -O2
+    coTruncateIntegersOnOverflow,
     // source map
     coSourceMapCreate,
     coSourceMapInclude,
@@ -200,6 +201,7 @@ const
     'Keep not used private declarations',
     'Keep not used declarations (WPO)',
     'Create short local variables for globals',
+    'Truncate integers in case of overflow',
     'Create source map',
     'Include Pascal sources in source map',
     'Do not shorten filenames in source map',
@@ -1066,6 +1068,11 @@ begin
     Include(Result,fppas2js.coEnumNumbers);
   if (coShortRefGlobals in Compiler.Options) or IsUnitReadFromPCU then
     Include(Result,fppas2js.coShortRefGlobals);
+
+  if coTruncateIntegersOnOverflow in Compiler.Options then
+    Include(Result,fppas2js.coTruncateIntegersOnOverflow)
+  else
+    Exclude(Result,fppas2js.coTruncateIntegersOnOverflow);
 
   if coLowerCase in Compiler.Options then
     Include(Result,fppas2js.coLowerCase)
@@ -3827,6 +3834,7 @@ begin
      'removenotusedprivates': SetOption(coKeepNotUsedPrivates,not Enable);
      'removenotuseddeclarations': SetOption(coKeepNotUsedDeclarationsWPO,not Enable);
      'shortrefglobals': SetOption(coShortRefGlobals,Enable);
+     'truncateintegersonoverflow': SetOption(coTruncateIntegersOnOverflow,Enable);
     else
       Log.LogMsgIgnoreFilter(nUnknownOptimizationOption,[QuoteStr(aValue)]);
     end;
