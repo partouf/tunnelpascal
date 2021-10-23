@@ -261,7 +261,8 @@ const
     'RTLVersionCheckMain',
     'RTLVersionCheckSystem',
     'RTLVersionCheckUnit',
-    'ShortRefGlobals'
+    'ShortRefGlobals',
+    'TruncateIntegersOnOverflow'
     );
 
   PCUDefaultTargetPlatform = PlatformBrowser;
