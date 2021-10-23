@@ -5862,7 +5862,11 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
     LeftBaseType, RightBaseType, LeftBaseTypeNeg, RightBaseTypeNeg: TResolverBaseType;
   begin
     {$IFDEF VerbosePas2JS}
-    writeln('TPas2JSResolver.ComputeBinaryExprRes LeftClass=',GetClassAncestorsDbg(TPasClassType(LeftResolved.LoTypeEl)),', RightClass=',GetClassAncestorsDbg(TPasClassType(RightResolved.LoTypeEl)),', OpCode: ',OpcodeStrings[Bin.OpCode]);
+    writeln('TPas2JSResolver.ComputeBinaryExprRes OpCode: ',OpcodeStrings[Bin.OpCode]);
+    if LeftResolved.LoTypeEl is TPasClassType then
+      writeln('  LeftClass=',GetClassAncestorsDbg(TPasClassType(LeftResolved.LoTypeEl)));
+    if RightResolved.LoTypeEl is TPasClassType then
+      writeln('  RightClass=',GetClassAncestorsDbg(TPasClassType(RightResolved.LoTypeEl)));
     {$ENDIF}
 
     LeftBaseType := LeftResolved.BaseType;
@@ -5984,7 +5988,8 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
     end;
 
     {$IFDEF VerbosePas2JS}
-    writeln('TPas2JSResolver.ComputeBinaryExprRes Result=',GetClassAncestorsDbg(TPasClassType(ResolvedEl.LoTypeEl)));
+    if ResolvedEl.LoTypeEl is TPasClassType then
+      writeln('TPas2JSResolver.ComputeBinaryExprRes Result=',GetClassAncestorsDbg(TPasClassType(ResolvedEl.LoTypeEl)));
     {$endif}
   end;
 
@@ -11387,7 +11392,9 @@ begin
   Result := Value;
 
   {$IFDEF VerbosePas2JS}
-  writeln('TPasToJSConverter.CreateIntegerBitFixAuto Value=',Value.ClassName,', El.Parent=', El.Parent.ClassName, ', Context=', AContext.ClassName);
+  writeln('TPasToJSConverter.CreateIntegerBitFixAuto Value=',Value.ClassName, ', Context=', AContext.ClassName);
+  if El.Parent <> nil then
+    writeln('  El.Parent=', El.Parent.ClassName);
   {$ENDIF}
   ToType := btNone;
 
@@ -11413,7 +11420,7 @@ begin
     if El is TBinaryExpr then
     begin
       BinaryEl := TBinaryExpr(El);
-      if BinaryEl.OpCode in [eopAnd, eopOr, eopXor, eopShr, eopShl] then
+      if BinaryEl.OpCode in [eopAnd, eopOr, eopXor, eopShl] then
       begin
         if aResolver <> nil then
         begin
@@ -14260,7 +14267,8 @@ begin
           TJSString(TempRefObjGetterName));
         // add "b"
         AddJS.B:=ValueJS;
-        if ExprResolved.BaseType in [btByte,btShortInt,btWord,btSmallInt,btLongInt,btLongWord] then
+        if (coTruncateIntegersOnOverflow in Options) and
+           (ExprResolved.BaseType in [btByte,btShortInt,btWord,btSmallInt,btLongInt,btLongWord]) then
           Call.AddArg(CreateIntegerBitFix(El,AddJS,ExprResolved.BaseType))
         else
           Call.AddArg(AddJS);
@@ -14297,7 +14305,8 @@ begin
         RaiseInconsistency(20180622211919,El);
       end;
 
-    if ExprResolved.BaseType in [btByte,btShortInt,btWord,btSmallInt,btLongInt,btLongWord] then
+    if (coTruncateIntegersOnOverflow in Options) and
+       (ExprResolved.BaseType in [btByte,btShortInt,btWord,btSmallInt,btLongInt,btLongWord]) then
     begin
       // convert  inc(avar,b)  to  a=a+b
 

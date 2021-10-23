@@ -3517,7 +3517,7 @@ begin
   Add('  f = high(word);');
   Add('begin');
   ConvertProgram;
-  CheckSource('TestVarBaseTypes',
+  CheckSource('TestConstBaseTypes',
     LinesToStr([
     'this.i=3;',
     'this.s="foo";',
@@ -3830,8 +3830,8 @@ begin
     'this.HiWord2 = Math.floor(-0x1234CDEF / 4294967296) >>> 0;',
     'this.lo4 = 0x34 & 0xF;',
     'this.hi4 = (0x34 >> 4) & 0xF;',
-    'this.lo5 = (((-0x34 & 255) << 24) >> 24) & 0xFF;',
-    'this.hi5 = ((((-0x34 & 255) << 24) >> 24) >> 8) & 0xFF;',
+    'this.lo5 = -0x34 & 0xFF;',
+    'this.hi5 = (-0x34 >> 8) & 0xFF;',
     'this.lo6 = 0x123456789ABCD >>> 0;',
     'this.hi6 = 74565 >>> 0;',
     'this.lo7 = -0x123456789ABCD >>> 0;',
@@ -4153,9 +4153,9 @@ begin
     '$mod.c = $mod.a >>> 24;',
     '$mod.c = $mod.a >>> $mod.b;',
     '$mod.c = ((($mod.b & $mod.c) >>> 0) | (($mod.a & $mod.b) >>> 0)) >>> 0;',
-    '$mod.c = $mod.i & $mod.a;',
-    '$mod.c = $mod.i | $mod.a;',
-    '$mod.c = $mod.i ^ $mod.a;',
+    '$mod.c = ($mod.i & $mod.a) >>> 0;',
+    '$mod.c = ($mod.i | $mod.a) >>> 0;',
+    '$mod.c = ($mod.i ^ $mod.a) >>> 0;',
     '']));
 end;
 
@@ -8145,7 +8145,7 @@ begin
     '$mod.w = $mod.i & 65535;',
     '$mod.sm = (($mod.i & 65535) << 16) >> 16;',
     '$mod.lw = $mod.i >>> 0;',
-    '$mod.li = $mod.i & 0xFFFFFFFF;',
+    '$mod.li = $mod.i | 0;',
     '']));
 end;
 
@@ -8724,7 +8724,7 @@ begin
     '$mod.c = "\uFFFF";',
     '$mod.i = $mod.c.charCodeAt() & 255;',
     '$mod.i = $mod.c.charCodeAt();',
-    '$mod.i = $mod.c.charCodeAt() & 0xFFFFFFFF;',
+    '$mod.i = $mod.c.charCodeAt() | 0;',
     '']));
 end;
 
