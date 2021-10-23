@@ -140,6 +140,7 @@ type
     coKeepNotUsedDeclarationsWPO, // -O-
     coShortRefGlobals, // -O2
     coObfuscateLocalIdentifiers, // -O2
+    coTruncateIntegersOnOverflow,
     // source map
     coSourceMapCreate,
     coSourceMapInclude,
@@ -203,6 +204,7 @@ const
     'Keep not used declarations (WPO)',
     'Create short local variables for globals',
     'Obfuscate local identifiers',
+    'Truncate integers in case of overflow',
     'Create source map',
     'Include Pascal sources in source map',
     'Do not shorten filenames in source map',
@@ -1071,6 +1073,11 @@ begin
     Include(Result,fppas2js.coShortRefGlobals);
   if coObfuscateLocalIdentifiers in Compiler.Options then
     Include(Result,fppas2js.coObfuscateLocalIdentifiers);
+
+  if coTruncateIntegersOnOverflow in Compiler.Options then
+    Include(Result,fppas2js.coTruncateIntegersOnOverflow)
+  else
+    Exclude(Result,fppas2js.coTruncateIntegersOnOverflow);
 
   if coLowerCase in Compiler.Options then
     Include(Result,fppas2js.coLowerCase)
@@ -3833,6 +3840,7 @@ begin
      'removenotuseddeclarations': SetOption(coKeepNotUsedDeclarationsWPO,not Enable);
      'shortrefglobals': SetOption(coShortRefGlobals,Enable);
      'obfuscatelocalidentifiers': SetOption(coObfuscateLocalIdentifiers,Enable);
+     'truncateintegersonoverflow': SetOption(coTruncateIntegersOnOverflow,Enable);
     else
       Log.LogMsgIgnoreFilter(nUnknownOptimizationOption,[QuoteStr(aValue)]);
     end;
