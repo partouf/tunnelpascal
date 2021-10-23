@@ -165,7 +165,7 @@ const
   DefaultResourceMode = rmHTML;
 
   coShowAll = [coShowErrors..coShowDebug];
-  coAllOptimizations = [coEnumValuesAsNumbers..coObfuscateLocalIdentifiers];
+  coAllOptimizations = [coEnumValuesAsNumbers..coTruncateIntegersOnOverflow];
   coO0 = [coKeepNotUsedPrivates,coKeepNotUsedDeclarationsWPO];
   coO1 = [coEnumValuesAsNumbers];
   coO2 = coO1+[coShortRefGlobals
@@ -3783,6 +3783,7 @@ begin
         Log.LogPlain('RemoveNotUsedPrivates');
         Log.LogPlain('RemoveNotUsedDeclarations');
         Log.LogPlain('ShortRefGlobals');
+        Log.LogPlain('TruncateIntegersOnOverflow');
       end;
     't':
       // write list of supported targets
@@ -4849,6 +4850,7 @@ begin
   {$IFDEF EnableObfuscateIdentifiers}
   w('      -OoObfuscateLocalIdentifiers[-]: Use auto generated names for private and local Pascal identifiers. Default enabled in -O2');
   {$ENDIF}
+  w('      -OoTruncateIntegersOnOverflow [-]: Whether to truncate integers in case of overflow. Default is disabled');
   w('  -P<x>  : Set target processor. Case insensitive:');
   w('    -Pecmascript5: default');
   w('    -Pecmascript6');
@@ -5079,6 +5081,7 @@ begin
   Log.LogPlain('  EnumNumbers');
   Log.LogPlain('  RemoveNotUsedPrivates');
   Log.LogPlain('  ShortRefGlobals');
+  Log.LogPlain('  TruncateIntegersOnOverflow');
   Log.LogLn;
   Log.LogPlain('Supported Whole Program Optimizations:');
   Log.LogPlain('  RemoveNotUsedDeclarations');
