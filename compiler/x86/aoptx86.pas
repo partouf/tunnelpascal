@@ -4094,7 +4094,8 @@ unit aoptx86;
         Result:=false;
         if taicpu(p).ops <> 2 then
           exit;
-        if GetNextInstruction(p,hp1) then
+        if ((taicpu(p).oper[1]^.typ=top_reg) and GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[1]^.reg)) or
+          GetNextInstruction(p,hp1) then
           begin
             if MatchInstruction(hp1,taicpu(p).opcode,[taicpu(p).opsize]) and
             (taicpu(hp1).ops = 2) then
@@ -4126,14 +4127,17 @@ unit aoptx86;
                               DebugMsg(SPeepholeOptimization + 'MovXXMovXX2Nop 1 done',p);
                               RemoveInstruction(hp1);
                               RemoveCurrentp(p); { p will now be equal to the instruction that follows what was hp1 }
+                              Result:=true;
+                              exit;
                             end
-                          else
+                          else if (taicpu(hp1).oper[1]^.typ<>top_ref) or (not(vol_write in taicpu(hp1).oper[1]^.ref^.volatility)) and
+                            (taicpu(hp1).oper[0]^.typ<>top_ref) or (not(vol_read in taicpu(hp1).oper[0]^.ref^.volatility)) then
                             begin
                               DebugMsg(SPeepholeOptimization + 'MovXXMovXX2MoVXX 1 done',p);
                               RemoveInstruction(hp1);
+                              Result:=true;
+                              exit;
                             end;
-                          Result:=true;
-                          exit;
                         end
                   end;
               end;
