@@ -5804,8 +5804,17 @@ procedure TPas2JSResolver.ComputeBinaryExprRes(Bin: TBinaryExpr; out
 
   procedure SetBaseType(BaseType: TResolverBaseType; Flags: TPasResolverResultFlags);
   begin
-    SetResolverValueExpr(ResolvedEl,BaseType,BaseTypes[BaseType],BaseTypes[BaseType],
-                         Bin,Flags);
+    // A small hack that uses the original type when possible.
+    // It is required to make type helpers work for integer types in expressions.
+    if LeftResolved.BaseType = BaseType then
+      SetResolverValueExpr(ResolvedEl,LeftResolved.BaseType,
+        LeftResolved.LoTypeEl,LeftResolved.HiTypeEl,Bin,Flags)
+    else if RightResolved.BaseType = BaseType then
+      SetResolverValueExpr(ResolvedEl,RightResolved.BaseType,
+        RightResolved.LoTypeEl,RightResolved.HiTypeEl,Bin,Flags)
+    else
+      SetResolverValueExpr(ResolvedEl,BaseType,
+        BaseTypes[BaseType],BaseTypes[BaseType],Bin,Flags);
   end;
 
   function GetPrimitiveExprSmallestIntegerBaseType(PrimExpr : TPrimitiveExpr) : TResolverBaseType;
