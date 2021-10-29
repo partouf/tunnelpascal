@@ -11333,6 +11333,42 @@ function TPasToJSConverter.CreateIntegerBitFixAuto(El: TPasElement; AContext: TC
     end;
   end;
 
+  function LeftIsTypedArrayOfType(aResolver: TPas2JSResolver; LeftResolved: TPasResolverResult; 
+    ToType: TResolverBaseType) : Boolean;
+  var
+    PropertyEl : TPasProperty;
+  begin
+    Result := false;
+    if (aResolver <> nil) and (LeftResolved.IdentEl is TPasProperty) then
+    begin
+      PropertyEl := TPasProperty(LeftResolved.IdentEl);
+      if aResolver.IsExternalBracketAccessor(aResolver.GetPasPropertySetter(PropertyEl)) then
+      begin
+        if PropertyEl.Parent is TPasClassType then
+        begin
+          if (ToType = btByte) and 
+              aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Uint8Array') then
+            Result := true
+          else if (ToType = btShortInt) and 
+              aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Int8Array') then
+            Result := true
+          else if (ToType = btWord) and 
+              aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Uint16Array') then
+            Result := true
+          else if (ToType = btSmallInt) and 
+              aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Int16Array') then
+            Result := true
+          else if (ToType = btLongWord) and 
+              aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Uint32Array') then
+            Result := true
+          else if (ToType = btLongInt) and 
+              aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Int32Array') then
+            Result := true;
+        end;
+      end;
+    end;
+  end;
+
 var
   ResolvedEl, LeftResolved, RightResolved: TPasResolverResult;
   aResolver: TPas2JSResolver;
@@ -11340,7 +11376,6 @@ var
   BinaryEl : TBinaryExpr;
   AssignEl : TPasImplAssign;
   ParamsEl : TParamsExpr;
-  PropertyEl : TPasProperty;
   ToType, LeftResolvedType, RightResolvedType : TResolverBaseType;
   AssignContext : TAssignContext;
   NeedBitFix, ParentWillFixOverflow, ParentAllowSignificantOverflow, IsArrayIndexExpr : Boolean;
@@ -11470,7 +11505,9 @@ begin
         RightResolvedType := RightResolved.BaseType;
 
         // select smallest type by size
-        if UseLeftTypeForAssignment(LeftResolvedType, RightResolvedType) then
+        if UseLeftTypeForAssignment(LeftResolvedType, RightResolvedType) or
+           // in case if types equal and left is TypedArray, then we can omit typecasting
+           ((LeftResolvedType = RightResolvedType) and LeftIsTypedArrayOfType(aResolver, LeftResolved, LeftResolvedType)) then
         begin
           ParentWillFixOverflow := true;
           ParentAllowSignificantOverflow := true;
@@ -11590,36 +11627,9 @@ begin
       begin
         NeedBitFix := true;
         ToType := LeftResolvedType;
-
         // if we are assigning value to the TypedArray, then we can omit typecasting
-        if (aResolver <> nil) and (LeftResolved.IdentEl is TPasProperty) then
-        begin
-          PropertyEl := TPasProperty(LeftResolved.IdentEl);
-          if aResolver.IsExternalBracketAccessor(aResolver.GetPasPropertySetter(PropertyEl)) then
-          begin
-            if PropertyEl.Parent is TPasClassType then
-            begin
-              if (ToType = btByte) and 
-                 aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Uint8Array') then
-                NeedBitFix := false
-              else if (ToType = btShortInt) and 
-                 aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Int8Array') then
-                NeedBitFix := false
-              else if (ToType = btWord) and 
-                 aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Uint16Array') then
-                NeedBitFix := false
-              else if (ToType = btSmallInt) and 
-                 aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Int16Array') then
-                NeedBitFix := false
-              else if (ToType = btLongWord) and 
-                 aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Uint32Array') then
-                NeedBitFix := false
-              else if (ToType = btLongInt) and 
-                 aResolver.IsExternalClass_Name(TPasClassType(PropertyEl.Parent),'Int32Array') then
-                NeedBitFix := false;
-            end;
-          end;
-        end;
+        if LeftIsTypedArrayOfType(aResolver, LeftResolved, ToType) then
+          NeedBitFix := false;
 
         if NeedBitFix and (Result is TJSSimpleAssignStatement) then
           TJSSimpleAssignStatement(Result).Expr := CreateIntegerBitFix(El, TJSSimpleAssignStatement(Result).Expr, ToType);
