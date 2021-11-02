@@ -155,6 +155,11 @@ type
     procedure SetHeight(AValue: Single);
     procedure SetWidth (AValue: Single);
   public
+    constructor Create(Origin: TPointF);
+    constructor Create(Origin: TPointF; AWidth, AHeight: Single);
+    constructor Create(ALeft, ATop, ARight, ABottom: Single);
+    constructor Create(P1, P2: TPointF);
+    constructor Create(R: TRectF);
     function  Union  (const r: TRectF):TRectF; inline;
     procedure Offset (const dx,dy : Single); inline;
     property  Width  : Single read GetWidth write SetWidth;
@@ -706,6 +711,38 @@ begin
 end;
 
 { TRectF }
+
+constructor TRectF.Create(ALeft, ATop, ARight, ABottom: Single);
+begin
+  Left := ALeft;
+  Top := ATop;
+  Right := ARight;
+  Bottom := ABottom;
+end;
+
+constructor TRectF.Create(P1, P2: TPointF);
+begin
+  TopLeft := P1;
+  BottomRight := P2;
+end;
+
+constructor TRectF.Create(Origin: TPointF);
+begin
+  TopLeft := Origin;
+  BottomRight := Origin;
+end;
+
+constructor TRectF.Create(Origin: TPointF; AWidth, AHeight: Single);
+begin
+  TopLeft := Origin;
+  Width := AWidth;
+  Height := AHeight;
+end;
+
+constructor TRectF.Create(R: TRectF);
+begin
+  Self := R;
+end;
 
 function TRectF.GetHeight: Single;
 begin
