@@ -230,6 +230,14 @@ unit aoptx86;
       and having an offset }
     function MatchReferenceWithOffset(const ref : treference;base,index : TRegister) : Boolean;
 
+    { Increments a reference offset by the given value.  Returns False if an
+      overflow occurred }
+    function IncOffset(var Offset: ASizeInt; Value: TCGInt): Boolean;
+
+    { Increments a reference offset by the given value.  Returns False if an
+      overflow occurred }
+    function DecOffset(var Offset: ASizeInt; Value: TCGInt): Boolean;
+
   implementation
 
     uses
@@ -461,6 +469,58 @@ unit aoptx86;
         end;
         InstrReadsFlags := false;
       end;
+
+  type
+{$ifdef i8086}
+    ARefInt = SmallInt;
+{$else i8086}
+    ARefInt = LongInt;
+{$endif i8086}
+
+{$push}
+{$q-,$r-}
+{$WARN 4044 OFF} { Comparison might be always false ... }
+  function IncOffset(var Offset: ASizeInt; Value: TCGInt): Boolean;
+    var
+      { For i386 and x86_64, despite ASizeInt being 64-bit, the offset must fit into a 32-bit signed integer }
+      Limit: ARefInt;
+    begin
+      { Check to see if the inputs already overflow }
+      if (Value < Low(ARefInt)) or (Value > High(ARefInt))
+        or (Offset < Low(ARefInt)) or (Offset > High(ARefInt))
+        then
+        Exit(False);
+
+      Limit := min(ARefInt(Offset), ARefInt(Value));
+
+      { Now actually increment the offset }
+      Inc(Offset, ARefInt(Value));
+
+      { Only False if an overflow occurred }
+      Result := (Offset >= Limit);
+    end;
+
+
+  function DecOffset(var Offset: ASizeInt; Value: TCGInt): Boolean;
+    var
+      { For i386 and x86_64, despite ASizeInt being 64-bit, the offset must fit into a 32-bit signed integer }
+      Limit: ARefInt;
+    begin
+      { Check to see if the inputs already overflow }
+      if (Value < Low(ARefInt)) or (Value > High(ARefInt))
+        or (Offset < Low(ARefInt)) or (Offset > High(ARefInt))
+        then
+        Exit(False);
+
+      Limit := max(ARefInt(Offset), ARefInt(Value));
+
+      { Now actually increment the offset }
+      Dec(Offset, ARefInt(Value));
+
+      { Only False if an overflow occurred }
+      Result := (Offset <= Limit);
+    end;
+{$pop}
 
 
   function TX86AsmOptimizer.GetNextInstructionUsingReg(Current: tai; out Next: tai; reg: TRegister): Boolean;
@@ -5059,8 +5119,9 @@ unit aoptx86;
       var
         hp1, hp2: tai;
         ActiveReg: TRegister;
-        OldOffset: asizeint;
+        NewOffset: asizeint;
         ThisConst: TCGInt;
+        Overflow: Boolean;
 
       function RegDeallocated: Boolean;
         begin
@@ -5101,26 +5162,25 @@ unit aoptx86;
                 )
               ) then
               begin
-                OldOffset := taicpu(hp1).oper[0]^.ref^.offset;
-{$push}
-{$R-}{$Q-}
+                Overflow := False;
+                NewOffset := taicpu(hp1).oper[0]^.ref^.offset;
+
                 { Explicitly disable overflow checking for these offset calculation
                   as those do not matter for the final result }
-                if ActiveReg=taicpu(hp1).oper[0]^.ref^.base then
-                  inc(taicpu(hp1).oper[0]^.ref^.offset,taicpu(p).oper[0]^.val);
-                if ActiveReg=taicpu(hp1).oper[0]^.ref^.index then
-                  inc(taicpu(hp1).oper[0]^.ref^.offset,taicpu(p).oper[0]^.val*max(taicpu(hp1).oper[0]^.ref^.scalefactor,1));
-{$pop}
-{$ifdef x86_64}
-                if (taicpu(hp1).oper[0]^.ref^.offset > $7FFFFFFF) or (taicpu(hp1).oper[0]^.ref^.offset < -2147483648) then
-                  begin
-                    { Overflow; abort }
-                    taicpu(hp1).oper[0]^.ref^.offset := OldOffset;
-                  end
-                else
-{$endif x86_64}
+                if { If any of the IncOffset calls return false, the optimisation is not made }
+                  not (
+                    (
+                      (ActiveReg = taicpu(hp1).oper[0]^.ref^.base) and
+                      not IncOffset(NewOffset, taicpu(p).oper[0]^.val)
+                    ) or (
+                      (ActiveReg = taicpu(hp1).oper[0]^.ref^.index) and
+                      not IncOffset(NewOffset, taicpu(p).oper[0]^.val * max(taicpu(hp1).oper[0]^.ref^.scalefactor,1))
+                    )
+                  ) then
                   begin
                     DebugMsg(SPeepholeOptimization + 'AddLea2Lea done',p);
+                    taicpu(hp1).oper[0]^.ref^.offset := NewOffset;
+
                     if not (cs_opt_level3 in current_settings.optimizerswitches) then
                       { hp1 is the immediate next instruction for sure - good for a quick speed boost }
                       RemoveCurrentP(p, hp1)
@@ -5962,7 +6022,7 @@ unit aoptx86;
       var
         hp1, hp2: tai;
         ActiveReg: TRegister;
-        OldOffset: asizeint;
+        NewOffset: asizeint;
         ThisConst: TCGInt;
 
       function RegDeallocated: Boolean;
@@ -6003,23 +6063,21 @@ unit aoptx86;
                 )
               ) then
               begin
-                OldOffset := taicpu(hp1).oper[0]^.ref^.offset;
+                NewOffset := taicpu(hp1).oper[0]^.ref^.offset;
 
-                if ActiveReg=taicpu(hp1).oper[0]^.ref^.base then
-                  Dec(taicpu(hp1).oper[0]^.ref^.offset,taicpu(p).oper[0]^.val);
-                if ActiveReg=taicpu(hp1).oper[0]^.ref^.index then
-                  Dec(taicpu(hp1).oper[0]^.ref^.offset,taicpu(p).oper[0]^.val*max(taicpu(hp1).oper[0]^.ref^.scalefactor,1));
-
-{$ifdef x86_64}
-                if (taicpu(hp1).oper[0]^.ref^.offset > $7FFFFFFF) or (taicpu(hp1).oper[0]^.ref^.offset < -2147483648) then
-                  begin
-                    { Overflow; abort }
-                    taicpu(hp1).oper[0]^.ref^.offset := OldOffset;
-                  end
-                else
-{$endif x86_64}
+                if { If any of the IncOffset calls return false, the optimisation is not made }
+                  not (
+                    (
+                      (ActiveReg = taicpu(hp1).oper[0]^.ref^.base) and
+                      not DecOffset(NewOffset, taicpu(p).oper[0]^.val)
+                    ) or (
+                      (ActiveReg = taicpu(hp1).oper[0]^.ref^.index) and
+                      not DecOffset(NewOffset, taicpu(p).oper[0]^.val * max(taicpu(hp1).oper[0]^.ref^.scalefactor,1))
+                    )
+                  ) then
                   begin
                     DebugMsg(SPeepholeOptimization + 'SubLea2Lea done',p);
+                    taicpu(hp1).oper[0]^.ref^.offset := NewOffset;
 
                     if not (cs_opt_level3 in current_settings.optimizerswitches) then
                       { hp1 is the immediate next instruction for sure - good for a quick speed boost }
@@ -6037,13 +6095,17 @@ unit aoptx86;
                 Assigned(hp1) or
                 GetNextInstructionUsingReg(p,hp1, ActiveReg)
               ) and
-              MatchInstruction(hp1,A_SUB,[taicpu(p).opsize]) and
+              MatchInstruction(hp1,A_ADD,A_SUB,[taicpu(p).opsize]) and
               (taicpu(hp1).oper[1]^.reg = ActiveReg) then
               begin
                 if taicpu(hp1).oper[0]^.typ = top_const then
                   begin
-                    { Merge add const1,%reg; add const2,%reg to add const1+const2,%reg }
-                    ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val;
+                    { Merge sub const1,%reg; sub/add const2,%reg to add const1+/-const2,%reg }
+                    if taicpu(hp1).opcode = A_SUB then
+                      ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val
+                    else
+                      ThisConst := taicpu(p).oper[0]^.val - taicpu(hp1).oper[0]^.val;
+
                     Result := True;
 
                     { Handle any overflows }

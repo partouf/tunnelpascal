@@ -40,10 +40,14 @@ interface
 
 
     {# Returns the minimal value between @var(a) and @var(b) }
+    function min(a,b : smallint) : smallint;{$ifdef USEINLINE}inline;{$endif}
+    function min(a,b : word) : word;{$ifdef USEINLINE}inline;{$endif}
     function min(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     function min(a,b : int64) : int64;{$ifdef USEINLINE}inline;{$endif}
     function min(a,b : qword) : qword;{$ifdef USEINLINE}inline;{$endif}
     {# Returns the maximum value between @var(a) and @var(b) }
+    function max(a,b : smallint) : smallint;{$ifdef USEINLINE}inline;{$endif}
+    function max(a,b : word) : word;{$ifdef USEINLINE}inline;{$endif}
     function max(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     function max(a,b : int64) : int64;{$ifdef USEINLINE}inline;{$endif}
     function max(a,b : qword) : qword;{$ifdef USEINLINE}inline;{$endif}
@@ -197,6 +201,30 @@ implementation
       lowertbl  : array[char] of char;
 
 
+    function min(a,b : smallint) : smallint;{$ifdef USEINLINE}inline;{$endif}
+    {
+      return the minimal of a and b
+    }
+      begin
+         if a<=b then
+           min:=a
+         else
+           min:=b;
+      end;
+
+
+    function min(a,b : word) : word;{$ifdef USEINLINE}inline;{$endif}
+    {
+      return the minimal of a and b
+    }
+      begin
+         if a<=b then
+           min:=a
+         else
+           min:=b;
+      end;
+
+
     function min(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     {
       return the minimal of a and b
@@ -221,6 +249,18 @@ implementation
       end;
 
 
+    function min(a,b : qword) : qword;{$ifdef USEINLINE}inline;{$endif}
+    {
+      return the minimal of a and b
+    }
+      begin
+         if a<=b then
+           min:=a
+         else
+           min:=b;
+      end;
+
+
     function min(const a,b : Tconstexprint) : Tconstexprint;{$ifdef USEINLINE}inline;{$endif}
     {
       return the minimal of a and b
@@ -233,15 +273,27 @@ implementation
       end;
 
 
-    function min(a,b : qword) : qword;
+    function max(a,b : smallint) : smallint;{$ifdef USEINLINE}inline;{$endif}
     {
-      return the minimal of a and b
+      return the maximum of a and b
     }
       begin
-         if a<=b then
-           min:=a
+         if a>=b then
+           max:=a
          else
-           min:=b;
+           max:=b;
+      end;
+
+
+    function max(a,b : word) : word;{$ifdef USEINLINE}inline;{$endif}
+    {
+      return the maximum of a and b
+    }
+      begin
+         if a>=b then
+           max:=a
+         else
+           max:=b;
       end;
 
 

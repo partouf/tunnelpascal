@@ -1280,7 +1280,7 @@ implementation
 
                         { Don't allow jump tables to get too large }
                         if max_dist>4*labelcnt then
-                          max_dist:=min(max_dist,2048);
+                          max_dist:=min(max_dist,QWord(2048));
 
                         if jumptable_no_range then
                           max_linear_list:=4
