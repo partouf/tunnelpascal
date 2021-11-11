@@ -752,14 +752,10 @@ begin
           or not (FD^.invkind=INVOKE_PROPERTYGET) then // ignore the last parameter of dispinterface PUT and PUTREF property
           usedProps:=usedProps-1;
         bPropHasParam:=usedProps>0;
-        if FD^.memid=0 then
+        if (FD^.memid=0) and bPropHasParam then
           sl:=' default;'
         else
           sl:=''; // default depends only on DISP_ID = 0
-        {$IFDEF fpc}
-        if not bPropHasParam then
-          sl:=''; // in fpc a default property must have parameters https://gitlab.com/freepascal.org/lazarus/ccr/-/issues/39015
-        {$ENDIF}
         sPropParam:='';
         sPropParam2:='';
         if bPropHasParam then
