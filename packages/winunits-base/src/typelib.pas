@@ -1679,6 +1679,11 @@ begin
           bracketOpen:='(';
           bracketClose:=')';
         end;
+        if Pos(bracketOpen,line)=0 then
+        begin
+          FOverloadedItems[i]:='';
+          Continue;
+        end;
         if bIsDispatch and isProp then
         begin
           FOverloadedItems[i]:=''; // type helper for dispinterface fails to compile property https://gitlab.com/freepascal.org/fpc/source/-/issues/39358
