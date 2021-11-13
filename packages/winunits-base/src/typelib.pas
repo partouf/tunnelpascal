@@ -172,7 +172,7 @@ Type
 implementation
 
 uses
-  variants;
+  variants, strutils;
 
 Resourcestring
   SErrInvalidUnitName = 'Invalid unit name : %s';
@@ -674,12 +674,24 @@ begin
           sPar:=sPar+format('%s: %s',[sVarName,sl]); // do not finish parameter yet because it can have attribute "optional" or "defaultvalue"
           if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then // parameter with default value
           begin
-            if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+            if AnsiEndsText('OleVariant', sl) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant. remember the desired default value
+              if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+                sPar:=sPar+format(' {= %s}',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+              else
+                sPar:=sPar+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
+            else if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
               sPar:=sPar+format(' = %s',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
             else if ParamIsPointer(FD^.lprgelemdescParam[k]) then
               sPar:=sPar+' = nil'
+            else if (FD^.lprgelemdescParam[k].tdesc.vt = VT_VARIANT) then // remember the desired default value
+              sPar:=sPar+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
             else
               sPar:=sPar+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
+          end
+          else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
+            and (sl='OleVariant') then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+          begin
+            sPar:=sPar+' {= EmptyParam}'; // remember the desired default value
           end;
           sPar:=sPar+'; '; // finish parameter now
           sFunc:=sFunc+sPar;
@@ -777,14 +789,26 @@ begin
           if not MakeValidId(GetName(1),sPropParam) then
             AddToHeader('//  Warning: renamed property index  ''%s'' in %s.%s to ''%s''',[GetName(1),iname,sMethodName,sPropParam]);
           sPropParam:=sPropParam+':'+TypeToString(TI,FD^.lprgelemdescParam[0].tdesc);
-            if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then
+            if (not bIsDispatch) and ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then
             begin
-              if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+              if AnsiEndsText('OleVariant', TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant. remember the desired default value
+                if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
+                  sPropParam:=sPropParam+format(' {= %s}',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
+                else
+                  sPropParam:=sPropParam+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
+              else if VarIsStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)) then
                 sPropParam:=sPropParam+format(' = %s',[QuotedStr(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)))])
               else if ParamIsPointer(FD^.lprgelemdescParam[k]) then
                 sPropParam:=sPropParam+' = nil'
+              else if FD^.lprgelemdescParam[k].tdesc.vt = VT_VARIANT then
+                sPropParam:=sPropParam+format(' {= %s}',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])])
               else
                 sPropParam:=sPropParam+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
+            end
+            else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
+              and (TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)='OleVariant') then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+            begin
+              sPropParam:=sPropParam+' {= EmptyParam}'; // remember the desired default value
             end;
           end;
         if bIsDispatch then
