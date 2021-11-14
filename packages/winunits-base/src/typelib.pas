@@ -1734,9 +1734,14 @@ begin
           else
             defClose:=')';
           defEnd:=Length(par);
-          while par[defEnd]<>defClose do
-            Dec(defEnd);
+          if (defClose='''') or (defClose='}') then
+            while par[defEnd]<>defClose do
+              Dec(defEnd)
+          else
+            Inc(defEnd);
           defBegin:=defBegin+2;
+          if defClose='''' then
+            Inc(defBegin);
           def:=Copy(par,defBegin,defEnd-defBegin);
           if isString then
             def:=QuotedStr(def);
@@ -1824,6 +1829,8 @@ begin
             end
             else
             begin
+              if isSet then
+                Delete(part2,3,6);
               output:=format('  %s %s%s);'#13#10,[part1,def,part2]);
               implement:=implement+output;
             end;
