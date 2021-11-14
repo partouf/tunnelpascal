@@ -843,7 +843,7 @@ begin
                 sPropParam:=sPropParam+format(' = %s',[StringReplace(VarToWideStr(Variant(FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue)),',','.',[])]);
             end
             else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
-              and (TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)='OleVariant') then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+              and AnsiEndsText('OleVariant',TypeToString(TI,FD^.lprgelemdescParam[k].tdesc)) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
               sPropParam:=sPropParam+' {= EmptyParam}'; // remember the desired default value for overloading
             if (((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) and
               (FD^.lprgelemdescParam[k].paramdesc.pparamdescex^.varDefaultValue.vt = VT_VARIANT))
