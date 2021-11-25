@@ -9,34 +9,57 @@
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 }
-unit hashutils;
+{
+  Part of this code is based on earlier work by Wolfgang Erhardt.
+}
+
+
+unit fphashutils;
 
 {$mode ObjFPC}{$H+}
 {$modeswitch advancedrecords}
 interface
 
 uses
-  Classes, SysUtils, ECC;
+  SysUtils;
+
+Type
+  EHashUtil = Class(Exception);
 
 Procedure BytesFromVar(out aBytes : TBytes; aLocation : Pointer; aSize : Integer);
 Function BytesFromVar(aLocation : Pointer; aSize : Integer) : TBytes;
+Procedure BytesToVar(const aBytes : TBytes; out aLocation; aSize : Integer);
+Procedure BytesToVar(const aBytes : TBytes; Out aLocation : Pointer);
 
-Function HexStrToBytes(Const aHexStr : AnsiString; out aBytes : TBytes) : Integer;
-Function BytesToHexStr(out aHexStr : AnsiString; aBytes : PByte; aSize : Integer) : Integer;
-Function BytesToHexStr(out aHexStr : AnsiString; aBytes : TBytes) : Integer;
-Function BytesToHexStr(aBytes : TBytes) : AnsiString;
+Procedure HexStrToBytes(Const aHexStr : AnsiString; out aBytes : TBytes); overload;
+Function HexStrToBytes(Const aHexStr : AnsiString) : TBytes; overload;
+
+Function BytesToHexStr(Const aSource : AnsiString) : Ansistring; overload;
+Procedure BytesToHexStr(out aHexStr : AnsiString;Const aSource : AnsiString); overload;
+Procedure BytesToHexStr(out aHexStr : AnsiString; aBytes : PByte; aSize : Integer); overload;
+Procedure BytesToHexStr(out aHexStr : AnsiString; aBytes : TBytes); overload;
+Function BytesToHexStr(aBytes : TBytes) : AnsiString; overload;
 Procedure BytesToHexStrAppend(aBytes : TBytes;var aHexStr : AnsiString);
 
 procedure BytesEncodeBase64(Source: Tbytes; out Dest: AnsiString; const IsURL, MultiLines, Padding: Boolean);
 Function BytesEncodeBase64(Source: Tbytes; const IsURL, MultiLines, Padding: Boolean) : AnsiString;
 
 function CryptoGetRandomBytes(Buffer: PByte; const Count: Integer): Boolean;
+Function ExtractBetween(const ASource,aStart,aEnd : String) : String;
+
+Type
+  TGetRandomBytes = function(aBytes : PByte; aCount: Integer): Boolean;
+
+var
+  GetRandomBytes : TGetRandomBytes;
+
 
 implementation
 
 Procedure BytesFromVar(out aBytes : TBytes; aLocation : Pointer; aSize : Integer);
 
 begin
+  aBytes:=[];
   SetLength(aBytes,aSize);
   if aSize>0 then
     Move(aLocation^,aBytes[0],aSize);
@@ -48,7 +71,28 @@ begin
   BytesFromVar(Result,aLocation,aSize);
 end;
 
-Function HexStrToBytes(Const aHexStr : AnsiString; out aBytes : TBytes) : Integer;
+Procedure BytesToVar(const aBytes : TBytes; out aLocation; aSize : Integer);
+
+begin
+  if aSize>Length(aBytes) then
+    aSize:=Length(aBytes);
+  Move(aBytes[0],aLocation,aSize);
+end;
+
+Procedure BytesToVar(const aBytes : TBytes; out aLocation : Pointer);
+
+begin
+  BytesToVar(aBytes,aLocation,Length(aBytes));
+end;
+
+Function HexStrToBytes(Const aHexStr : AnsiString) : TBytes;
+
+begin
+  Result:=[];
+  HexStrToBytes(ahexStr,Result);
+end;
+
+Procedure HexStrToBytes(Const aHexStr : AnsiString; out aBytes : TBytes);
 
 const
   Convert: array['0'..'f'] of SmallInt =
@@ -64,6 +108,7 @@ Var
 
 begin
   Len:=Length(aHexStr);
+  aBytes:=[];
   SetLength(aBytes, Len div 2);
   if Len=0 then Exit;
   P := PAnsiChar(aHexStr);
@@ -77,7 +122,19 @@ begin
   end;
 end;
 
-Function BytesToHexStr(out aHexStr : AnsiString; aBytes : PByte; aSize : Integer) : Integer;
+Function BytesToHexStr(Const aSource : AnsiString) : Ansistring;
+
+begin
+  BytesToHexStr(Result,aSource);
+end;
+
+Procedure BytesToHexStr(out aHexStr : AnsiString; Const aSource : AnsiString);
+
+begin
+  BytesToHexStr(aHexStr,PByte(PChar(aSource)),Length(aSource))
+end;
+
+procedure BytesToHexStr(out aHexStr : AnsiString; aBytes : PByte; aSize : Integer);
 
 Const
   Digits: Array[0..15] of AnsiChar = ('0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F');
@@ -88,6 +145,7 @@ var
   PC : PAnsiChar;
 
 begin
+  aHexStr:='';
   SetLength(aHexStr,aSize*2);
   if aSize=0 then
     exit;
@@ -103,13 +161,14 @@ begin
     end;
 end;
 
-function BytesToHexStr(out aHexStr: AnsiString; aBytes: TBytes): Integer;
+Procedure BytesToHexStr(out aHexStr: AnsiString; aBytes: TBytes);
 
 begin
   BytesToHexStr(aHexStr,PByte(aBytes),Length(aBytes));
 end;
 
 function BytesToHexStr(aBytes: TBytes): AnsiString;
+
 begin
   BytesToHexStr(Result,aBytes);
 end;
@@ -197,6 +256,7 @@ begin
     Exit;
   DestCapacity := GetBase64EncodedSize(BufSize, MultiLines);
   DestSize := 0;
+  Dest:='';
   SetLength(Dest, DestCapacity);
   SourceBuf := PByte(Source);
   DestBuf := PByte(Dest);
@@ -274,15 +334,24 @@ type
     function Next: UInt32;
   end;
 
-// TODO: explore Xorshift* instead of CryptoGetRandomNumber
+
 procedure TLecuyer.Seed;
 var
-  VLI: TVLI;
+  VLI: Array[0..2] of byte;
+  I : Integer;
+
 begin
-  EccGetRandomNumber(VLI);
-  rs1 := VLI[0];
-  rs2 := VLI[1];
-  rs3 := VLI[2];
+  I:=0;
+  Repeat
+    Inc(I);
+    if (Pointer(GetRandomBytes)=Nil) or not GetRandomBytes(@VLI,Sizeof(VLI)) then
+       Raise EHashUtil.Create('Cannot seed Lecuyer: no random bytes');
+    rs1 := VLI[0];
+    rs2 := VLI[1];
+    rs3 := VLI[2];
+  Until ((RS1>1) and (rs2>7) and (RS3>15)) or (I>100);
+  if I>100 then
+    Raise EHashUtil.Create('Cannot seed Lecuyer: no suitable random bytes');
   SeedCount := 1;
 end;
 
@@ -319,9 +388,43 @@ begin
   begin
     R := Lecuyer.Next;
     Move(R, PByteArray(Buffer)[Rounds*SizeOf(UInt32)], Remainder);
+    R:=R+R;// Silence compiler warning
   end;
 end;
 
+function ExtractBetween(const ASource, aStart, aEnd: String): String;
 
+Var
+  P1,P2 : Integer;
+
+begin
+  Result:='';
+  P1:=Pos(aStart,ASource);
+  if P1<=0 then exit;
+  Inc(P1,Length(aStart));
+  P2:=Pos(aEnd,ASource,P1);
+  if P2<=0 then exit;
+  Result:=Copy(aSource,P1,P2-P1);
+
+end;
+
+function IntGetRandomNumber(aBytes : PByte; aCount: Integer): Boolean;
+
+Var
+  i : Integer;
+  P : PByte;
+
+begin
+  P:=aBytes;
+  For I:=0 to aCount-1 do
+    begin
+    P^:=Random(256);
+    Inc(P);
+    end;
+  Result:=True;
+end;
+
+begin
+  GetRandomBytes:=@IntGetRandomNumber;
 end.
 

@@ -32,6 +32,8 @@ begin
     P.Dependencies.Add('fcl-net');
     P.Dependencies.Add('fcl-process');
     P.Dependencies.Add('fcl-fpcunit');
+    P.Dependencies.Add('fcl-hash');
+    P.Dependencies.Add('hash');
     P.Dependencies.Add('fcl-registry',AllWindowsOSes);
     P.Dependencies.Add('openssl',AllUnixOSes+AllWindowsOSes);
     P.Dependencies.Add('fastcgi');
@@ -333,6 +335,8 @@ begin
     T:=P.Targets.AddUnit('fpjwasha512.pp');
     T.Dependencies.AddUnit('fpjwt');
     T:=P.Targets.AddUnit('fpjwasha384.pp');
+    T.Dependencies.AddUnit('fpjwt');
+    T:=P.Targets.AddUnit('fpjwaes256.pp');
     T.Dependencies.AddUnit('fpjwt');
     T:=P.Targets.AddUnit('fphttpwebclient.pp');
     T.Dependencies.AddUnit('fpwebclient');

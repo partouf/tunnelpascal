@@ -1505,10 +1505,10 @@ function TPasParser.ParseStringType(Parent: TPasElement;
   const NamePos: TPasSourcePos; const TypeName: String): TPasAliasType;
 
 Var
-  LengthAsText : String;
+  CodePageAsText,LengthAsText : String;
   ok: Boolean;
   Params: TParamsExpr;
-  LengthExpr: TPasExpr;
+  CodePageExpr,LengthExpr: TPasExpr;
 
 begin
   Result := TPasAliasType(CreateElement(TPasAliasType, TypeName, Parent, NamePos));
@@ -1532,10 +1532,20 @@ begin
       CheckToken(tkSquaredBraceClose);
       LengthAsText:=ExprToText(LengthExpr);
       end
+    else if CurToken=tkBraceOpen then
+      begin
+      CodePageAsText:='';
+      NextToken;
+      CodePageExpr:=DoParseExpression(Result,nil,false);
+      Result.CodePageExpr:=CodePageExpr;
+      CheckToken(tkBraceClose);
+      CodePageAsText:=ExprToText(CodePageExpr);
+      end
     else
       UngetToken;
     Result.DestType:=TPasStringType(CreateElement(TPasStringType,'string',Result));
     TPasStringType(Result.DestType).LengthExpr:=LengthAsText;
+    TPasStringType(Result.DestType).CodePageExpr:=CodePageAsText;
     ok:=true;
   finally
     if not ok then
@@ -1608,9 +1618,12 @@ begin
       ok:=true;
       exit;
       end
-    else if (CurToken in [tkBraceOpen,tkDotDot]) then // A: B..C;
+    else if (CurToken in [tkBraceOpen,tkDotDot])  then // A: B..C or A: string(CP);
       begin
-      K:=stkRange;
+      if not (LowerCase(Name)='string') then
+        K:=stkRange
+      else
+        K:=stkString;
       UnGetToken;
       end
     else
@@ -1901,7 +1914,7 @@ Type
 
 Const
   // These types are allowed only when full type declarations
-  FullTypeTokens = [tkGeneric,{tkSpecialize,}tkClass,tkObjCClass,tkInterface,tkObjcProtocol,tkDispInterface,tkType];
+  FullTypeTokens = [tkGeneric,{tkSpecialize,tkClass,}tkObjCClass,tkInterface,tkObjcProtocol,tkDispInterface,tkType];
   // Parsing of these types already takes care of hints
   NoHintTokens = [tkProcedure,tkFunction];
   InterfaceKindTypes : Array[Boolean] of TPasObjKind = (okInterface,okObjcProtocol);
@@ -1951,6 +1964,10 @@ begin
           begin
           lClassType:=lctClass;
           NextToken;
+          if not (Full or (CurToken=tkOf)) then
+             ParseExc(nParserTypeNotAllowedHere,SParserTypeNotAllowedHere,[CurtokenText]);
+           //  Parser.CurrentModeswitches:=Parser.CurrentModeswitches+[msClass];
+
           if CurTokenIsIdentifier('Helper') then
             begin
             // class helper: atype end;
@@ -4382,9 +4399,12 @@ begin
       if CurTokenIsIdentifier('INDEX') then
         begin
         NextToken;
-        E.Exportindex:=DoParseExpression(E,Nil)
-        end
-      else if CurTokenIsIdentifier('NAME') then
+        E.Exportindex:=DoParseExpression(E,Nil);
+        nextToken;
+        if not CurTokenIsIdentifier('NAME') then
+          UngetToken;
+        end;
+      if CurTokenIsIdentifier('NAME') then
         begin
         NextToken;
         E.ExportName:=DoParseExpression(E,Nil)
@@ -7641,7 +7661,7 @@ var
   s: String;
   Expr: TPasExpr;
 begin
-  if (CurToken=tkIdentifier) and (AType.ObjKind=okClass) then
+  if (CurToken=tkIdentifier) and (AType.ObjKind in [okClass,okObject]) then
     begin
     s := LowerCase(CurTokenString);
     if (s = 'sealed') or (s = 'abstract') then

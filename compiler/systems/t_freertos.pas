@@ -1169,7 +1169,9 @@ begin
   {$pop}
 
   binstr:='gcc';
-  if (current_settings.controllertype = ct_esp32) then
+  if current_settings.controllertype = ct_none then
+    Message(exec_f_controllertype_expected)
+  else if current_settings.controllertype = ct_esp32 then
     cmdstr:='-C -P -x c -E -o esp32_out.ld -I . $IDF_PATH/components/esp32/ld/esp32.ld'
   else
     cmdstr:='-C -P -x c -E -o esp8266_out.ld -I . $IDF_PATH/components/esp8266/ld/esp8266.ld';
@@ -1450,28 +1452,33 @@ function TlinkerFreeRTOS.postprocessexecutable(const fn : string;isdll:boolean):
     stringoffset:=secheader.sh_offset;
 
     seek(f,elfheader.e_shoff);
+    status.codesize:=0;
     status.datasize:=0;
     for i:=0 to elfheader.e_shnum-1 do
       begin
         blockread(f,secheader,sizeof(secheader));
         secheader:=MaybeSwapSecHeader(secheader);
         secname:=ReadSectionName(stringoffset+secheader.sh_name);
-        if secname='.text' then
+        if pos('.text',secname)<>0 then
           begin
             Message1(execinfo_x_codesize,tostr(secheader.sh_size));
-            status.codesize:=secheader.sh_size;
+            inc(status.codesize,secheader.sh_size);
           end
-        else if secname='.data' then
+        else if pos('.data',secname)<>0 then
           begin
             Message1(execinfo_x_initdatasize,tostr(secheader.sh_size));
             inc(status.datasize,secheader.sh_size);
           end
-        else if secname='.bss' then
+        else if pos('.rodata',secname)<>0 then
+          begin
+            Message1(execinfo_x_initdatasize,tostr(secheader.sh_size));
+            inc(status.datasize,secheader.sh_size);
+          end
+        else if pos('.bss',secname)<>0 then
           begin
             Message1(execinfo_x_uninitdatasize,tostr(secheader.sh_size));
             inc(status.datasize,secheader.sh_size);
           end;
-
       end;
     close(f);
     {$pop}

@@ -2590,7 +2590,7 @@ cg_w_interrupt_does_not_save_registers=06062_W_The target CPU does not support p
 #
 # Assembler reader
 #
-# 07146 is the last used one
+# 07147 is the last used one
 #
 asmr_d_start_reading=07000_DL_Starting $1 styled assembler parsing
 % This informs you that an assembler block is being parsed
@@ -2935,6 +2935,7 @@ asmr_e_a64_invalid_regset=07144_E_Registers in a register set must be consecutiv
 asmr_e_unknown_field=07145_E_Unknown field identifier
 % The internal assembler read cannot find the passed field identifier.
 asmr_e_not_supported_combination_attsuffix_memrefsize_type=07146_E_Not supported combination opcode: $1 - att-suffix-type {$2} and memrefsize-type {$3}
+asmr_e_a64_regset_too_large=07147_E_Too many registers in register set.
 #
 # Assembler/binary writers
 #
@@ -2999,7 +3000,7 @@ asmw_e_illegal_use_of_sp=08036_E_Asm: ESP/RSP cannot be used as index register
 #
 # Executing linker/assembler
 #
-# 09035 is the last used one
+# 09036 is the last used one
 #
 # BeginOfTeX
 %
@@ -3060,9 +3061,6 @@ exec_e_exe_not_supported=09018_E_Creation of Executables not supported
 exec_e_dll_not_supported=09019_E_Creation of Dynamic/Shared Libraries not supported
 % Creating dynamically loadable libraries is not supported for this platform, because it was
 % not yet implemented in the compiler.
-exec_e_static_lib_not_supported=09035_E_Creation of Static Libraries not supported
-% Creating static libraries is not supported for this platform, because it was
-% not yet implemented in the compiler.
 exec_i_closing_script=09020_I_Closing script $1
 % Informational message showing when writing of the external assembling and linking script is finished.
 exec_e_res_not_found=09021_E_Resource compiler "$1" not found, switching to external mode
@@ -3100,6 +3098,12 @@ exec_w_init_file_not_found=09034_W_"$1" not found, this will probably cause a li
 % If the system has gcc installed, running \var{gcc --print-file-name <filename>} might return the path to the file.
 % Add this path in your \var{fpc.cfg} using the switch \var{-Fl} to fix this error. This requires though,
 % that gcc targets the same target as FPC.
+exec_e_static_lib_not_supported=09035_E_Creation of Static Libraries not supported
+% Creating static libraries is not supported for this platform, because it was
+% not yet implemented in the compiler.
+exec_f_controllertype_expected=09036_F_To generate the correct linker call, a controller type must be set by the directive -Wp
+% Xtensa micro controller require a detailed specification linker command which depends on the target controller.
+% If no target controller is set, this command cannot be build and thus linking cannot be carried out.
 %
 %\end{description}
 # EndOfTeX
