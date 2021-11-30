@@ -3477,7 +3477,32 @@ const pemagic : array[0..3] of byte = (
            (Header.mach<>COFF_MAGIC) or
            (Header.opthdr<>sizeof(tcoffpeoptheader)) then
           begin
-            Comment(V_Error,'Invalid DLL '+dllname+', invalid header size');
+
+            if (Header.mach<>COFF_MAGIC) then
+              begin
+{$ifdef win32}
+                { Only throw a warning if the DLL is for x86_64-win64 }
+                if (Header.mach = $8664) and
+                  { 240 bytes = size of TCOFFPEOptHeader for 64-bit }
+                  (Header.opthdr = 240) then
+                  begin
+                    Comment(V_Warning,'DLL '+dllname+' is 64-bit');
+                    exit;
+                  end;
+{$endif win32}
+{$ifdef win64}
+                { Only throw a warning if the DLL is for i386-win32 }
+                if (Header.mach = $14c) and
+                  { 224 bytes = size of TCOFFPEOptHeader for 32-bit }
+                  (Header.opthdr = 224) then
+                  begin
+                    Comment(V_Warning,'DLL '+dllname+' is 32-bit');
+                    exit;
+                  end;
+{$endif win64}
+              end;
+
+            Comment(V_Error,'Invalid DLL '+dllname+', invalid header size or unsupported machine type');
             exit;
           end;
         { Read optheader }
