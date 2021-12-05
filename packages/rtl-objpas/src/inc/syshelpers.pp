@@ -162,6 +162,22 @@ type
     {$i syshelpersbh.inc}
   end;
 
+  TBoolean8SysHelper = type helper(TBoolean8Helper) for Boolean8
+    {$i syshelpersbh.inc}
+  end;
+
+  TBoolean16SysHelper = type helper(TBoolean16Helper) for Boolean16
+    {$i syshelpersbh.inc}
+  end;
+
+  TBoolean32SysHelper = type helper(TBoolean32Helper) for Boolean32
+    {$i syshelpersbh.inc}
+  end;
+
+  TBoolean64SysHelper = type helper(TBoolean64Helper) for Boolean64
+    {$i syshelpersbh.inc}
+  end;
+
   TByteBoolSysHelper = type helper(TByteBoolHelper) for ByteBool
     {$i syshelpersbh.inc}
   end;
@@ -171,6 +187,10 @@ type
   end;
 
   TLongBoolSysHelper = type helper(TLongBoolHelper) for LongBool
+    {$i syshelpersbh.inc}
+  end;
+
+  TQWordBoolSysHelper = type helper(TQWordBoolHelper) for QWordBool
     {$i syshelpersbh.inc}
   end;
 
@@ -245,6 +265,80 @@ end;
 //  System helpers  //
 //                  //
 //////////////////////
+
+
+{ ---------------------------------------------------------------------
+  TBooleanSysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TBooleanSysHelper}
+{$define TBOOLTYPE:=Boolean}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TBoolean8SysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TBoolean8SysHelper}
+{$define TBOOLTYPE:=Boolean8}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TBoolean16SysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TBoolean16SysHelper}
+{$define TBOOLTYPE:=Boolean16}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TBoolean32SysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TBoolean32SysHelper}
+{$define TBOOLTYPE:=Boolean32}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TBoolean64SysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TBoolean64SysHelper}
+{$define TBOOLTYPE:=Boolean64}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TByteBoolSysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TByteBoolSysHelper}
+{$define TBOOLTYPE:=ByteBool}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TWordBoolSysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TWordBoolSysHelper}
+{$define TBOOLTYPE:=WordBool}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TLongBoolSysHelper
+  ---------------------------------------------------------------------}
+
+
+{$define TBOOLHELPER:=TLongBoolSysHelper}
+{$define TBOOLTYPE:=LongBool}
+{$i syshelpersb.inc}
+
+{ ---------------------------------------------------------------------
+  TLongBoolSysHelper
+  ---------------------------------------------------------------------}
+
+{$define TBOOLHELPER:=TQWordBoolSysHelper}
+{$define TBOOLTYPE:=QWordBool}
+{$i syshelpersb.inc}
 
 
 { ---------------------------------------------------------------------
@@ -329,15 +423,7 @@ end;
 
 {$define TORDINALHELPER:=TNativeIntSysHelper}
 {$define TORDINALBITINDEX:=TNativeIntBitIndex}
-{$ifdef cpu16}
-  {$define TORDINALNIBBLEINDEX:=TSmallIntNibbleIndex}
-{$endif}
-{$ifdef cpu32}
-  {$define TORDINALNIBBLEINDEX:=TIntegerNibbleIndex}
-{$endif}
-{$ifdef cpu64}
-  {$define TORDINALNIBBLEINDEX:=TInt64NibbleIndex}
-{$endif}
+{$define TORDINALNIBBLEINDEX:=TNativeIntNibbleIndex}
 {$i syshelperso.inc}
 
 { ---------------------------------------------------------------------
@@ -346,49 +432,8 @@ end;
 
 {$define TORDINALHELPER:=TNativeUIntSysHelper}
 {$define TORDINALBITINDEX:=TNativeUIntBitIndex}
-{$ifdef cpu16}
-  {$define TORDINALNIBBLEINDEX:=TWordNibbleIndex}
-{$endif}
-{$ifdef cpu32}
-  {$define TORDINALNIBBLEINDEX:=TDwordNibbleIndex}
-{$endif}
-{$ifdef cpu64}
-  {$define TORDINALNIBBLEINDEX:=TQwordNibbleIndex}
-{$endif}
+{$define TORDINALNIBBLEINDEX:=TNativeUIntNibbleIndex}
 {$i syshelperso.inc}
-
-{ ---------------------------------------------------------------------
-  TBooleanSysHelper
-  ---------------------------------------------------------------------}
-
-{$define TBOOLHELPER:=TBooleanSysHelper}
-{$define TBOOLTYPE:=Boolean}
-{$i syshelpersb.inc}
-
-{ ---------------------------------------------------------------------
-  TByteBoolSysHelper
-  ---------------------------------------------------------------------}
-
-{$define TBOOLHELPER:=TByteBoolSysHelper}
-{$define TBOOLTYPE:=ByteBool}
-{$i syshelpersb.inc}
-
-{ ---------------------------------------------------------------------
-  TWordBoolSysHelper
-  ---------------------------------------------------------------------}
-
-{$define TBOOLHELPER:=TWordBoolSysHelper}
-{$define TBOOLTYPE:=WordBool}
-{$i syshelpersb.inc}
-
-{ ---------------------------------------------------------------------
-  TLongBoolSysHelper
-  ---------------------------------------------------------------------}
-
-
-{$define TBOOLHELPER:=TLongBoolSysHelper}
-{$define TBOOLTYPE:=LongBool}
-{$i syshelpersb.inc}
 
 end.
 
