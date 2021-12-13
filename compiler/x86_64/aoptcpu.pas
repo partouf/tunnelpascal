@@ -41,6 +41,7 @@ implementation
 
 uses
   globals,
+  cgbase,
   globtype,
   aasmcpu;
 
@@ -84,6 +85,8 @@ uses
 
 
     function TCpuAsmOptimizer.PeepHoleOptPass1Cpu(var p: tai): boolean;
+      var
+        CurrentReg: TRegister;
       begin
         result:=False;
         case p.typ of
@@ -181,6 +184,51 @@ uses
                 else
                   ;
               end;
+
+              { If a 32-bit register is written, search ahead for a MOV instruction,
+                if one is found that copies that register to another, leave a hint
+                for the compiler that the upper 32 bits are zero.  This permits even
+                deeper optimisations wtih DeepMovOPT }
+              if not Result and
+                { This is anything but quick! }
+                (cs_opt_level3 in current_settings.optimizerswitches) and
+                (taicpu(p).opsize in [S_NO, S_L, S_BL, S_WL]) then
+                begin
+                  if MatchInstruction(p, A_MUL, A_DIV, [{ No need to specify S_L again }]) then
+                    begin
+                      ZeroUpperHint(p, NR_EAX);
+                      ZeroUpperHint(p, NR_EDX);
+                    end
+                  else if MatchInstruction(p, A_IMUL, A_IDIV, []) then
+                    begin
+                      { IMUL and IDIV only write to registers }
+                      if (taicpu(p).ops = 1) then
+                        begin
+                          ZeroUpperHint(p, NR_EAX);
+                          ZeroUpperHint(p, NR_EDX);
+                        end
+                      else
+                        ZeroUpperHint(p, taicpu(p).oper[taicpu(p).ops - 1]^.reg);
+                    end
+                  else if
+                    (
+                      { There might be a better way to do this, but for now, just check
+                        for particular opcodes }
+                      MatchInstruction(p, [A_ADD, A_ADC, A_SUB, A_SBB, A_INC, A_DEC, A_MULX,
+                        A_LEA, A_MOV, A_MOVZX, A_MOVSX { NOTE: not MOVSXD },
+                        A_ANDN, A_AND, A_OR, A_XOR, A_NEG, A_NOT,
+                        A_BSF, A_BSR, A_BZHI, A_LZCNT, A_POPCNT,
+                        A_SHL, A_SHR, A_SAR, A_ROL, A_ROR, A_SHLX, A_SHRX, A_SARX, A_RORX,
+                        A_CVTSD2SI, A_VCVTSD2SI, A_CVTSS2SI, A_VCVTSS2SI], []
+                      )
+                    ) and
+                    (taicpu(p).oper[taicpu(p).ops - 1]^.typ = top_reg) then
+                    begin
+                      CurrentReg := taicpu(p).oper[taicpu(p).ops - 1]^.reg;
+                      if getsubreg(CurrentReg) = R_SUBD then
+                        ZeroUpperHint(p, CurrentReg);
+                    end;
+                end;
             end;
           else
             ;

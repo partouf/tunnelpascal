@@ -221,6 +221,9 @@ unit aoptx86;
         function TrySwapMovOp(var p, hp1: tai): Boolean;
         function TrySwapMovCmp(var p, hp1: tai): Boolean;
         function TryCmpCMovOpts(var p, hp1: tai) : Boolean;
+{$ifdef x86_64}
+        procedure ZeroUpperHint(var p: tai; Reg: TRegister);
+{$endif x86_64}
 
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
@@ -325,13 +328,16 @@ unit aoptx86;
 {$endif 8086}
 
 
-{$ifdef DEBUG_AOPTCPU}
     const
+{$ifdef x86_64}
+      EXTRA_OPT_TAG_ZERO_UPPER = $74677A75; { tgzu in big-endian }
+{$endif x86_64}
+
+{$ifdef DEBUG_AOPTCPU}
       SPeepholeOptimization: shortstring = 'Peephole Optimization: ';
 {$else DEBUG_AOPTCPU}
     { Empty strings help the optimizer to remove string concatenations that won't
       ever appear to the user on release builds. [Kit] }
-    const
       SPeepholeOptimization = '';
 {$endif DEBUG_AOPTCPU}
       LIST_STEP_SIZE = 4;
@@ -2781,6 +2787,17 @@ unit aoptx86;
 
         ReplaceReg := taicpu(p_mov).oper[0]^.reg;
         CurrentReg := taicpu(p_mov).oper[1]^.reg;
+
+{$ifdef x86_64}
+        if (taicpu(p_mov).opsize = S_L) and Assigned(FindExtraInfo(p_mov, eit_tag, EXTRA_OPT_TAG_ZERO_UPPER)) then
+          begin
+            { We know that the register being read has its upper 32 bits set to zero,
+              so it's safe to replace references to the full 64-bit register even
+              though only the lower 32 bits have been written to }
+            setsubreg(ReplaceReg, R_SUBQ);
+            setsubreg(CurrentReg, R_SUBQ);
+          end;
+{$endif x86_64}
 
         case hp.opcode of
           A_FSTSW, A_FNSTSW,
@@ -7340,8 +7357,7 @@ unit aoptx86;
            if const in 1..3
         }
 
-        if MatchOpType(taicpu(p), top_const, top_reg) and
-          (taicpu(p).oper[0]^.val in [1..3]) and
+        if (taicpu(p).oper[0]^.val in [1..3]) and
           GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[1]^.reg) and
           ((MatchInstruction(hp1,A_MOV,A_LEA,[]) and
            MatchOpType(taicpu(hp1),top_ref,top_reg)) or
@@ -9412,6 +9428,38 @@ unit aoptx86;
           TrySwapMovOp(hp2, hp1);
     end;
 
+{$ifdef x86_64}
+  procedure TX86AsmOptimizer.ZeroUpperHint(var p: tai; Reg: TRegister);
+    var
+      hp1: tai;
+    begin
+      hp1 := p;
+      while GetNextInstructionUsingReg(hp1, hp1, Reg) and (hp1.typ = ait_instruction) do
+        begin
+          if MatchInstruction(hp1, A_TEST, A_CMP, A_Jcc, []) then
+            { These don't modify the register but there might be a MOV following
+              them.  Also allow the crossing of a conditional jump; it's only
+              if a label gets hit that the assumption can no longer hold. }
+            Continue;
+
+          if MatchInstruction(hp1, A_MOV, [S_L]) and
+            MatchOpType(taicpu(hp1), top_reg, top_reg) and
+            (taicpu(hp1).oper[0]^.reg = Reg) and
+            { Provide a hint for the compiler that the upper 32 bits are zero, if
+              one doesn't exist}
+            not Assigned(FindExtraInfo(hp1, eit_tag, EXTRA_OPT_TAG_ZERO_UPPER)) then
+              begin
+{$ifdef DEBUG_AOPTCPU}
+                { This doesn't get optimised out yet when it's no longer used }
+                setsubreg(Reg, R_SUBQ);
+                DebugMsg(SPeepholeOptimization + 'Compiler hint: Upper 32 bits of ' + debug_regname(Reg) + ' is zero', hp1);
+{$endif DEBUG_AOPTCPU}
+                AppendExtraInfo(hp1, TExtraOptInfo, EXTRA_OPT_TAG_ZERO_UPPER);
+              end;
+            Break;
+          end;
+    end;
+{$endif x86_64}
 
   function TX86AsmOptimizer.OptPass2MOV(var p : tai) : boolean;
 
