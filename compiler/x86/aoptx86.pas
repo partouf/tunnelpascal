@@ -9585,7 +9585,9 @@ unit aoptx86;
                         begin
                           { Just so we have something to insert as a paremeter}
                           reference_reset(NewRef, 1, []);
+
                           NewInstr := taicpu.op_ref(A_JMP, S_NO, NewRef);
+                          NewInstr.is_jmp := True;
 
                           { Now actually load the correct parameter (this also
                             increases the reference count) }
