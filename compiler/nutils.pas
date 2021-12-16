@@ -1497,7 +1497,12 @@ implementation
     function check_for_sideeffect(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         result:=fen_false;
-        if (n.nodetype in [assignn,calln,asmn,finalizetempsn]) or
+        if (
+           (n.nodetype = calln) and
+           { Pure functions by definition do not have side-effects }
+           not (po_pure in tcallnode(n).procdefinition.procoptions)
+          ) or
+           (n.nodetype in [assignn,asmn,finalizetempsn]) or
            ((n.nodetype=inlinen) and
             tinlinenode(n).may_have_sideeffect_norecurse
            ) or

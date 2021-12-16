@@ -144,6 +144,7 @@ type
     _LAST,
     _NAME,
     _NEAR,
+    _PURE,
     _READ,
     _SELF,
     _SYSV,
@@ -491,6 +492,7 @@ const
       (str:'LAST'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NAME'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'NEAR'          ;special:false;keyword:[m_none];op:NOTOKEN),
+      (str:'PURE'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'READ'          ;special:false;keyword:[m_none];op:NOTOKEN),
       (str:'SELF'          ;special:false;keyword:[m_none];op:NOTOKEN), {set inside methods only PM }
       (str:'SYSV'          ;special:false;keyword:[m_none];op:NOTOKEN),   { Syscall variation on MorphOS }

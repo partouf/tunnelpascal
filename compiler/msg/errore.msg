@@ -465,7 +465,7 @@ scan_e_misplaced_rtti_directive=02113_E_A The RTTI directive cannot be used here
 #
 # Parser
 #
-# 03370 is the last used one
+# 03374 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1684,6 +1684,8 @@ parser_n_pure_analysis_too_complex=03372_N_Analysis of pure function was too com
 % The subroutine in question is no longer considered pure from this point.
 parser_w_pure_ineligible=03373_W_Subroutine "$1" is not eligible to be a pure function due to the following reason: $2
 % While checking to see if the subroutine could be made a pure, a construct was found that made it ineligible and otherwise impossible for the compiler to analyse.
+parser_e_pure_analysis_error=03374_E_At least $1 error(s) occurred during the purity analysis of subroutine "$2".
+% While checking to see if the subroutine could be made a pure, a compiler error occurred.
 %
 % \end{description}
 %
