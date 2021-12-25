@@ -1073,7 +1073,15 @@ unit aoptx86;
         for CurrentSuperReg in RegSet do
           begin
             CurrentReg := newreg(R_INTREGISTER, TSuperRegister(CurrentSuperReg), RegSize);
-            if not AUsedRegs[R_INTREGISTER].IsUsed(CurrentReg) then
+            if not AUsedRegs[R_INTREGISTER].IsUsed(CurrentReg)
+{$if defined(i386) or defined(i8086)}
+              { If the target size is 8-bit, make sure we can actually encode it }
+              and (
+                (RegSize >= R_SUBW) or { Not R_SUBL or R_SUBH }
+                (GetSupReg(CurrentReg) in [RS_EAX,RS_EBX,RS_ECX,RS_EDX])
+              )
+{$endif i386 or i8086}
+              then
               begin
                 Currentp := p;
                 Breakout := False;
@@ -6006,6 +6014,7 @@ unit aoptx86;
          v: TCGInt;
          hp1, hp2, p_dist, p_jump, hp1_dist, p_label, hp1_label: tai;
          FirstMatch: Boolean;
+         NewReg: TRegister;
          JumpLabel, JumpLabel_dist, JumpLabel_far: TAsmLabel;
        begin
          Result:=false;
@@ -6144,6 +6153,84 @@ unit aoptx86;
                end;
 
              GetNextInstruction(p_jump, p_jump);
+           end;
+
+         {
+           Try to optimise the following:
+             cmp       $x,###  ($x and $y can be registers or constants)
+             je        @lbl1   (only reference)
+ 	     cmp       $y,###  (### are identical)
+           @Lbl:
+             sete      %reg1
+
+           Change to:
+             cmp       $x,###
+             sete      %reg2   (allocate new %reg2)
+             cmp       $y,###
+             sete      %reg1
+             orb       %reg2,%reg1
+             (dealloc %reg2)
+
+           This adds an instruction (so don't perform under -Os), but it removes
+           a conditional branch.
+         }
+         if not (cs_opt_size in current_settings.optimizerswitches) and
+           MatchInstruction(hp1, A_Jcc, []) and
+           IsJumpToLabel(taicpu(hp1)) and
+           (taicpu(hp1).condition in [C_E, C_Z]) and
+           GetNextInstruction(hp1, hp2) and
+           MatchInstruction(hp2, A_CMP, A_TEST, [taicpu(p).opsize]) and
+           MatchOperand(taicpu(p).oper[1]^, taicpu(hp2).oper[1]^) and
+           { The first operand of CMP instructions can only be a register or
+             operand anyway, so no need to check }
+           GetNextInstruction(hp2, p_label) and
+           (p_label.typ = ait_label) and
+           (tai_label(p_label).labsym.getrefs = 1) and
+           (JumpTargetOp(taicpu(hp1))^.ref^.symbol = tai_label(p_label).labsym) and
+           GetNextInstruction(p_label, p_dist) and
+           MatchInstruction(p_dist, A_SETcc, []) and
+           (taicpu(p_dist).condition in [C_E, C_Z]) and
+           (taicpu(p_dist).oper[0]^.typ = top_reg) then
+           begin
+             TransferUsedRegs(TmpUsedRegs);
+             UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+             UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+             UpdateUsedRegs(TmpUsedRegs, tai(p_label.Next));
+             UpdateUsedRegs(TmpUsedRegs, tai(p_dist.Next));
+
+             if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) and
+               { Get the instruction after the SETcc instruction so we can
+                 allocate a new register over the entire range }
+               GetNextInstruction(p_dist, hp1_dist) then
+               begin
+                 { Register can appear in p if it's not used afterwards, so only
+                   allocate between hp1 and hp1_dist }
+                 NewReg := GetIntRegisterBetween(R_SUBL, TmpUsedRegs, hp1, hp1_dist);
+                 if NewReg <> NR_NO then
+                   begin
+                     DebugMsg(SPeepholeOptimization + 'CMP/JE/CMP/@Lbl/SETE -> CMP/SETE/CMP/SETE/OR, removing conditional branch', p);
+
+                     { Change the jump instruction into a SETcc instruction }
+                     taicpu(hp1).opcode := A_SETcc;
+                     taicpu(hp1).opsize := S_B;
+                     taicpu(hp1).loadreg(0, NewReg);
+
+                     { This is now a dead label }
+                     tai_label(p_label).labsym.decrefs;
+
+                     { Prefer adding before the next instruction so the FLAGS
+                       register is deallicated first  }
+                     AsmL.InsertBefore(
+                       taicpu.op_reg_reg(A_OR, S_B, NewReg, taicpu(p_dist).oper[0]^.reg),
+                       hp1_dist
+                     );
+
+                     Result := True;
+                     { Don't exit yet, as p wasn't changed and hp1, while
+                       modified, is still intact and might be optimised by the
+                       SETcc optimisation below }
+                   end;
+               end;
            end;
 
          if taicpu(p).oper[0]^.typ = top_const then
@@ -8490,6 +8577,11 @@ unit aoptx86;
             { Under -O1 and -O2, GetNextInstructionUsingReg may return an
               instruction that doesn't actually contain ThisReg }
             (cs_opt_level3 in current_settings.optimizerswitches) or
+            { This allows this Movx optimisation to work through the SETcc instructions
+              inserted by the 'CMP/JE/CMP/@Lbl/SETE -> CMP/SETE/CMP/SETE/OR'
+              optimisation on -O1 and -O2 (on -O3, GetNextInstructionUsingReg will
+              skip over these SETcc instructions). }
+            (taicpu(hp1).opcode = A_SETcc) or
             RegInInstruction(ThisReg, hp1)
           ) do
           begin
@@ -8547,30 +8639,6 @@ unit aoptx86;
                       )
                     ) then
                     Break;
-(*
-                  { ANDing can't increase the value past the limit or decrease
-                    it below 0, so we can skip the checks, plus the test value
-                    won't change afterwards }
-                  if (taicpu(hp1).opcode = A_CMP) and
-                    { cmp $0,$reg is equivalent to test %reg,%reg, plus the
-                      test values aren't being modified anyway }
-                    (taicpu(hp1).oper[0]^.val <> 0) then
-                    begin
-                      WorkingValue := taicpu(hp1).oper[0]^.val;
-
-                      TestValMin := TestValMin - WorkingValue;
-                      TestValMax := TestValMax - WorkingValue;
-                      TestValSignedMax := TestValSignedMax - WorkingValue;
-
-                      if not CheckOverflowConditions then
-                        Break;
-
-                      { Because the register isn't actually adjusted, we can
-                        restore the test values to what they were previously }
-                      TestValMin := TestValMin + WorkingValue;
-                      TestValMax := TestValMax + WorkingValue;
-                      TestValSignedMax := TestValSignedMax + WorkingValue;
-                    end; *)
 
                   { Check to see if the active register is used afterwards }
                   TransferUsedRegs(TmpUsedRegs);
@@ -8650,6 +8718,21 @@ unit aoptx86;
                       Result := True;
                       Exit;
                     end;
+                end;
+              A_SETcc:
+                begin
+                  { This allows this Movx optimisation to work through the SETcc instructions
+                    inserted by the 'CMP/JE/CMP/@Lbl/SETE -> CMP/SETE/CMP/SETE/OR'
+                    optimisation on -O1 and -O2 (on -O3, GetNextInstructionUsingReg will
+                    skip over these SETcc instructions). }
+                  if (cs_opt_level3 in current_settings.optimizerswitches) or
+                    { Of course, break out if the current register is used }
+                    RegInOp(ThisReg, taicpu(hp1).oper[0]^) then
+                    Break
+                  else
+                    { We must use Continue so the instruction doesn't get added
+                      to InstrList }
+                    Continue;
                 end;
 
               A_ADD,A_SUB,A_AND,A_OR,A_XOR,A_SHL,A_SHR,A_SAR:
@@ -9016,7 +9099,7 @@ unit aoptx86;
                 end;
 
               else
-                { This includes ADC, SBB, IDIV and SAR }
+                { This includes ADC, SBB and IDIV }
                 Break;
             end;
 
