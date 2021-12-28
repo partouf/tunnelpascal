@@ -195,6 +195,7 @@ unit aoptx86;
         function OptPass2SETcc(var p : tai) : boolean;
 
         function CheckMemoryWrite(var first_mov, second_mov: taicpu): Boolean;
+        function DetermineCondition(cond: TAsmCond; SetVal, CmpVal: TCGInt; Bits: Integer): Boolean;
 
         function PostPeepholeOptMov(var p : tai) : Boolean;
         function PostPeepholeOptMovzx(var p : tai) : Boolean;
@@ -212,6 +213,7 @@ unit aoptx86;
 
         procedure ConvertJumpToRET(const p: tai; const ret_p: tai);
 
+        function CheckMovBranchCmpJccShortcut(var mov_p: tai): Boolean;
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
         function TrySwapMovOp(var p, hp1: tai): Boolean;
         function TrySwapMovCmp(var p, hp1: tai): Boolean;
@@ -254,7 +256,7 @@ unit aoptx86;
       cpuinfo,
       procinfo,
       paramgr,
-      aasmbase,
+      aasmbase,aasmdata,
       aoptbase,aoptutils,
       symconst,symsym,
       cgx86,
@@ -2785,6 +2787,184 @@ unit aoptx86;
           end;
       end;
 
+{$push}{$Q-}{$R-}
+    { Disable range and overflow checks because "(1 shl Bits) - 1" overflows if Bits is 64 }
+    function TX86AsmOptimizer.DetermineCondition(cond: TAsmCond; SetVal, CmpVal: TCGInt; Bits: Integer): Boolean;
+      var
+        SignedOffset, Mask: TCGInt;
+      begin
+        SignedOffset := TCGInt(1) shl (Bits - 1);
+        Mask := (SignedOffset shl 1) - 1;
+        SetVal := SetVal and Mask;
+        CmpVal := CmpVal and Mask;
+
+        case cond of
+          C_E, C_Z:
+            Result := (SetVal = CmpVal);
+          C_NE, C_NZ:
+            Result := (SetVal <> CmpVal);
+          C_L, C_NGE:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) < QWord(CmpVal - SignedOffset));
+          C_LE, C_NG:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) <= QWord(CmpVal - SignedOffset));
+          C_G, C_NLE:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) > QWord(CmpVal - SignedOffset));
+          C_GE, C_NL:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) >= QWord(CmpVal - SignedOffset));
+          C_B, C_C, C_NAE:
+            Result := (SetVal < CmpVal);
+          C_BE, C_NA:
+            Result := (SetVal <= CmpVal);
+          C_A, C_NBE:
+            Result := (SetVal > CmpVal);
+          C_AE, C_NB, C_NC:
+            Result := (SetVal >= CmpVal);
+          else
+            InternalError(2021122801);
+        end;
+      end;
+{$pop}
+
+    function TX86AsmOptimizer.CheckMovBranchCmpJccShortcut(var mov_p: tai): Boolean;
+      var
+        hp1: tai;
+
+        function AnalyseJump(var jump_p: tai): Boolean;
+          var
+            hp2, hp3, hp_label: tai;
+            Value, Comparison: TCGInt;
+            Branch: Boolean;
+            OldLabel, NewLabel: TAsmLabel;
+          begin
+            Result := False;
+
+            if not IsJumpToLabel(taicpu(jump_p)) then
+              { Needs to be a distinct label }
+              Exit;
+
+            OldLabel := TAsmLabel(JumpTargetOp(taicpu(jump_p))^.ref^.symbol);
+            hp_label := getlabelwithsym(OldLabel);
+            if not Assigned(hp_label) then
+              { Couldn't get the label }
+              Exit;
+
+            if GetNextInstruction(hp_label, hp2) and
+              (hp2.typ = ait_instruction) and
+              (taicpu(hp2).opsize = taicpu(mov_p).opsize) and
+              (
+                (
+                  (taicpu(hp2).opcode = A_CMP) and
+                  (taicpu(hp2).oper[0]^.typ = top_const) and
+                  MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^)
+                ) or
+                (
+                  (taicpu(hp2).opcode = A_TEST) and
+                  (taicpu(mov_p).oper[1]^.typ = top_reg) and
+                  MatchOperand(taicpu(hp2).oper[0]^, taicpu(mov_p).oper[1]^.reg) and
+                  MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^.reg)
+                )
+              ) and
+              GetNextInstruction(hp2, hp3) and
+              MatchInstruction(hp3, A_Jcc, []) and
+              IsJumpToLabel(taicpu(hp3)) then
+              begin
+                Value := taicpu(mov_p).oper[0]^.val;
+                if (taicpu(hp2).opcode = A_TEST) then
+                  Comparison := 0
+                else
+                  Comparison := taicpu(hp2).oper[0]^.val;
+
+                Branch := DetermineCondition(taicpu(hp3).condition, Value, Comparison, topsize2memsize[taicpu(hp2).opsize]);
+                Result := True;
+                if Branch then
+                  begin
+                    { The simpler one }
+                    DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always true)', jump_p);
+                    NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp3))^.ref^.symbol);
+                  end
+                else
+                  begin
+                    { We need a new label for this }
+                    if not FindLiveLabel(hp3, NewLabel) then
+                      begin
+                        { See if an unconditional jump follows, as we can use the destination of that instead }
+                        if GetNextInstruction(hp3, hp2) and
+                          (hp2.typ = ait_instruction) and
+                          IsJumpToLabelUncond(taicpu(hp2)) then
+                          NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp2))^.ref^.symbol)
+                        else
+                          begin
+                            current_asmdata.getjumplabel(NewLabel);
+                            asml.InsertAfter(tai_label.Create(NewLabel), hp3);
+                          end;
+                      end;
+
+                    DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always false)', jump_p);
+                  end;
+
+                OldLabel.decrefs;
+                JumpTargetOp(taicpu(jump_p))^.ref^.symbol := NewLabel;
+                NewLabel.increfs;
+              end;
+          end;
+
+      begin
+        Result := False;
+        { Try to find the following combination:
+            mov      $x, (oper)
+            jmp      @Lbl1
+            ...
+          @Lbl:
+            cmp      $y, (oper)
+            j(c)     @Lbl2
+
+          Evaluate the cmp instruction based on what x and y are, since
+          "j(c) @Lbl2" is deterministic (either change the first jump to @Lbl2
+          or to a new label appearing after "j(c) @Lbl2"
+
+          Other possibilities:
+            mov      $x, (oper)
+            test/cmp ###, ###
+            j(c1)    @Lbl1
+            ...
+          @Lbl:
+            cmp      $y, (oper)
+            j(c2)    @Lbl2
+
+          ... and:
+            mov      $x, (oper)
+            (unrelated movs)
+            j(c1)    @Lbl1
+          ...
+          @Lbl:
+            cmp      $y, (oper)
+            j(c2)    @Lbl2#
+
+          ,.. or a combination thereof:
+        }
+
+        if (taicpu(mov_p).oper[0]^.typ <> top_const) then
+          { Only constants are deterministic }
+          Exit;
+
+        hp1 := mov_p;
+        while GetNextInstruction(mov_p, hp1) and (hp1.typ = ait_instruction) do
+          case taicpu(hp1).opcode of
+            A_JMP:
+              begin
+                Result := AnalyseJump(hp1);
+                Exit;
+              end;
+            else
+              { Play safe }
+              Break;
+          end;
+      end;
+
 
     function TX86AsmOptimizer.FuncMov2Func(var p: tai; const hp1: tai): Boolean;
       var
@@ -2889,6 +3069,7 @@ unit aoptx86;
 {$ifdef x86_64}
       NewConst: TCGInt;
 {$endif x86_64}
+      MovVal, CmpVal: TCGInt;
 
       procedure convert_mov_value(signed_movop: tasmop; max_value: tcgint); inline;
         begin
@@ -2986,7 +3167,7 @@ unit aoptx86;
         end;
 
       var
-        GetNextInstruction_p, TempRegUsed, CrossJump: Boolean;
+        GetNextInstruction_p, TempRegUsed, CrossJump, CondResult: Boolean;
         PreMessage, RegName1, RegName2, InputVal, MaskNum: string;
         NewSize: topsize; NewOffset: asizeint;
         p_SourceReg, p_TargetReg, NewMMReg: TRegister;
@@ -3642,6 +3823,13 @@ unit aoptx86;
                 Result := True;
                 Exit;
               end;
+          end;
+
+        { Check the MOV/JMP into distant comparison optimisation }
+        if CheckMovBranchCmpJccShortcut(p) then
+          begin
+            Result := True;
+            Exit;
           end;
 
         { Next instruction is also a MOV ? }
