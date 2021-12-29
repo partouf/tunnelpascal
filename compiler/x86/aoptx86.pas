@@ -4884,6 +4884,133 @@ unit aoptx86;
                 Result := True;
                 Exit;
               end;
+
+            if (taicpu(p).oper[0]^.typ = top_const) and
+              MatchOperand(taicpu(p).oper[1]^, taicpu(hp1).oper[1]^) and
+              (
+                (
+                  (taicpu(hp1).opcode = A_CMP) and
+                  (taicpu(hp1).oper[0]^.typ = top_const)
+                ) or
+                (
+                  (taicpu(p).oper[1]^.typ = top_reg) and
+                  (taicpu(hp1).opcode = A_TEST) and
+                  MatchOperand(taicpu(hp1).oper[0]^, taicpu(p).oper[1]^.reg)
+                )
+              ) then
+              begin
+                {
+                  mov $x,(oper)
+                  cmp %y,(oper)
+                  jcc/setcc/cmovcc etc.
+
+                  Conditions are deterministic
+                }
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+
+                MovVal := taicpu(p).oper[0]^.val;
+                if taicpu(hp1).opcode = A_TEST then
+                  CmpVal := 0
+                else
+                  CmpVal := taicpu(hp1).oper[0]^.val;
+
+                hp3 := hp1;
+                while RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) and GetNextInstruction(hp3, hp2) and (hp2.typ = ait_instruction) do
+                  begin
+                    if (taicpu(hp2).opcode = A_Jcc) then
+                      { Check for jump shortcuts first.  Not only will they
+                        be missed if the condition is destroyed, but the
+                        jump optimisations may invert the condition, or remove
+                        it completely, so doing these optimisations after the
+                        condition has already been read may cause incorrect
+                        code to be generated. }
+                      DoJumpOptimizations(hp2, TempBool);
+
+                    if taicpu(hp2).condition = C_None then
+                      CondResult := False
+                    else
+                      CondResult := DetermineCondition(taicpu(hp2).condition, MovVal, CmpVal, topsize2memsize[taicpu(hp1).opsize]);
+
+                    case taicpu(hp2).opcode of
+                      A_CMOVcc:
+                        begin
+                          if CondResult then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'CMOVcc -> MOV because condition is always true', hp2);
+                              taicpu(hp2).opcode := A_MOV;
+                              taicpu(hp2).condition := C_None;
+                              Result := True;
+                            end
+                          else
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'CMOVcc -> NOP because condition is always false', hp2);
+                              UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+                              RemoveInstruction(hp2);
+                              Result := True;
+                              Continue;
+                            end;
+                        end;
+                      A_SETcc:
+                        begin
+                          taicpu(hp2).opcode := A_MOV;
+                          taicpu(hp2).condition := C_None;
+                          taicpu(hp2).ops := 2;
+                          taicpu(hp2).loadoper(1, taicpu(hp2).oper[0]^);
+                          if CondResult then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'SETcc -> MOV 1 because condition is always true', hp2);
+                              taicpu(hp2).loadconst(0, 1);
+                            end
+                          else
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'SETcc -> MOV 0 because condition is always false', hp2);
+                              taicpu(hp2).loadconst(0, 0);
+                            end;
+
+                          Result := True;
+                        end;
+                      A_Jcc:
+                        begin
+                          if CondResult then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'Jcc -> JMP because condition is always true', hp2);
+                              MakeUnconditional(taicpu(hp2));
+                              Result := True;
+                            end
+                          else
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'Jcc -> NOP because condition is always false', hp2);
+                              if IsJumpToLabel(taicpu(hp2)) then
+                                JumpTargetOp(taicpu(hp2))^.ref^.symbol.decrefs;
+
+                              UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+                              RemoveInstruction(hp2);
+                              Result := True;
+                              Continue;
+                            end;
+                        end;
+                      else
+                        if RegInInstruction(NR_DEFAULTFLAGS, hp2) then
+                          Break;
+                    end;
+
+                    UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+                    hp3 := hp2;
+                  end;
+
+                if Result then
+                  begin
+                    if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                      begin
+                        DebugMsg(SPeepholeOptimization + 'MOV/CMP -> MOV because comparison is deterministic', hp1);
+                        RemoveInstruction(hp1);
+                      end;
+
+                    Exit;
+                  end;
+              end;
           end;
 
         if MatchInstruction(hp1,A_LEA,[S_L{$ifdef x86_64},S_Q{$endif x86_64}]) and
