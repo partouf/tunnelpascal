@@ -2853,62 +2853,107 @@ unit aoptx86;
               Exit;
 
             if GetNextInstruction(hp_label, hp2) and
-              (hp2.typ = ait_instruction) and
-              (taicpu(hp2).opsize = taicpu(mov_p).opsize) and
-              (
-                (
-                  (taicpu(hp2).opcode = A_CMP) and
-                  (taicpu(hp2).oper[0]^.typ = top_const) and
-                  MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^)
-                ) or
-                (
-                  (taicpu(hp2).opcode = A_TEST) and
-                  (taicpu(mov_p).oper[1]^.typ = top_reg) and
-                  MatchOperand(taicpu(hp2).oper[0]^, taicpu(mov_p).oper[1]^.reg) and
-                  MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^.reg)
-                )
-              ) and
-              GetNextInstruction(hp2, hp3) and
-              MatchInstruction(hp3, A_Jcc, []) and
-              IsJumpToLabel(taicpu(hp3)) then
+              (hp2.typ = ait_instruction) then
               begin
-                Value := taicpu(mov_p).oper[0]^.val;
-                if (taicpu(hp2).opcode = A_TEST) then
-                  Comparison := 0
-                else
-                  Comparison := taicpu(hp2).oper[0]^.val;
+                { Another possibility:
+                      mov      $x, (oper)
+                      jmp      @Lbl1
+                      ...
+                    @Lbl1:
+                      mov      $y, (oper)
 
-                Branch := DetermineCondition(taicpu(hp3).condition, Value, Comparison, topsize2memsize[taicpu(hp2).opsize]);
-                Result := True;
-                if Branch then
+                  If x = y, then try to change to (@Lbl2 must exist; if not,
+                    a later optimisation will sort that out):
+                      mov      $x, (oper)
+                      jmp      @Lbl2
+                      ...
+                    @Lbl1:
+                      mov      $y, (oper)
+                    @Lbl2:
+
+                  Failing that, or if x <> y, or y is not a constant, then
+                    remove "mov $x, (oper)".
+                }
+                if (taicpu(hp2).opcode = A_MOV) then
                   begin
-                    { The simpler one }
-                    DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always true)', jump_p);
-                    NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp3))^.ref^.symbol);
-                  end
-                else
-                  begin
-                    { We need a new label for this }
-                    if not FindLiveLabel(hp3, NewLabel) then
+                    if (taicpu(hp2).opsize >= taicpu(mov_p).opsize) and
+                      not MatchOperand(taicpu(hp2).oper[0]^, taicpu(mov_p).oper[1]^) and
+                      MatchOperand(taicpu(mov_p).oper[1]^, taicpu(hp2).oper[1]^) then
                       begin
-                        { See if an unconditional jump follows, as we can use the destination of that instead }
-                        if GetNextInstruction(hp3, hp2) and
-                          (hp2.typ = ait_instruction) and
-                          IsJumpToLabelUncond(taicpu(hp2)) then
-                          NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp2))^.ref^.symbol)
+                        if (taicpu(hp2).oper[0]^.typ <> top_const) or
+                          (taicpu(hp2).oper[0]^.val <> taicpu(mov_p).oper[0]^.val) or
+                          not FindLiveLabel(hp2, NewLabel) then
+                          begin
+                            DebugMsg(SPeepholeOptimization + 'MOV/JMP/@Lbl/MOV -> Removed initial MOV as it is completely dominated', mov_p);
+                            RemoveCurrentp(mov_p, hp1);
+                            Result := True;
+                            Exit;
+                          end
                         else
                           begin
-                            current_asmdata.getjumplabel(NewLabel);
-                            asml.InsertAfter(tai_label.Create(NewLabel), hp3);
+                            DebugMsg(SPeepholeOptimization + 'MOV/JMP/@Lbl/MOV/@Lbl -> Redirected jump to second label because MOVs are identical', jump_p);
+                            JumpTargetOp(taicpu(jump_p))^.ref^.symbol.decrefs;
+                            JumpTargetOp(taicpu(jump_p))^.ref^.symbol := NewLabel;
+                            NewLabel.increfs;
                           end;
                       end;
+                  end
+                else if (taicpu(hp2).opsize = taicpu(mov_p).opsize) and
+                  (
+                    (
+                      (taicpu(hp2).opcode = A_CMP) and
+                      (taicpu(hp2).oper[0]^.typ = top_const) and
+                      MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^)
+                    ) or
+                    (
+                      (taicpu(hp2).opcode = A_TEST) and
+                      (taicpu(mov_p).oper[1]^.typ = top_reg) and
+                      MatchOperand(taicpu(hp2).oper[0]^, taicpu(mov_p).oper[1]^.reg) and
+                      MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^.reg)
+                    )
+                  ) and
+                  GetNextInstruction(hp2, hp3) and
+                  MatchInstruction(hp3, A_Jcc, []) and
+                  IsJumpToLabel(taicpu(hp3)) then
+                  begin
+                    Value := taicpu(mov_p).oper[0]^.val;
+                    if (taicpu(hp2).opcode = A_TEST) then
+                      Comparison := 0
+                    else
+                      Comparison := taicpu(hp2).oper[0]^.val;
 
-                    DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always false)', jump_p);
+                    Branch := DetermineCondition(taicpu(hp3).condition, Value, Comparison, topsize2memsize[taicpu(hp2).opsize]);
+                    Result := True;
+                    if Branch then
+                      begin
+                        { The simpler one }
+                        DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always true)', jump_p);
+                        NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp3))^.ref^.symbol);
+                      end
+                    else
+                      begin
+                        { We need a new label for this }
+                        if not FindLiveLabel(hp3, NewLabel) then
+                          begin
+                            { See if an unconditional jump follows, as we can use the destination of that instead }
+                            if GetNextInstruction(hp3, hp2) and
+                              (hp2.typ = ait_instruction) and
+                              IsJumpToLabelUncond(taicpu(hp2)) then
+                              NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp2))^.ref^.symbol)
+                            else
+                              begin
+                                current_asmdata.getjumplabel(NewLabel);
+                                asml.InsertAfter(tai_label.Create(NewLabel), hp3);
+                              end;
+                          end;
+
+                        DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always false)', jump_p);
+                      end;
+
+                    OldLabel.decrefs;
+                    JumpTargetOp(taicpu(jump_p))^.ref^.symbol := NewLabel;
+                    NewLabel.increfs;
                   end;
-
-                OldLabel.decrefs;
-                JumpTargetOp(taicpu(jump_p))^.ref^.symbol := NewLabel;
-                NewLabel.increfs;
               end;
           end;
 
@@ -2944,7 +2989,7 @@ unit aoptx86;
             cmp      $y, (oper)
             j(c2)    @Lbl2#
 
-          ,.. or a combination thereof:
+          ... or a combination thereof.
         }
 
         if (taicpu(mov_p).oper[0]^.typ <> top_const) then
