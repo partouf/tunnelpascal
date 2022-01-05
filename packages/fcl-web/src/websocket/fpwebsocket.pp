@@ -995,7 +995,7 @@ begin
     TWSFramePayload.CopyMasked(Payload.Data,Buffer,Payload.MaskKey,aOffset);
     end
   else
-    for I:=0 to Payload.DataLength-1 do
+    for I:=0 to int64(Payload.DataLength)-1 do
       buffer[aOffset + I]:=Payload.Data[I];
 
   Result := Buffer;
@@ -1297,8 +1297,6 @@ end;
 procedure TWSConnection.Disconnect;
 begin
   DoDisconnect;
-  if Assigned(FOnDisconnect) then
-    FOnDisconnect(Self);
 end;
 
 procedure TWSConnection.Close(aData: TBytes);
