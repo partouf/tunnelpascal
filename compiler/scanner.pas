@@ -370,9 +370,7 @@ implementation
           idtoken^:=tok;
         if (infop^.keyword*current_settings.modeswitches)=[] then
           exit;
-        result:=infop^.op;
-        if result=NOTOKEN then
-          result:=tok;
+        result:=infop^.to_op;
       end;
 
 
