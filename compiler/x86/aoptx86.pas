@@ -4155,8 +4155,8 @@ unit aoptx86;
             movq x(ref),%reg64
             shrq y,%reg64
           To:
-            movq x+4(ref),%reg32
-            shrq y-32,%reg32 (Remove if y = 32)
+            movl x+4(ref),%reg32
+            shrl y-32,%reg32 (Remove if y = 32)
         }
         if (taicpu(p).opsize = S_Q) and
           (taicpu(p).oper[0]^.typ = top_ref) and { Second operand will be a register }
@@ -4198,6 +4198,55 @@ unit aoptx86;
             Exit;
           end;
 {$endif x86_64}
+
+        { Backward optimisation.  If we have:
+            func.  %reg1,%reg2
+            mov    %reg2,%reg3
+            (dealloc %reg2)
+
+          Change to:
+            func.  %reg1,%reg3 (see comment below for what a valid func. is)
+        }
+        if MatchOpType(taicpu(p), top_reg, top_reg) then
+          begin
+            CurrentReg := taicpu(p).oper[0]^.reg;
+            ActiveReg := taicpu(p).oper[1]^.reg;
+            TransferUsedRegs(TmpUsedRegs);
+            if not RegUsedAfterInstruction(CurrentReg, p, TmpUsedRegs) and
+              GetLastInstruction(p, hp2) and
+              (hp2.typ = ait_instruction) and
+              { Have to make sure it's an instruction that only reads from
+                operand 1 and only writes (not reads or modifies) from operand 2;
+                in essence, a one-operand pure function such as BSR or POPCNT }
+              (taicpu(hp2).ops = 2) and
+              (insprop[taicpu(hp2).opcode].Ch * [Ch_Rop1, Ch_Wop2] = [Ch_Rop1, Ch_Wop2]) and
+              (taicpu(hp2).oper[1]^.typ = top_reg) and
+              (taicpu(hp2).oper[1]^.reg = CurrentReg) then
+              begin
+                case taicpu(hp2).opcode of
+                  A_FSTSW, A_FNSTSW,
+                  A_IN,   A_INS,  A_OUT,  A_OUTS,
+                  A_CMPS, A_LODS, A_MOVS, A_SCAS, A_STOS,
+                    { These routines have explicit operands, but they are restricted in
+                      what they can be (e.g. IN and OUT can only read from AL, AX or
+                      EAX. }
+                  A_CMOVcc:
+                    { CMOV is not valid either because then CurrentReg will depend
+                      on an unknown value if the condition is False and hence is
+                      not a pure write }
+                    ;
+                  else
+                    begin
+                      DebugMsg(SPeepholeOptimization + 'Removed MOV and changed destination on previous instruction to optimise register usage (FuncMov2Func)', p);
+                      taicpu(hp2).oper[1]^.reg := ActiveReg;
+                      AllocRegBetween(ActiveReg, hp2, p, TmpUsedRegs);
+                      RemoveCurrentp(p, hp1);
+                      Result := True;
+                      Exit;
+                    end;
+                end;
+              end;
+          end;
       end;
 
 
@@ -12310,14 +12359,34 @@ unit aoptx86;
            GetNextInstruction(p,hp2) and
            MatchInstruction(hp2,A_SETcc,A_Jcc,A_CMOVcc,[]) then
           case taicpu(hp1).opcode Of
-            A_ADD, A_SUB, A_OR, A_XOR, A_AND:
+            A_ADD, A_SUB, A_OR, A_XOR, A_AND,
+            { These two instructions set the zero flag if the result is zero }
+            A_POPCNT, A_LZCNT:
               begin
-                if OpsEqual(taicpu(hp1).oper[1]^,taicpu(p).oper[1]^) and
-                  { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
-                  { and in case of carry for A(E)/B(E)/C/NC                  }
-                   ((taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) or
-                    ((taicpu(hp1).opcode <> A_ADD) and
-                     (taicpu(hp1).opcode <> A_SUB))) then
+                if (
+                    { With POPCNT, an input of zero will set the zero flag
+                      because the population count of zero is zero }
+                    (taicpu(hp1).opcode = A_POPCNT) and
+                    (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) and
+                    (
+                      OpsEqual(taicpu(hp1).oper[0]^, taicpu(p).oper[1]^) or
+                      { Faster than going through the second half of the 'or'
+                        condition below }
+                      OpsEqual(taicpu(hp1).oper[1]^, taicpu(p).oper[1]^)
+                    )
+                  ) or (
+                    OpsEqual(taicpu(hp1).oper[1]^, taicpu(p).oper[1]^) and
+                    { does not work in case of overflow for G(E)/L(E)/C_O/C_NO }
+                    { and in case of carry for A(E)/B(E)/C/NC                  }
+                    (
+                      (taicpu(hp2).condition in [C_Z,C_NZ,C_E,C_NE]) or
+                      (
+                        (taicpu(hp1).opcode <> A_ADD) and
+                        (taicpu(hp1).opcode <> A_SUB) and
+                        (taicpu(hp1).opcode <> A_LZCNT)
+                      )
+                    )
+                  ) then
                   begin
                     RemoveCurrentP(p, hp2);
                     Result:=true;
