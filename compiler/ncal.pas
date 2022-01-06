@@ -3628,7 +3628,6 @@ implementation
         invokesym : tsym;
       begin
          result:=nil;
-         candidates:=nil;
 
          oldcallnode:=aktcallnode;
          aktcallnode:=self;
@@ -3748,7 +3747,7 @@ implementation
                    ignorevisibility:=(nf_isproperty in flags) or
                                      ((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
                                      (cnf_ignore_visibility in callnodeflags);
-                   candidates:=tcallcandidates.create(symtableprocentry,symtableproc,left,ignorevisibility,
+                   candidates.init(symtableprocentry,symtableproc,left,ignorevisibility,
                      not(nf_isproperty in flags),cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
                      callnodeflags*[cnf_anon_inherited,cnf_inherited]=[],cnf_anon_inherited in callnodeflags,spezcontext);
 
@@ -3793,7 +3792,7 @@ implementation
                               symtableprocentry.write_parameter_lists(nil);
                             end;
                         end;
-                      candidates.free;
+                      candidates.done;
                       exit;
                     end;
 
@@ -3868,7 +3867,7 @@ implementation
 {$endif EXTDEBUG}
 
                       { We can not proceed, release all procs and exit }
-                      candidates.free;
+                      candidates.done;
                       exit;
                     end;
 
@@ -3878,7 +3877,7 @@ implementation
                    if procdefinition.is_specialization and (procdefinition.typ=procdef) then
                      maybe_add_pending_specialization(procdefinition,candidates.para_anon_syms);
 
-                   candidates.free;
+                   candidates.done;
                  end; { end of procedure to call determination }
              end;
 
