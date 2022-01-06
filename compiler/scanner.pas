@@ -357,13 +357,13 @@ implementation
         while low<high do
          begin
            mid:=(high+low+1) shr 1;
-           if s<tokeninfo^[ttoken(mid)].str then
+           if s<tokeninfo[ttoken(mid)].str then
             high:=mid-1
            else
             low:=mid;
          end;
         tok:=ttoken(high);
-        infop:=@tokeninfo^[tok];
+        infop:=@tokeninfo[tok];
         if s<>infop^.str then
           exit;
         if Assigned(idtoken) then
@@ -5286,7 +5286,7 @@ type
                       begin
                         { does really an identifier follow? }
                         if not (c in ['_','A'..'Z','a'..'z']) then
-                          message2(scan_f_syn_expected,tokeninfo^[_ID].str,c);
+                          message2(scan_f_syn_expected,tokeninfo[_ID].str,c);
                         readstring;
                         token:=_ID;
                         idtoken:=_ID;

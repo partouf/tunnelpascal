@@ -2648,15 +2648,15 @@ implementation
         { set _FAIL as keyword if constructor }
         if (pd.proctypeoption=potype_constructor) then
          begin
-           oldfailtokenmode:=tokeninfo^[_FAIL].keyword;
-           tokeninfo^[_FAIL].keyword:=alllanguagemodes;
+           oldfailtokenmode:=tokeninfo[_FAIL].keyword;
+           tokeninfo[_FAIL].keyword:=alllanguagemodes;
          end;
 
         tcgprocinfo(current_procinfo).parse_body;
 
         { reset _FAIL as _SELF normal }
         if (pd.proctypeoption=potype_constructor) then
-          tokeninfo^[_FAIL].keyword:=oldfailtokenmode;
+          tokeninfo[_FAIL].keyword:=oldfailtokenmode;
 
         { When it's a nested procedure then defer the code generation,
           when back at normal function level then generate the code

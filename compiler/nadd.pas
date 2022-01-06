@@ -2050,7 +2050,7 @@ implementation
              (nodetype=addn) and
              (m_array_operators in current_settings.modeswitches) and
              isbinaryoverloaded(hp,[ocf_check_non_overloadable,ocf_check_only]) then
-           message3(parser_w_operator_overloaded_hidden_3,left.resultdef.typename,arraytokeninfo[_PLUS].str,right.resultdef.typename);
+           message3(parser_w_operator_overloaded_hidden_3,left.resultdef.typename,tokeninfo[_PLUS].str,right.resultdef.typename);
 
          if isbinaryoverloaded(hp,[]) then
            begin

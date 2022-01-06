@@ -794,7 +794,7 @@ implementation
                    _PROTECTED :
                      begin
                        check_unbound_attributes;
-                       Message1(parser_e_not_allowed_in_record,tokeninfo^[_PROTECTED].str);
+                       Message1(parser_e_not_allowed_in_record,tokeninfo[_PROTECTED].str);
                        consume(_PROTECTED);
                        current_structdef.symtable.currentvisibility:=vis_protected;
                        include(current_structdef.objectoptions,oo_has_protected);
@@ -842,7 +842,7 @@ implementation
                               _PROTECTED:
                                 begin
                                   { "strict protected" is not allowed for records }
-                                  Message1(parser_e_not_allowed_in_record,tokeninfo^[_STRICT].str+' '+tokeninfo^[_PROTECTED].str);
+                                  Message1(parser_e_not_allowed_in_record,tokeninfo[_STRICT].str+' '+tokeninfo[_PROTECTED].str);
                                   consume(_PROTECTED);
                                   current_structdef.symtable.currentvisibility:=vis_strictprotected;
                                   include(current_structdef.objectoptions,oo_has_strictprotected);

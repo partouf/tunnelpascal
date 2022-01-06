@@ -375,7 +375,7 @@ type
   ttokenidx=array[tokenlenmin..tokenlenmax,'A'..'Z'] of tokenidxrec;
 
 const
-  arraytokeninfo : ttokenarray =(
+  tokeninfo : ttokenarray =(
       (str:''              ;special:true ;keyword:[m_none];                          to_op:NOTOKEN),
     { Operators which can be overloaded }
       (str:'+'             ;special:true ;keyword:[m_none];                          to_op:_PLUS),
@@ -741,7 +741,6 @@ type
 {$endif jvm}
 
 var
-  tokeninfo:ptokenarray;
   tokenidx:ptokenidx;
 {$ifdef jvm}
   jvmtokenidx: pjvmtokenidx;
@@ -769,10 +768,10 @@ begin
   fillchar(tokenidx^,sizeof(tokenidx^),0);
   for t:=low(ttoken) to high(ttoken) do
    begin
-     if not arraytokeninfo[t].special then
+     if not tokeninfo[t].special then
       begin
-        i:=length(arraytokeninfo[t].str);
-        c:=arraytokeninfo[t].str[1];
+        i:=length(tokeninfo[t].str);
+        c:=tokeninfo[t].str[1];
         if ord(tokenidx^[i,c].first)=0 then
          tokenidx^[i,c].first:=t;
         tokenidx^[i,c].last:=t;
@@ -795,7 +794,6 @@ procedure inittokens;
 begin
   if tokenidx = nil then
   begin
-    tokeninfo:=@arraytokeninfo;
     new(tokenidx);
 {$ifdef jvm}
     new(jvmtokenidx);
@@ -809,7 +807,6 @@ procedure donetokens;
 begin
   if tokenidx <> nil then
   begin
-    tokeninfo:=nil;
     dispose(tokenidx);
     tokenidx:=nil;
 {$ifdef jvm}

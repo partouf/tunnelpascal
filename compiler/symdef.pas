@@ -6954,7 +6954,7 @@ implementation
                   if (pno_ownername in pno) and
                      assigned(struct) then
                     s:=s+struct.RttiName+'.';
-                  s:=s+arraytokeninfo[t].str;
+                  s:=s+tokeninfo[t].str;
                   if not (pno_noparams in pno) then
                     s:=s+typename_paras(pno);
                   break;
