@@ -321,6 +321,7 @@ type
     _SYSV_ABI_DEFAULT,
     _GREATERTHANOREQUAL
   );
+  pttoken=^ttoken;
 
   { sub_expr(opmultiply) is need to get -1 ** 4 to be
     read as - (1**4) and not (-1)**4 PM }

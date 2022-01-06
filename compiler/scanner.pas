@@ -333,28 +333,46 @@ implementation
       preprocstring : array [preproctyp] of string[7]
         = ('$IFDEF','$IFNDEF','$IF','$IFOPT','$ELSE','$ELSEIF');
 
-    function is_keyword(const s:string):boolean;
+    { idtoken is set before checking mode and converting to operator, and unchanged if keyword is not recognized at all.
+      For example:
+      recognize_keyword('MOD',@idt)   = _OP_MOD, idt = _MOD
+      recognize_keyword('TRY',@idt)   = _TRY,    idt = _TRY    - with $modeswitch exceptions on
+      recognize_keyword('TRY',@idt)   = NOTOKEN, idt = _TRY    - with $modeswitch exceptions off
+      recognize_keyword('HELLO',@idt) = NOTOKEN, idt unchanged
+    }
+    function recognize_keyword(const s: shortstring; idtoken: pttoken): ttoken;
       var
         low,high,mid : longint;
+        tok : ttoken;
+        idxp : ^tokenidxrec;
+        infop : ^tokenrec;
       begin
+        result:=NOTOKEN;
         if not (length(s) in [tokenlenmin..tokenlenmax]) or
            not (s[1] in ['a'..'z','A'..'Z']) then
-         begin
-           is_keyword:=false;
-           exit;
-         end;
-        low:=ord(tokenidx^[length(s),s[1]].first);
-        high:=ord(tokenidx^[length(s),s[1]].last);
+          exit;
+        idxp:=@tokenidx^[length(s),s[1]];
+        low:=ord(idxp^.first);
+        high:=ord(idxp^.last);
         while low<high do
          begin
            mid:=(high+low+1) shr 1;
-           if pattern<tokeninfo^[ttoken(mid)].str then
+           if s<tokeninfo^[ttoken(mid)].str then
             high:=mid-1
            else
             low:=mid;
          end;
-        is_keyword:=(pattern=tokeninfo^[ttoken(high)].str) and
-                    ((tokeninfo^[ttoken(high)].keyword*current_settings.modeswitches)<>[]);
+        tok:=ttoken(high);
+        infop:=@tokeninfo^[tok];
+        if s<>infop^.str then
+          exit;
+        if Assigned(idtoken) then
+          idtoken^:=tok;
+        if (infop^.keyword*current_settings.modeswitches)=[] then
+          exit;
+        result:=infop^.op;
+        if result=NOTOKEN then
+          result:=tok;
       end;
 
 
@@ -2506,7 +2524,7 @@ type
                end;
 
              { key words are never substituted }
-             if is_keyword(hs) then
+             if recognize_keyword(hs,nil)<>NOTOKEN then
                Message(scan_e_keyword_cant_be_a_macro);
 
              new(macrobuffer);
@@ -2601,7 +2619,7 @@ type
         mac.is_used:=true;
 
         { key words are never substituted }
-        if is_keyword(hs) then
+        if recognize_keyword(hs,nil)<>NOTOKEN then
           Message(scan_e_keyword_cant_be_a_macro);
 
         { macro assignment can be both := and = }
@@ -5192,36 +5210,14 @@ type
         if c in ['A'..'Z','a'..'z','_'] then
          begin
            readstring;
-           token:=_ID;
            idtoken:=_ID;
          { keyword or any other known token,
            pattern is always uppercased }
-           if (pattern[1]<>'_') and (length(pattern) in [tokenlenmin..tokenlenmax]) then
-            begin
-              low:=ord(tokenidx^[length(pattern),pattern[1]].first);
-              high:=ord(tokenidx^[length(pattern),pattern[1]].last);
-              while low<high do
-               begin
-                 mid:=(high+low+1) shr 1;
-                 if pattern<tokeninfo^[ttoken(mid)].str then
-                  high:=mid-1
-                 else
-                  low:=mid;
-               end;
-              with tokeninfo^[ttoken(high)] do
-                if pattern=str then
-                  begin
-                    if (keyword*current_settings.modeswitches)<>[] then
-                      if op=NOTOKEN then
-                        token:=ttoken(high)
-                      else
-                        token:=op;
-                    idtoken:=ttoken(high);
-                  end;
-            end;
+           token:=recognize_keyword(pattern,@idtoken);
          { Only process identifiers and not keywords }
-           if token=_ID then
+           if token=NOTOKEN then
             begin
+              token:=_ID;
             { this takes some time ... }
               if (cs_support_macro in current_settings.moduleswitches) then
                begin
@@ -5939,31 +5935,9 @@ exit_label:
            'a'..'z' :
              begin
                readstring;
-               optoken:=_ID;
-               if (pattern[1]<>'_') and (length(pattern) in [tokenlenmin..tokenlenmax]) then
-                begin
-                  low:=ord(tokenidx^[length(pattern),pattern[1]].first);
-                  high:=ord(tokenidx^[length(pattern),pattern[1]].last);
-                  while low<high do
-                   begin
-                     mid:=(high+low+1) shr 1;
-                     if pattern<tokeninfo^[ttoken(mid)].str then
-                      high:=mid-1
-                     else
-                      low:=mid;
-                   end;
-                  with tokeninfo^[ttoken(high)] do
-                    if pattern=str then
-                      begin
-                        if (keyword*current_settings.modeswitches)<>[] then
-                          if op=NOTOKEN then
-                            optoken:=ttoken(high)
-                          else
-                            optoken:=op;
-                      end;
-                  if not (optoken in preproc_operators) then
-                    optoken:=_ID;
-                end;
+               optoken:=recognize_keyword(pattern,nil);
+               if not (optoken in preproc_operators) then
+                 optoken:=_ID;
                current_scanner.preproc_pattern:=pattern;
                readpreproc:=optoken;
              end;
