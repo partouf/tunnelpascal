@@ -321,6 +321,9 @@ implementation
       turbo_scannerdirectives : TFPHashObjectList;     { for other modes }
       mac_scannerdirectives   : TFPHashObjectList;     { for mode mac }
 
+    const
+      DirectiveIgnored=pointer(1);
+
 
 {*****************************************************************************
                               Helper routines
@@ -4355,7 +4358,7 @@ type
              end
             else
              begin
-               current_scanner.ignoredirectives.Add(hs,nil);
+               current_scanner.ignoredirectives.Add(hs,DirectiveIgnored);
                Message1(scan_w_illegal_directive,'$'+hs);
              end;
             { conditionals already read the comment }
