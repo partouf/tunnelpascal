@@ -156,6 +156,7 @@ unit aoptx86;
         procedure RemoveLastDeallocForFuncRes(p : tai);
 
         function DoArithCombineOpt(var p : tai) : Boolean;
+        function DoAddRefOpt(var p, hp1: tai; Reg: TRegister; Value: TCGInt): Boolean;
         function DoMovCmpMemOpt(var p : tai; const hp1: tai) : Boolean;
         function DoSETccLblRETOpt(var p: tai; const hp_label: tai_label) : Boolean;
 
@@ -5788,6 +5789,7 @@ unit aoptx86;
                         else
                           DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB -> ADD',p);
                         RemoveInstruction(hp1);
+                        hp1 := nil; { This permits DoAddRefOpt to work in a single call }
                       end;
                   end
                 else
@@ -5812,6 +5814,28 @@ unit aoptx86;
                         Exit;
                       end;
                   end;
+              end;
+
+            { Change:
+                add     $x,%reg1
+                ...
+                ???     #(%reg2,%reg1,y)  (Instructions with a reference)
+                (dealloc %reg1)
+
+              To:
+                ???     x*y+#(%reg2,%reg1,y)
+
+                (Do similar when %reg1 appears in (or also in) the index)
+            }
+
+            if (
+                { Save calling GetNextInstructionUsingReg again }
+                Assigned(hp1) or
+                GetNextInstructionUsingReg(p,hp1, ActiveReg)
+              ) and DoAddRefOpt(p, hp1, ActiveReg, taicpu(p).oper[0]^.val) then
+              begin
+                Result := True;
+                Exit;
               end;
 
             if DoArithCombineOpt(p) then
@@ -6307,6 +6331,121 @@ unit aoptx86;
                   end;
               end;
           end;
+      end;
+
+
+    function TX86AsmOptimizer.DoAddRefOpt(var p, hp1: tai; Reg: TRegister; Value: TCGInt): Boolean;
+      var
+        ThisConst: TCGInt;
+        X: Integer;
+        NewAssign, RegUsed: Boolean;
+        hp2, p_next: tai;
+      begin
+        Result := False;
+
+        if taicpu(hp1).typ <> ait_instruction then
+          Exit;
+
+        { If thef flags are in use, do not make any changes }
+        if RegInUsedRegs(NR_DEFAULTFLAGS, UsedRegs) then
+          Exit;
+
+        NewAssign :=
+          { MOV is a common case and faster to check than calling MatchInstruction }
+          (
+            (taicpu(hp1).opcode = A_MOV) and
+            (taicpu(hp1).oper[1]^.typ = top_reg) and
+            SuperRegistersEqual(taicpu(hp1).oper[1]^.reg, Reg)
+          ) or
+          (
+            MatchInstruction(hp1, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif x86_64}, []) and
+            SuperRegistersEqual(taicpu(hp1).oper[1]^.reg, Reg)
+          ) or
+          RegLoadedWithNewValue(Reg, hp1);
+
+        if not NewAssign and
+          RegModifiedByInstruction(Reg, hp1) then
+          Exit;
+
+        TransferUsedRegs(TmpUsedRegs);
+        if not GetNextInstruction(p, p_next) then
+          { We should have hit hp1 at least }
+          InternalError(2022010801);
+
+        UpdateUsedRegs(TmpUsedRegs, tai(p_next.Next));
+
+        if p_next <> hp1 then
+          begin
+            hp2 := p_next;
+            repeat
+              UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+            until not GetNextInstruction(hp2, hp2) or (hp2 = hp1);
+          end;
+
+        RegUsed := RegUsedAfterInstruction(Reg, hp1, TmpUsedRegs);
+
+        { If the register is used afterwards, we have to take some precautions }
+        if RegUsed and RegInInstruction(NR_DEFAULTFLAGS, hp1) then
+          { Swapping the instructions will scramble the flags; e.g.
+              subq    $1,%rax
+              cmpb    $10,(%rax)
+
+            Swapping them will cause the flags to depend on SUB instead
+          }
+          Exit;
+
+        for X := 0 to taicpu(hp1).ops - 1 do
+          if taicpu(hp1).oper[X]^.typ = top_ref then
+            begin
+              ThisConst := taicpu(hp1).oper[X]^.ref^.offset;
+
+              if (taicpu(hp1).oper[X]^.ref^.base = Reg) then
+                begin
+                  Inc(ThisConst, Value);
+                  Result := True;
+                end;
+
+              if (taicpu(hp1).oper[X]^.ref^.index = Reg) then
+                begin
+                  Inc(ThisConst, Value * max(taicpu(hp1).oper[X]^.ref^.scalefactor, 1));
+                  Result := True;
+                end;
+
+              if Result then
+                if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
+                  { Overflow - abort }
+                  Result := False
+                else if (cs_opt_size in current_settings.optimizerswitches) and
+                  not NewAssign and RegUsed and
+                  (ThisConst <> 0) then
+                  { Will increase code size }
+                  Result := False
+                else
+                  taicpu(hp1).oper[X]^.ref^.offset := ThisConst;
+
+              Break;
+            end;
+
+          if Result then
+            begin
+              if not NewAssign and RegUsed then
+                begin
+                  DebugMsg(SPeepholeOptimization + 'Merged arithmetic instruction into following reference (OpRef2RefOp)', p);
+                  UpdateUsedRegs(tai(p.Next));
+                  Asml.Remove(p);
+                  Asml.InsertAfter(p, hp1);
+                  p := p_next;
+                end
+              else
+                begin
+                  DebugMsg(SPeepholeOptimization + 'Merged arithmetic instruction into following reference (OpRef2Ref)', p);
+                  if (cs_opt_level3 in current_settings.optimizerswitches) then
+                    RemoveCurrentp(p)
+                  else
+                    RemoveCurrentp(p, p_next);
+                end;
+              Exit;
+            end;
       end;
 
 
@@ -6863,6 +7002,7 @@ unit aoptx86;
                         else
                           DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> SUB',p);
                         RemoveInstruction(hp1);
+                        hp1 := nil; { This permits DoAddRefOpt to work in a single call }
                       end;
                   end
                 else
@@ -6922,7 +7062,32 @@ unit aoptx86;
               end;
 {$endif i386}
             if DoArithCombineOpt(p) then
-              Result:=true;
+              begin
+                Result:=true;
+                Exit;
+              end;
+
+            { Change:
+                sub     $x,%reg1
+                ...
+                ???     #(%reg2,%reg1,y)  (Instructions with a reference)
+                (dealloc %reg1)
+
+              To:
+                ???     #-x*y(%reg2,%reg1,y)
+
+                (Do similar when %reg1 appears in (or also in) the index)
+            }
+
+            if (
+                { Save calling GetNextInstructionUsingReg again }
+                Assigned(hp1) or
+                GetNextInstructionUsingReg(p,hp1, ActiveReg)
+              ) and DoAddRefOpt(p, hp1, ActiveReg, -taicpu(p).oper[0]^.val) then
+              begin
+                Result := True;
+                Exit;
+              end;
           end;
       end;
 
