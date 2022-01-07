@@ -342,30 +342,20 @@ implementation
     }
     function recognize_keyword(const s: shortstring; idtoken: pttoken): ttoken;
       var
-        low,high,mid : longint;
         tok : ttoken;
-        idxp : ^tokenidxrec;
-        infop : ^tokenrec;
+        infop : ptokenrec;
+        ith,itok : SizeInt;
       begin
         result:=NOTOKEN;
-        if not (length(s) in [tokenlenmin..tokenlenmax]) or
-           not (s[1] in ['a'..'z','A'..'Z']) then
-          exit;
-        idxp:=@tokenidx^[length(s),s[1]];
-        low:=ord(idxp^.first);
-        high:=ord(idxp^.last);
-        while low<high do
-         begin
-           mid:=(high+low+1) shr 1;
-           if s<tokeninfo[ttoken(mid)].str then
-            high:=mid-1
-           else
-            low:=mid;
-         end;
-        tok:=ttoken(high);
-        infop:=@tokeninfo[tok];
-        if s<>infop^.str then
-          exit;
+        ith:=TokenHash(s) and tokenhashtablemask;
+        repeat
+          itok:=tokenhashtable^[ith];
+          if itok=0 then exit;
+          tok:=ttoken((ord(FirstKeywordToken)-1)+itok);
+          infop:=@tokeninfo[tok];
+          if infop^.str=s then break;
+          ith:=(ith+1) and tokenhashtablemask;
+        until false;
         if Assigned(idtoken) then
           idtoken^:=tok;
         if (infop^.keyword*current_settings.modeswitches)=[] then

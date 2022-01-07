@@ -25,7 +25,7 @@ unit tokens;
 interface
 
 uses
-  globtype;
+  globtype,cutils;
 
 type
   ttoken=(NOTOKEN,
@@ -363,16 +363,10 @@ type
     keyword : tmodeswitches;
     to_op   : ttoken;
   end;
+  ptokenrec=^tokenrec;
 
   ttokenarray=array[ttoken] of tokenrec;
   ptokenarray=^ttokenarray;
-
-  tokenidxrec=record
-    first,last : ttoken;
-  end;
-
-  ptokenidx=^ttokenidx;
-  ttokenidx=array[tokenlenmin..tokenlenmax,'A'..'Z'] of tokenidxrec;
 
 const
   tokeninfo : ttokenarray =(
@@ -669,6 +663,7 @@ const
       (str:'SYSV_ABI_DEFAULT';special:false;keyword:[m_none];                        to_op:_SYSV_ABI_DEFAULT),
       (str:'GREATERTHANOREQUAL';special:false;keyword:[m_none];                      to_op:_GREATERTHANOREQUAL) { delphi operator name }
   );
+  FirstKeywordToken = _C;
 
 
 {$ifdef jvm}
@@ -740,8 +735,19 @@ type
   tjvmtokenidx=array[jvmtokenlenmin..jvmtokenlenmax] of tjvmtokenidxrec;
 {$endif jvm}
 
+const
+  tokenhashtablemask = 1 shl 10 - 1; { Must be 2^N-1. 2^10-1 is 1023, around four times greater than keyword token count. }
+
+type
+  tokenhashtablebasetype=uint8;
+{$if ord(High(ttoken))-(ord(FirstKeywordToken)-1)>High(tokenhashtablebasetype)}
+  {$error tokenhashtablebasetype doesn't fit all keywords, increase to uint16}
+{$endif}
+  ttokenhashtable=array[0..tokenhashtablemask] of tokenhashtablebasetype;
+  ptokenhashtable=^ttokenhashtable;
+
 var
-  tokenidx:ptokenidx;
+  tokenhashtable:ptokenhashtable;
 {$ifdef jvm}
   jvmtokenidx: pjvmtokenidx;
 {$endif jvm}
@@ -750,34 +756,46 @@ var
 procedure inittokens;
 procedure donetokens;
 procedure create_tokenidx;
+function TokenHash(const s : shortstring): uint32;
 
 
 implementation
 
 procedure create_tokenidx;
-{ create an index with the first and last token for every possible token
-  length, so a search only will be done in that small part }
 var
   t : ttoken;
-  i : longint;
-  c : char;
+  ith,collisions: SizeUint;
 {$ifdef jvm}
-  j : longint;
+  i,j : longint;
 {$endif jvm}
 begin
-  fillchar(tokenidx^,sizeof(tokenidx^),0);
+{ Create a hash table of tokens.
+  tokenhashtable stores 0 for empty entries, and 1 + (token - FirstKeywordToken) for existing tokens,
+  which can be rewritten as token + (FirstKeywordToken - 1). }
+  fillchar(tokenhashtable^,sizeof(tokenhashtable^),0);
   for t:=low(ttoken) to high(ttoken) do
    begin
      if not tokeninfo[t].special then
       begin
-        i:=length(tokeninfo[t].str);
-        c:=tokeninfo[t].str[1];
-        if ord(tokenidx^[i,c].first)=0 then
-         tokenidx^[i,c].first:=t;
-        tokenidx^[i,c].last:=t;
+        if t<FirstKeywordToken then internalerrorproc(2021111001);
+        ith:=TokenHash(tokeninfo[t].str) and tokenhashtablemask;
+        collisions:=0;
+        while tokenhashtable^[ith]<>0 do
+         begin
+           ith:=(ith+1) and tokenhashtablemask;
+           inc(collisions);
+           if collisions>=4 then
+           { An unpleasant amount of collisions.
+             Hash table size (tokenhashtablemask) can be increased to 2^11-1, hash function or collision resolution strategy can be altered,
+             or just this threshold increased to 5 ;) }
+             internalerrorproc(2021111002);
+         end;
+         tokenhashtable^[ith]:=ord(t)-(ord(FirstKeywordToken)-1);
       end;
    end;
 {$ifdef jvm}
+{ create an index with the first and last token for every possible token
+  length, so a search only will be done in that small part }
   fillchar(jvmtokenidx^,sizeof(jvmtokenidx^),0);
   for j:=low(jvmreservedwords) to high(jvmreservedwords) do
    begin
@@ -792,9 +810,9 @@ end;
 
 procedure inittokens;
 begin
-  if tokenidx = nil then
+  if tokenhashtable=nil then
   begin
-    new(tokenidx);
+    new(tokenhashtable);
 {$ifdef jvm}
     new(jvmtokenidx);
 {$endif jvm}
@@ -805,15 +823,41 @@ end;
 
 procedure donetokens;
 begin
-  if tokenidx <> nil then
+  if tokenhashtable<>nil then
   begin
-    dispose(tokenidx);
-    tokenidx:=nil;
+    dispose(tokenhashtable);
+    tokenhashtable:=nil;
 {$ifdef jvm}
     dispose(jvmtokenidx);
     jvmtokenidx:=nil;
 {$endif jvm}
   end;
 end;
+
+{$push} {$rangechecks off} {$overflowchecks off}
+{ Tuned for small strings and existing keywords.
+  At some point of the time, gave no collisions for 2048-cell table. But even 1024 is fine. }
+function TokenHash(const s : shortstring): uint32;
+const
+  M1=45; M2=125; MSmall=11;
+var
+  ns : uint8;
+begin
+  ns:=length(s);
+  if ns<sizeof(uint32) then
+   begin
+     if ns=0 then exit(0);
+   { Combines 3 or less characters. }
+     result:=(uint32(s[1])+(uint32(s[1+ns div 2]) shl 8)+(uint32(s[ns]) shl 16))*MSmall;
+   end
+  else
+   { Combines first 4 and last 4 characters (possibly overlapping for ns<8).
+     As collisions nor reproducibility aren't important, endianness is not important either. }
+   result:=
+     unaligned(PUint32(@s[1])^)*M1 +
+     unaligned(PUint32(@s[ns-(sizeof(uint32)-1)])^)*M2;
+  result:=result xor (result shr 16);
+end;
+{$pop}
 
 end.
