@@ -5817,6 +5817,11 @@ unit aoptx86;
                   end;
               end;
 
+            if DoArithCombineOpt(p) then
+              begin
+                Result:=true;
+                Exit;
+              end;
             { Change:
                 add     $x,%reg1
                 ...
@@ -6344,7 +6349,7 @@ unit aoptx86;
       begin
         Result := False;
 
-        if taicpu(hp1).typ <> ait_instruction then
+        if hp1.typ <> ait_instruction then
           Exit;
 
         { If thef flags are in use, do not make any changes }
@@ -6493,8 +6498,16 @@ unit aoptx86;
                     OtherRegister := CurrentRef^.index;
 
                   if (OtherRegister <> NR_NO) and
-                    { If we can't set the offset to zero, this is wasted effort }
-                    (CurrentRef^.offset = Value)
+                    (
+                      { If we can't set the offset to zero, this is wasted effort }
+                      (CurrentRef^.offset = Value) or
+                      { But maybe not if we can reduce the byte count }
+                      (
+                        ((CurrentRef^.offset > 127) or (CurrentRef^.offset < -128)) and
+                        ((CurrentRef^.offset - Value) >= -128) and
+                        ((CurrentRef^.offset - Value) <= 127)
+                      )
+                    )
                     and GetLastInstruction(hp1, hp2) and
                     { Make sure there is a pipeline stall between hp2 and hp1,
                       otherwise a saving won't be made }
