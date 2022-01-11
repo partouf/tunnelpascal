@@ -236,6 +236,7 @@ type
     FFinalFrame: Boolean;
     FRSV: Byte;
     FPayload : TWSFramePayload;
+    FReason: WORD;
   protected
     function Read(aTransport: IWSTransport): boolean;
     function GetAsBytes : TBytes; virtual;
@@ -250,6 +251,7 @@ type
     property FinalFrame: Boolean read FFinalFrame write FFinalFrame;
     property Payload : TWSFramePayload Read FPayload Write FPayLoad;
     property FrameType: TFrameType read FFrameType;
+    property Reason: WORD read FReason;
     Property AsBytes : TBytes Read GetAsBytes;
   end;
   TWSFrameClass = Class of TWSFrame;
@@ -313,12 +315,13 @@ type
     Procedure DoDisconnect; virtual; abstract;
     // Read message from connection. Return False if connection was closed.
     function DoReadMessage: Boolean;
-    procedure DispatchEvent(aInitialType : TFrameType; aFrame: TWSFrame);
+    procedure DispatchEvent(aInitialType : TFrameType; aFrame: TWSFrame; aMessageContent: TBytes);
     Procedure SetHandShakeRequest(aRequest : TWSHandShakeRequest);
     Function HandleIncoming(aFrame: TWSFrame) : Boolean; virtual;
     function GetHandshakeCompleted: Boolean; virtual; abstract;
     Function GetTransport : IWSTransport; virtual; abstract;
     property Owner : TComponent Read FOwner;
+    function IsValidUTF8(aValue: TBytes): boolean;
   Public
     Type
       TConnectionIDAllocator = Procedure(out aID : String) of object;
@@ -502,7 +505,6 @@ begin
     FlagPong :         Self:=ftPong;
   else
     Self:=ftFutureOpcodes;
-    //Raise EConvertError.CreateFmt(SErrInvalidFrameType,[aValue]);
   end;
 end;
 
@@ -673,7 +675,7 @@ end;
 function TWSMessage.GetAsString: UTF8String;
 
 begin
-  Result:=TEncoding.UTF8.GetAnsiString(Payload);
+  Result:=TEncoding.UTF8.GetString(Payload);
 end;
 
 function TWSMessage.GetAsUnicodeString: UnicodeString;
@@ -919,8 +921,12 @@ end;
 
 constructor TWSFrame.Create(aType: TFrameType; aIsFinal: Boolean; APayload: TBytes; aMask: Integer=0);
 
+var
+  closeData: TBytes;
+
 begin
   Create(aType,aIsFinal,aMask);
+
   FPayload.Data := APayload;
   if Assigned(aPayload) then
     FPayload.DataLength := Cardinal(Length(aPayload));
@@ -929,6 +935,7 @@ end;
 constructor TWSFrame.Create(aType: TFrameType; aIsFinal : Boolean = True; aMask: Integer=0);
 
 begin
+  FReason:=CLOSE_NORMAL_CLOSURE;
   FPayload:=Default(TWSFramePayload);
   FPayload.MaskKey:=aMask;
   FPayload.Masked:=aMask<>0;
@@ -943,7 +950,7 @@ Var
   Data : TBytes;
 
 begin
-  Data:=TEncoding.UTF8.GetAnsiBytes(AMessage);
+  Data:=TEncoding.UTF8.GetBytes(AMessage);
   Create(ftText,True,Data,aMask);
 end;
 
@@ -980,6 +987,19 @@ begin
   FRSV:=(B1 and %01110000) shr 4;
   FFrameType.AsFlag:=(B1 and $F);
   FPayload.Read(Buffer,aTransport);
+  FReason:=CLOSE_NORMAL_CLOSURE;
+  if FFrameType=ftClose then
+    if FPayload.DataLength = 1 then
+      FReason:=CLOSE_PROTOCOL_ERROR
+    else
+    if FPayload.DataLength>1 then
+    begin
+      FReason:=SwapEndian(FPayload.Data.ToWord(0));
+      FPayload.DataLength := FPayload.DataLength - 2;
+      if FPayload.DataLength > 0 then
+        move(FPayload.Data[2], FPayload.Data[0], FPayload.DataLength - 2);
+      SetLength(FPayload.Data, FPayload.DataLength);
+    end;
   Result:=True;
 end;
 
@@ -1141,7 +1161,7 @@ begin
   end;
 end;
 
-procedure TWSConnection.SetHandShakeRequest(aRequest: TWSHandshakeRequest);
+procedure TWSConnection.SetHandShakeRequest(aRequest: TWSHandShakeRequest);
 begin
   FreeAndNil(FHandshakeRequest);
   FHandShakeRequest:=aRequest;
@@ -1210,7 +1230,7 @@ begin
   Result:=DoReadMessage;
 end;
 
-procedure TWSConnection.DispatchEvent(aInitialType : TFrameType; aFrame : TWSFrame);
+procedure TWSConnection.DispatchEvent(aInitialType: TFrameType; aFrame: TWSFrame; aMessageContent: TBytes);
 
 Var
   msg: TWSMessage;
@@ -1220,34 +1240,30 @@ begin
   ftPing,
   ftPong,
   ftClose :
-     begin
-     If Assigned(FOnControl) then
-       FOnControl(Self,aInitialType,FMessageContent);
-     FMessageContent:=[];
-     end;
+    If Assigned(FOnControl) then
+      FOnControl(Self,aInitialType,aMessageContent);
   ftBinary,
   ftText :
     begin
-    if Assigned(FOnMessageReceived) then
+      if Assigned(FOnMessageReceived) then
       begin
-      Msg:=Default(TWSMessage);
-      Msg.IsText:=(aInitialType=ftText);
-      if aFrame.FrameType=ftBinary then
-        Msg.Sequences:=[fsFirst]
-      else
-        Msg.Sequences:=[fsContinuation];
-      if aFrame.FinalFrame then
-        Msg.Sequences:=Msg.Sequences+[fsLast];
-      Msg.PayLoad:=FMessageContent;
-      FOnMessageReceived(Self, Msg);
+        Msg:=Default(TWSMessage);
+        Msg.IsText:=(aInitialType=ftText);
+        if aFrame.FrameType=ftBinary then
+          Msg.Sequences:=[fsFirst]
+        else
+          Msg.Sequences:=[fsContinuation];
+        if aFrame.FinalFrame then
+          Msg.Sequences:=Msg.Sequences+[fsLast];
+        Msg.PayLoad:=aMessageContent;
+        FOnMessageReceived(Self, Msg);
       end;
-    FMessageContent:=[];
     end;
   ftContinuation: ; // Cannot happen normally
   end;
 end;
 
-Function TWSConnection.HandleIncoming(aFrame : TWSFrame) : Boolean;
+function TWSConnection.HandleIncoming(aFrame: TWSFrame) : Boolean;
 
    Procedure UpdateCloseState;
 
@@ -1258,76 +1274,217 @@ Function TWSConnection.HandleIncoming(aFrame : TWSFrame) : Boolean;
        FCloseState:=csClosed;
    end;
 
+   procedure ProtocolError(aCode: Word);
+   begin
+     Close('', aCode);
+     UpdateCloseState;
+     Result:=false;
+   end;
+
 begin
-  Result:=True;
+  Result:=true;
   // check Reserved bits
   if aFrame.Reserved<>0 then
   begin
-    Close('', CLOSE_PROTOCOL_ERROR);
-    UpdateCloseState;
-    Result:=false;
+    ProtocolError(CLOSE_PROTOCOL_ERROR);
     Exit;
   end;
   // check Reserved opcode
   if aFrame.FrameType = ftFutureOpcodes then
   begin
-    Close('', CLOSE_PROTOCOL_ERROR);
-    UpdateCloseState;
-    Result:=false;
+    ProtocolError(CLOSE_PROTOCOL_ERROR);
     Exit;
   end;
   { If control frame it must be complete }
   if ((aFrame.FrameType=ftPing) or
       (aFrame.FrameType=ftPong) or
-      (aFrame.FrameType=ftClose) or
-      (aFrame.FrameType=ftContinuation))
+      (aFrame.FrameType=ftClose))
      and (not aFrame.FinalFrame) then
   begin
-    Close('', CLOSE_PROTOCOL_ERROR);
-    UpdateCloseState;
-    Result:=false;
+    ProtocolError(CLOSE_PROTOCOL_ERROR);
     Exit;
   end;
+  //
+
   // here we handle payload.
-  if aFrame.FrameType<>ftContinuation then
-    FInitialOpcode:=aFrame.FrameType;
-  if aFrame.FrameType in [ftPong,ftBinary,ftText,ftPing] then
-    FMessageContent:=aFrame.Payload.Data;
+//  if aFrame.FrameType in [ftBinary,ftText] then
+//  begin
+//    FInitialOpcode:=aFrame.FrameType;
+//    FMessageContent:=aFrame.Payload.Data;
+//  end;
+
   // Special handling
   Case aFrame.FrameType of
     ftContinuation:
-     FMessageContent.Append(aFrame.Payload.Data);
+      begin
+        if FInitialOpcode=ftContinuation then
+        begin
+          ProtocolError(CLOSE_PROTOCOL_ERROR);
+          Exit;
+        end;
+
+        FMessageContent.Append(aFrame.Payload.Data);
+        if aFrame.FinalFrame then
+        begin
+          if FInitialOpcode = ftText then
+            if IsValidUTF8(FMessageContent) then
+              DispatchEvent(FInitialOpcode,aFrame,FMessageContent)
+            else
+              ProtocolError(CLOSE_INVALID_FRAME_PAYLOAD_DATA)
+          else
+            DispatchEvent(FInitialOpcode,aFrame,FMessageContent);
+          // reset initial opcode
+          FInitialOpcode:=ftContinuation;
+        end;
+      end;
+
     ftPing:
       begin
         if aFrame.Payload.DataLength > 125 then
-          Close('', CLOSE_PROTOCOL_ERROR)
+          ProtocolError(CLOSE_PROTOCOL_ERROR)
         else
-          if not (woPongExplicit in Options) then
-            Send(ftPong,aFrame.Payload.Data);
+        if not (woPongExplicit in Options) then
+        begin
+          Send(ftPong,aFrame.Payload.Data);
+          DispatchEvent(ftPing,aFrame,aFrame.Payload.Data);
+        end;
      end;
    ftClose:
      begin
-     // If our side sent the initial close, this is the reply, and we must disconnect (Result=false).
-     Result:=FCloseState=csNone;
-     if Result then
-     begin
-       FMessageContent:=aFrame.Payload.Data;
-       if not (woCloseExplicit in Options) then
+       // If our side sent the initial close, this is the reply, and we must disconnect (Result=false).
+       Result:=FCloseState=csNone;
+       if Result then
        begin
-         Close('', CLOSE_NORMAL_CLOSURE); // Will update state
-         Result:=False; // We can disconnect.
+         if (aFrame.Payload.DataLength>123) then
+         begin
+           ProtocolError(CLOSE_PROTOCOL_ERROR);
+           exit;
+         end;
+
+         if not (woCloseExplicit in Options) then
+         begin
+          if (aFrame.Reason<CLOSE_NORMAL_CLOSURE) or
+             (aFrame.Reason=CLOSE_RESERVER) or
+             (aFrame.Reason=CLOSE_NO_STATUS_RCVD) or
+             (aFrame.Reason=CLOSE_ABNORMAL_CLOSURE) or
+             ((aFrame.Reason>CLOSE_TLS_HANDSHAKE) and (aFrame.Reason<3000)) then
+           begin
+             ProtocolError(CLOSE_PROTOCOL_ERROR);
+             exit;
+           end;
+           if IsValidUTF8(aFrame.Payload.Data) then
+           begin
+             DispatchEvent(ftClose,aFrame,aFrame.Payload.Data);
+             Close('', aFrame.Reason); // Will update state
+             UpdateCloseState;
+             Result:=False; // We can disconnect.
+           end
+           else
+            ProtocolError(CLOSE_PROTOCOL_ERROR);
+
+         end
+         else
+           UpdateCloseState
        end
        else
-         UpdateCloseState
-     end
-     else
-       UpdateCloseState;
+         UpdateCloseState;
+     end;
+   ftBinary,ftText:
+     begin
+       if FInitialOpcode in [ftText, ftBinary] then
+       begin
+         ProtocolError(CLOSE_PROTOCOL_ERROR);
+         Exit;
+       end;
+       FInitialOpcode:=aFrame.FrameType;
+       FMessageContent:=aFrame.Payload.Data;
+       if aFrame.FinalFrame then
+       begin
+         if aFrame.FrameType = ftText then
+           if IsValidUTF8(aFrame.Payload.Data) then
+             DispatchEvent(FInitialOpcode,aFrame,aFrame.Payload.Data)
+           else
+             ProtocolError(CLOSE_INVALID_FRAME_PAYLOAD_DATA)
+         else
+           DispatchEvent(FInitialOpcode,aFrame,aFrame.Payload.Data);
+
+         FInitialOpcode:=ftContinuation;
+       end;
      end;
   else
     ; // avoid Compiler warning
   End;
-  if (aFrame.FinalFrame) or (woIndividualFrames in Options) then
-    DispatchEvent(FInitialOpcode,aFrame);
+end;
+
+function TWSConnection.IsValidUTF8(aValue: TBytes): boolean;
+var
+  i, len, n, j: integer;
+  c: ^byte;
+begin
+  Result := true;
+  len := length(aValue);
+  if len = 0 then
+    exit;
+  Result := False;
+  i := 0;
+  c := @AValue[0];
+  while i < len do
+  begin
+    if (c^ >= $00) and (c^ <= $7f) then
+      n := 0
+    else if (c^ >= $c2) and (c^ <= $df) then
+      n := 1
+    else if (c^ = $e0) then
+      n := 2
+    else if (c^ >= $e1) and (c^ <= $ec) then
+      n := 2
+    else if (c^ = $ed) then
+      n := 2
+    else if (c^ >= $ee) and (c^ <= $ef) then
+      n := 2
+    else if (c^ = $f0) then
+      n := 3
+    else if (c^ >= $f1) and (c^ <= $f3) then
+      n := 3
+    else if (c^ = $f4) then
+      n := 3
+    else
+      exit;
+
+    j := 0;
+    Inc(i);
+
+    while j < n do
+    begin
+      if i >= len then
+        exit;
+      case c^ of
+        $c2..$df, $e1..$ec, $ee..$ef, $f1..$f3:
+          if not (((c + 1)^ >= $80) and ((c + 1)^ <= $bf)) then
+            exit;
+        $e0:
+          if not (((c + 1)^ >= $a0) and ((c + 1)^ <= $bf)) then
+            exit;
+        $ed:
+          if not (((c + 1)^ >= $80) and ((c + 1)^ <= $9f)) then
+            exit;
+        $f0:
+          if not (((c + 1)^ >= $90) and ((c + 1)^ <= $bf)) then
+            exit;
+        $f4:
+          if not (((c + 1)^ >= $80) and ((c + 1)^ <= $8f)) then
+            exit;
+        $80..$bf:
+          if not (((c + 1)^ >= $80) and ((c + 1)^ <= $bf)) then
+            exit;
+      end;
+      Inc(c);
+      Inc(i);
+      Inc(j);
+    end;
+    Inc(c);
+  end;
+  Result := True;
 end;
 
 function TWSConnection.FrameClass: TWSFrameClass;
@@ -1336,7 +1493,7 @@ begin
   Result:=TWSFrame;
 end;
 
-procedure TWSConnection.Send(const AMessage: UTF8String);
+procedure TWSConnection.Send(const AMessage: UTF8string);
 
 var
   aFrame: TWSFrame;
@@ -1372,6 +1529,7 @@ var
   aData: TBytes;
   aSize: Integer;
 begin
+  aData := [];
   // first two bytes is reason of close RFC 6455 section-5.5.1
   aData := TEncoding.UTF8.GetAnsiBytes(aMessage);
   aSize := Length(aData);
@@ -1412,7 +1570,7 @@ begin
     end;
 end;
 
-Function TWSConnection.DoReadMessage : Boolean ;
+function TWSConnection.DoReadMessage: Boolean;
 
 Var
   F : TWSFrame;
