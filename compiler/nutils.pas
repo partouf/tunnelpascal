@@ -135,9 +135,11 @@ interface
 
     { count the number of nodes in the node tree,
       rough estimation how large the tree "node" is }
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode; max : integer) : dword;
+    function node_count_unbounded(node : tnode): dword;
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode; max : integer) : dword;
+    function node_count_weighted_unbounded(node : tnode) : dword;
 
     { returns true, if the value described by node is constant/immutable, this approximation is safe
       if no dirty tricks like buffer overflows or pointer magic are used }
@@ -1426,37 +1428,59 @@ implementation
         result:=foreachnodestatic(n,@check_for_conditional_nodes,nil);
       end;
 
-    var
-      nodecount : dword;
 
     function donodecount(var n: tnode; arg: pointer): foreachnoderesult;
       begin
-        inc(nodecount);
-        result:=fen_false;
+        PInteger(arg)^:=PInteger(arg)^-1;
+        if PInteger(arg)^>0 then
+          result:=fen_false
+        else
+          result:=fen_norecurse_false;
       end;
 
 
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode; max : integer) : dword;
+      var
+        left : integer;
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount,nil);
-        result:=nodecount;
+        left:=max;
+        foreachnodestatic(node,@donodecount,@left);
+        if left<0 then left:=0;
+        result:=max-left;
+      end;
+
+
+    function node_count_unbounded(node : tnode): dword;
+      begin
+        result:=node_count(node,High(integer));
       end;
 
 
     function donodecount_weighted(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         if not(n.nodetype in [blockn,statementn,callparan,nothingn]) then
-          inc(nodecount);
-        result:=fen_false;
+          PInteger(arg)^:=PInteger(arg)^-1;
+        if PInteger(arg)^>0 then
+          result:=fen_false
+        else
+          result:=fen_norecurse_false;
       end;
 
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode; max : integer) : dword;
+      var
+        left : integer;
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount_weighted,nil);
-        result:=nodecount;
+        left:=max;
+        foreachnodestatic(node,@donodecount_weighted,@left);
+        if left<0 then left:=0;
+        result:=max-left;
+      end;
+
+
+    function node_count_weighted_unbounded(node : tnode) : dword;
+      begin
+        result:=node_count_weighted(node,High(integer));
       end;
 
 
