@@ -28,6 +28,7 @@ type
     Procedure AssertEquals(Const AMessage : String; Expected, Actual : TJSToken); overload;
     Procedure AssertEquals(Const AMessage : String; Expected, Actual : TJSType); overload;
     Procedure AssertEquals(Const AMessage : String; Expected, Actual : TJSVarType); overload;
+    Procedure AssertEquals(Const AMessage : String; Expected, Actual : TKeyOptionality); overload;
     Procedure AssertIdentifier(Msg : String; El : TJSElement; Const AName : TJSString);
     procedure AssertEquals(Const AMessage : String; aExpected : AnsiString; aActual : TJSString); overload;
     Function  GetSourceElements : TJSSourceElements;
@@ -337,6 +338,16 @@ begin
   AssertEquals(AMessage,NE,NA);
 end;
 
+procedure TTestBaseJSParser.AssertEquals(const AMessage: String; Expected, Actual: TKeyOptionality);
+Var
+  NE,NA : String;
+
+begin
+  NE:=GetEnumName(TypeInfo(TKeyOptionality),Ord(Expected));
+  NA:=GetEnumName(TypeInfo(TKeyOptionality),Ord(Actual));
+  AssertEquals(AMessage,NE,NA);
+end;
+
 Procedure TTestBaseJSParser.AssertIdentifier(Msg: String; El: TJSElement;
   Const AName: TJSString);
 
@@ -375,7 +386,7 @@ Var
 begin
   E:=GetVars;
   AssertNotNull('Have statements',E);
-  Writeln('Count : ',E.Count);
+  // Writeln('Count : ',E.Count);
   If (E.Count=0) then
     Fail('Zero variables defined');
   Result:=E.Nodes[0].Node;
@@ -2160,7 +2171,6 @@ Var
   E : TJSSourceElements;
   N : TJSElement;
   FD : TJSFunctionDeclarationStatement;
-  P : TJSTypedParam;
 
 begin
   CreateParser('function a (...b,c) {}');

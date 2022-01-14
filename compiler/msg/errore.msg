@@ -445,7 +445,7 @@ scan_e_unexpected_endif=02108_E_$ENDIF directive found without a matching $IF(N)
 #
 # Parser
 #
-# 03355 is the last used one
+# 03361 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1632,6 +1632,9 @@ parser_e_location_regpair_only_consecutive=03359_E_Only consecutive registers ar
 % MorphOS syscall specific: only consecutive (f.e.: d1-d2) registers are supported for 64bit register pairs
 parser_e_constructurs_cannot_take_type_parameters=03360_E_Constructors cannot take type parameters
 % The use of type parameters in constructors is not allowed.
+parser_e_raise_with_noreturn_not_allowed=03361_E_Raise in subroutines declared as noreturn is not allowed
+% \var{noreturn} tells the compiler that the activation scope of the subroutine is never left. This includes exceptions
+% goto or any other mean. While the compiler cannot detect all such cases some are trivial and the compiler gives an error.
 %
 % \end{description}
 %
@@ -4361,6 +4364,7 @@ x*2Wp<x>_Specify the controller type; see fpc -i or fpc -iu for possible values
 4*2WP<x>_Minimum iOS deployment version: 8.0, 8.0.2, ... (iphonesim)
 a*2WP<x>_Minimum iOS deployment version: 7.0, 7.1.2, ... (Darwin)
 A*2WP<x>_Minimum iOS deployment version: 3.0, 5.0.1, ... (Darwin)
+x*2WP<x>_Esp8266-rtos-sdk or esp-idf version number: 3.3, 3.4 (esp8266) or 4.2, 4.3 (esp32)
 3*2WR_Generate relocation code (Windows)
 4*2WR_Generate relocation code (Windows)
 A*2WR_Generate relocation code (Windows)
