@@ -121,7 +121,9 @@ implementation
          blockid : longint;
          hl1,hl2 : TConstExprInt;
          sl1,sl2 : tstringconstnode;
-         casedeferror, caseofstring : boolean;
+         casedeferror, 
+         caseofstring,
+         caseofclass : boolean;
          casenode : tcasenode;
       begin
          consume(_CASE);
@@ -142,10 +144,14 @@ implementation
          caseofstring :=
            ([m_delphi, m_mac, m_tp7] * current_settings.modeswitches = []) and
            is_string(casedef);
+         caseofclass :=
+           ([m_delphi, m_mac, m_tp7] * current_settings.modeswitches = []) and
+           is_classref(casedef);
 
          if (not assigned(casedef)) or
-            ( not(is_ordinal(casedef)) and (not caseofstring) ) then
+            (not(is_ordinal(casedef)) and (not caseofstring and not caseofclass)) then
           begin
+            // TODO: new message for all case types
             CGMessage(type_e_ordinal_or_string_expr_expected);
             { create a correct tree }
             caseexpr.free;
@@ -238,9 +244,11 @@ implementation
              else
                begin
                  { type check for string case statements }
-                 if (caseofstring and (not is_conststring_or_constcharnode(p))) or
+                 if (caseofstring and not is_conststring_or_constcharnode(p)) or
+                 { type check for class case statements }
+                   (caseofclass and not is_classref(p.resultdef)) or
                  { type checking for ordinal case statements }
-                   ((not caseofstring) and (not is_subequal(casedef, p.resultdef))) then
+                   ((not caseofstring and not caseofclass) and (not is_subequal(casedef, p.resultdef))) then
                    CGMessage(parser_e_case_mismatch);
 
                  if caseofstring then
@@ -248,6 +256,8 @@ implementation
                      sl1:=get_string_value(p, tstringdef(casedef));
                      casenode.addlabel(blockid,sl1,sl1);
                    end
+                 else if caseofclass then
+                   casenode.addlabel(blockid,tloadvmtaddrnode(p),tloadvmtaddrnode(p))
                  else
                    begin
                      hl1:=get_ordinal_value(p);
