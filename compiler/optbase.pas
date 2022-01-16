@@ -31,7 +31,10 @@ unit optbase;
     type
       { this should maybe replaced by a spare set,
         using a dyn. array makes assignments cheap }
-      tdfaset = array of byte;
+      DFASetBaseType = PtrUint;
+      PDFASetBaseType = ^DFASetBaseType;
+
+      tdfaset = array of DFASetBaseType;
       PDFASet = ^TDFASet;
 
       toptinfo = record
@@ -89,20 +92,23 @@ unit optbase;
     uses
       cutils;
 
+    const
+      DFASetBaseBits = bitsizeof(DFASetBaseType);
+
     procedure DFASetInclude(var s : tdfaset;e : integer);
       var
-        e8 : Integer;
+        eb : SizeInt;
       begin
-        e8:=e div 8;
-        if e8>high(s) then
-          SetLength(s,e8+1);
-        s[e8]:=s[e8] or (1 shl (e mod 8));
+        eb:=cardinal(e) div DFASetBaseBits;
+        if eb>high(s) then
+          SetLength(s,eb+1);
+        s[eb]:=s[eb] or (DFASetBaseType(1) shl (cardinal(e) mod DFASetBaseBits));
       end;
 
 
     procedure DFASetIncludeSet(var d : tdfaset;const s : tdfaset);
       var
-        i : integer;
+        i : SizeInt;
       begin
         if length(s)>length(d) then
           SetLength(d,length(s));
@@ -113,7 +119,7 @@ unit optbase;
 
     procedure DFASetExcludeSet(var d : tdfaset;const s : tdfaset);
       var
-        i : integer;
+        i : SizeInt;
       begin
         if length(s)>length(d) then
           SetLength(d,length(s));
@@ -124,21 +130,21 @@ unit optbase;
 
     procedure DFASetExclude(var s : tdfaset;e : integer);
       var
-        e8 : Integer;
+        eb : SizeInt;
       begin
-        e8:=e div 8;
-        if e8<=high(s) then
-          s[e8]:=s[e8] and not(1 shl (e mod 8));
+        eb:=cardinal(e) div DFASetBaseBits;
+        if eb<=high(s) then
+          s[eb]:=s[eb] and not(DFASetBaseType(1) shl (cardinal(e) mod DFASetBaseBits));
       end;
 
 
     function DFASetIn(const s : tdfaset;e : integer) : boolean;
       var
-        e8 : Integer;
+        eb : SizeInt;
       begin
-        e8:=e div 8;
-        if e8<=high(s) then
-          result:=(s[e8] and (1 shl (e mod 8)))<>0
+        eb:=cardinal(e) div DFASetBaseBits;
+        if eb<=high(s) then
+          result:=(s[eb] and (DFASetBaseType(1) shl (cardinal(e) mod DFASetBaseBits)))<>0
         else
           result:=false;
       end;
@@ -146,7 +152,7 @@ unit optbase;
 
     procedure DFASetUnion(var d : tdfaset;const s1,s2 : tdfaset);
       var
-        i : integer;
+        i : SizeInt;
       begin
         SetLength(d,max(Length(s1),Length(s2)));
         for i:=0 to min(high(s1),high(s2)) do
@@ -162,7 +168,7 @@ unit optbase;
 
     procedure DFASetIntersect(var d : tdfaset;const s1,s2 : tdfaset);
       var
-        i : integer;
+        i : SizeInt;
       begin
         SetLength(d,min(Length(s1),Length(s2)));
         for i:=0 to high(d) do
@@ -172,7 +178,7 @@ unit optbase;
 
     procedure DFASetDiff(var d : tdfaset;const s1,s2 : tdfaset);
       var
-        i : integer;
+        i : SizeInt;
       begin
         SetLength(d,length(s1));
         for i:=0 to high(d) do
@@ -185,9 +191,11 @@ unit optbase;
 
     function DFASetNotEqual(const s1,s2 : tdfaset) : boolean;
       var
-        i : integer;
+        i : SizeInt;
       begin
-        result:=true;
+        result:=pointer(s1)<>pointer(s2);
+        if not result then
+          exit;
         { one set could be larger than the other }
         if length(s1)>length(s2) then
           begin
@@ -215,11 +223,11 @@ unit optbase;
 
     procedure PrintDFASet(var f : text;s : TDFASet);
       var
-        i : integer;
+        i : SizeInt;
         first : boolean;
       begin
         first:=true;
-        for i:=0 to Length(s)*8 do
+        for i:=0 to Length(s)*DFASetBaseBits-1 do
           begin
             if DFASetIn(s,i) then
               begin
