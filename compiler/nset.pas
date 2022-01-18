@@ -657,7 +657,7 @@ implementation
           ltConstString:
             result:=left^._low_str.fullcompare(right^._high_str);
           ltClassRef:
-            result:=comparetext(left^._low_class.left.resultdef.typename, right^._high_class.left.resultdef.typename);
+            result:=comparetext(left^._low_class.left.resultdef.typename,right^._high_class.left.resultdef.typename);
           otherwise
             internalerror(2022011602);
         end;
@@ -881,7 +881,7 @@ implementation
          { Load caseexpr into temp var if complex. }
          { No need to do this for ordinal, because }
          { in that case caseexpr is generated once }
-         if (flabels^.label_type = ltConstString) and (not valid_for_addr(left, false)) and
+         if ((flabels^.label_type = ltConstString) or (flabels^.label_type = ltClassRef)) and (not valid_for_addr(left, false)) and
            (blocks.count > 0) then
            begin
              init_block := internalstatements(stmt);
@@ -1348,6 +1348,8 @@ implementation
 
 
     function tcasenode.insert_if_block_label(hcaselabel: pcaselabel; var p : pcaselabel) : pcaselabel;
+      var
+        duplicate_label: boolean;
       begin
         if not assigned(p) then
           begin
@@ -1360,10 +1362,16 @@ implementation
           result := insert_if_block_label(hcaselabel,p^.greater)
         else
           begin
+            duplicate_label:=true;
+            { class case labels with mismatched types use nil nodes as placeholder
+              but we don't need to give an error the label is duplicate. }
+            if (hcaselabel^.label_type=ltClassRef) and (hcaselabel^._low_class.left.nodetype=niln) then
+              duplicate_label := false;
             get_case_label_low_node(hcaselabel).free;
             get_case_label_high_node(hcaselabel).free;
             dispose(hcaselabel);
-            Message(parser_e_double_caselabel);
+            if duplicate_label then
+              Message(parser_e_double_caselabel);
             result:=nil;
           end;
       end;
