@@ -242,7 +242,13 @@ implementation
                  if caseofstring then
                    casenode.addlabel(blockid,sl1,sl2)
                  else if caseofclass then
-                   casenode.addlabel(blockid,tloadvmtaddrnode(trangenode(p).left),tloadvmtaddrnode(trangenode(p).right))
+                   begin
+                     { ranges of class are not supported but need a placeholder node anyways }
+                     vmtnode:=cloadvmtaddrnode.create(cnilnode.create);
+                     typecheckpass(tnode(vmtnode));
+                     casenode.addlabel(blockid,vmtnode,vmtnode);
+                     vmtnode.free;
+                   end
                  else
                    casenode.addlabel(blockid,hl1,hl2);
                end
