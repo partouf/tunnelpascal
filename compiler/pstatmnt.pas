@@ -246,7 +246,7 @@ implementation
                      { ranges of class are not supported but need a placeholder node anyways }
                      vmtnode:=cloadvmtaddrnode.create(cnilnode.create);
                      typecheckpass(tnode(vmtnode));
-                     casenode.addlabel(blockid,vmtnode,vmtnode);
+                     casenode.addlabel(blockid,vmtnode);
                      vmtnode.free;
                    end
                  else
@@ -280,7 +280,7 @@ implementation
                          { create a dummy vmt node for the mismatched label }
                          vmtnode:=cloadvmtaddrnode.create(cnilnode.create);
                          typecheckpass(tnode(vmtnode));
-                         casenode.addlabel(blockid,vmtnode,vmtnode);
+                         casenode.addlabel(blockid,vmtnode);
                          vmtnode.free;
                        end;
                    end
@@ -290,7 +290,7 @@ implementation
                      casenode.addlabel(blockid,sl1,sl1);
                    end
                  else if caseofclass then
-                   casenode.addlabel(blockid,tloadvmtaddrnode(p),tloadvmtaddrnode(p))
+                   casenode.addlabel(blockid,tloadvmtaddrnode(p))
                  else
                    begin
                      hl1:=get_ordinal_value(p);

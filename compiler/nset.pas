@@ -57,8 +57,7 @@ interface
             );
             ltClassRef:
             (
-              _low_class,
-              _high_class : tloadvmtaddrnode;
+              _class : tloadvmtaddrnode;
             );
        end;
 
@@ -136,7 +135,7 @@ interface
           function docompare(p: tnode): boolean; override;
           procedure addlabel(blockid:longint;const l,h : TConstExprInt); overload;
           procedure addlabel(blockid:longint;l,h : tstringconstnode); overload;
-          procedure addlabel(blockid:longint;l,h : tloadvmtaddrnode); overload;
+          procedure addlabel(blockid:longint;n : tloadvmtaddrnode); overload;
           procedure addblock(blockid:longint;instr:tnode);
           procedure addelseblock(instr:tnode);
 
@@ -629,7 +628,7 @@ implementation
           ltConstString:
             result:=lab^._low_str;
           ltClassRef:
-            result:=lab^._low_class;
+            result:=lab^._class;
           otherwise
             internalerror(2022011603);
         end;
@@ -642,7 +641,7 @@ implementation
           ltConstString:
             result:=lab^._high_str;
           ltClassRef:
-            result:=lab^._high_class;
+            result:=lab^._class;
           otherwise
             internalerror(2022011604);
         end;
@@ -657,7 +656,7 @@ implementation
           ltConstString:
             result:=left^._low_str.fullcompare(right^._high_str);
           ltClassRef:
-            result:=comparetext(left^._low_class.left.resultdef.typename,right^._high_class.left.resultdef.typename);
+            result:=comparetext(left^._class.left.resultdef.typename,right^._class.left.resultdef.typename);
           otherwise
             internalerror(2022011602);
         end;
@@ -1363,12 +1362,21 @@ implementation
         else
           begin
             duplicate_label:=true;
-            { class case labels with mismatched types use nil nodes as placeholder
-              but we don't need to give an error the label is duplicate. }
-            if (hcaselabel^.label_type=ltClassRef) and (hcaselabel^._low_class.left.nodetype=niln) then
-              duplicate_label := false;
-            get_case_label_low_node(hcaselabel).free;
-            get_case_label_high_node(hcaselabel).free;
+            if hcaselabel^.label_type=ltClassRef then
+              begin
+                { class case labels with mismatched types use nil nodes as placeholder
+                  but we don't need to give an error the label is duplicate. }
+                if hcaselabel^._class.left.nodetype=niln then
+                  duplicate_label := false;
+
+                hcaselabel^._class.free;
+              end
+            else
+              begin
+                get_case_label_low_node(hcaselabel).free;
+                get_case_label_high_node(hcaselabel).free;
+              end;
+
             dispose(hcaselabel);
             if duplicate_label then
               Message(parser_e_double_caselabel);
@@ -1451,7 +1459,7 @@ implementation
         insert_if_block_label(hcaselabel,flabels);
       end;
 
-    procedure tcasenode.addlabel(blockid: longint; l, h: tloadvmtaddrnode);
+    procedure tcasenode.addlabel(blockid: longint; n: tloadvmtaddrnode);
       var
         hcaselabel : pcaselabel;
       begin
@@ -1460,8 +1468,7 @@ implementation
         hcaselabel^.blockid := blockid;
         hcaselabel^.label_type := ltClassRef;
 
-        hcaselabel^._low_class := tloadvmtaddrnode(l.getcopy);
-        hcaselabel^._high_class := tloadvmtaddrnode(h.getcopy);
+        hcaselabel^._class := tloadvmtaddrnode(n.getcopy);
 
         insert_if_block_label(hcaselabel,flabels);
       end;
