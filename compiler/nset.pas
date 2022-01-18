@@ -656,7 +656,10 @@ implementation
           ltConstString:
             result:=left^._low_str.fullcompare(right^._high_str);
           ltClassRef:
-            result:=comparetext(left^._class.left.resultdef.typename,right^._class.left.resultdef.typename);
+            if equal_defs(left^._class.left.resultdef,right^._class.left.resultdef) then
+              result:=0
+            else
+              result:=1;
           otherwise
             internalerror(2022011602);
         end;
