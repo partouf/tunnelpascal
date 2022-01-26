@@ -1054,6 +1054,7 @@ implementation
             ascii2unicode(value_str,len,current_settings.sourcecodepage,pw);
             ansistringdispose(value_str,len);
             pcompilerwidestring(value_str):=pw;
+            len:=getlengthwidestring(pw);
           end
         else
           { convert unicode 2 ascii }
