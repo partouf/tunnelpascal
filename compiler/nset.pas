@@ -28,10 +28,10 @@ interface
     uses
        cclasses,constexp,
        node,globtype,globals,
-       aasmbase,ncon,nflw,symtype;
+       aasmbase,ncon,nmem,nflw,symtype;
 
     type
-       TLabelType = (ltOrdinal, ltConstString);
+       TLabelType = (ltOrdinal, ltConstString, ltClassRef);
 
        pcaselabel = ^tcaselabel;
        tcaselabel = record
@@ -54,6 +54,10 @@ interface
             (
               _low_str,
               _high_str   : tstringconstnode;
+            );
+            ltClassRef:
+            (
+              _class : tloadvmtaddrnode;
             );
        end;
 
@@ -108,6 +112,7 @@ interface
           function getlabelcoverage: qword;
           procedure updatecoverage;
           procedure checkordinalcoverage;
+          function insert_if_block_label(hcaselabel:pcaselabel; var p:pcaselabel): pcaselabel;
         public
           blocks    : TFPList;
           elseblock : tnode;
@@ -130,6 +135,7 @@ interface
           function docompare(p: tnode): boolean; override;
           procedure addlabel(blockid:longint;const l,h : TConstExprInt); overload;
           procedure addlabel(blockid:longint;l,h : tstringconstnode); overload;
+          procedure addlabel(blockid:longint;n : tloadvmtaddrnode); overload;
           procedure addblock(blockid:longint;instr:tnode);
           procedure addelseblock(instr:tnode);
 
@@ -616,6 +622,49 @@ implementation
       end;
 
 
+    function get_case_label_low_node(lab:pcaselabel): tnode;
+      begin
+        case lab^.label_type of
+          ltConstString:
+            result:=lab^._low_str;
+          ltClassRef:
+            result:=lab^._class;
+          otherwise
+            internalerror(2022011603);
+        end;
+      end;
+
+
+    function get_case_label_high_node(lab:pcaselabel): tnode;
+      begin
+        case lab^.label_type of
+          ltConstString:
+            result:=lab^._high_str;
+          ltClassRef:
+            result:=lab^._class;
+          otherwise
+            internalerror(2022011604);
+        end;
+      end;
+
+
+    function compare_case_labels(left,right:pcaselabel): integer;
+      begin
+        if left^.label_type<>right^.label_type then
+          internalerror(2022011601);
+        case left^.label_type of
+          ltConstString:
+            result:=left^._low_str.fullcompare(right^._high_str);
+          ltClassRef:
+            if equal_defs(left^._class.left.resultdef,right^._class.left.resultdef) then
+              result:=0
+            else
+              result:=1;
+          otherwise
+            internalerror(2022011602);
+        end;
+      end;
+
 {*****************************************************************************
                               TCASENODE
 *****************************************************************************}
@@ -719,7 +768,6 @@ implementation
         result:=simplify(false);
       end;
 
-
     type
       TLinkedListCaseLabelItem = class(TLinkedListItem)
         casenode: pcaselabel;
@@ -786,13 +834,13 @@ implementation
                   else
                     newcheck:=@check;
                   labitem:=TLinkedListCaseLabelItem(lablist[j]).casenode;
-                  newcheck^:=caddnode.create(equaln,left.getcopy,labitem^._low_str.getcopy);
-                  if (labitem^._low_str.fullcompare(labitem^._high_str)<>0) then
+                  newcheck^:=caddnode.create(equaln,left.getcopy,get_case_label_low_node(labitem).getcopy);
+                  if compare_case_labels(labitem,labitem)<>0 then
                     begin
                       newcheck^.nodetype:=gten;
                       newcheck^:=caddnode.create(
                         andn,newcheck^,caddnode.create(
-                          lten,left.getcopy,labitem^._high_str.getcopy));
+                          lten,left.getcopy,get_case_label_high_node(labitem).getcopy));
                     end;
                 end;
               result:=cifnode.create(check,
@@ -835,7 +883,7 @@ implementation
          { Load caseexpr into temp var if complex. }
          { No need to do this for ordinal, because }
          { in that case caseexpr is generated once }
-         if (flabels^.label_type = ltConstString) and (not valid_for_addr(left, false)) and
+         if ((flabels^.label_type = ltConstString) or (flabels^.label_type = ltClassRef)) and (not valid_for_addr(left, false)) and
            (blocks.count > 0) then
            begin
              init_block := internalstatements(stmt);
@@ -878,7 +926,8 @@ implementation
                exit;
              end;
 
-         if (flabels^.label_type = ltConstString) then
+         { if-block case statements }
+         if (flabels^.label_type = ltConstString) or (flabels^.label_type = ltClassRef) then
            begin
              if_node:=makeifblock(elseblock);
 
@@ -1300,6 +1349,45 @@ implementation
       end;
 
 
+    function tcasenode.insert_if_block_label(hcaselabel: pcaselabel; var p : pcaselabel) : pcaselabel;
+      var
+        duplicate_label: boolean;
+      begin
+        if not assigned(p) then
+          begin
+            p := hcaselabel;
+            result := p;
+          end
+        else if compare_case_labels(p,hcaselabel)>0 then
+          result := insert_if_block_label(hcaselabel,p^.less)
+        else if compare_case_labels(p,hcaselabel)<0 then
+          result := insert_if_block_label(hcaselabel,p^.greater)
+        else
+          begin
+            duplicate_label:=true;
+            if hcaselabel^.label_type=ltClassRef then
+              begin
+                { class case labels with mismatched types use nil nodes as placeholder
+                  but we don't need to give an error the label is duplicate. }
+                if hcaselabel^._class.left.nodetype=niln then
+                  duplicate_label := false;
+
+                hcaselabel^._class.free;
+              end
+            else
+              begin
+                get_case_label_low_node(hcaselabel).free;
+                get_case_label_high_node(hcaselabel).free;
+              end;
+
+            dispose(hcaselabel);
+            if duplicate_label then
+              Message(parser_e_double_caselabel);
+            result:=nil;
+          end;
+      end;
+
+
     procedure tcasenode.addlabel(blockid:longint;const l,h : TConstExprInt);
       var
         hcaselabel : pcaselabel;
@@ -1362,30 +1450,6 @@ implementation
 
       var
         hcaselabel : pcaselabel;
-
-      function insertlabel(var p : pcaselabel) : pcaselabel;
-        begin
-          if not assigned(p) then
-            begin
-              p := hcaselabel;
-              result := p;
-            end
-          else
-            if (p^._low_str.fullcompare(hcaselabel^._high_str) > 0) then
-              result := insertlabel(p^.less)
-          else
-            if (p^._high_str.fullcompare(hcaselabel^._low_str) < 0) then
-              result := insertlabel(p^.greater)
-          else
-            begin
-              hcaselabel^._low_str.free;
-              hcaselabel^._high_str.free;
-              dispose(hcaselabel);
-              Message(parser_e_double_caselabel);
-              result:=nil;
-            end;
-        end;
-
       begin
         new(hcaselabel);
         fillchar(hcaselabel^, sizeof(tcaselabel), 0);
@@ -1395,7 +1459,20 @@ implementation
         hcaselabel^._low_str := tstringconstnode(l.getcopy);
         hcaselabel^._high_str := tstringconstnode(h.getcopy);
 
-        insertlabel(flabels);
+        insert_if_block_label(hcaselabel,flabels);
       end;
 
+    procedure tcasenode.addlabel(blockid: longint; n: tloadvmtaddrnode);
+      var
+        hcaselabel : pcaselabel;
+      begin
+        new(hcaselabel);
+        fillchar(hcaselabel^, sizeof(tcaselabel), 0);
+        hcaselabel^.blockid := blockid;
+        hcaselabel^.label_type := ltClassRef;
+
+        hcaselabel^._class := tloadvmtaddrnode(n.getcopy);
+
+        insert_if_block_label(hcaselabel,flabels);
+      end;
 end.

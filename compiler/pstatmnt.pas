@@ -121,7 +121,11 @@ implementation
          blockid : longint;
          hl1,hl2 : TConstExprInt;
          sl1,sl2 : tstringconstnode;
-         casedeferror, caseofstring : boolean;
+         casedeferror, 
+         caseofstring,
+         caseofclass,
+         case_mismatch : boolean;
+         vmtnode : tloadvmtaddrnode;
          casenode : tcasenode;
       begin
          consume(_CASE);
@@ -142,10 +146,15 @@ implementation
          caseofstring :=
            ([m_delphi, m_mac, m_tp7] * current_settings.modeswitches = []) and
            is_string(casedef);
+         caseofclass :=
+           ([m_delphi, m_mac, m_tp7] * current_settings.modeswitches = []) and
+           is_classref(casedef);
 
          if (not assigned(casedef)) or
-            ( not(is_ordinal(casedef)) and (not caseofstring) ) then
+            (not(is_ordinal(casedef)) and (not caseofstring and not caseofclass)) then
           begin
+            // TODO: new message for class case types?
+            // type_e_valid_case_label_expected
             CGMessage(type_e_ordinal_or_string_expr_expected);
             { create a correct tree }
             caseexpr.free;
@@ -232,22 +241,56 @@ implementation
 
                  if caseofstring then
                    casenode.addlabel(blockid,sl1,sl2)
+                 else if caseofclass then
+                   begin
+                     { ranges of class are not supported but need a placeholder node anyways }
+                     vmtnode:=cloadvmtaddrnode.create(cnilnode.create);
+                     typecheckpass(tnode(vmtnode));
+                     casenode.addlabel(blockid,vmtnode);
+                     vmtnode.free;
+                   end
                  else
                    casenode.addlabel(blockid,hl1,hl2);
                end
              else
                begin
                  { type check for string case statements }
-                 if (caseofstring and (not is_conststring_or_constcharnode(p))) or
+                 if (caseofstring and not is_conststring_or_constcharnode(p)) or
+                 { type check for class case statements }
+                   (caseofclass and not is_classref(p.resultdef)) or
                  { type checking for ordinal case statements }
-                   ((not caseofstring) and (not is_subequal(casedef, p.resultdef))) then
-                   CGMessage(parser_e_case_mismatch);
+                   ((not caseofstring and not caseofclass) and (not is_subequal(casedef, p.resultdef))) then
+                   begin
+                     CGMessage(parser_e_case_mismatch);
+                     case_mismatch:=true;
+                   end
+                 else
+                   case_mismatch:=false;
 
-                 if caseofstring then
+                 if case_mismatch then
+                   begin
+                     { create placeholder labels for mismatched types }
+                     if caseofstring then
+                       begin
+                         sl1:=get_string_value(p, tstringdef(casedef));
+                         casenode.addlabel(blockid,sl1,sl1);
+                       end
+                     else
+                       begin
+                         { create a dummy vmt node for the mismatched label }
+                         vmtnode:=cloadvmtaddrnode.create(cnilnode.create);
+                         typecheckpass(tnode(vmtnode));
+                         casenode.addlabel(blockid,vmtnode);
+                         vmtnode.free;
+                       end;
+                   end
+                 else if caseofstring then
                    begin
                      sl1:=get_string_value(p, tstringdef(casedef));
                      casenode.addlabel(blockid,sl1,sl1);
                    end
+                 else if caseofclass then
+                   casenode.addlabel(blockid,tloadvmtaddrnode(p))
                  else
                    begin
                      hl1:=get_ordinal_value(p);
