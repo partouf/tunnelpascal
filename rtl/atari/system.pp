@@ -56,7 +56,7 @@ const
     UnusedHandle    = $ffff;
     StdInputHandle  = 0;
     StdOutputHandle = 1;
-    StdErrorHandle  = $ffff;
+    StdErrorHandle  = 2;
 
 var
     args: PChar;
@@ -119,7 +119,7 @@ var
   procedure SysInitParamsAndEnv;
   begin
     // [0] index contains the args length...
-    args:=@basepage^.p_cmdlin[1];
+    args:=@basepage^.p_cmdlin[0];
     GenerateArgs;
   end;
 
