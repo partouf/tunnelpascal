@@ -4329,40 +4329,42 @@ unit aoptx86;
           begin
             CurrentReg := taicpu(p).oper[0]^.reg;
             ActiveReg := taicpu(p).oper[1]^.reg;
-            TransferUsedRegs(TmpUsedRegs);
-            if not RegUsedAfterInstruction(CurrentReg, p, TmpUsedRegs) and
-              GetLastInstruction(p, hp2) and
-              (hp2.typ = ait_instruction) and
-              { Have to make sure it's an instruction that only reads from
-                operand 1 and only writes (not reads or modifies) from operand 2;
-                in essence, a one-operand pure function such as BSR or POPCNT }
-              (taicpu(hp2).ops = 2) and
-              (insprop[taicpu(hp2).opcode].Ch * [Ch_Rop1, Ch_Wop2] = [Ch_Rop1, Ch_Wop2]) and
-              (taicpu(hp2).oper[1]^.typ = top_reg) and
-              (taicpu(hp2).oper[1]^.reg = CurrentReg) then
+            { Make sure %reg2 is not the stack or frame pointer as these aren't
+              tracked properly.  Fixes issue #39555 }
+            if (CurrentReg <> NR_STACK_POINTER_REG) and
+              (CurrentReg <> current_procinfo.framepointer) then
               begin
-                case taicpu(hp2).opcode of
-                  A_FSTSW, A_FNSTSW,
-                  A_IN,   A_INS,  A_OUT,  A_OUTS,
-                  A_CMPS, A_LODS, A_MOVS, A_SCAS, A_STOS,
-                    { These routines have explicit operands, but they are restricted in
-                      what they can be (e.g. IN and OUT can only read from AL, AX or
-                      EAX. }
-                  A_CMOVcc:
-                    { CMOV is not valid either because then CurrentReg will depend
-                      on an unknown value if the condition is False and hence is
-                      not a pure write }
-                    ;
-                  else
-                    begin
-                      DebugMsg(SPeepholeOptimization + 'Removed MOV and changed destination on previous instruction to optimise register usage (FuncMov2Func)', p);
-                      taicpu(hp2).oper[1]^.reg := ActiveReg;
-                      AllocRegBetween(ActiveReg, hp2, p, TmpUsedRegs);
-                      RemoveCurrentp(p, hp1);
-                      Result := True;
-                      Exit;
+                TransferUsedRegs(TmpUsedRegs);
+                if not RegUsedAfterInstruction(CurrentReg, p, TmpUsedRegs) and
+                  GetLastInstruction(p, hp2) and
+                  (hp2.typ = ait_instruction) and
+                  { Have to make sure it's an instruction that only reads from
+                    operand 1 and only writes (not reads or modifies) from operand 2;
+                    in essence, a one-operand pure function such as BSR or POPCNT }
+                  (taicpu(hp2).ops = 2) and
+                  (insprop[taicpu(hp2).opcode].Ch * [Ch_Rop1, Ch_Wop2] = [Ch_Rop1, Ch_Wop2]) and
+                  (taicpu(hp2).oper[1]^.typ = top_reg) and
+                  (taicpu(hp2).oper[1]^.reg = CurrentReg) then
+                  begin
+                    case taicpu(hp2).opcode of
+                      A_FSTSW, A_FNSTSW,
+                      A_IN,   A_INS,  A_OUT,  A_OUTS,
+                      A_CMPS, A_LODS, A_MOVS, A_SCAS, A_STOS:
+                        { These routines have explicit operands, but they are restricted in
+                          what they can be (e.g. IN and OUT can only read from AL, AX or
+                          EAX. }
+                        ;
+                      else
+                        begin
+                          DebugMsg(SPeepholeOptimization + 'Removed MOV and changed destination on previous instruction to optimise register usage (FuncMov2Func)', p);
+                          taicpu(hp2).oper[1]^.reg := ActiveReg;
+                          AllocRegBetween(ActiveReg, hp2, p, TmpUsedRegs);
+                          RemoveCurrentp(p, hp1);
+                          Result := True;
+                          Exit;
+                        end;
                     end;
-                end;
+                  end;
               end;
           end;
       end;
