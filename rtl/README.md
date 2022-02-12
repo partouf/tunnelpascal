@@ -1,0 +1,30 @@
+# Run-Time Library (RTL)
+This is the Run-Time Library (RTL) tree for Free Pascal.
+
+## Requirements
+To recompile the RTL, edit the main makefile. The makefiles **need** a GNU make
+compatible make, they need unix-like 'rm' and 'mv' commands, as well as some
+others. You can find these in the gnuutils package on the ftp site.
+
+## Compile instructions
+The main makefile is located ABOVE the RTL tree. It uses the FPC
+makefile.fpc to guess reasonable defaults for everything it needs
+(these files can be found in base.zip on the FTP site).
+
+The tree contains subdirectories for all the supported operating systems,
+as well as all processor architectures. The processor directories contain
+low-level routines which are required for the system unit (if they are not
+available in high-level language form), as well as optimized versions of
+the pascal generic routines (the generic routine source code is localed in
+the inc subdirectory).
+
+In principle, you can also descend into the subdirectory of your OS, and
+type 'make' there, that should also compile everything.
+
+## Possible switches
+The only variable that you may want to set are:
+| Name of switch | Description of switch |
+|---|---|
+| FPC | What compiler to use - use an absolute path (default is ppc386) |
+| INSTALL_UNITDIR | Where to install the RTL units |
+| OPT | Any special options you want to set for the compiler |
