@@ -121,7 +121,7 @@ implementation
     symtable,symsym,
     llvmsym,hlcgobj,
     defutil,blockutl,cgbase,paramgr,
-    cpubase;
+    cpubase,llvminfo;
 
 
 {******************************************************************
@@ -693,6 +693,7 @@ implementation
         signext: tllvmvalueextension;
         usedef: tdef;
         firstloc: boolean;
+        typestr: TSymStr;
       begin
         if (proccalloption in cdecl_pocalls) and
            is_array_of_const(hp.vardef) then
@@ -721,7 +722,9 @@ implementation
           { implicit zero/sign extension for ABI compliance? }
           if not first then
              encodedstr:=encodedstr+', ';
-          llvmaddencodedtype_intern(usedef,[],encodedstr);
+          typestr:='';
+          llvmaddencodedtype_intern(usedef,[],typestr);
+          encodedstr:=encodedstr+typestr;
           { in case signextstr<>'', there should be only one paraloc -> no need
             to clear (reason: it means that the paraloc is larger than the
             original parameter) }
@@ -743,14 +746,24 @@ implementation
                 internalerror(2015101404);
 {$endif aarch64}
               if withattributes then
-                 if first
+                begin
+                  if first
 {$ifdef aarch64}
-                    and not is_managed_type(hp.vardef)
+                     and not is_managed_type(hp.vardef)
 {$endif aarch64}
-                    then
-                   encodedstr:=encodedstr+' sret noalias nocapture'
-                 else
-                   encodedstr:=encodedstr+' noalias nocapture';
+                  then
+                    begin
+                      encodedstr:=encodedstr+' sret';
+                      if llvmflag_sret_ty in llvmversion_properties[current_settings.llvmversion] then
+                        begin
+                          if typestr[length(typestr)]<>'*' then
+                            internalerror(2022021303);
+                          delete(typestr,length(typestr),1);
+                          encodedstr:=encodedstr+'('+typestr+')';
+                        end;
+                    end;
+                  encodedstr:=encodedstr+' noalias nocapture';
+                end;
             end
           else if not paramanager.push_addr_param(hp.varspez,hp.vardef,proccalloption) and
              llvmbyvalparaloc(paraloc) then
@@ -758,6 +771,8 @@ implementation
               if withattributes then
                 begin
                   encodedstr:=encodedstr+'* byval';
+                  if llvmflag_sret_ty in llvmversion_properties[current_settings.llvmversion] then
+                    encodedstr:=encodedstr+'('+typestr+')';
                   if firstloc and
                      (para^.alignment<>std_param_align) then
                     begin
