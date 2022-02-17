@@ -96,6 +96,9 @@ unit aoptbase;
         { returns true if reg is modified by any instruction between p1 and p2 }
         function RegModifiedBetween(reg: TRegister; p1, p2: tai): Boolean;
 
+        { returns true if reg1 or reg2 is modified by any instruction between p1 and p2 }
+        function RegPairModifiedBetween(reg1,reg2: TRegister; p1, p2: tai): Boolean;
+
         { returns true if reg is loaded with a new value by hp }
         function RegLoadedWithNewValue(reg: tregister; hp: tai): boolean; Virtual;
 
@@ -308,6 +311,19 @@ unit aoptbase;
     Result:=false;
     while assigned(p1) and assigned(p2) and GetNextInstruction(p1,p1) and (p1<>p2) do
       if RegModifiedByInstruction(reg,p1) then
+        begin
+          Result:=true;
+          exit;
+        end;
+  end;
+
+
+  Function TAOptBase.RegPairModifiedBetween(reg1,reg2 : TRegister;p1,p2 : tai) : Boolean;
+  Begin
+    Result:=false;
+    while assigned(p1) and assigned(p2) and GetNextInstruction(p1,p1) and (p1<>p2) do
+      if ((reg1<>NR_NO) and RegModifiedByInstruction(reg1,p1)) or
+        ((reg2<>NR_NO) and RegModifiedByInstruction(reg2,p1)) then
         begin
           Result:=true;
           exit;
