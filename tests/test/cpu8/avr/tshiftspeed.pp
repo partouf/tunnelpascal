@@ -1,7 +1,7 @@
 { %opt=-O2 -B }
 { %cpu=avr }
 
-program tshift_speed;
+program tshiftspeed;
 
 { Test correctness of code generated for shifts with compile time constant shift distance.
   This test is compiled to test the speed optimized code generator. }

@@ -1,0 +1,32 @@
+{ %cpu=avr }
+{ %target=embedded }
+
+program tmixedoverload;
+
+type
+  Byte_e = type Byte; section '.eeprom';
+  pbyte_e = type ^byte_e;
+
+procedure writeTest(a: Pbyte); overload;
+begin
+  a^ := 123;
+end;
+
+procedure writeTest(a: pbyte_e); overload;
+begin
+  a^ := 234;
+end;
+
+var
+  tmp: byte;
+  b1: pbyte_e;
+
+begin
+  writeTest(@tmp);
+  if tmp <> 123 then
+    halt(1);
+
+  writeTest(b1);
+  if b1^ <> 234 then
+    halt(2);
+end.

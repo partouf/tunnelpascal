@@ -1873,7 +1873,6 @@ procedure TRX24_AMI0_ISR; external name 'TRX24_AMI0_ISR'; // Interrupt 73 Addres
 procedure TRX24_AMI1_ISR; external name 'TRX24_AMI1_ISR'; // Interrupt 74 Address match interrupt of address filter 1
 procedure TRX24_AMI2_ISR; external name 'TRX24_AMI2_ISR'; // Interrupt 75 Address match interrupt of address filter 2
 procedure TRX24_AMI3_ISR; external name 'TRX24_AMI3_ISR'; // Interrupt 76 Address match interrupt of address filter 3
-==== BASE ====
 
 procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; section '.init';
  asm
