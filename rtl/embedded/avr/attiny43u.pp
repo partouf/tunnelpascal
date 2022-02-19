@@ -210,6 +210,8 @@ const
   EEPE = 1; // EEPROM Write Enable
   EERE = 0; // EEPROM Read Enable
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -283,5 +285,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set USI_START_ISR, Default_IRQ_handler
    .set USI_OVF_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

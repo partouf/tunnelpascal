@@ -2002,6 +2002,8 @@ var
   LOCKBIT: TLOCKBIT absolute $128A;
   USERROW: TUSERROW absolute $1300;
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -2169,5 +2171,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set PORTB_PORT_ISR, Default_IRQ_handler
   .set PORTE_PORT_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

@@ -605,6 +605,7 @@ const
   TWAM15 = $06;
   TWAM16 = $07;
 
+{$include sectionhelpersh.inc}
 
 implementation
 
@@ -829,5 +830,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set USART2_RXS_ISR, Default_IRQ_handler
   .set USART2_START_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

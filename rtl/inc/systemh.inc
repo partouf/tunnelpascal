@@ -1884,6 +1884,10 @@ type
   implicit or explicit exceptions }
 {$i excepth.inc}
 
+{$ifdef avr}
+{$i avrh.inc}
+{$endif avr}
+
 {*****************************************************************************
                    FPDoc phony declarations.
 *****************************************************************************}

@@ -533,6 +533,8 @@ const
   IDE = 4; // Identifier Extension
   DLC = 0; // Data Length Code Bits
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -688,5 +690,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set TWI_ISR, Default_IRQ_handler
    .set SPM_READY_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

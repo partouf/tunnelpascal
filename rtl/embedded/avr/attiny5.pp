@@ -162,6 +162,8 @@ const
   WDP = 0; // Watchdog Timer Prescaler Bits
   WDE = 3; // Watch Dog Enable
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -215,5 +217,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set VLM_ISR, Default_IRQ_handler
    .set ADC_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

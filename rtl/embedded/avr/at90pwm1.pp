@@ -442,6 +442,8 @@ const
   POEN1B = 2; // PSCOUT11 Output Enable
   POEN1A = 0; // PSCOUT10 Output Enable
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -579,5 +581,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set RESERVED31_ISR, Default_IRQ_handler
    .set SPM_READY_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

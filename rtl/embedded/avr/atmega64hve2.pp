@@ -437,6 +437,7 @@ const
   VADICIE = $04;  
   VADACIE = $05;  
 
+{$include sectionhelpersh.inc}
 
 implementation
 
@@ -545,5 +546,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set SPM_ISR, Default_IRQ_handler
   .set PLL_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

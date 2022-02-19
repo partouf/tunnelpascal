@@ -400,6 +400,8 @@ const
   PRSPI = 2; // Power Reduction Serial Peripheral Interface
   PRADC = 0; // Power Reduction ADC
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -531,5 +533,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set USART1_UDRE_ISR, Default_IRQ_handler
    .set USART1_TX_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

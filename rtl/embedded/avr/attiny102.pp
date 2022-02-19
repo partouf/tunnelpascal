@@ -267,6 +267,7 @@ const
   T = $06;  
   I = $07;  
 
+{$include sectionhelpersh.inc}
 
 implementation
 {$define RELBRANCHES}
@@ -339,5 +340,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set USART_DRE_ISR, Default_IRQ_handler
   .set USART_TXC_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

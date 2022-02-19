@@ -379,6 +379,8 @@ const
   RXS = 6; // USART RX Start Flag
   SFDE = 5; // USART RX Start Frame Detection Enable
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -492,5 +494,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set SPM_Ready_ISR, Default_IRQ_handler
    .set QTRIP_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

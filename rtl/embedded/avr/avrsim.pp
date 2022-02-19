@@ -11,6 +11,28 @@ unit avrsim;
       HALTREQUEST : byte absolute $22;
       EXCEPTIONJMPZERO : boolean absolute 52;
 
+      // Needed by EEPROM handling code
+      SPMCSR : byte absolute $57;  // Store Program Memory Control and Status Register
+
+      EEAR  : word absolute $41;   // EEPROM Address Register
+      EEARL : byte absolute $41;   // EEPROM Address Register Low
+      EEARH : byte absolute $41+1; // EEPROM Address Register High
+      EEDR  : byte absolute $40;   // EEPROM Data Register
+      EECR  : byte absolute $3F;   // EEPROM Control Register
+
+    const
+      // EECR bits
+      EEPM  = 4;  // EEPROM Programming Mode Bits
+      EERIE = 3;  // EEPROM Ready Interrupt Enable
+      EEMPE = 2;  // EEPROM Master Write Enable
+      EEPE  = 1;  // EEPROM Write Enable
+      EERE  = 0;  // EEPROM Read Enable
+
+    {$include sectionhelpersh.inc}
+
+    {$define DOCALL:=call}
+    {$define DOJMP:=jmp}
+
   implementation
 
     uses
@@ -27,6 +49,12 @@ unit avrsim;
           ;
       end;
 
+    procedure Default_IRQ_handler; public name '_Default_IRQ_handler';noreturn;
+      begin
+        while true do
+          ;
+      end;
+
     var
       _data: record end; external name '__data_start';
       _edata: record end; external name '__data_end';
@@ -36,10 +64,15 @@ unit avrsim;
       _stack_top: record end; external name '_stack_top';
       __dtors_end: record end; external name '__dtors_end';
 
+    procedure EE_READY_ISR; external name 'EE_READY_ISR'; // Interrupt 1 EEPROM Ready
+
     procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; section '.init';
       asm
         jmp __dtors_end // Jump to last linker symbol before .init0
-        // Interrupt vectors to be added here
+        jmp EE_READY_ISR
+
+        .weak EE_READY_ISR
+        .set EE_READY_ISR, Default_IRQ_handler
       end;
 
     procedure _FPC_init_zeroreg_SP; assembler; nostackframe; noreturn; public name '_init_zeroreg_SP'; section '.init2';
@@ -132,6 +165,7 @@ unit avrsim;
         ACh:=#0;
       end;
 
+    {$include sectionhelpers.inc}
 
 begin
   EXCEPTIONJMPZERO:=true;

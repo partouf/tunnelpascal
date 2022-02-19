@@ -255,6 +255,8 @@ const
   ADIE = 3; // ADC Interrupt Enable
   ADPS = 0; // ADC  Prescaler Select Bits
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -340,5 +342,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set TWI_ISR, Default_IRQ_handler
    .set SPM_RDY_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

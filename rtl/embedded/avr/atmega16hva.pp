@@ -309,6 +309,7 @@ const
   BPPL = $00;  
   BPPLE = $01;  
 
+{$include sectionhelpersh.inc}
 
 implementation
 
@@ -334,6 +335,7 @@ procedure CCADC_CONV_ISR; external name 'CCADC_CONV_ISR'; // Interrupt 17 Coulom
 procedure CCADC_REG_CUR_ISR; external name 'CCADC_REG_CUR_ISR'; // Interrupt 18 Coloumb Counter ADC Regular Current
 procedure CCADC_ACC_ISR; external name 'CCADC_ACC_ISR'; // Interrupt 19 Coloumb Counter ADC Accumulator
 procedure EE_READY_ISR; external name 'EE_READY_ISR'; // Interrupt 20 EEPROM Ready
+==== BASE ====
 
 procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; section '.init';
  asm
@@ -401,5 +403,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set CCADC_ACC_ISR, Default_IRQ_handler
   .set EE_READY_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

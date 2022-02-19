@@ -442,6 +442,8 @@ const
   // PRR1
   PRTIM3 = 0; // Power Reduction Timer/Counter3
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -589,5 +591,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set TIMER3_COMPB_ISR, Default_IRQ_handler
    .set TIMER3_OVF_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.
