@@ -194,6 +194,9 @@ implementation
 {$ifdef i8086}
       cpuinfo,
 {$endif i8086}
+{$ifdef avr}
+      symcpu,
+{$endif avr}
       htypechk,pass_1,ncal,nld,ncon,ncnv,cgbase,procinfo,widestr
       ;
 
@@ -674,6 +677,24 @@ implementation
 
         if not(assigned(result)) then
           result:=simplify(false);
+
+{$ifdef avr}
+        { check if base symbol is located in a section.
+          If so, use or register a new def containing a reference to the section }
+        if (left.nodetype=loadn) and
+           (tloadnode(left).symtableentry.typ=staticvarsym) then
+          begin
+            maybeRegisterNewTypeWithSection(resultdef,
+              sectionNameToSymSection(tstaticvarsym(tloadnode(left).symtableentry).section));
+          end;
+
+        { check if vecnode is located in a section.
+          If so, use or register a new def containing a reference to the section }
+        if (left.nodetype=vecn) and Assigned(left.resultdef) then
+          begin
+            maybeRegisterNewTypeWithSection(resultdef,left.resultdef.symsection);
+          end;
+{$endif avr}
       end;
 
 
@@ -850,6 +871,15 @@ implementation
 
          { is this right for object of methods ?? }
          expectloc:=LOC_REGISTER;
+
+{$ifdef avr}
+         { check if base symbol is located in a section.
+           If so, copy section name to result definition }
+         if (left.nodetype=loadn) and
+            (tloadnode(left).symtableentry.typ=staticvarsym) then
+           tcpupointerdef(resultdef).symsection:=
+             sectionNameToSymSection(tstaticvarsym(tloadnode(left).symtableentry).section);
+{$endif avr}
       end;
 
 
@@ -899,7 +929,13 @@ implementation
          maybe_call_procvar(left,true);
 
          if left.resultdef.typ=pointerdef then
-           resultdef:=tpointerdef(left.resultdef).pointeddef
+          begin
+           resultdef:=tpointerdef(left.resultdef).pointeddef;
+{$ifdef avr}
+           { Copy section across from pointer type so that correct access is generated }
+           maybeRegisterNewTypeWithSection(resultdef,left.resultdef.symsection);
+{$endif avr}
+          end
          else if left.resultdef.typ=undefineddef then
            resultdef:=cundefineddef.create(true)
          else
@@ -1378,6 +1414,9 @@ implementation
            else
              CGMessage(type_e_array_required);
         end;
+ {$ifdef avr}
+        maybeRegisterNewTypeWithSection(resultdef, left.resultdef.symsection);
+ {$endif avr}
       end;
 
 

@@ -633,6 +633,9 @@ implementation
         cr, cl  : Tconstexprint;
         v2p, c2p, c1p, v1p: pnode;
         p1,p2: TConstPtrUInt;
+{$ifdef avr}
+        ls,rs: tsymsection;
+{$endif avr}
       begin
         result:=nil;
         l1:=0;
@@ -1277,6 +1280,15 @@ implementation
                 addn :
                   begin
                     t:=cstringconstnode.createpchar(concatansistrings(s1,s2,l1,l2),l1+l2,nil);
+{$ifdef avr}
+                    { New string should inherit original section }
+                    ls:=ld.symsection;
+                    rs:=rd.symsection;
+                    if (ls=rs) and (ls<>ss_none) then
+                      t.location.reference.symsection:=ls
+                    else
+                      Comment(V_Note,'String constants from different sections merged, ignoring section information');
+{$endif avr}
                     typecheckpass(t);
                     if not is_ansistring(resultdef) or
                        (tstringdef(resultdef).encoding<>globals.CP_NONE) then
@@ -3358,6 +3370,10 @@ implementation
         tempnode : ttempcreatenode;
         cmpfuncname: string;
         para: tcallparanode;
+        helpername: string;
+{$ifdef avr}
+        tmpsymsection: tsymsection;
+{$endif avr}
       begin
         result:=nil;
         { when we get here, we are sure that both the left and the right }
@@ -3411,11 +3427,20 @@ implementation
                             ),
                             para
                           );
-                  result:=ccallnode.createintern(
-                            'fpc_'+tstringdef(resultdef).stringtypname+'_concat',
-                            para
-                          );
-                  include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
+
+                 helpername:='fpc_'+tstringdef(resultdef).stringtypname+'_concat';
+{$ifdef avr}
+                 tmpsymsection:=ss_none;
+                 if right.location.reference.symsection<>ss_none then
+                   tmpsymsection:=right.location.reference.symsection
+                 else if right.resultdef.symsection<>ss_none then
+                   tmpsymsection:=right.resultdef.symsection;
+                 if (tmpsymsection<>ss_none) and needSectionSpecificHelperCode(tmpsymsection,true) then
+                   helpername:=helpername+
+                               '_'+symSectionToSectionPostfixName(tmpsymsection);
+{$endif avr}
+                  result:=ccallnode.createintern(helpername,para);
+                  include(aktassignmentnode.flags,nf_assign_done_in_right);
                   firstpass(result);
                 end
               else
@@ -3520,7 +3545,15 @@ implementation
               { for equality checks use optimized version }
               if nodetype in [equaln,unequaln] then
                 cmpfuncname := cmpfuncname + '_equal';
-
+{$ifdef avr}
+              tmpsymsection:=ss_none;
+              if right.location.reference.symsection<>ss_none then
+                tmpsymsection:=right.location.reference.symsection
+              else if right.resultdef.symsection<>ss_none then
+                tmpsymsection:=right.resultdef.symsection;
+              if (tmpsymsection<>ss_none) and needSectionSpecificHelperCode(tmpsymsection,true) then
+                cmpfuncname:=cmpfuncname+'_'+symSectionToSectionPostfixName(tmpsymsection);
+{$endif avr}
               result := ccallnode.createintern(cmpfuncname,
                 ccallparanode.create(right,ccallparanode.create(left,nil)));
               { and compare its result with 0 according to the original operator }

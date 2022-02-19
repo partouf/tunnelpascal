@@ -127,6 +127,11 @@ implementation
                    else
                      hp:=cconstsym.create_string(orgname,conststring,sp,tstringconstnode(p).len,nil);
                  end;
+
+{$ifdef avr}
+               if p.resultdef.symsection<>ss_none then
+                 hp.symsection:=p.resultdef.symsection;
+{$endif avr}
              end;
            realconstn :
              begin
@@ -234,6 +239,9 @@ implementation
          skip_initialiser : boolean;
          varspez : tvarspez;
          asmtype : tasmlisttype;
+{$ifdef avr}
+         sectionname: ansistring;
+{$endif avr}
       begin
          old_block_type:=block_type;
          block_type:=bt_const;
@@ -276,6 +284,18 @@ implementation
                    else
                      stringdispose(deprecatedmsg);
                    consume(_SEMICOLON);
+{$ifdef avr}
+                   { try to parse a section directive }
+                   if (target_info.system in systems_allow_section) and
+                      (symtablestack.top.symtabletype in [staticsymtable,globalsymtable]) and
+                      (idtoken=_SECTION) then
+                     begin
+                       try_consume_sectiondirective(sectionname);
+                       if sectionname<>'' then
+                         tconstsym(sym).symsection:=sectionNameToSymSection(sectionname);
+                     end;
+{$endif avr}
+
                 end;
 
              _COLON:
@@ -323,6 +343,18 @@ implementation
                        symtablestack.top.insertsym(sym);
                      end;
                    sym.register_sym;
+{$ifdef avr}
+                   if sym.typ=staticvarsym then
+                   begin
+                     if (hdef.symsection<>ss_none) then
+                      begin
+                        tstaticvarsym(sym).symsection:=hdef.symsection;
+                        tstaticvarsym(sym).section:=symSectionToSectionName(hdef.symsection);
+                        include(tstaticvarsym(sym).varoptions, vo_has_section);
+                      end
+                   end;
+{$endif avr}
+
                    current_tokenpos:=storetokenpos;
                    skip_initialiser:=false;
                    { Anonymous proctype definitions can have proc directives }
@@ -725,6 +757,9 @@ implementation
 {$ifdef x86}
          segment_register: string;
 {$endif x86}
+{$ifdef avr}
+         symsect: tsymsection;
+{$endif avr}
       begin
          old_block_type:=block_type;
          { save unit container of forward declarations -
@@ -1167,6 +1202,26 @@ implementation
                   end;
               end;
 
+{$ifdef avr}
+              if hdef.typ in [arraydef,recorddef,pointerdef,orddef,
+                              stringdef,floatdef] then
+                { Try to read section directive and associate with this pointer type }
+                if try_to_consume(_SECTION) then
+                 begin
+                   if not isunique then
+                      Comment(V_Error,'Section directive only allowed for unique types');
+                   s:=get_stringconst;
+                   consume(_SEMICOLON);
+                   if s<>'' then
+                     begin
+                       symsect:=sectionNameToSymSection(s);
+                       if hdef.symsection<>symsect then
+                         hdef.symsection:=symsect;
+                     end;
+                 end;
+{$endif avr}
+
+
               { if we have a real type definition or a unique type we may bind
                 attributes to this def }
               if not istyperenaming or isunique then
@@ -1230,7 +1285,7 @@ implementation
                   (idtoken=_FINAL))));
          { resolve type block forward declarations and restore a unit
            container for them }
-         resolve_forward_types;
+         resolve_forward_types{$ifdef avr}(isunique){$endif avr};
          current_module.checkforwarddefs.free;
          current_module.checkforwarddefs:=old_checkforwarddefs;
          block_type:=old_block_type;

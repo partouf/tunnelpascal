@@ -74,6 +74,9 @@ interface
          dbg_state   : tdefdbgstatus;
          defoptions  : tdefoptions;
          defstates   : tdefstates;
+{$ifdef avr}
+         symsection  : tsymsection;
+{$endif avr}
          constructor create(dt:tdeftyp);
          destructor destroy; override;
          procedure buildderef;virtual;abstract;

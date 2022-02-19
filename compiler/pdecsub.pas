@@ -403,6 +403,10 @@ implementation
                    if assigned(arrayelementdef.typesym) then
                      check_hints(arrayelementdef.typesym,arrayelementdef.typesym.symoptions,arrayelementdef.typesym.deprecatedmsg);
                    tarraydef(hdef).elementdef:=arrayelementdef;
+{$ifdef avr}
+                   if arrayelementdef.symsection<>ss_none then
+                     hdef.symsection:=arrayelementdef.symsection;
+{$endif avr}
                  end;
               end
              else
@@ -489,6 +493,11 @@ implementation
           if is_univ and
              not is_valid_univ_para_type(hdef) then
             Message1(parser_e_invalid_univ_para,hdef.typename);
+
+{$ifdef avr}
+          if (hdef.symsection=ss_progmem) and (varspez in [vs_var,vs_out]) then
+            Comment(V_Error, 'Section PROGMEM is read-only and only supported for parameters passed by (const) value or constref');
+{$endif avr}
 
           for i:=0 to sc.count-1 do
             begin

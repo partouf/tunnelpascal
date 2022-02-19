@@ -682,13 +682,23 @@ implementation
         { either to shortstring or ansistring depending on    }
         { length                                              }
         if (n.nodetype=stringconstn) then
-          if is_chararray(n.resultdef) then
-            if (tstringconstnode(n).len<=255) then
-              inserttypeconv(n,cshortstringtype)
-            else
-              inserttypeconv(n,getansistringdef)
-          else if is_widechararray(n.resultdef) then
-            inserttypeconv(n,cunicodestringtype);
+          begin
+            if is_chararray(n.resultdef) then
+              if (tstringconstnode(n).len<=255) then
+                inserttypeconv(n,cshortstringtype)
+              else
+                inserttypeconv(n,getansistringdef)
+            else if is_widechararray(n.resultdef) then
+              inserttypeconv(n,cunicodestringtype);
+          end
+{$ifdef avr}
+        { A shortstring in a section can also be converted to a temp string
+          to avoid calling a section helper }
+        else if (cs_convert_sectioned_strings_to_temps in current_settings.localswitches) and
+            (n.nodetype=loadn) and (tloadnode(n).resultdef.symsection<>ss_none) and
+                (tloadnode(n).resultdef.typ in [stringdef, arraydef]) then
+          inserttypeconv(n, cshortstringtype);
+{$endif avr}
       end;
 
 
@@ -810,7 +820,17 @@ implementation
 
           if inlinenumber in [in_write_x,in_writeln_x] then
             { prefer strings to chararrays }
+{$ifdef avr}
+          begin
+{$endif avr}
             maybe_convert_to_string(para.left);
+{$ifdef avr}
+            { type conversion above can clobber section information in definition }
+            if (para.left.location.reference.symsection<>ss_none) and
+               not is_typeparam(para.left.resultdef) then
+              maybeRegisterNewTypeWithSection(para.left.resultdef, para.left.location.reference.symsection);
+          end;
+{$endif avr}
           if is_typeparam(para.left.resultdef) then
             error_para:=true
           else
@@ -818,6 +838,10 @@ implementation
               stringdef :
                 begin
                   name:=procprefixes[do_read]+tstringdef(para.left.resultdef).stringtypname;
+{$ifdef avr}
+                  if needSectionSpecificHelperCode(para.left.resultdef.symsection, not do_read) then
+                    name:=name+'_'+symSectionToSectionPostfixName(para.left.resultdef.symsection);
+{$endif avr}
                   if (m_isolike_io in current_settings.modeswitches) and (tstringdef(para.left.resultdef).stringtype<>st_shortstring) then
                     begin
                       CGMessagePos(para.fileinfo,type_e_cant_read_write_type_in_iso_mode);
@@ -954,7 +978,11 @@ implementation
                     begin
                       CGMessagePos(para.fileinfo,type_e_cant_read_write_type);
                       error_para := true;
-                    end
+                    end;
+{$ifdef avr}
+                  if not(do_read) and (para.left.resultdef.symsection<>ss_none) then
+                    name:=name+'_'+symSectionToSectionPostfixName(para.left.resultdef.symsection);
+{$endif avr}
                 end;
               else
                 begin

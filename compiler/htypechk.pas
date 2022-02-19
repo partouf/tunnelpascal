@@ -1564,6 +1564,15 @@ implementation
                end;
              derefn :
                begin
+{$ifdef avr}
+                 { Assignment to a dereferenced reference to a read-only section not allowed }
+                 if tderefnode(p).resultdef.symsection=ss_progmem then
+                   begin
+                     valid_for_assign:=false;
+                     if report_errors then
+                       Comment(V_Error,'Write access to section .progmem not supported');
+                   end;
+{$endif avr}
                  { dereference -> always valid }
                  valid_for_assign:=true;
                  mayberesettypeconvs;
@@ -2058,7 +2067,11 @@ implementation
             begin
               { all shortstrings are allowed, size is not important }
               if is_shortstring(def_from) and
-                 is_shortstring(def_to) then
+                 is_shortstring(def_to)
+{$ifdef avr}
+                 and (def_from.symsection=def_to.symsection)
+{$endif avr}
+                 then
                 eq:=te_equal;
             end;
           objectdef :
@@ -2105,7 +2118,12 @@ implementation
               { when searching the correct overloaded procedure   }
               if (p.resultdef.typ=stringdef) and
                  (tstringdef(def_to).stringtype=tstringdef(p.resultdef).stringtype) and
-                 (tstringdef(def_to).encoding=tstringdef(p.resultdef).encoding) then
+                 (tstringdef(def_to).encoding=tstringdef(p.resultdef).encoding)
+{$ifdef avr}
+                and needSectionSpecificHelperCode(tstringdef(p.resultdef).symsection, true) and
+                     (tstringdef(def_to).symsection=tstringdef(p.resultdef).symsection) and
+                     not(cs_convert_sectioned_strings_to_temps in current_settings.localswitches)
+{$endif avr}  then
                 eq:=te_equal
             end;
           formaldef,
@@ -3067,7 +3085,7 @@ implementation
               else
               { for value and const parameters check precision of real, give
                 penalty for loosing of precision. var and out parameters must match exactly }
-               if not(currpara.varspez in [vs_var,vs_out]) and
+                if not(currpara.varspez in [vs_var,vs_out]) and
                   is_real_or_cextended(def_from) and
                   is_real_or_cextended(def_to) then
                  begin

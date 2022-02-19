@@ -116,6 +116,21 @@ interface
          cst_ansistring,
          cst_widestring,
          cst_unicodestring
+{$ifdef avr}
+         ,
+         cst_conststring_progmem,
+         cst_shortstring_progmem,
+         cst_longstring_progmem,
+         cst_ansistring_progmem,
+         cst_widestring_progmem,
+         cst_unicodestring_progmem,
+         cst_conststring_eeprom,
+         cst_shortstring_eeprom,
+         cst_longstring_eeprom,
+         cst_ansistring_eeprom,
+         cst_widestring_eeprom,
+         cst_unicodestring_eeprom
+{$endif avr}
        );
 
        tstringconstnode = class(tconstnode)
@@ -322,7 +337,13 @@ implementation
         len : longint;
         pc  : pchar;
         value_set : pconstset;
+{$ifdef avr}
+        currentsymsection : tsymsection;
+{$endif avr}
       begin
+{$ifdef avr}
+        currentsymsection:=p.symsection;
+{$endif avr}
         p1:=nil;
         case p.consttyp of
           constord :
@@ -345,6 +366,11 @@ implementation
               move(pchar(p.value.valueptr)^,pc^,len);
               pc[len]:=#0;
               p1:=cstringconstnode.createpchar(pc,len,p.constdef);
+{$ifdef avr}
+              { A real big hack, but the symsection property gets dropped at the node level }
+              if currentsymsection<>ss_none then
+                p1.location.reference.symsection:=currentsymsection;
+{$endif avr}
             end;
           constwstring :
             p1:=cstringconstnode.createunistr(pcompilerwidestring(p.value.valueptr));
@@ -976,6 +1002,12 @@ implementation
               resultdef:=carraydef.create(0,len-1,s32inttype);
               tarraydef(resultdef).elementdef:=cansichartype;
               include(tarraydef(resultdef).arrayoptions,ado_IsConstString);
+{$ifdef avr}
+              { Propagate symsection from node to resultdef,
+                but not while parsing a type, const, const type or var }
+              if not (self.blocktype in [bt_type,bt_const,bt_const_type,bt_var]) then
+                maybeRegisterNewTypeWithSection(resultdef,self.location.reference.symsection);
+{$endif avr}
             end;
           cst_shortstring :
             resultdef:=cshortstringtype;
@@ -1163,6 +1195,12 @@ implementation
                 end;
             end;
         cst_type:=st2cst[tstringdef(def).stringtype];
+{$ifdef avr}
+        { If retaining section information from here,
+          it will probably lead to calling a section specific string helper }
+        if Assigned(resultdef) and needSectionSpecificHelperCode(resultdef.symsection,true) then
+          maybeRegisterNewTypeWithSection(def,resultdef.symsection);
+{$endif avr}
         resultdef:=def;
       end;
 

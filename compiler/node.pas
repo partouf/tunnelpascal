@@ -756,7 +756,7 @@ implementation
         { tnode fields }
         blocktype:=tblock_type(ppufile.getbyte);
         ppufile.getposinfo(fileinfo);
-        ppufile.getset(tppuset5(localswitches));
+        ppufile.getset(tppuset6(localswitches));
         verbosity:=ppufile.getlongint;
         ppufile.getderef(resultdefderef);
         ppufile.getset(tppuset4(flags));
@@ -771,7 +771,7 @@ implementation
       begin
         ppufile.putbyte(byte(block_type));
         ppufile.putposinfo(fileinfo);
-        ppufile.putset(tppuset5(localswitches));
+        ppufile.putset(tppuset6(localswitches));
         ppufile.putlongint(verbosity);
         ppufile.putderef(resultdefderef);
         ppufile.putset(tppuset4(flags));

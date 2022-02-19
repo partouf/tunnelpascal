@@ -487,7 +487,13 @@ implementation
                      begin
                        { static data is currently always volatile }
                        if not(vo_is_weak_external in gvs.varoptions) then
-                         reference_reset_symbol(location.reference,current_asmdata.RefAsmSymbol(gvs.mangledname,AT_DATA,use_indirect_symbol(gvs)),0,location.reference.alignment,[])
+                         begin
+                           reference_reset_symbol(location.reference,current_asmdata.RefAsmSymbol(gvs.mangledname,AT_DATA,use_indirect_symbol(gvs)),0,location.reference.alignment,[]);
+{$ifdef avr}
+                           if gvs.symsection<>ss_none then
+                             location.reference.symsection:=gvs.symsection;
+{$endif avr}
+                         end
                        else
                          reference_reset_symbol(location.reference,current_asmdata.WeakRefAsmSymbol(gvs.mangledname,AT_DATA),0,location.reference.alignment,[])
                      end
@@ -535,6 +541,11 @@ implementation
                     else
                       location_reset_ref(location,LOC_REFERENCE,newsize,1,[]);
                     hlcg.reference_reset_base(location.reference,voidpointertype,hregister,0,ctempposinvalid,location.reference.alignment,[]);
+{$ifdef avr}
+                    { ensure location points to the correct section according to the pointer information }
+                    { so that code generator can generate section specific code }
+                    location.reference.symsection:=resultdef.symsection;
+{$endif avr}
                   end;
 
                 { make const a LOC_CREFERENCE }

@@ -718,6 +718,9 @@ implementation
 {$ifdef x86}
        cgx86,
 {$endif x86}
+{$ifdef avr}
+       CPUInfo,
+{$endif avr}
        ncgutil;
 
 
@@ -897,6 +900,10 @@ implementation
       ref.base:=reg;
       ref.offset:=offset;
       ref.temppos:=temppos;
+{$ifdef avr}
+      { Copy section information from pointer definition }
+      ref.symsection:=regsize.symsection;
+{$endif avr}
     end;
 
   procedure thlcgobj.a_label(list: TAsmList; l: tasmlabel); inline;
@@ -3444,8 +3451,18 @@ implementation
     var
       cgpara1,cgpara2,cgpara3 : TCGPara;
       pd : tprocdef;
+      helpername: string;
     begin
-      pd:=search_system_proc('fpc_shortstr_to_shortstr');
+      helpername:='fpc_shortstr_to_shortstr';
+{$ifdef avr}
+      if (strdef.symsection<>dest.symsection) and needSectionSpecificHelperCode(strdef.symsection,true) then
+        helpername:=helpername+'_'+symSectionToSectionPostfixName(strdef.symsection);
+{$endif avr}
+      pd:=search_system_proc(helpername);
+{$ifdef avr}
+      if not Assigned(pd) then
+        Comment(V_Error,'Could not locate required helper '+helpername);
+{$endif avr}
       cgpara1.init;
       cgpara2.init;
       cgpara3.init;

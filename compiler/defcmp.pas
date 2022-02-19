@@ -195,6 +195,35 @@ implementation
       symtable,symsym,symcpu,
       defutil,symutil;
 
+{$ifdef avr}
+    function compare_defs_record(def_from,def_to:trecorddef;var doconv:tconverttype):tequaltype;
+      var
+        i: integer;
+        fvs1, fvs2: tfieldvarsym;
+      begin
+        compare_defs_record := te_incompatible;
+        doconv := tc_not_possible;
+        if (def_from.size = def_to.size) and
+           (def_from.symtable.SymList.Count = def_to.symtable.SymList.Count) then
+          begin
+            i := 0;
+            fvs1 := nil;
+            fvs2 := nil;
+            while (i < trecorddef(def_from).symtable.SymList.Count) and
+                 (fvs1 = fvs2) do
+              begin
+                fvs1 := tfieldvarsym(trecorddef(def_from).symtable.SymList.Items[i]);
+                fvs2 := tfieldvarsym(trecorddef(def_to).symtable.SymList.Items[i]);
+                inc(i);
+              end;
+            if fvs1 = fvs2 then
+              begin
+                compare_defs_record := te_equal;
+                doconv:=tc_equal;
+              end;
+          end;
+      end;
+{$endif avr}
 
     function same_genconstraint_interfaces(intffrom,intfto:tobject):boolean;
       begin
@@ -596,6 +625,10 @@ implementation
                  procvardef,
                  pointerdef :
                    begin
+{$ifdef avr}
+                     if def_from.symsection<>def_to.symsection then
+                       exit;
+{$endif avr}
                      if cdo_explicit in cdoptions then
                       begin
                         eq:=te_convert_l1;
@@ -673,7 +706,21 @@ implementation
                          { for ansi- and unicodestrings also the encoding must match }
                          (not(tstringdef(def_from).stringtype in [st_ansistring,st_unicodestring]) or
                           (tstringdef(def_from).encoding=tstringdef(def_to).encoding)) then
+{$ifdef avr}
+                        if (def_from.symsection=def_to.symsection) then
+{$endif avr}
                         eq:=te_equal
+{$ifdef avr}
+                        else if def_to.symsection<>ss_none then
+                          eq:=te_incompatible
+                        else
+                          begin
+                            doconv:=tc_string_2_string;
+                            { If sections doesn't match, do type conversion via temp shortstring.
+                              Not as efficient as a direct call }
+                            eq:=te_convert_l1;
+                          end
+{$endif avr}
                      else
                        begin
                          doconv:=tc_string_2_string;
@@ -702,6 +749,12 @@ implementation
                              end;
                            st_shortstring :
                              begin
+{$ifdef avr}
+                               if (def_from.symsection<>def_to.symsection) and
+                                  (def_to.symsection<>ss_none) then
+                                 eq:=te_incompatible
+                               else
+{$endif avr}
                                { Prefer shortstrings of different length or conversions
                                  from shortstring to ansistring }
                                case tstringdef(def_to).stringtype of
@@ -791,6 +844,19 @@ implementation
                               end
                             else if not(cs_refcountedstrings in current_settings.localswitches) and
                                (tstringdef(def_to).stringtype=st_shortstring) then
+{$ifdef avr}
+                              { Give conversion to a symsection def a lower priority,
+                                to pick normal shortstring candidates first }
+                              if (def_to.symsection<>ss_none) then
+                                begin
+                                  if (def_from.symsection=def_to.symsection) and
+                                     not(cs_convert_sectioned_strings_to_temps in current_settings.localswitches) then
+                                    eq:=te_equal
+                                  else
+                                    eq:=te_convert_l2;
+                                end
+                              else
+{$endif avr}
                               eq:=te_equal
                             else if not(m_default_unicodestring in current_settings.modeswitches) and
                                (cs_refcountedstrings in current_settings.localswitches) and
@@ -850,6 +916,12 @@ implementation
                          else
                            eq:=te_convert_l2;
                        end;
+{$ifdef avr}
+                     { No conversion helpers supplied to convert to a section,
+                       except if parsing a typed const }
+                     if not (fromtreetype in [nothingn,stringconstn]) and (def_to.symsection<>ss_none) then
+                       eq:=te_incompatible;
+{$endif avr}
                    end;
                  pointerdef :
                    begin
@@ -870,6 +942,13 @@ implementation
                              else if is_wide_or_unicode_string(def_to) then
                                eq:=te_convert_l3
                              else
+{$ifdef avr}
+                              { Can only convert from sectioned pchar to RAM string }
+                              if needSectionSpecificHelperCode(def_from.symsection,true) and
+                                 (def_to.symsection<>ss_none) then
+                                eq:=te_incompatible
+                              else
+{$endif avr}
                               eq:=te_convert_l4
                            end
                           else if is_pwidechar(def_from) then
@@ -1230,13 +1309,22 @@ implementation
                             else
                              { array -> open array }
                              if not(cdo_parameter in cdoptions) and
-                                equal_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef) then
-                               begin
-                                 if fromtreetype=stringconstn then
-                                   eq:=te_convert_l1
-                                 else
-                                   eq:=te_equal;
-                               end;
+                                (equal_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef)
+{$ifdef avr}
+                                 or ( (tarraydef(def_from).elementdef.symsection <> tarraydef(def_to).elementdef.symsection) and
+                                      (compare_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef, fromtreetype) in [te_exact, te_equal, te_convert_l1])
+                                     )
+{$endif avr}
+                                ) then
+{$ifdef avr}
+                               { Try to favour the alternative conversion to (short)string }
+                               if (cs_convert_sectioned_strings_to_temps in current_settings.localswitches) and
+                                  is_char(tarraydef(def_from).elementdef) and
+                                  is_char(tarraydef(def_to).elementdef) then
+                                 eq:=te_convert_l1
+                               else
+{$endif avr}
+                                 eq:=te_equal;
                           end
                         else
                          { to array of const }
@@ -1249,7 +1337,13 @@ implementation
                              end
                             else
                              { array of tvarrec -> array of const }
-                             if equal_defs(tarraydef(def_to).elementdef,tarraydef(def_from).elementdef) then
+                             if equal_defs(tarraydef(def_to).elementdef,tarraydef(def_from).elementdef)
+{$ifdef avr}
+                                or ( (tarraydef(def_from).elementdef.symsection <> tarraydef(def_to).elementdef.symsection) and
+                                     (compare_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef, fromtreetype) in [te_exact, te_equal, te_convert_l1])
+                                    )
+{$endif avr}
+                              then
                               begin
                                 doconv:=tc_equal;
                                 eq:=te_convert_l1;
@@ -1285,7 +1379,13 @@ implementation
                             { open array -> array }
                             if not(cdo_parameter in cdoptions) and
                                is_open_array(def_from) and
-                               equal_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef) then
+                               (equal_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef)
+{$ifdef avr}
+                                 or ( (tarraydef(def_from).elementdef.symsection <> tarraydef(def_to).elementdef.symsection) and
+                                      (compare_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef, fromtreetype) in [te_exact, te_equal, te_convert_l1]))
+
+{$endif avr}
+                               ) then
                               begin
                                 eq:=te_equal
                               end
@@ -1298,8 +1398,14 @@ implementation
                                  tarraydef(def_from).is_hwvector) and
                                 (tarraydef(def_from).lowrange=tarraydef(def_to).lowrange) and
                                 (tarraydef(def_from).highrange=tarraydef(def_to).highrange) and
-                                equal_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef) and
-                                (compare_defs_ext(tarraydef(def_from).rangedef,tarraydef(def_to).rangedef,nothingn,hct,hpd,[])>te_incompatible) then
+                                (equal_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef)
+{$ifdef avr}
+                                 or ( (tarraydef(def_from).elementdef.symsection <> tarraydef(def_to).elementdef.symsection) and
+                                      (compare_defs(tarraydef(def_from).elementdef,tarraydef(def_to).elementdef, fromtreetype) in [te_exact, te_equal, te_convert_l1])
+                                    )
+{$endif avr}
+
+                                ) and (compare_defs_ext(tarraydef(def_from).rangedef,tarraydef(def_to).rangedef,nothingn,hct,hpd,[])>te_incompatible) then
                               begin
                                 eq:=te_equal
                               end;
@@ -1652,10 +1758,11 @@ implementation
                            end
                          else
                           { all pointers can be assigned from void-pointer }
-                          if is_void(tpointerdef(def_from).pointeddef) or
+                          if (is_void(tpointerdef(def_from).pointeddef) or
                           { all pointers can be assigned from void-pointer or formaldef pointer, check
                             tw3777.pp if you change this }
-                            (tpointerdef(def_from).pointeddef.typ=formaldef) then
+                            (tpointerdef(def_from).pointeddef.typ=formaldef))
+                            {$ifdef avr} and (tpointerdef(def_from).symsection=tpointerdef(def_to).symsection){$endif avr} then
                            begin
                              doconv:=tc_equal;
                              { give pwidechar a penalty so it prefers
@@ -2115,7 +2222,12 @@ implementation
                 begin
                   doconv:=tc_intf_2_guid;
                   eq:=te_convert_l1;
-                end;
+                end
+{$ifdef avr}
+               else if (def_to.typ = recorddef) and
+                  ((def_from.symsection <> ss_none) or (def_to.symsection <> ss_none)) then
+                 eq:=compare_defs_record(trecorddef(def_from),trecorddef(def_to),doconv);
+{$endif avr}
              end;
 
            formaldef :
@@ -2170,6 +2282,18 @@ implementation
            (doconv=tc_not_possible) then
           doconv:=tc_equal;
 
+{$ifdef avr}
+        { Penalize defs in different sections, }
+        if (def_from.symsection<>def_to.symsection) and
+          { but not when preferring temp strings }
+           not((def_to.typ=stringdef) and
+               (def_to.symsection=ss_none) and
+               (cs_convert_sectioned_strings_to_temps in current_settings.localswitches)) then
+          begin
+            if eq>te_convert_l5 then
+              dec(eq);
+          end;
+{$endif avr}
         compare_defs_ext:=eq;
       end;
 

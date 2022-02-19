@@ -339,7 +339,6 @@ implementation
       ttypeconvnodetype = (tct_implicit,tct_explicit,tct_internal);
 
     procedure do_inserttypeconv(var p: tnode;def: tdef; convtype: ttypeconvnodetype);
-
       begin
         if not assigned(p.resultdef) then
          begin
@@ -359,6 +358,9 @@ implementation
           still expects the resultdef of the node to be a stringdef) }
         if equal_defs(p.resultdef,def) and
            (p.resultdef.typ=def.typ) and
+{$ifdef avr}
+           (p.resultdef.symsection=def.symsection) and
+{$endif avr}
            not is_bitpacked_access(p) and
            { result of a hardware vector node must remain a hardware
              vector of the same kind (will match to tc_equal with regular arrays
@@ -390,7 +392,6 @@ implementation
 
 
     procedure inserttypeconv(var p:tnode;def:tdef);
-
       begin
         do_inserttypeconv(p,def,tct_implicit);
       end;
@@ -1129,17 +1130,24 @@ implementation
         newblock : tblocknode;
         newstat  : tstatementnode;
         restemp  : ttempcreatenode;
+        procname: string;
       begin
         if is_widechar(tarraydef(left.resultdef).elementdef) then
           chartype:='widechar'
         else
           chartype:='char';
+        procname:='fpc_'+chartype+'array_to_';
         if tstringdef(resultdef).stringtype=st_shortstring then
           begin
             newblock:=internalstatements(newstat);
             restemp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,false);
             addstatement(newstat,restemp);
-            addstatement(newstat,ccallnode.createintern('fpc_'+chartype+'array_to_shortstr',
+            procname:=procname+'shortstr';
+{$ifdef avr}
+            if needSectionSpecificHelperCode(left.resultdef.symsection,true) then
+              procname:=procname+'_'+symSectionToSectionPostfixName(left.resultdef.symsection);
+{$endif avr}
+            addstatement(newstat,ccallnode.createintern(procname,
               ccallparanode.create(cordconstnode.create(
                 ord(tarraydef(left.resultdef).lowrange=0),pasbool1type,false),
               ccallparanode.create(left,ccallparanode.create(
@@ -1150,8 +1158,12 @@ implementation
           end
         else if (tstringdef(resultdef).stringtype=st_ansistring) then
           begin
-            result:=ccallnode.createinternres(
-                      'fpc_'+chartype+'array_to_'+tstringdef(resultdef).stringtypname,
+            procname:=procname+tstringdef(resultdef).stringtypname;
+{$ifdef avr}
+            if needSectionSpecificHelperCode(left.resultdef.symsection,true) then
+              procname:=procname+'_'+symSectionToSectionPostfixName(left.resultdef.symsection);
+{$endif avr}
+            result:=ccallnode.createinternres(procname,
                       ccallparanode.create(
                         cordconstnode.create(
                           ord(tarraydef(left.resultdef).lowrange=0),
@@ -1171,11 +1183,17 @@ implementation
                     );
           end
         else
-          result:=ccallnode.createinternres(
-            'fpc_'+chartype+'array_to_'+tstringdef(resultdef).stringtypname,
-            ccallparanode.create(cordconstnode.create(
-               ord(tarraydef(left.resultdef).lowrange=0),pasbool1type,false),
-             ccallparanode.create(left,nil)),resultdef);
+          begin
+            procname:=procname+tstringdef(resultdef).stringtypname;
+{$ifdef avr}
+            if needSectionSpecificHelperCode(left.resultdef.symsection,true) then
+              procname:=procname+'_'+symSectionToSectionPostfixName(left.resultdef.symsection);
+{$endif avr}
+            result:=ccallnode.createinternres(procname,
+              ccallparanode.create(cordconstnode.create(
+                 ord(tarraydef(left.resultdef).lowrange=0),pasbool1type,false),
+               ccallparanode.create(left,nil)),resultdef);
+          end;
         left:=nil;
       end;
 
@@ -1389,6 +1407,11 @@ implementation
       end;
 
     function ttypeconvnode.typecheck_string_to_string : tnode;
+      var
+        newblock : tblocknode;
+        newstat  : tstatementnode;
+        restemp  : ttempcreatenode;
+        procname : string;
       begin
         result:=nil;
         if (left.nodetype=stringconstn) and
@@ -1446,7 +1469,33 @@ implementation
               Message2(type_w_explicit_string_cast,left.resultdef.typename,resultdef.typename)
             else
               Message2(type_w_implicit_string_cast,left.resultdef.typename,resultdef.typename);
-          end
+          end;
+
+{$ifdef avr}
+        { Convert shortstring in section to regular temp shortstring,
+          but only if controller doesn't have unified memory }
+        if (tstringdef(left.resultdef).stringtype=st_shortstring) and
+           (tstringdef(resultdef).stringtype=st_shortstring) and
+           needSectionSpecificHelperCode(left.resultdef.symsection,true) then
+          begin
+            procname:='fpc_shortstr_to_shortstr';
+            procname:=procname+'_'+symSectionToSectionPostfixName(left.resultdef.symsection);
+
+            newblock:=internalstatements(newstat);
+            restemp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,false);
+            addstatement(newstat,restemp);
+
+            { Call parameters: var res:shortstring; constref sstr: shortstring_eeprom }
+            addstatement(newstat,ccallnode.createintern(procname,
+              ccallparanode.create(left,
+              ccallparanode.create(ctemprefnode.create(restemp),nil))));
+
+            addstatement(newstat,ctempdeletenode.create_normal_temp(restemp));
+            addstatement(newstat,ctemprefnode.create(restemp));
+            result:=newblock;
+            left:=nil;
+          end;
+{$endif avr}
       end;
 
     function ttypeconvnode.typecheck_char_to_chararray : tnode;
@@ -1773,13 +1822,19 @@ implementation
         newblock : tblocknode;
         newstat  : tstatementnode;
         restemp  : ttempcreatenode;
+        procname : string;
       begin
         if tstringdef(resultdef).stringtype=st_shortstring then
           begin
+            procname:='fpc_pchar_to_shortstr';
+{$ifdef avr}
+            if needSectionSpecificHelperCode(left.resultdef.symsection,true) then
+              procname:=procname+'_'+symSectionToSectionPostfixName(left.resultdef.symsection);
+{$endif avr}
             newblock:=internalstatements(newstat);
             restemp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,false);
             addstatement(newstat,restemp);
-            addstatement(newstat,ccallnode.createintern('fpc_pchar_to_shortstr',ccallparanode.create(left,ccallparanode.create(
+            addstatement(newstat,ccallnode.createintern(procname,ccallparanode.create(left,ccallparanode.create(
               ctemprefnode.create(restemp),nil))));
             addstatement(newstat,ctempdeletenode.create_normal_temp(restemp));
             addstatement(newstat,ctemprefnode.create(restemp));
@@ -2904,6 +2959,12 @@ implementation
                   if assigned(result) then
                     exit;
 
+{$ifdef avr}
+                  { Cannot eliminate a loadn if left and result are in different sections }
+                  if (left.nodetype = loadn) and (resultdef.symsection <> left.resultdef.symsection) then
+                    exit;
+{$endif avr}
+
                   { in case of bitpacked accesses, the original type must
                     remain so that not too many/few bits are laoded }
                   if is_bitpacked_access(left) then
@@ -3566,6 +3627,17 @@ implementation
                 )
                ) then
               begin
+{$ifdef avr}
+                { stringconstn in section needs explicit conversion,
+                  but only if left and right are in different sections }
+                if (left.resultdef.symsection<>ss_none) and (self.resultdef.symsection=ss_none) and
+                   needSectionSpecificHelperCode(left.resultdef.symsection,true) then
+                  begin
+                    result:=typecheck_chararray_to_string;
+                    exit;
+                  end
+                else
+{$endif avr}
                 { output string consts in local ansistring encoding }
                 if is_ansistring(resultdef) and
                   { do not mess with the result type for internally created nodes }
