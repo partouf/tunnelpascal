@@ -17909,6 +17909,20 @@ unit aoptx86;
               Break;
 
             case taicpu(forward_pointer).opcode of
+              A_SHL, A_SHR, A_SAR, A_ROR, A_ROL:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
+                    not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(rle_pointer).oper[1]^) then
+                    Break;
+
+                  { Not allowed writes to references }
+                  if taicpu(forward_pointer).oper[1]^.typ = top_ref then
+                    Break;
+
+                  if not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                    Break;
+                end;
               A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif},
               A_MOVSS, A_MOVSD, A_MOVAPS, A_MOVUPS, A_MOVAPD, A_MOVUPD, A_MOVDQA, A_MOVDQU, A_MOVD, A_MOVQ,
               A_MOVNTDQ, A_MOVNTDQA, A_MOVNTPD, A_MOVNTPS,
