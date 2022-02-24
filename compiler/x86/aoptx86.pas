@@ -8801,6 +8801,7 @@ unit aoptx86;
    function TX86AsmOptimizer.OptPass1Imul(var p: tai): boolean;
      var
        hp1 : tai;
+       SWRegState: TAllUsedRegs;
      begin
        result:=false;
        { replace
@@ -8826,6 +8827,38 @@ unit aoptx86;
                RemoveInstruction(hp1);
                result:=true;
              end;
+         end;
+
+       if not Result and
+         (cs_opt_asmcse in current_settings.optimizerswitches) and
+         { Only the 3-instruction version is a true write; don't store the 1-
+           and 2-operand versions in the sliding window }
+         (taicpu(p).ops = 3) and
+         { If IMUL reads and writes to the same register, it's impossible for it
+           to be a valid starting point for a repeating sequence since the input
+           won't be the same }
+         not MatchOperand(taicpu(p).oper[1]^, taicpu(p).oper[2]^.reg) then
+         begin
+           hp1 := FindSWMatch(taicpu(p), SWRegState);
+           if Assigned(hp1) and
+             not (
+               (taicpu(hp1).oper[1]^.typ = top_reg) and
+               { Call SuperRegistersEqual to save calling RegModifiedBetween unnecessarily }
+               RegModifiedBetween(taicpu(hp1).oper[1]^.reg, hp1, p)
+             ) and
+             not (
+               (taicpu(hp1).oper[1]^.typ = top_ref) and
+               { Make sure the registers that make up the reference haven't changed }
+               (taicpu(hp1).oper[1]^.ref^.refaddr = addr_no) and
+               RegPairModifiedBetween(taicpu(hp1).oper[1]^.ref^.base, taicpu(hp1).oper[1]^.ref^.index, hp1, p)
+             ) and
+             TraceRLE(p, hp1, SWRegState) then
+             begin
+               Result := True;
+               Exit;
+             end;
+
+           AddToSW(p);
          end;
      end;
 
@@ -17874,6 +17907,20 @@ unit aoptx86;
                   IncludeRegInUsedRegs(taicpu(p).oper[1]^.reg, ForwardTrackedRegs);
                 end;
             end;
+          A_IMUL:
+            begin
+              if taicpu(p).ops <> 3 then
+                InternalError(2022022202);
+
+              if not CheckInput(taicpu(p).oper[1]^) then
+                begin
+                  ReleaseUsedRegs(RLETrackedRegs);
+                  ReleaseUsedRegs(ForwardTrackedRegs);
+                  Exit;
+                end;
+
+              IncludeRegInUsedRegs(taicpu(p).oper[taicpu(p).ops-1]^.reg, ForwardTrackedRegs);
+            end;
           else
             begin
               { Don't know how to handle this instruction }
@@ -17909,6 +17956,114 @@ unit aoptx86;
               Break;
 
             case taicpu(forward_pointer).opcode of
+              A_CBW, A_CWDE, A_CWD, A_CDQ{$ifdef x86_64}, A_CDQE, A_CQO{$endif x86_64}:
+                { Zero-operand instructions that are fine as is };
+              A_IMUL:
+                begin
+                  case taicpu(forward_pointer).ops of
+                    1:
+                      if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
+                        not CheckInput(taicpu(forward_pointer).oper[0]^) and
+                        { Implicitly reads one of the operands from EAX }
+                        not CheckRegister(NR_EAX) then
+                        Break;
+                    2:
+                      begin
+                        if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
+                          not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                          (taicpu(forward_pointer).oper[1]^.reg <> taicpu(rle_pointer).oper[1]^.reg) or
+                          not CheckRegister(taicpu(forward_pointer).oper[1]^.reg) then
+                          Break;
+                      end;
+                    3:
+                      begin
+                        if (taicpu(forward_pointer).oper[0]^.val <> taicpu(rle_pointer).oper[0]^.val) or
+                          not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(rle_pointer).oper[1]^) or
+                          not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                          Break;
+
+                        { This is a special kind of mismatch - the final MOVx/LEA writes to a different register.
+                          If the register in the first chain hasn't been modified, then the entire second chain
+                          can be replaced with a single MOV instruction to write it to the new register }
+                        if (taicpu(forward_pointer).oper[2]^.reg <> taicpu(rle_pointer).oper[2]^.reg) then
+                          begin
+                            UpdateUsedRegs(RLETrackedRegs, tai(rle_last.Next));
+
+                            { Be a little hacky and don't include the assignment of the different target register... }
+                            UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_last.Next));
+                            { ... but do include the RLE register so it's monitored }
+                            IncludeRegInUsedRegs(taicpu(rle_pointer).oper[2]^.reg, ForwardTrackedRegs);
+
+                            { Before doing the last instruction, see if we can optimise what's
+                              currently present in case the last line fails }
+                            if VerifyRLE then
+                              Result := True;
+
+                            { Look beyond the final instruction that we're replacing to deallocate any
+                              temporary registers that are being used }
+                            UpdateUsedRegsIgnoreNew(RLETrackedRegs, tai(rle_pointer.Next));
+                            UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_pointer.Next));
+
+                            { Add the RLE register to the forward tracking array so it's not ignored }
+                            IncludeRegInUsedRegs(taicpu(rle_pointer).oper[2]^.reg, ForwardTrackedRegs);
+
+                            if CheckSWRegisters(rle_pointer, p, ForwardTrackedRegs) then
+                              begin
+                                { This is a valid dereference chain that can be replaced
+                                  with the result of the previous one }
+                                DebugSWMsg(SSlidingWindow + 'Removed common subexpression (different ending register via IMUL)', forward_pointer);
+                                taicpu(forward_pointer).opcode := A_MOV;
+                                taicpu(forward_pointer).loadreg(0, taicpu(rle_pointer).oper[2]^.reg);
+                                taicpu(forward_pointer).loadreg(1, taicpu(forward_pointer).oper[2]^.reg);
+                                taicpu(forward_pointer).clearop(2);
+                                taicpu(forward_pointer).ops := 2;
+
+                                { Remove all remaining instructions between p and forward_pointer }
+                                while p <> forward_pointer do
+                                  begin
+                                    { Use RemoveCurrentP so UsedRegs is updated }
+                                    DebugSWMsg(SSlidingWindow + 'Removed common subexpression', p);
+                                    if not RemoveCurrentP(p) then
+                                      InternalError(2022021701);
+                                  end;
+
+                                { Make sure the RLE registers are tracked all the way through }
+                                AllocAllUsedRegsBetween(rle_pointer, forward_pointer, ForwardTrackedRegs, RLETrackedRegs);
+
+                                { Make sure UsedRegs knows about the newly allocated registers }
+                                MergeUsedRegs(ForwardTrackedRegs);
+
+                                Result := True;
+                              end;
+
+                            ReleaseUsedRegs(RLETrackedRegs);
+                            ReleaseUsedRegs(ForwardTrackedRegs);
+                            Exit;
+                          end;
+                      end;
+                    else
+                      InternalError(2022022201);
+                  end;
+                end;
+              A_MUL:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                    { Implicitly reads one of the operands from EAX }
+                    not CheckRegister(NR_EAX) then
+                    Break;
+                end;
+              A_DIV, A_IDIV:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                    not CheckRegister(NR_EAX) then
+                    Break;
+
+                  { Word, DWord and QWord versions store part of the numerator in EDX }
+                  if (taicpu(forward_pointer).opsize > S_B) and not CheckRegister(NR_EDX) then
+                    Break;
+                end;
               A_NOT, A_NEG:
                 begin
                   { Not allowed writes to references }
@@ -17917,7 +18072,7 @@ unit aoptx86;
 
                   if not CheckInput(taicpu(forward_pointer).oper[0]^) then
                     Break;
-                end;
+                 end;
               A_AND, A_OR, A_XOR:
                 begin
                   if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
