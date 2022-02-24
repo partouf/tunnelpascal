@@ -5457,6 +5457,7 @@ unit aoptx86;
    function TX86AsmOptimizer.OptPass1MOVXX(var p : tai) : boolean;
       var
         hp1 : tai;
+        SWRegState: TAllUsedRegs;
       begin
         Result:=false;
         if taicpu(p).ops <> 2 then
@@ -5509,6 +5510,28 @@ unit aoptx86;
                   end;
               end;
             end;
+          end;
+
+        if not Result and
+          (cs_opt_asmcse in current_settings.optimizerswitches) and
+          (taicpu(p).oper[1]^.typ = top_reg) then
+          begin
+            hp1 := FindSWMatch(taicpu(p), SWRegState);
+            if Assigned(hp1) and
+              not (
+                (taicpu(p).oper[0]^.typ = top_ref) and
+                { Make sure the registers that make up the reference haven't changed }
+                (taicpu(p).oper[0]^.ref^.refaddr = addr_no) and
+                RegPairModifiedBetween(taicpu(p).oper[0]^.ref^.base, taicpu(p).oper[0]^.ref^.index, hp1, p)
+              ) and
+              TraceRLE(p, hp1, SWRegState) then
+              begin
+                Result := True;
+                Exit;
+              end;
+
+            if not Result then
+              AddToSW(p);
           end;
       end;
 
@@ -14130,6 +14153,7 @@ unit aoptx86;
         NewRegSize: TSubRegister;
         Limit: TCgInt;
         SwapOper: POper;
+        SWRegState: TAllUsedRegs;
       begin
         result:=false;
         reg_and_hp1_is_instr:=(taicpu(p).oper[1]^.typ = top_reg) and
@@ -15059,6 +15083,28 @@ unit aoptx86;
                         Result := True;
                       end;
                   end;
+          end;
+
+        if not Result and
+          (cs_opt_asmcse in current_settings.optimizerswitches) and
+          (taicpu(p).oper[1]^.typ = top_reg) then
+          begin
+            hp1 := FindSWMatch(taicpu(p), SWRegState);
+            if Assigned(hp1) and
+              not (
+                (taicpu(p).oper[0]^.typ = top_ref) and
+                { Make sure the registers that make up the reference haven't changed }
+                (taicpu(p).oper[0]^.ref^.refaddr = addr_no) and
+                RegPairModifiedBetween(taicpu(p).oper[0]^.ref^.base, taicpu(p).oper[0]^.ref^.index, hp1, p)
+              ) and
+              TraceRLE(p, hp1, SWRegState) then
+              begin
+                Result := True;
+                Exit;
+              end;
+
+            if not Result then
+              AddToSW(p);
           end;
       end;
 
@@ -17687,6 +17733,17 @@ unit aoptx86;
               end;
           end;
 
+        for RegIndex := RS_XMM0 to RS_XMM7 do
+          begin
+            CurrentReg := newreg(R_MMXREGISTER, RegIndex, R_SUBMMWHOLE);
+            if TrackedRegs[R_MMXREGISTER].IsUsed(CurrentReg) then
+              begin
+                TmpUsedRegs[R_MMXREGISTER].Clear;
+                IncludeRegInUsedRegs(CurrentReg, InitialUsedRegs);
+                AllocRegBetween(CurrentReg, p1, p2, InitialUsedRegs);
+              end;
+          end;
+
 {$ifdef x86_64}
         for RegIndex := RS_XMM0 to RS_XMM31 do
 {$else x86_64}
@@ -17799,9 +17856,13 @@ unit aoptx86;
 
         { Analyse initial input }
         case taicpu(p).opcode of
-          A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif}:
+          A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif},
+          A_MOVSS, A_MOVSD, A_MOVAPS, A_MOVUPS, A_MOVAPD, A_MOVUPD, A_MOVDQA, A_MOVDQU, A_MOVD, A_MOVQ,
+          A_MOVNTDQ, A_MOVNTDQA, A_MOVNTPD, A_MOVNTPS,
+          A_VMOVSS, A_VMOVSD, A_VMOVAPS, A_VMOVUPS, A_VMOVAPD, A_VMOVUPD, A_VMOVDQA, A_VMOVDQU, A_VMOVD, A_VMOVQ,
+          A_VMOVNTDQ, A_VMOVNTDQA, A_VMOVNTPD, A_VMOVNTPS:
             begin
-              if not CheckInput(taicpu(p).oper[0]^) then
+              if (taicpu(p).ops <> 2) { Wrong MOVSS } or not CheckInput(taicpu(p).oper[0]^) then
                 begin
                   ReleaseUsedRegs(RLETrackedRegs);
                   ReleaseUsedRegs(ForwardTrackedRegs);
@@ -17848,8 +17909,16 @@ unit aoptx86;
               Break;
 
             case taicpu(forward_pointer).opcode of
-              A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif}:
+              A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif},
+              A_MOVSS, A_MOVSD, A_MOVAPS, A_MOVUPS, A_MOVAPD, A_MOVUPD, A_MOVDQA, A_MOVDQU, A_MOVD, A_MOVQ,
+              A_MOVNTDQ, A_MOVNTDQA, A_MOVNTPD, A_MOVNTPS,
+              A_VMOVSS, A_VMOVSD, A_VMOVAPS, A_VMOVUPS, A_VMOVAPD, A_VMOVUPD, A_VMOVDQA, A_VMOVDQU, A_VMOVD, A_VMOVQ,
+              A_VMOVNTDQ, A_VMOVNTDQA, A_VMOVNTPD, A_VMOVNTPS:
                 begin
+                  if taicpu(forward_pointer).ops <> 2 then
+                    { Wrong MOVSS }
+                    Break;
+
                   { Not allowed writes to references }
                   if taicpu(forward_pointer).oper[1]^.typ = top_ref then
                     Break;
@@ -17872,7 +17941,8 @@ unit aoptx86;
                           { Here is the reason why TmpUsedRegs was being used, so it can accurately
                             detect whether the destination register is in use up to this point, plus
                             TmpUsedRegs gets modified after a call to RegUsedAfterInstruction }
-                          if not (
+                          if MatchInstruction(forward_pointer, [A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif}], []) and
+                            not (
                               { Is the value of rle_pointer's register still in use? }
                               RegUsedAfterInstruction(taicpu(rle_pointer).oper[1]^.reg, forward_pointer, TmpUsedRegs) and
                               { If so, it must preserve its value through the sdequence of instructions p to forward_pointer }
