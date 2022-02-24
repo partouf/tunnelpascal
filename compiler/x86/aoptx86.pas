@@ -17909,7 +17909,16 @@ unit aoptx86;
               Break;
 
             case taicpu(forward_pointer).opcode of
-              A_SHL, A_SHR, A_SAR, A_ROR, A_ROL:
+              A_NOT, A_NEG:
+                begin
+                  { Not allowed writes to references }
+                  if taicpu(forward_pointer).oper[0]^.typ = top_ref then
+                    Break;
+
+                  if not CheckInput(taicpu(forward_pointer).oper[0]^) then
+                    Break;
+                end;
+              A_AND, A_OR, A_XOR:
                 begin
                   if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
                     not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(rle_pointer).oper[1]^) then
@@ -17921,6 +17930,75 @@ unit aoptx86;
 
                   if not CheckInput(taicpu(forward_pointer).oper[0]^) or
                     not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                    Break;
+                end;
+              A_SHL, A_SHR, A_SAR, A_ROR, A_ROL, A_ADD, A_SUB:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(rle_pointer).oper[1]^) then
+                    Break;
+
+                  { Not allowed writes to references }
+                  if taicpu(forward_pointer).oper[1]^.typ = top_ref then
+                    Break;
+
+                  if not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                    Break;
+
+                  if (taicpu(forward_pointer).oper[0]^.typ = top_const) then
+                    begin
+                      { A special kind of mismatch - the shift constant is different, but it
+                        might be possible to make a saving if the register isn't modified
+                        between the first and second chains.}
+                      if (taicpu(forward_pointer).oper[0]^.val <> taicpu(rle_pointer).oper[0]^.val) then
+                        begin
+                          UpdateUsedRegs(RLETrackedRegs, tai(rle_last.Next));
+                          UpdateUsedRegs(ForwardTrackedRegs, tai(forward_last.Next));
+
+                          { Before doing the last instruction, see if we can optimise what's
+                            currently present in case the last line fails }
+                          if VerifyRLE then
+                            Result := True;
+
+                          { Look beyond the final instruction that we're replacing to deallocate any
+                            temporary registers that are being used }
+                          UpdateUsedRegsIgnoreNew(RLETrackedRegs, tai(rle_pointer.Next));
+                          UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_pointer.Next));
+
+                          if CheckSWRegisters(rle_pointer, p, ForwardTrackedRegs) then
+                            begin
+                              if (taicpu(forward_pointer).oper[0]^.val > taicpu(rle_pointer).oper[0]^.val) then
+                                begin
+                                  { If the second chain has a larger value, this is easy to accommodate as all
+                                    we have to do is keep the second shift/rotate but change the value to be
+                                    equal to the difference between the two original values. }
+
+                                  DebugSWMsg(SSlidingWindow + 'Removed common subexpression (larger immediate)', forward_pointer);
+                                  Dec(taicpu(forward_pointer).oper[0]^.val, taicpu(rle_pointer).oper[0]^.val);
+
+                                  { Remove all remaining instructions between p and forward_pointer }
+                                  while p <> forward_pointer do
+                                    begin
+                                      { Use RemoveCurrentP so UsedRegs is updated }
+                                      DebugSWMsg(SSlidingWindow + 'Removed common subexpression', p);
+                                      if not RemoveCurrentP(p) then
+                                        InternalError(2022021702);
+                                    end;
+                                  Result := True;
+
+                                  { Make sure the RLE registers are tracked all the way through }
+                                  AllocAllUsedRegsBetween(rle_pointer, forward_pointer, ForwardTrackedRegs, RLETrackedRegs);
+
+                                  { Make sure UsedRegs knows about the newly allocated registers }
+                                  MergeUsedRegs(ForwardTrackedRegs);
+                                end;
+                            end;
+                          ReleaseUsedRegs(RLETrackedRegs);
+                          ReleaseUsedRegs(ForwardTrackedRegs);
+                          Exit;
+                        end;
+                    end
+                  else if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(rle_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[0]^) then
                     Break;
                 end;
               A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif},
