@@ -258,6 +258,10 @@ unit aoptx86;
         procedure AddToSW(var p: tai);
         function FindSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
 
+        { Locates a match where all but the last operand are equal (although it
+          must be a register }
+        function FindPartialSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
+
         { Allocate all registers marked as used in TrackedRegs between p1 and p2
           (uses TmpUsedRegs as the initialusedregs in calls to AllocRegBetween }
         procedure AllocAllUsedRegsBetween(p1, p2: tai; var TrackedRegs: TAllUsedRegs; var InitialUsedRegs: TAllUsedRegs);
@@ -17534,14 +17538,27 @@ unit aoptx86;
     function TX86AsmOptimizer.HandleSimple2OpSWInstruction(var p: tai): Boolean;
       var
         SWRegState: TAllUsedRegs;
-        hp1: tai;
+        hp1, hp2: tai;
       begin
         Result := False;
         if (cs_opt_asmcse in current_settings.optimizerswitches) and
           (taicpu(p).oper[1]^.typ = top_reg) then
           begin
+            { Instruction must explicitly write to the last operand (not modify or read-write) }
+            if not (Ch_WOp2 in InsProp[taicpu(p).opcode].Ch) and
+              { The only exceptional case }
+              not (
+                (taicpu(p).opcode = A_MOVSD) and
+                (taicpu(p).ops = 2)
+              ) then
+              InternalError(2022022501);
+
+            GetLastInstruction(p, hp2);
+
             hp1 := FindSWMatch(taicpu(p), SWRegState);
             if Assigned(hp1) and
+              { Can't be adjacent }
+              (hp1 <> hp2) and
               not (
                 (taicpu(hp1).oper[0]^.typ = top_reg) and
                 { Call SuperRegistersEqual to save calling RegModifiedBetween unnecessarily }
@@ -17557,6 +17574,56 @@ unit aoptx86;
               begin
                 Result := True;
                 Exit;
+              end
+            else if (getregtype(taicpu(p).oper[1]^.reg) = R_INTREGISTER) and
+              { Don't do partial matches for register-to-register moves, as these
+                are already as efficient as they can be (and will cause an infinite
+                loop in the peephole optimizer in some cases). }
+              not (
+                (taicpu(p).opcode = A_MOV) and
+                (taicpu(p).oper[0]^.typ = top_reg)
+              ) then
+              begin
+                { If not an exact match, maybe a partial match? }
+                hp1 := FindPartialSWMatch(taicpu(p), SWRegState);
+                { oper[1] of hp1 will be a register, otherwise FindPartialSWMatch would have returned nil }
+                if Assigned(hp1) and
+                  { Can't be adjacent }
+                  (hp1 <> hp2) and
+                  not RegModifiedBetween(taicpu(hp1).oper[1]^.reg, hp1, p) and
+                  not (
+                    (taicpu(hp1).oper[0]^.typ = top_reg) and
+                    { Call SuperRegistersEqual to save calling RegModifiedBetween unnecessarily }
+                    not SuperRegistersEqual(taicpu(hp1).oper[0]^.reg, taicpu(hp1).oper[1]^.reg) and
+                    RegModifiedBetween(taicpu(hp1).oper[0]^.reg, hp1, p)
+                  ) and
+                  not (
+                    (taicpu(hp1).oper[0]^.typ = top_ref) and
+                    (
+                      { If True, this means the register changes value, but is
+                        missed by RegPairModifiedBetween }
+                      RegInRef(taicpu(hp1).oper[1]^.reg, taicpu(hp1).oper[0]^.ref^) or
+                      (
+                        { Make sure the registers that make up the reference haven't changed }
+                        (taicpu(hp1).oper[0]^.ref^.refaddr = addr_no) and
+                        RegPairModifiedBetween(taicpu(hp1).oper[0]^.ref^.base, taicpu(hp1).oper[0]^.ref^.index, hp1, p)
+                      )
+                    )
+                  ) then
+                  begin
+                    DebugSWMsg(SSlidingWindow + 'Successfully converted partial match to register-to-register MOV', p);
+                    taicpu(p).opcode := A_MOV;
+                    taicpu(p).opsize := reg2opsize(taicpu(hp1).oper[1]^.reg);
+                    taicpu(p).loadreg(0, taicpu(hp1).oper[1]^.reg);
+
+                    AllocRegBetween(taicpu(hp1).oper[1]^.reg, hp1, p, SWRegState);
+
+                    { Make sure UsedRegs knows about the newly allocated register }
+                    IncludeRegInUsedRegs(taicpu(hp1).oper[1]^.reg, UsedRegs);
+
+                    Result := True;
+                    Exit;
+                  end;
               end;
 
             AddToSW(p);
@@ -17632,6 +17699,68 @@ unit aoptx86;
               if not Mismatch then
                 begin
                   DebugSWMsg(SSlidingWindow + 'Found match in sliding window (ref = ' + hexstr(p) + ')', p);
+                  DebugSWMsg(SSlidingWindow + 'Reference for match found below (ref = ' + hexstr(p) + ')', p_sw);
+                  Result := p_sw;
+                  CopyUsedRegs(SlidingWindow[Index].RegState, RegState);
+                  Exit;
+                end;
+            end;
+
+          if Index = 0 then
+            Index := SLIDING_WINDOW_SIZE - 1
+          else
+            Dec(Index);
+
+          { Drop out if Index has made a complete loop }
+        until Index = WindowTop;
+
+      end;
+
+
+    function TX86AsmOptimizer.FindPartialSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
+      var
+        Index: Cardinal;
+        X: Integer;
+        p_sw: taicpu;
+        hp: taicpu absolute p; { Implicit typecast }
+        Mismatch: Boolean;
+      begin
+        Result := nil;
+        if DisableSW then
+          Exit;
+
+        if (hp.oper[hp.ops-1]^.typ <> top_reg) then
+          Exit;
+
+        Index := WindowTop;
+        repeat
+          p_sw := taicpu(SlidingWindow[Index].ai);
+          if not Assigned(p_sw) then
+            { Sliding window hasn't been completely filled; this is as far as
+              we can search }
+            Exit;
+
+          if (p_sw.opcode = hp.opcode) and
+            (p_sw.opsize = hp.opsize) and
+            (p_sw.ops = hp.ops) then
+            begin
+              Mismatch := False;
+
+              { Check to see if all but the final parameters match }
+              for X := 0 to p_sw.ops - 2 do
+                begin
+                  if not MatchOperand(p_sw.oper[X]^, hp.oper[X]^) then
+                    begin
+                      Mismatch := True;
+                      Break;
+                    end;
+                end;
+
+              { If Mismatch is still false, then we have a match! }
+              if not Mismatch and
+                (p_sw.oper[p_sw.ops-1]^.typ = top_reg) then
+                begin
+                  DebugSWMsg(SSlidingWindow + 'Found partial match in sliding window (ref = ' + hexstr(p) + ')', p);
                   DebugSWMsg(SSlidingWindow + 'Reference for match found below (ref = ' + hexstr(p) + ')', p_sw);
                   Result := p_sw;
                   CopyUsedRegs(SlidingWindow[Index].RegState, RegState);
