@@ -76,11 +76,13 @@ end;
 
 {$IFNDEF UNI_BUILD_TIME} 
 function isUnifiedIdeograph(const ACodePoint : Cardinal) : boolean;
-var
-  p : PUC_Prop;
 begin
-  p := GetProps(ACodePoint);
-  Result := (p <> nil) and p^.UnifiedIdeograph;
+  result := false;
+  case ACodePoint of
+    $3400..$4DBF, $4E00..$9FFF, $FA0E..$FA0F, $FA11, $FA13..$FA14, $FA1F, $FA21, $FA23..$FA24, $FA27..$FA29,
+    $20000..$2A6DF, $2A700..$2B738, $2B740..$2B81D, $2B820..$2CEA1, $2CEB0..$2EBE0, $30000..$3134A:
+      result := true;
+  end;
 end;
 {$ENDIF UNI_BUILD_TIME}
 

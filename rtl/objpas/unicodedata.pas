@@ -104,6 +104,7 @@ unit unicodedata;
 
 {$SCOPEDENUMS ON}
 {$pointermath on}
+{$coperators on}
 {$define USE_INLINE}
 { $define uni_debug}
 
@@ -140,6 +141,8 @@ const
   HIGH_SURROGATE_BEGIN = Word($D800);
   HIGH_SURROGATE_END   = Word($DBFF);
   HIGH_SURROGATE_COUNT = HIGH_SURROGATE_END - HIGH_SURROGATE_BEGIN + 1;
+  SURROGATES_BEGIN     = HIGH_SURROGATE_BEGIN;
+  SURROGATES_END       = LOW_SURROGATE_END;
   UCS4_HALF_BASE       = LongWord($10000);
   UCS4_HALF_MASK       = Word($3FF);
   MAX_LEGAL_UTF32      = $10FFFF;
@@ -279,46 +282,45 @@ const
     (c : 0; b : 0; a : 0;);
   {$endif ENDIAN_LITTLE}
 
+  function GetCategory(c: uint32): uint8;
+  function GetCCC(c: uint32): uint8;
+  function GetNumericValue(c: uint32): double;
+  function GetSimpleUpperCase(c: uint32): uint32;
+  function GetSimpleLowerCase(c: uint32): uint32;
+  function GetSimpleTitleCase(c: uint32): uint32;
+  function IsWhiteSpace(c: uint32): boolean;
+  function IsHangulSyllable(c: uint32): boolean;
+  function IsUnifiedIdeograph(const ACodePoint : Cardinal) : boolean;
+
 type
   PUC_Prop = ^TUC_Prop;
 
   { TUC_Prop }
 
-  { On alignment-sensitive targets, at least some of them, assembler uses to forcibly align data >1 byte.
-    This breaks intended layout of initialized constants/variables.
-    A proper solution is to patch compiler to emit always unaligned directives for words/dwords/etc,
-    but for now just declare this record as "unpacked". This causes bloat, but it's better than having
-    entire unit not working at all. }
-  TUC_Prop = {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}packed{$endif} record
+  { Once upon a time, UnicodeData.txt database was stored as the array of TUC_Prop.
+    This is a compatibility wrapper that disguises the codepoint index as @Self
+    and emulates accessing its properties by redirecting them to specific functions. }
+  TUC_Prop = record
   private
-    function GetCategory : Byte;inline;
-    procedure SetCategory(AValue : Byte);
-    function GetWhiteSpace : Boolean;inline;
-    procedure SetWhiteSpace(AValue : Boolean);
-    function GetHangulSyllable : Boolean;inline;
-    procedure SetHangulSyllable(AValue : Boolean);
-    function GetNumericValue: Double;inline; 
+    function GetCategory : Byte; inline;
+    function GetCCC : Byte; inline;
+    function GetWhiteSpace : Boolean; inline;
+    function GetHangulSyllable : Boolean; inline;
+    function GetNumericValue: Double; inline;
     function GetUnifiedIdeograph : Boolean;inline;
-  public //Shortned names
-    C  : Byte;      //CategoryData
-    C3 : Byte;      //Canonical Combining Class
-    N  : Byte;      //NumericIndex
-    UC : UInt24;    //SimpleUpperCase
-    LC : UInt24;    //SimpleLowerCase
-    D  : SmallInt;  //DecompositionID
+    function GetSimpleUpperCase : uint32; inline;
+    function GetSimpleLowerCase : uint32; inline;
+    function GetSimpleTitleCase : uint32; inline;
   public
-    property CategoryData : Byte read C write C;
-    property NumericIndex    : Byte read N write N;
-    property SimpleUpperCase : UInt24 read UC write UC;
-    property SimpleLowerCase : UInt24 read LC write LC;
-    property DecompositionID : SmallInt read D write D;
-  public
-    property Category : Byte read GetCategory write SetCategory;
-    property WhiteSpace : Boolean read GetWhiteSpace write SetWhiteSpace;
-    property HangulSyllable : Boolean read GetHangulSyllable write SetHangulSyllable; 
-    property UnifiedIdeograph : Boolean read GetUnifiedIdeograph;
-    property NumericValue : Double read GetNumericValue;
-  end;
+    property Category : Byte read GetCategory; deprecated 'Use GetCategory()';
+    property CCC : Byte read GetCCC; deprecated 'Use GetCCC()';
+    property WhiteSpace : Boolean read GetWhiteSpace; deprecated 'Use IsWhiteSpace()';
+    property HangulSyllable : Boolean read GetHangulSyllable; deprecated 'Use IsHangulSyllable()';
+    property NumericValue : Double read GetNumericValue; deprecated 'Use GetNumericValue()';
+    property UnifiedIdeograph : Boolean read GetUnifiedIdeograph; deprecated 'Use IsUnifiedIdeograph()';
+    property SimpleUpperCase : uint32 read GetSimpleUpperCase; deprecated 'Use GetSimpleUpperCase()';
+    property SimpleLowerCase : uint32 read GetSimpleLowerCase; deprecated 'Use GetSimpleLowerCase()';
+  end deprecated 'Use GetCategory(), GetCCC(), etc., this is a wrapper.';
 
 type
   TUCA_PropWeights = packed record
@@ -503,9 +505,10 @@ const
     out   AResultString          : UnicodeString
   ) : Integer;
 
-  function GetProps(const ACodePoint : Word) : PUC_Prop;overload;{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
-  function GetProps(const AHighS, ALowS : UnicodeChar): PUC_Prop;overload;{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
-  function GetProps(const ACodePoint : Cardinal) : PUC_Prop;overload;inline;
+  function GetProps(const ACodePoint : Word) : PUC_Prop;overload;inline; deprecated 'Use GetCategory(), GetCCC(), etc., this is a wrapper.';
+  function GetProps(const AHighS, ALowS : UnicodeChar): PUC_Prop;overload;inline; deprecated 'Use GetCategory(), GetCCC(), etc., this is a wrapper.';
+  function GetProps(const ACodePoint : Cardinal) : PUC_Prop;overload;inline; deprecated 'Use GetCategory(), GetCCC(), etc., this is a wrapper.';
+
   function GetPropUCA(const AHighS, ALowS : UnicodeChar; const ABook : PUCA_DataBook): PUCA_PropItemRec; overload;{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
   function GetPropUCA(const AChar : UnicodeChar; const ABook : PUCA_DataBook) : PUCA_PropItemRec; overload;{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
 
@@ -633,8 +636,29 @@ resourcestring
 
 implementation
 
-type
+{$include unicodedata_props.inc}
 
+  function IsWhiteSpace(c: uint32): boolean;
+  begin
+    result := false;
+    case c of
+      $20 {Space}, $9 .. $D {Tab, Line feed, Line tab, Form feed, Carriage return},
+      $85 {Next line}, $A0 {No-break space}, $1680 {ogham space mark}, $2000 {en quad} .. $200A {hair space},
+      $2028 {line separator}, $2029 {paragraph separator},
+      $202F {narrow no-break space}, $205F {medium mathematical space},
+      $3000 {ideographic space}: result := true;
+    end;
+  end;
+
+  function IsHangulSyllable(c: uint32): boolean;
+  begin
+    result := false;
+    case c of
+      $1100..$11FF, $A960..$A97C, $AC00..$D7A3, $D7B0..$D7C6, $D7CB..$D7FB: result := true;
+    end;
+  end;
+
+type
   TCardinalRec = packed record
   {$ifdef ENDIAN_LITTLE}
     byte0, byte1, byte2, byte3 : Byte;
@@ -1597,14 +1621,6 @@ begin
   Result := LoadCollation(ADirectory,ALanguage,al);
 end;
 
-{$INCLUDE unicodedata.inc}
-{$IFDEF ENDIAN_LITTLE}
-  {$INCLUDE unicodedata_le.inc}
-{$ENDIF ENDIAN_LITTLE}
-{$IFDEF ENDIAN_BIG}
-  {$INCLUDE unicodedata_be.inc}
-{$ENDIF ENDIAN_BIG}
-
 procedure FromUCS4(const AValue : UCS4Char; out AHighS, ALowS : UnicodeChar);
 begin
   AHighS := UnicodeChar((AValue - $10000) shr 10 + $d800);
@@ -1643,49 +1659,19 @@ begin
             (Word(AValue) <= LOW_SURROGATE_END);
 end;
 
-function GetProps(const ACodePoint : Word) : PUC_Prop;overload;{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
+function GetProps(const ACodePoint : Word) : PUC_Prop;
 begin
-  Result:=
-    @UC_PROP_ARRAY[
-       UC_TABLE_3[
-         UC_TABLE_2[UC_TABLE_1[hi(ACodePoint)]]
-           [lo(ACodePoint) shr 4]
-       ][lo(ACodePoint) and $F]
-     ];    {
-    @UC_PROP_ARRAY[
-       UC_TABLE_2[
-         (UC_TABLE_1[WordRec(ACodePoint).Hi] * 256) +
-         WordRec(ACodePoint).Lo
-       ]
-     ];}
+  Result:=PUC_Prop(PtrUint(ACodePoint));
 end;
 
-function GetProps(const AHighS, ALowS : UnicodeChar): PUC_Prop;overload;{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
+function GetProps(const AHighS, ALowS : UnicodeChar): PUC_Prop;
 begin
-  Result:=
-    @UC_PROP_ARRAY[
-       UCO_TABLE_3[
-         UCO_TABLE_2[UCO_TABLE_1[Word(AHighS)-HIGH_SURROGATE_BEGIN]]
-           [(Word(ALowS) - LOW_SURROGATE_BEGIN) div 32]
-       ][(Word(ALowS) - LOW_SURROGATE_BEGIN) mod 32]
-     ];    {
-  Result:=
-    @UC_PROP_ARRAY[
-       UCO_TABLE_2[
-         (UCO_TABLE_1[Word(AHighS)-HIGH_SURROGATE_BEGIN] * HIGH_SURROGATE_COUNT) +
-         Word(ALowS) - LOW_SURROGATE_BEGIN
-       ]
-     ]; }
+  Result:=PUC_Prop(PtrUint(ToUCS4(AHighS, ALowS)));
 end;
 
-function GetProps(const ACodePoint : Cardinal) : PUC_Prop;inline;
-var
-  l, h : UnicodeChar;
+function GetProps(const ACodePoint : Cardinal) : PUC_Prop;
 begin
-  if (ACodePoint <= High(Word)) then
-    exit(GetProps(Word(ACodePoint)));
-  FromUCS4(ACodePoint,h,l);
-  Result := GetProps(h,l);
+  result:=PUC_Prop(PtrUint(ACodePoint));
 end;
 
 function UnicodeToUpper(
@@ -1696,7 +1682,7 @@ function UnicodeToUpper(
 var
   i, c : SizeInt;
   pp, pr : PUnicodeChar;
-  pu : PUC_Prop;
+  cp, cpUp : uint32;
   locIsSurrogate : Boolean;
   r : UnicodeString;
 begin
@@ -1707,10 +1693,10 @@ begin
     pr := @r[1];
     i := 1;
     while (i <= c) do begin
-      pu := GetProps(Word(pp^));
-      locIsSurrogate := (pu^.Category = UGC_Surrogate);
+      cp := Word(pp^);
+      locIsSurrogate := (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END);
       if locIsSurrogate then begin
-        if (i = c) or not(UnicodeIsSurrogatePair(pp[0],pp[1])) then begin
+        if (i = c) or not(UnicodeIsSurrogatePair(UnicodeChar(cp),pp[1])) then begin
           if AIgnoreInvalidSequence then begin
             pr^ := pp^;
             Inc(pp);
@@ -1720,9 +1706,10 @@ begin
           end;
           exit(ERROR_INVALID_CODEPOINT_SEQUENCE);
         end;
-        pu := GetProps(pp^,AString[i+1]);
+        cp := ToUCS4(UnicodeChar(cp),pp[1]);
       end;
-      if (pu^.SimpleUpperCase = 0) then begin
+      cpUp := GetSimpleUpperCase(cp);
+      if (cpUp = cp) then begin
         pr^ := pp^;
         if locIsSurrogate then begin
           Inc(pp);
@@ -1731,10 +1718,10 @@ begin
           pr^ := pp^;
         end;
       end else begin
-        if (pu^.SimpleUpperCase <= $FFFF) then begin
-          pr^ := UnicodeChar(Word(pu^.SimpleUpperCase));
+        if (cpUp <= $FFFF) then begin
+          pr^ := UnicodeChar(cpUp);
         end else begin
-          FromUCS4(UCS4Char(Cardinal(pu^.SimpleUpperCase)),pr^,PUnicodeChar(PtrUInt(pr)+SizeOf(UnicodeChar))^);
+          FromUCS4(cpUp,pr^,PUnicodeChar(PtrUInt(pr)+SizeOf(UnicodeChar))^);
           Inc(pr);
         end;
         if locIsSurrogate then begin
@@ -1762,7 +1749,7 @@ function UnicodeToLower(
 var
   i, c : SizeInt;
   pp, pr : PUnicodeChar;
-  pu : PUC_Prop;
+  cp, cpLo : uint32;
   locIsSurrogate : Boolean;
   r : UnicodeString;
 begin
@@ -1773,10 +1760,10 @@ begin
     pr := @r[1];
     i := 1;
     while (i <= c) do begin
-      pu := GetProps(Word(pp^));
-      locIsSurrogate := (pu^.Category = UGC_Surrogate);
+      cp := Word(pp^);
+      locIsSurrogate := (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END);
       if locIsSurrogate then begin
-        if (i = c) or not(UnicodeIsSurrogatePair(pp[0],pp[1])) then begin
+        if (i = c) or not(UnicodeIsSurrogatePair(UnicodeChar(cp),pp[1])) then begin
           if AIgnoreInvalidSequence then begin
             pr^ := pp^;
             Inc(pp);
@@ -1786,9 +1773,10 @@ begin
           end;
           exit(ERROR_INVALID_CODEPOINT_SEQUENCE);
         end;
-        pu := GetProps(pp^,AString[i+1]);
+        cpLo := ToUCS4(UnicodeChar(cp),AString[i+1]);
       end;
-      if (pu^.SimpleLowerCase = 0) then begin
+      cpLo := GetSimpleLowerCase(cp);
+      if (cp = cpLo) then begin
         pr^ := pp^;
         if locIsSurrogate then begin
           Inc(pp);
@@ -1797,10 +1785,10 @@ begin
           pr^ := pp^;
         end;
       end else begin
-        if (pu^.SimpleLowerCase <= $FFFF) then begin
-          pr^ := UnicodeChar(Word(pu^.SimpleLowerCase));
+        if (cpLo <= $FFFF) then begin
+          pr^ := UnicodeChar(cpLo);
         end else begin
-          FromUCS4(UCS4Char(Cardinal(pu^.SimpleLowerCase)),pr^,PUnicodeChar(PtrUInt(pr)+SizeOf(UnicodeChar))^);
+          FromUCS4(cpLo,pr^,PUnicodeChar(PtrUInt(pr)+SizeOf(UnicodeChar))^);
           Inc(pr);
         end;
         if locIsSurrogate then begin
@@ -1852,28 +1840,16 @@ begin
   end;
 end;
 
-function Decompose(const ADecomposeIndex : Integer; ABuffer : PUnicodeChar) : Integer;
+function Decompose(const ADecomposeIndex : SizeUint; ABuffer : PUnicodeChar) : Integer;
 var
   locStack : array[0..23] of Cardinal;
   locStackIdx : Integer;
   ResultBuffer : array[0..23] of Cardinal;
   ResultIdx : Integer;
 
-  procedure AddCompositionToStack(const AIndex : Integer);
-  var
-    pdecIdx : ^TDecompositionIndexRec;
-    k, kc : Integer;
-    pu : ^UInt24;
+  procedure AddCompositionToStack(AIndex : SizeUint);
   begin
-    pdecIdx := @(UC_DEC_BOOK_DATA.Index[AIndex]);
-    pu := @(UC_DEC_BOOK_DATA.CodePoints[pdecIdx^.S]);
-    kc := pdecIdx^.L;
-    Inc(pu,kc);
-    for k := 1 to kc do begin
-      Dec(pu);
-      locStack[locStackIdx + k] := pu^;
-    end;
-    locStackIdx := locStackIdx + kc;
+    locStackIdx += integer(DecomposeCommonRev(AIndex, @locStack[locStackIdx + 1]));
   end;
 
   procedure AddResult(const AChar : Cardinal);{$IFDEF INLINE_SUPPORT_PRIVATE_VARS}inline;{$ENDIF}
@@ -1891,7 +1867,6 @@ var
 var
   cu : Cardinal;
   decIdx : SmallInt;
-  locIsWord : Boolean;
   i : Integer;
   p : PUnicodeChar;
 begin
@@ -1900,12 +1875,8 @@ begin
   AddCompositionToStack(ADecomposeIndex);
   while (locStackIdx >= 0) do begin
     cu := PopStack();
-    locIsWord := (cu <= MAX_WORD);
-    if locIsWord then
-      decIdx := GetProps(Word(cu))^.DecompositionID
-    else
-      decIdx := GetProps(cu)^.DecompositionID;
-    if (decIdx = -1) then
+    decIdx := GetDecompositionIndex(cu);
+    if decIdx = 0 then
       AddResult(cu)
     else
       AddCompositionToStack(decIdx);
@@ -1970,8 +1941,8 @@ var
   end;
 
 var
-  pu : PUC_Prop;
-  cccp, cccq : Byte;
+  cp : uint32;
+  cpccc, cccp, cccq : Byte;
 begin
   c := ALength;
   if (c < 2) then
@@ -1979,44 +1950,45 @@ begin
   p := AStr;
   i := 1;
   while (i < c) do begin
-    pu := GetProps(Word(p^));
-    locIsSurrogateP := (pu^.Category = UGC_Surrogate);
+    cp := Word(p^);
+    locIsSurrogateP := (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END);
     if locIsSurrogateP then begin
       if (i = (c - 1)) then
         Break;
-      if not UnicodeIsSurrogatePair(p[0],p[1]) then begin
+      if not UnicodeIsSurrogatePair(UnicodeChar(cp),p[1]) then begin
         Inc(p);
         Inc(i);
         Continue;
       end;
-      pu := GetProps(p[0],p[1]);
+      cp := ToUCS4(UnicodeChar(cp),p[1]);
     end;
-    if (pu^.C3 > 0) then begin
-      cccp := pu^.C3;
+    cpccc := GetCCC(cp);
+    if (cpccc > 0) then begin
+      cccp := cpccc;
       if locIsSurrogateP then
         q := p + 2
       else
         q := p + 1;
-      pu := GetProps(Word(q^));
-      locIsSurrogateQ := (pu^.Category = UGC_Surrogate);
+      cp := Word(q^);
+      locIsSurrogateQ := (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END);
       if locIsSurrogateQ then begin
         if (i = c) then
           Break;
-        if not UnicodeIsSurrogatePair(q[0],q[1]) then begin
+        if not UnicodeIsSurrogatePair(UnicodeChar(cp),q[1]) then begin
           Inc(p);
           Inc(i);
           Continue;
         end;
-        pu := GetProps(q[0],q[1]);
+        cp := ToUCS4(UnicodeChar(cp),q[1]);
       end;
-      cccq := pu^.C3;
+      cccq := GetCCC(cp);
       if (cccq > 0) and (cccp > cccq) then begin
         Swap();
         if (i > 1) then begin
           Dec(p);
           Dec(i);
-          pu := GetProps(Word(p^));
-          if (pu^.Category = UGC_Surrogate) then begin
+          cp := Word(p^);
+          if (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END) then begin
             if (i > 1) then begin
               Dec(p);
               Dec(i);
@@ -2044,9 +2016,8 @@ end;
 function NormalizeNFD(const AStr : PUnicodeChar; ALength : SizeInt) : UnicodeString;
 const MAX_EXPAND = 3;
 var
-  i, c, kc, k : SizeInt;
+  i, c, kc, k, decIdx : SizeInt;
   pp, pr : PUnicodeChar;
-  pu : PUC_Prop;
   locIsSurrogate : Boolean;
   cpArray : array[0..7] of Cardinal;
   cp : Cardinal;
@@ -2058,27 +2029,33 @@ begin
     pr := @Result[1];
     i := 1;
     while (i <= c) do begin
-      pu := GetProps(Word(pp^));
-      locIsSurrogate := (pu^.Category = UGC_Surrogate);
+      cp := Word(pp^);
+      locIsSurrogate := (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END);
       if locIsSurrogate then begin
         if (i = c) then
           Break;
-        if not UnicodeIsSurrogatePair(pp[0],pp[1]) then begin
+        if not UnicodeIsSurrogatePair(UnicodeChar(cp),pp[1]) then begin
           pr^ := pp^;
           Inc(pp);
           Inc(pr);
           Inc(i);
           Continue;
         end;
-        pu := GetProps(pp[0],pp[1]);
+        cp := ToUCS4(UnicodeChar(cp), pp[1]);
       end;
-      if pu^.HangulSyllable then begin
+      decIdx := GetDecompositionIndex(cp);
+      if decIdx = 0 then begin
+        pr^ := pp^;
         if locIsSurrogate then begin
-          cp := ToUCS4(pp[0],pp[1]);
+          Inc(pp);
+          Inc(pr);
+          Inc(i);
+          pr^ := pp^;
+        end;
+      end else if decIdx = HangulSyllable then begin
+        if locIsSurrogate then begin
           Inc(pp);
           Inc(i);
-        end else begin
-          cp := Word(pp^);
         end;
         kc := DecomposeHangul(cp,@cpArray[0]);
         for k := 0 to kc - 1 do begin
@@ -2093,21 +2070,11 @@ begin
         if (kc > 0) then
           Dec(pr);
       end else begin
-        if (pu^.DecompositionID = -1) then begin
-          pr^ := pp^;
-          if locIsSurrogate then begin
-            Inc(pp);
-            Inc(pr);
-            Inc(i);
-            pr^ := pp^;
-          end;
-        end else begin
-          k := Decompose(pu^.DecompositionID,pr);
-          pr := pr + (k - 1);
-          if locIsSurrogate then begin
-            Inc(pp);
-            Inc(i);
-          end;
+        k := Decompose(decIdx,pr);
+        pr := pr + (k - 1);
+        if locIsSurrogate then begin
+          Inc(pp);
+          Inc(i);
         end;
       end;
       Inc(pp);
@@ -2115,7 +2082,7 @@ begin
       Inc(i);
     end;
     Dec(pp);
-    i := ((PtrUInt(pr) - PtrUInt(@Result[1])) div SizeOf(UnicodeChar));
+    i := (SizeUint(PtrUInt(pr) - PtrUInt(@Result[1])) div SizeOf(UnicodeChar));
     SetLength(Result,i);
     CanonicalOrder(@Result[1],Length(Result));
   end;
@@ -2218,46 +2185,49 @@ begin
     ANode := t;
 end;
 
-{ TUC_Prop }
-
-function TUC_Prop.GetCategory: Byte;
+function TUC_Prop.GetCategory : Byte;
 begin
-  Result := Byte((C and Byte($F8)) shr 3);
+  result := UnicodeData.GetCategory(PtrUint(@self));
 end;
 
-function TUC_Prop.GetNumericValue: Double;
+function TUC_Prop.GetCCC : Byte;
 begin
-  Result := UC_NUMERIC_ARRAY[NumericIndex];
+  result := UnicodeData.GetCCC(PtrUint(@self));
+end;
+
+function TUC_Prop.GetWhiteSpace : Boolean;
+begin
+  result := IsWhiteSpace(PtrUint(@self));
+end;
+
+function TUC_Prop.GetHangulSyllable : Boolean;
+begin
+  result := IsHangulSyllable(PtrUint(@self));
+end;
+
+function TUC_Prop.GetNumericValue : Double;
+begin
+  result := UnicodeData.GetNumericValue(PtrUint(@self));
 end;
 
 function TUC_Prop.GetUnifiedIdeograph : Boolean;
 begin
-  Result := IsBitON(C,2);
+  result := IsUnifiedIdeograph(PtrUint(@self));
 end;
 
-procedure TUC_Prop.SetCategory(AValue: Byte);
+function TUC_Prop.GetSimpleUpperCase : uint32;
 begin
-  C := Byte(C or Byte(AValue shl 3));
+  result := UnicodeData.GetSimpleUpperCase(PtrUint(@self));
 end;
 
-function TUC_Prop.GetWhiteSpace: Boolean;
+function TUC_Prop.GetSimpleLowerCase : uint32;
 begin
-  Result := IsBitON(C,0);
+  result := UnicodeData.GetSimpleLowerCase(PtrUint(@self));
 end;
 
-procedure TUC_Prop.SetWhiteSpace(AValue: Boolean);
+function TUC_Prop.GetSimpleTitleCase : uint32;
 begin
-  SetBit(C,0,AValue);
-end;
-
-function TUC_Prop.GetHangulSyllable: Boolean;
-begin
-  Result := IsBitON(C,1);
-end;
-
-procedure TUC_Prop.SetHangulSyllable(AValue: Boolean);
-begin
-   SetBit(C,1,AValue);
+  result := UnicodeData.GetSimpleTitleCase(PtrUint(@self));
 end;
 
 { TUCA_DataBook }
@@ -2818,7 +2788,8 @@ var
   var
     k : DWord;
     pk : PUnicodeChar;
-    puk : PUC_Prop;
+    cp : uint32;
+    cpccc : byte;
   begin
     k := AStartFrom;
     if (k > c) then
@@ -2837,15 +2808,16 @@ var
       if (k = c) then
         exit(False);
       if UnicodeIsLowSurrogate(pk[1]) then
-        puk := GetProps(pk[0],pk[1])
+        cp := ToUCS4(pk[0],pk[1])
       else
-        puk := GetProps(Word(pk^));
+        cp := Word(pk^);
     end else begin
-      puk := GetProps(Word(pk^));
+      cp := Word(pk^);
     end;
-    if (puk^.C3 = 0) or (lastUnblockedNonstarterCCC >= puk^.C3) then
+    cpccc := GetCCC(cp);
+    if (cpccc = 0) or (lastUnblockedNonstarterCCC >= cpccc) then
       exit(False);
-    lastUnblockedNonstarterCCC := puk^.C3;
+    lastUnblockedNonstarterCCC := cpccc;
     Result := True;
   end;
 
@@ -3034,14 +3006,14 @@ var
   var
     kk, kkidx : Integer;
     b : Boolean;
-    puk : PUC_Prop;
+    cpccc : byte;
     ppk : PUCA_PropItemRec;
   begin
     Result := False;
-    puk := GetProps(cp);
-    if (puk^.C3 = 0) then
+    cpccc := GetCCC(cp);
+    if (cpccc = 0) then
       exit;
-    lastUnblockedNonstarterCCC := puk^.C3;
+    lastUnblockedNonstarterCCC := cpccc;
     if surrogateState then
       kk := i + 2
     else
@@ -3599,7 +3571,7 @@ function FilterString(
 var
   i, c : SizeInt;
   pp, pr : PUnicodeChar;
-  pu : PUC_Prop;
+  cp : uint32;
   locIsSurrogate : Boolean;
 begin
   c := ALength;
@@ -3609,19 +3581,19 @@ begin
     pr := @Result[1];
     i := 1;
     while (i <= c) do begin
-      pu := GetProps(Word(pp^));
-      locIsSurrogate := (pu^.Category = UGC_Surrogate);
+      cp := Word(pp^);
+      locIsSurrogate := (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END);
       if locIsSurrogate then begin
         if (i = c) then
           Break;
-        if not UnicodeIsSurrogatePair(pp[0],pp[1]) then begin
+        if not UnicodeIsSurrogatePair(UnicodeChar(cp),pp[1]) then begin
           Inc(pp);
           Inc(i);
           Continue;
         end;
-        pu := GetProps(pp[0],pp[1]);
+        cp := ToUCS4(UnicodeChar(cp),pp[1]);
       end;
-      if not(pu^.Category in AExcludedMask) then begin
+      if not(GetCategory(cp) in AExcludedMask) then begin
         pr^ := pp^;
         Inc(pr);
         if locIsSurrogate then begin
@@ -3768,7 +3740,8 @@ var
   var
     k : DWord;
     pk : PUnicodeChar;
-    puk : PUC_Prop;
+    cp : uint32;
+    cpccc : byte;
   begin
     k := AStartFrom;
     if (k > ctx^.c) then
@@ -3787,15 +3760,16 @@ var
       if (k = ctx^.c) then
         exit(False);
       if UnicodeIsLowSurrogate(pk[1]) then
-        puk := GetProps(pk[0],pk[1])
+        cp := ToUCS4(pk[0],pk[1])
       else
-        puk := GetProps(Word(pk^));
+        cp := Word(pk^);
     end else begin
-      puk := GetProps(Word(pk^));
+      cp := Word(pk^);
     end;
-    if (puk^.C3 = 0) or (ctx^.lastUnblockedNonstarterCCC >= puk^.C3) then
+    cpccc := GetCCC(cp);
+    if (cpccc = 0) or (ctx^.lastUnblockedNonstarterCCC >= cpccc) then
       exit(False);
-    ctx^.lastUnblockedNonstarterCCC := puk^.C3;
+    ctx^.lastUnblockedNonstarterCCC := cpccc;
     Result := True;
   end;
 
@@ -3975,14 +3949,14 @@ var
   var
     kk : Integer;
     b : Boolean;
-    puk : PUC_Prop;
+    cpccc : Byte;
     ppk : PUCA_PropItemRec;
   begin
     Result := False;
-    puk := GetProps(ctx^.cp);
-    if (puk^.C3 = 0) then
+    cpccc := GetCCC(ctx^.cp);
+    if (cpccc = 0) then
       exit;
-    ctx^.lastUnblockedNonstarterCCC := puk^.C3;
+    ctx^.lastUnblockedNonstarterCCC := cpccc;
     if ctx^.surrogateState then
       kk := ctx^.i + 2
     else
