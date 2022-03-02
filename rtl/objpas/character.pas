@@ -750,18 +750,8 @@ class function TCharacter.TestCategory(
         AIndex  : Integer;
         ACategory : TUnicodeCategory
 ) : Boolean;
-var
-  pu : PUC_Prop;
 begin
-  if (AIndex < 1) or (AIndex > Length(AString)) then
-    raise EArgumentOutOfRangeException.CreateFmt(SStringIndexOutOfRange, [AIndex, Length(AString)]);
-  pu := GetProps(Word(AString[AIndex]));
-  if (TUnicodeCategory(pu^.Category) = TUnicodeCategory.ucSurrogate) then begin
-    if not IsSurrogatePair(AString,AIndex) then
-      raise EArgumentException.Create(SInvalidUnicodeCodePointSequence);
-    pu := GetProps(AString[AIndex],AString[AIndex+1]);
-  end;
-  Result := (TUnicodeCategory(pu^.Category) = ACategory);
+  Result := GetUnicodeCategory(AString, AIndex) = ACategory;
 end;
 
 class function TCharacter.TestCategory(
@@ -769,18 +759,8 @@ class function TCharacter.TestCategory(
         AIndex : Integer;
         ACategory : TUnicodeCategorySet
 ) : Boolean;
-var
-  pu : PUC_Prop;
 begin
-  if (AIndex < 1) or (AIndex > Length(AString)) then
-    raise EArgumentOutOfRangeException.CreateFmt(SStringIndexOutOfRange, [AIndex, Length(AString)]);
-  pu := GetProps(Word(AString[AIndex]));
-  if (TUnicodeCategory(pu^.Category) = TUnicodeCategory.ucSurrogate) then begin
-    if not IsSurrogatePair(AString,AIndex) then
-      raise EArgumentException.Create(SInvalidUnicodeCodePointSequence);
-    pu := GetProps(AString[AIndex],AString[AIndex+1]);
-  end;
-  Result := (TUnicodeCategory(pu^.Category) in ACategory);
+  Result := GetUnicodeCategory(AString, AIndex) in ACategory;
 end;
 
 constructor TCharacter.Create;
@@ -847,7 +827,7 @@ end;
 
 class function TCharacter.GetNumericValue(AChar : UnicodeChar) : Double;
 begin
-  Result := GetProps(Word(AChar))^.NumericValue;
+  Result := UnicodeData.GetNumericValue(Word(AChar));
 end;
 
 class function TCharacter.GetNumericValue(
@@ -855,29 +835,29 @@ class function TCharacter.GetNumericValue(
         AIndex  : Integer
 ) : Double;
 var
-  pu : PUC_Prop;
+  cp : uint32;
 begin
   if (AIndex < 1) or (AIndex > Length(AString)) then
     raise EArgumentOutOfRangeException.CreateFmt(SStringIndexOutOfRange, [AIndex, Length(AString)]);
-  pu := GetProps(Word(AString[AIndex]));
-  if (TUnicodeCategory(pu^.Category) = TUnicodeCategory.ucSurrogate) then begin
+  cp := Word(AString[AIndex]);
+  if (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END) then begin
     if not IsSurrogatePair(AString,AIndex) then
       raise EArgumentException.Create(SInvalidUnicodeCodePointSequence);
-    pu := GetProps(AString[AIndex],AString[AIndex+1]);
+    cp := ToUCS4(UnicodeChar(cp),AString[AIndex+1]);
   end;
-  Result := pu^.NumericValue;
+  Result := UnicodeData.GetNumericValue(cp);
 end;
 
 class function TCharacter.GetNumericValue(aChar: UCS4Char): Double;
 begin
-  Result := GetProps(AChar)^.NumericValue;
+  Result := UnicodeData.GetNumericValue(aChar);
 end;
 
 
 
 class function TCharacter.GetUnicodeCategory(AChar : UnicodeChar) : TUnicodeCategory;
 begin   
-  Result := TUnicodeCategory(GetProps(Word(AChar))^.Category);
+  Result := TUnicodeCategory(UnicodeData.GetCategory(Word(AChar)));
 end;
 
 class function TCharacter.GetUnicodeCategory(
@@ -885,17 +865,17 @@ class function TCharacter.GetUnicodeCategory(
         AIndex  : Integer
 ) : TUnicodeCategory;
 var
-  pu : PUC_Prop;
-begin   
+  cp : uint32;
+begin
   if (AIndex < 1) or (AIndex > Length(AString)) then
     raise EArgumentOutOfRangeException.CreateFmt(SStringIndexOutOfRange, [AIndex, Length(AString)]);
-  pu := GetProps(Word(AString[AIndex]));
-  if (TUnicodeCategory(pu^.Category) = TUnicodeCategory.ucSurrogate) then begin
+  cp := Word(AString[AIndex]);
+  if (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END) then begin
     if not IsSurrogatePair(AString,AIndex) then
       raise EArgumentException.Create(SInvalidUnicodeCodePointSequence);
-    pu := GetProps(AString[AIndex],AString[AIndex+1]);
+    cp := ToUCS4(UnicodeChar(cp),AString[AIndex+1]);
   end;
-  Result := TUnicodeCategory(pu^.Category);
+  Result := TUnicodeCategory(UnicodeData.GetCategory(cp));
 end;
 
 
@@ -915,7 +895,7 @@ end;
 
 class function TCharacter.IsControl(AChar : UnicodeChar) : Boolean;
 begin  
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucControl);
+  Result := UnicodeData.GetCategory(Word(AChar)) = ord(TUnicodeCategory.ucControl);
 end;
 
 class function TCharacter.IsControl(
@@ -933,7 +913,7 @@ end;
 
 class function TCharacter.IsDigit(AChar : UnicodeChar) : Boolean;
 begin 
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucDecimalNumber);
+  Result := UnicodeData.GetCategory(Word(AChar)) = ord(TUnicodeCategory.ucDecimalNumber);
 end;
 
 class function TCharacter.IsDigit(
@@ -951,7 +931,7 @@ end;
 
 class function TCharacter.IsSurrogate(AChar : UnicodeChar) : Boolean;
 begin   
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucSurrogate);
+  Result := (Word(AChar) >= SURROGATES_BEGIN) and (Word(AChar) <= SURROGATES_END);
 end;
 
 class function TCharacter.IsSurrogate(
@@ -972,8 +952,7 @@ end;
 
 class function TCharacter.IsHighSurrogate(AChar : UnicodeChar) : Boolean;
 begin 
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucSurrogate) and
-            (Word(AChar) >= HIGH_SURROGATE_BEGIN) and 
+  Result := (Word(AChar) >= HIGH_SURROGATE_BEGIN) and 
             (Word(AChar) <= HIGH_SURROGATE_END);
 end;
 
@@ -994,8 +973,7 @@ end;
 
 class function TCharacter.IsLowSurrogate(AChar : UnicodeChar) : Boolean;
 begin   
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucSurrogate) and
-            (Word(AChar) >= LOW_SURROGATE_BEGIN) and 
+  Result := (Word(AChar) >= LOW_SURROGATE_BEGIN) and 
             (Word(AChar) <= LOW_SURROGATE_END); 
 end;
 
@@ -1041,7 +1019,7 @@ end;
 
 class function TCharacter.IsLetter(AChar : UnicodeChar) : Boolean;
 begin 
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) in LETTER_CATEGORIES);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) in LETTER_CATEGORIES);
 end;
 
 class function TCharacter.IsLetter(
@@ -1060,7 +1038,7 @@ end;
 
 class function TCharacter.IsLetterOrDigit(AChar : UnicodeChar) : Boolean;
 begin 
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) in LETTER_OR_DIGIT_CATEGORIES);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) in LETTER_OR_DIGIT_CATEGORIES);
 end;
 
 class function TCharacter.IsLetterOrDigit(
@@ -1078,7 +1056,7 @@ end;
 
 class function TCharacter.IsLower(AChar : UnicodeChar) : Boolean;
 begin        
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucLowercaseLetter);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) = TUnicodeCategory.ucLowercaseLetter);
 end;
 
 class function TCharacter.IsLower(
@@ -1097,7 +1075,7 @@ end;
 
 class function TCharacter.IsNumber(AChar : UnicodeChar) : Boolean;
 begin
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) in NUMBER_CATEGORIES);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) in NUMBER_CATEGORIES);
 end;
 
 class function TCharacter.IsNumber(
@@ -1115,7 +1093,7 @@ end;
 
 class function TCharacter.IsPunctuation(AChar : UnicodeChar) : Boolean;
 begin
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) in PUNCTUATION_CATEGORIES);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) in PUNCTUATION_CATEGORIES);
 end;
 
 class function TCharacter.IsPunctuation(
@@ -1133,7 +1111,7 @@ end;
 
 class function TCharacter.IsSeparator(AChar: UnicodeChar): Boolean;
 begin
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) in SEPARATOR_CATEGORIES);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) in SEPARATOR_CATEGORIES);
 end;
 
 class function TCharacter.IsSeparator(
@@ -1153,7 +1131,7 @@ end;
 
 class function TCharacter.IsSymbol(AChar: UnicodeChar): Boolean;
 begin
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) in SYMBOL_CATEGORIES);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) in SYMBOL_CATEGORIES);
 end;
 
 class function TCharacter.IsSymbol(aChar: UCS4Char): Boolean;
@@ -1173,7 +1151,7 @@ end;
 
 class function TCharacter.IsUpper(AChar : UnicodeChar) : Boolean;
 begin
-  Result := (TUnicodeCategory(GetProps(Word(AChar))^.Category) = TUnicodeCategory.ucUppercaseLetter);
+  Result := (TUnicodeCategory(UnicodeData.GetCategory(Word(AChar))) = TUnicodeCategory.ucUppercaseLetter);
 end;
 
 class function TCharacter.IsUpper(
@@ -1191,7 +1169,7 @@ end;
 
 class function TCharacter.IsWhiteSpace(AChar : UnicodeChar) : Boolean;
 begin
-  Result := GetProps(Word(AChar))^.WhiteSpace;
+  Result := UnicodeData.IsWhiteSpace(Word(AChar));
 end;
 
 class function TCharacter.IsWhiteSpace(
@@ -1199,17 +1177,17 @@ class function TCharacter.IsWhiteSpace(
         AIndex  : Integer
 ) : Boolean;
 var
-  pu : PUC_Prop;
+  cp : uint32;
 begin
   if (AIndex < 1) or (AIndex > Length(AString)) then
     raise EArgumentOutOfRangeException.CreateFmt(SStringIndexOutOfRange, [AIndex, Length(AString)]);
-  pu := GetProps(Word(AString[AIndex]));
-  if (TUnicodeCategory(pu^.Category) = TUnicodeCategory.ucSurrogate) then begin
+  cp := Word(AString[AIndex]);
+  if (cp >= SURROGATES_BEGIN) and (cp <= SURROGATES_END) then begin
     if not IsSurrogatePair(AString,AIndex) then
       raise EArgumentException.Create(SInvalidUnicodeCodePointSequence);
-    pu := GetProps(AString[AIndex],AString[AIndex+1]);
+    cp := ToUCS4(UnicodeChar(cp),AString[AIndex+1]);
   end;
-  Result := pu^.WhiteSpace;
+  Result := UnicodeData.IsWhiteSpace(cp);
 end;
 
 class function TCharacter.IsWhiteSpace(aChar: UCS4Char): Boolean;
@@ -1219,9 +1197,7 @@ end;
 
 class function TCharacter.ToLower(AChar : UnicodeChar) : UnicodeChar;
 begin
-  Result := UnicodeChar(Word(GetProps(Word(AChar))^.SimpleLowerCase));
-  if (Result = UnicodeChar(0)) then
-    Result := AChar;
+  Result := UnicodeChar(UnicodeData.GetSimpleLowerCase(Word(AChar)));
 end;
 
 class function TCharacter.ToLower(const AString : UnicodeString) : UnicodeString;
@@ -1248,9 +1224,7 @@ end;
 
 class function TCharacter.ToUpper(AChar : UnicodeChar) : UnicodeChar;
 begin
-  Result := UnicodeChar(Word(GetProps(Word(AChar))^.SimpleUpperCase));
-  if (Result = UnicodeChar(0)) then
-    Result := AChar;
+  Result := UnicodeChar(UnicodeData.GetSimpleUpperCase(Word(AChar)));
 end;
 
 class function TCharacter.ToUpper(const AString : UnicodeString) : UnicodeString;
