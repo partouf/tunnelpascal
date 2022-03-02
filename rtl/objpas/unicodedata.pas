@@ -189,36 +189,13 @@ const
 // Names
 
   UnicodeCategoryNames: array[0..29] of string[2] = (
-    'Lu',
-    'Ll',
-    'Lt',
-    'Lm',
-    'Lo',
-    'Mn',
-    'Mc',
-    'Me',
-    'Nd',
-    'Nl',
-    'No',
-    'Pc',
-    'Pd',
-    'Ps',
-    'Pe',
-    'Pi',
-    'Pf',
-    'Po',
-    'Sm',
-    'Sc',
-    'Sk',
-    'So',
-    'Zs',
-    'Zl',
-    'Zp',
-    'Cc',
-    'Cf',
-    'Cs',
-    'Co',
-    'Cn'
+    'Lu', 'Ll', 'Lt', 'Lm', 'Lo',
+    'Mn', 'Mc', 'Me',
+    'Nd', 'Nl', 'No',
+    'Pc', 'Pd', 'Ps', 'Pe', 'Pi', 'Pf', 'Po',
+    'Sm', 'Sc', 'Sk', 'So',
+    'Zs', 'Zl', 'Zp',
+    'Cc', 'Cf', 'Cs', 'Co', 'Cn'
     );
 
 type
