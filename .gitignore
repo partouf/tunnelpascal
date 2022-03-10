@@ -27,6 +27,8 @@
 *.diff
 *.lst
 *.app
+*.ttp
+*.prg
 fpcmade.*
 *-stamp.*
 build-stamp.*

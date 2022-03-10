@@ -208,7 +208,7 @@ const
   nClassTypesAreNotRelatedXY = 3142;
   nDirectiveXNotAllowedHere = 3143;
   nAwaitWithoutPromise = 3144;
-  nSymbolCannotExportedFromALibrary = 3145;
+  nSymbolCannotBeExportedFromALibrary = 3145;
 
   // using same IDs as FPC
   nVirtualMethodXHasLowerVisibility = 3250; // was 3050
@@ -228,8 +228,8 @@ resourcestring
   sIllegalQualifier = 'illegal qualifier "%s"';
   sSyntaxErrorExpectedButFound = 'Syntax error, "%s" expected but "%s" found';
   sWrongNumberOfParametersForCallTo = 'Wrong number of parameters specified for call to "%s"';
-  sIncompatibleTypeArgNo = 'Incompatible type arg no. %s: Got "%s", expected "%s"';
-  sIncompatibleTypeArgNoVarParamMustMatchExactly = 'Incompatible type arg no. %s: Got "%s", expected "%s". Var param must match exactly.';
+  sIncompatibleTypeArgNo = 'Incompatible type for arg no. %s: Got "%s", expected "%s"';
+  sIncompatibleTypeArgNoVarParamMustMatchExactly = 'Incompatible type for arg no. %s: Got "%s", expected "%s". Var param must match exactly.';
   sVariableIdentifierExpected = 'Variable identifier expected';
   sDuplicateIdentifier = 'Duplicate identifier "%s" at %s';
   sXExpectedButYFound = '%s expected, but %s found';
@@ -364,7 +364,7 @@ resourcestring
   sClassTypesAreNotRelatedXY = 'Class types "%s" and "%s" are not related';
   sDirectiveXNotAllowedHere = 'Directive "%s" not allowed here';
   sAwaitWithoutPromise = 'Await without promise';
-  sSymbolCannotExportedFromALibrary = 'The symbol cannot be exported from a library';
+  sSymbolCannotBeExportedFromALibrary = 'The symbol cannot be exported from a library';
 
 type
   { TResolveData - base class for data stored in TPasElement.CustomData }

@@ -1152,7 +1152,7 @@ implementation
                      if tsym(genericparams[i]).typ=typesym then
                        tstoreddef(ttypesym(genericparams[i]).typedef).register_def;
                   end;
-                insert_generic_parameter_types(pd,nil,genericparams);
+                insert_generic_parameter_types(pd,nil,genericparams,false);
                 { the list is no longer required }
                 genericparams.free;
                 genericparams:=nil;
@@ -1199,7 +1199,7 @@ implementation
               end;
           end
         else if assigned(genericdef) then
-          insert_generic_parameter_types(pd,tstoreddef(genericdef),generictypelist);
+          insert_generic_parameter_types(pd,tstoreddef(genericdef),generictypelist,false);
 
         { methods inherit df_generic or df_specialization from the objectdef }
         if assigned(pd.struct) and
@@ -2197,7 +2197,7 @@ procedure pd_syscall(pd:tabstractprocdef);
                 system_i386_aros:
                     result:='eax';
                 system_x86_64_aros:
-                    result:='rax';
+                    result:='r12';
                 system_powerpc_morphos:
                     result:='r12';
                 else
@@ -2416,6 +2416,19 @@ begin
     message(parser_e_cannot_use_hardfloat_in_a_softfloat_environment);
 end;
 
+procedure pd_section(pd:tabstractprocdef);
+begin
+  if pd.typ<>procdef then
+    internalerror(2021032801);
+  if not (target_info.system in systems_allow_section) then
+    Message(parser_e_section_directive_not_allowed_for_target);
+{$ifdef symansistr}
+  tprocdef(pd).section:=get_stringconst;
+{$else symansistr}
+  tprocdef(pd).section:=stringdup(get_stringconst);
+{$endif}
+end;
+
 type
    pd_handler=procedure(pd:tabstractprocdef);
    proc_dir_rec=record
@@ -2430,7 +2443,7 @@ type
    end;
 const
   {Should contain the number of procedure directives we support.}
-  num_proc_directives=53;
+  num_proc_directives=54;
   proc_direcdata:array[1..num_proc_directives] of proc_dir_rec=
    (
     (
@@ -2754,6 +2767,15 @@ const
       mutexclpocall : [];
       mutexclpotype : [potype_constructor,potype_destructor,potype_class_constructor,potype_class_destructor];
       mutexclpo     : [po_external]
+    ),(
+      idtok:_SECTION;
+      pd_flags : [pd_interface,pd_implemen,pd_body,pd_notobject,pd_notobjintf,pd_notrecord,pd_nothelper];
+      handler  : @pd_section;
+      pocall   : pocall_none;
+      pooption : [po_public,po_global];
+      mutexclpocall : [pocall_internproc];
+      mutexclpotype : [];
+      mutexclpo     : [po_external,po_inline,po_interrupt]
     ),(
       idtok:_SOFTFLOAT;
       pd_flags : [pd_interface,pd_implemen,pd_body,pd_procvar];

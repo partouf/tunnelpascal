@@ -445,7 +445,7 @@ scan_e_unexpected_endif=02108_E_$ENDIF directive found without a matching $IF(N)
 #
 # Parser
 #
-# 03361 is the last used one
+# 03363 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1635,6 +1635,10 @@ parser_e_constructurs_cannot_take_type_parameters=03360_E_Constructors cannot ta
 parser_e_raise_with_noreturn_not_allowed=03361_E_Raise in subroutines declared as noreturn is not allowed
 % \var{noreturn} tells the compiler that the activation scope of the subroutine is never left. This includes exceptions
 % goto or any other mean. While the compiler cannot detect all such cases some are trivial and the compiler gives an error.
+parser_e_section_directive_not_allowed_for_target=03362_E_Directive section not allowed for this target
+% Only some targets (e.g. Embedded and FreeRTOS) support the section directive.
+parser_e_absolute_sym_cannot_reference_itself=03363_E_Absolute variable cannot reference itself
+% Declarations like \var{var i: Integer absolute i;} are not allowed
 %
 % \end{description}
 %
@@ -3708,7 +3712,7 @@ package_e_duplicate_package=13003_E_Duplicate package $1
 % a second time.
 package_e_unit_deny_package=13004_E_Unit $1 can not be part of a package
 % The unit can not be part of a package because the DenyPackageUnit directive is enabled for the unit.
-package_n_implicit_unit_import=13005_N_Unit $1 is implicitely imported into package $2
+package_n_implicit_unit_import=13005_N_Unit $1 is implicitly imported into package $2
 % The unit was not specified as part of the \var{contains} section and is also not included in one of the
 % required packages. Add the unit to the \var{contains} section to increase compatibility with other packages.
 package_f_cant_create_pcp=13006_F_Failed to create PCP file $2 for package $1
@@ -3784,7 +3788,7 @@ package_u_ppl_filename=13029_U_PPL filename $1
 #
 option_logo=11023_[
 Free Pascal Compiler version $FPCFULLVERSION [$FPCDATE] for $FPCCPU
-Copyright (c) 1993-2021 by Florian Klaempfl and others
+Copyright (c) 1993-2022 by Florian Klaempfl and others
 ]
 
 #
@@ -4271,6 +4275,7 @@ x*2Tfreertos_FreeRTOS
 x*2Tlinux_Linux
 # z80 targets
 Z*2Tembedded_Embedded
+Z*2Tamstradcpc_Amstrad CPC
 Z*2Tmsxdos_MSX-DOS
 Z*2Tzxspectrum_ZX Spectrum
 # wasm32 targets
@@ -4327,6 +4332,7 @@ A*2We_Use external resources (Darwin)
 P*2We_Use external resources (Darwin)
 p*2We_Use external resources (Darwin)
 3*2WF_Specify full-screen type application (EMX, OS/2)
+6*2WF<x>_Set TOS program flags to <x> (Atari)
 3*2WG_Specify graphic type application (EMX, OS/2, Windows)
 4*2WG_Specify graphic type application (Windows)
 A*2WG_Specify graphic type application (Windows)
@@ -4371,6 +4377,9 @@ A*2WR_Generate relocation code (Windows)
 8*2Wt<x>_Set the target executable format
 8*3Wtcom_Create a DOS .COM file (requires tiny memory model)
 8*3Wtexe_Create a DOS .EXE file (default)
+6*2Wt<x>_Set the target executable format (Atari)
+6*3Wttos_Create TOS executable file (default)
+6*3Wtmint_Create a MiNT executable file
 P*2WT_Specify MPW tool type application (Classic Mac OS)
 6*2WQ<x>_Set executable metadata format (Sinclair QL)
 6*3WQqhdr_Set metadata to QDOS File Header style (default)
@@ -4402,7 +4411,7 @@ F*2Xp<x>_First search for the compiler binary in the directory <x>
 **2Xt_Link with static libraries (-static is passed to linker)
 **2Xu_Generate executable in UF2 format  (embedded targets only)
 **2Xv_Generate table for Virtual Entry calls
-**2XV_Use VLink as external linker       (default on Amiga, MorphOS)
+**2XV_Use VLink as external linker       (default on Amiga, Atari, Sinclair QL)
 **2XX_Try to smartlink units             (defines FPC_LINK_SMART)
 **1*_
 **1?_Show this help

@@ -516,6 +516,7 @@ type
     function GetSQLConnection: TSQLConnection;
     function GetSQLTransaction: TSQLTransaction;
     function GetStatementType : TStatementType;
+    function IsMacrosStored: Boolean;
     Function NeedLastInsertID: TField;
     procedure SetMacroChar(AValue: Char);
     procedure SetOptions(AValue: TSQLQueryOptions);
@@ -639,7 +640,7 @@ type
     Property Options : TSQLQueryOptions Read FOptions Write SetOptions default [];
     property Params : TParams read GetParams Write SetParams;
     Property ParamCheck : Boolean Read GetParamCheck Write SetParamCheck default true;
-    property Macros : TParams read GetMacros Write SetMacros;
+    property Macros : TParams read GetMacros Write SetMacros stored IsMacrosStored;
     Property MacroCheck : Boolean Read GetMacroCheck Write SetMacroCheck default false;
     Property MacroChar : Char Read GetMacroChar Write SetMacroChar default DefaultMacroChar;
     property ParseSQL : Boolean read GetParseSQL write SetParseSQL default true;
@@ -1924,6 +1925,7 @@ begin
     ftBcd      : Result := CurrToStr(Param.AsCurrency, FSQLFormatSettings);
     ftFloat    : Result := FloatToStr(Param.AsFloat, FSQLFormatSettings);
     ftFMTBcd   : Result := StringReplace(Param.AsString, DefaultFormatSettings.DecimalSeparator, FSQLFormatSettings.DecimalSeparator, []);
+    ftSingle   : Result := FloatToStr(Param.AsSingle, FSQLFormatSettings);
   else
     Result := Param.AsString;
   end; {case}
@@ -3430,6 +3432,11 @@ begin
     Result:=Cursor.FStatementType
   else
     Result:=stUnknown;
+end;
+
+function TCustomSQLQuery.IsMacrosStored: Boolean;
+begin
+  Result := Macros.Count > 0;
 end;
 
 procedure TCustomSQLQuery.SetParamCheck(AValue: Boolean);

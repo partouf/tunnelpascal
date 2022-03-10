@@ -486,6 +486,11 @@ begin
   ftVarBytes: result := FD.Size + SizeOf(Word);
   ftBlob, ftMemo, ftWideMemo:
               result := SizeOf(TMDSBlobField);
+  ftLongWord: Result := SizeOf(LongWord);
+  ftShortInt: Result := SizeOf(ShortInt);
+  ftByte:     Result := SizeOf(Byte);
+  ftExtended: Result := SizeOf(Extended);
+  ftSingle  : Result := SizeOf(Single);
  else
   RaiseError(SErrFieldTypeNotSupported,[FD.Name]);
  end;
@@ -1171,11 +1176,16 @@ begin
                   ftBoolean  : F1.AsBoolean:=F2.AsBoolean;
                   ftFloat    : F1.AsFloat:=F2.AsFloat;
                   ftLargeInt : F1.AsLargeInt:=F2.AsLargeInt;
-                  ftSmallInt : F1.AsInteger:=F2.AsInteger;
-                  ftInteger  : F1.AsInteger:=F2.AsInteger;
+                  ftSmallInt,
+                  ftInteger,
+                  ftShortInt,
+                  ftByte     : F1.AsInteger:=F2.AsInteger;
                   ftDate     : F1.AsDateTime:=F2.AsDateTime;
                   ftTime     : F1.AsDateTime:=F2.AsDateTime;
                   ftDateTime : F1.AsDateTime:=F2.AsDateTime;
+                  ftLongWord : F1.AsLongWord:=F2.AsLongWord;
+                  ftExtended : F1.AsExtended:=F2.AsExtended;
+                  ftSingle   : F1.AsSingle:=F2.AsSingle;
                   else         F1.AsString:=F2.AsString;
                 end;
               end;

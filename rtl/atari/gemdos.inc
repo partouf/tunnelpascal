@@ -19,12 +19,14 @@
 
 const
     E_OK        = 0;       // OK. No error has arisen
+    ESPIPE      = -6;      // Illegal seek
     EINVFN      = -32;     // Unknown function number
     EFILNF      = -33;     // File not found
     EPTHNF      = -34;     // Directory (folder) not found
     ENHNDL      = -35;     // No more handles available
     EACCDN      = -36;     // Access denied
     EIHNDL      = -37;     // Invalid file handle
+    EPERM       = -38;     // Permission denied
     ENSMEM      = -39;     // Insufficient memory
     EIMBA       = -40;     // Invalid memory block address
     EDRIVE      = -46;     // Invalid drive specification
@@ -152,7 +154,7 @@ function gemdos_fattrib(filename: pchar; wflag: smallint; attrib: smallint): sma
 
 function gemdos_dgetpath(path: pchar; driveno: smallint): smallint; syscall 1 71;
 function gemdos_malloc(number: dword): pointer; syscall 1 72;
-function gemdos_free(block: pointer): dword; syscall 1 73;
+function gemdos_mfree(block: pointer): dword; syscall 1 73;
 function gemdos_mshrink(zero: word; block: pointer; newsiz: longint): longint; syscall 1 74;
 function gemdos_pexec(mode: word; name: pchar; cmdline: pchar; env: pchar): longint; syscall 1 75;
 procedure gemdos_pterm(returncode: smallint); syscall 1 76;

@@ -440,11 +440,29 @@ begin
     list.concat(taicpu.op_reg_reg_const(A_ADDIU, reg, NR_R0, a))
   else if (a>=0) and (a <= 65535) then
     list.concat(taicpu.op_reg_reg_const(A_ORI, reg, NR_R0, a))
+{$ifdef mips32}
   else
+{$else}
+  else if (a>=0) and (a <= high(dword)) then
+{$endif}
     begin
       list.concat(taicpu.op_reg_const(A_LUI, reg, aint(a) shr 16));
       if (a and aint($FFFF))<>0 then
         list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,a and aint($FFFF)));
+{$ifdef mips64}
+    end
+  else
+    begin
+      list.concat(taicpu.op_reg_const(A_LUI, reg, aint(a) shr 48));
+      if ((a shr 32) and aint($FFFF))<>0 then
+        list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,(a shr 32) and aint($FFFF)));
+      list.concat(taicpu.op_reg_const(A_SLL, reg, 16));
+      if ((a shr 16) and aint($FFFF))<>0 then
+        list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,(a shr 16) and aint($FFFF)));
+      list.concat(taicpu.op_reg_const(A_SLL, reg, 16));
+      if (a and aint($FFFF))<>0 then
+        list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,a  and aint($FFFF)));
+{$endif mips64}
     end;
 end;
 
@@ -481,6 +499,9 @@ begin
     OS_32,
     OS_S32:
       Op := A_SW;
+    OS_64,
+    OS_S64:
+      Op := A_SD;
     else
       InternalError(2002122100);
   end;
@@ -547,6 +568,10 @@ begin
         list.concat(taicpu.op_reg_reg_const(A_ANDI, reg2, reg1, $ff));
       OS_16:
         list.concat(taicpu.op_reg_reg_const(A_ANDI, reg2, reg1, $ffff));
+{$ifdef cpu64bitalu}
+      OS_64,
+      OS_S64,
+{$endif cpu64bitalu}
       OS_32,
       OS_S32:
         done:=false;
@@ -1234,8 +1259,12 @@ begin
   case size of
     OS_32:  asmop:=A_MULTU;
     OS_S32: asmop:=A_MULT;
+{$ifdef cpu64bitalu}
+    OS_64:  asmop:=A_DMULTU;
+    OS_S64: asmop:=A_DMULT;
+{$endif cpu64bitalu}
   else
-    InternalError(2014060802);
+    InternalError(2022020901);
   end;
   list.concat(taicpu.op_reg_reg(asmop,src1,src2));
   if (dstlo<>NR_NO) then
@@ -1597,12 +1626,14 @@ begin
     if Count > 0 then
     begin
       tmpreg1 := GetIntRegister(list, OS_INT);
-      for count2 := 1 to Count do
+      count2:=1;
+      while count2 <= Count do
       begin
         list.concat(taicpu.op_reg_ref(A_LW, tmpreg1, src));
         list.concat(taicpu.op_reg_ref(A_SW, tmpreg1, dst));
         Inc(src.offset, 4);
         Inc(dst.offset, 4);
+        Inc(count2);
       end;
       len := len mod 4;
     end;
@@ -1674,12 +1705,14 @@ begin
     begin
       { unrolled loop }
       tmpreg1 := GetIntRegister(list, OS_INT);
-      for i := 1 to len do
+      i := 1;
+      while i <= len do
       begin
         list.concat(taicpu.op_reg_ref(A_LBU, tmpreg1, src));
         list.concat(taicpu.op_reg_ref(A_SB, tmpreg1, dst));
         Inc(src.offset);
         Inc(dst.offset);
+	Inc(i);
       end;
     end;
   end;

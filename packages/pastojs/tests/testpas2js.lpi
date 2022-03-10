@@ -37,7 +37,7 @@
         <PackageName Value="FCL"/>
       </Item2>
     </RequiredPackages>
-    <Units Count="13">
+    <Units Count="14">
       <Unit0>
         <Filename Value="testpas2js.pp"/>
         <IsPartOfProject Value="True"/>
@@ -101,6 +101,11 @@
         <Filename Value="tcconverter.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit12>
+      <Unit13>
+        <Filename Value="tcpas2jsanalyzer.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TCPas2JSAnalyzer"/>
+      </Unit13>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
