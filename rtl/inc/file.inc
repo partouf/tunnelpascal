@@ -17,6 +17,9 @@
 
 type
   UnTypedFile=File;
+{$ifdef USE_FILEREC_FULLNAME}
+  TFileFullName = {$ifdef FPC_ANSI_TEXTFILEREC}RawByteString{$else}UnicodeString{$endif};
+{$endif USE_FILEREC_FULLNAME}
 
 procedure InitFile(var f : file);
 begin
@@ -521,7 +524,7 @@ Begin
   end;
 {$ifdef USE_FILEREC_FULLNAME}
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-  UnicodeString(FileRec(f).FullName):='';
+  TFileFullName(FileRec(f).FullName):='';
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 {$endif USE_FILEREC_FULLNAME}
 End;
@@ -686,7 +689,7 @@ Function GetFullName(var f:File) : UnicodeString;
   begin
 {$ifdef USE_FILEREC_FULLNAME}
   if Assigned(FileRec(f).FullName) then
-    Result:=UnicodeString(FileRec(f).FullName)
+    Result:=TFileFullName(FileRec(f).FullName)
   else
 {$endif USE_FILEREC_FULLNAME}
     Result:=PFileTextRecChar(@FileRec(f).Name);
