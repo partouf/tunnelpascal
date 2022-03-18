@@ -28,6 +28,53 @@ begin
   FileRec(f).mode:=fmClosed;
 end;
 
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+procedure AssignFileName(var f:File;const Name: UnicodeString);
+var
+{$ifdef FPC_ANSI_TEXTFILEREC}
+  fn: RawByteString;
+{$else}
+  fn: UnicodeString absolute Name;
+{$endif FPC_ANSI_TEXTFILEREC}
+begin
+{$ifdef FPC_ANSI_TEXTFILEREC}
+  fn:=ToSingleByteFileSystemEncodedFileName(Name);
+{$endif FPC_ANSI_TEXTFILEREC}
+  FileRec(f).Name:=fn;
+  { null terminate, since the name array is regularly used as p(wide)char }
+  FileRec(f).Name[high(FileRec(f).Name)]:=#0;
+{$ifdef USE_FILEREC_FULLNAME}
+  if Length(fn)>255 then
+    TFileFullName(FileRec(f).FullName):=fn;
+{$endif USE_FILEREC_FULLNAME}
+End;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+procedure AssignFileName(var f:File;const Name: RawByteString);
+var
+{$ifdef FPC_ANSI_TEXTFILEREC}
+  fn: RawByteString;
+{$else}
+  fn: UnicodeString;
+{$endif FPC_ANSI_TEXTFILEREC}
+begin
+{$ifdef FPC_ANSI_TEXTFILEREC}
+  { ensure the characters in the record's filename are encoded correctly }
+  fn:=ToSingleByteFileSystemEncodedFileName(Name);
+{$else FPC_ANSI_TEXTFILEREC}
+  fn:=Name;
+{$endif FPC_ANSI_TEXTFILEREC}
+  FileRec(f).Name:=fn;
+  { null terminate, since the name array is regularly used as p(wide)char }
+  FileRec(f).Name[high(FileRec(f).Name)]:=#0;
+{$ifdef USE_FILEREC_FULLNAME}
+  if Length(fn)>255 then
+    TFileFullName(FileRec(f).FullName):=fn;
+{$endif USE_FILEREC_FULLNAME}
+end;
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+
 
 {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
 Procedure Assign(out f:File;const Name: UnicodeString);
@@ -36,21 +83,7 @@ Procedure Assign(out f:File;const Name: UnicodeString);
 }
 Begin
   InitFile(F);
-{$ifdef FPC_ANSI_TEXTFILEREC}
-  FileRec(f).Name:=ToSingleByteFileSystemEncodedFileName(Name);
-{$ifdef USE_FILEREC_FULLNAME}
-  if Length(Name)>255 then
-    RawByteString(FileRec(f).FullName):=Name;
-{$endif USE_FILEREC_FULLNAME}
-{$else FPC_ANSI_TEXTFILEREC}
-  FileRec(f).Name:=Name;
-{$ifdef USE_FILEREC_FULLNAME}
-  if Length(Name)>255 then
-    UnicodeString(FileRec(f).FullName):=Name;
-{$endif USE_FILEREC_FULLNAME}
-{$endif FPC_ANSI_TEXTFILEREC}
-  { null terminate, since the name array is regularly used as p(wide)char }
-  FileRec(f).Name[high(FileRec(f).Name)]:=#0;
+  AssignFileName(F,Name);
 End;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
@@ -62,22 +95,7 @@ Procedure Assign(out f:File;const Name: RawByteString);
 }
 Begin
   InitFile(F);
-{$ifdef FPC_ANSI_TEXTFILEREC}
-  { ensure the characters in the record's filename are encoded correctly }
-  FileRec(f).Name:=ToSingleByteFileSystemEncodedFileName(Name);
-{$ifdef USE_FILEREC_FULLNAME}
-  if Length(Name)>255 then
-    RawbyteString(FileRec(f).FullName):=Name;
-{$endif USE_FILEREC_FULLNAME}
-{$else FPC_ANSI_TEXTFILEREC}
-  FileRec(f).Name:=Name;
-{$ifdef USE_FILEREC_FULLNAME}
-  if Length(Name)>255 then
-    UnicodeString(FileRec(f).FullName):=Name;
-{$endif USE_FILEREC_FULLNAME}
-{$endif FPC_ANSI_TEXTFILEREC}
-  { null terminate, since the name array is regularly used as p(wide)char }
-  FileRec(f).Name[high(FileRec(f).Name)]:=#0;
+  AssignFileName(F,Name);
 End;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
