@@ -45,7 +45,9 @@ begin
   FileRec(f).Name[high(FileRec(f).Name)]:=#0;
 {$ifdef USE_FILEREC_FULLNAME}
   if Length(fn)>255 then
-    TFileFullName(FileRec(f).FullName):=fn;
+    TFileFullName(FileRec(f).FullName):=fn
+  else
+    TFileFullName(FileRec(f).FullName):='';
 {$endif USE_FILEREC_FULLNAME}
 End;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
@@ -70,7 +72,9 @@ begin
   FileRec(f).Name[high(FileRec(f).Name)]:=#0;
 {$ifdef USE_FILEREC_FULLNAME}
   if Length(fn)>255 then
-    TFileFullName(FileRec(f).FullName):=fn;
+    TFileFullName(FileRec(f).FullName):=fn
+  else
+    TFileFullName(FileRec(f).FullName):='';
 {$endif USE_FILEREC_FULLNAME}
 end;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
@@ -588,15 +592,11 @@ Begin
   fs:=ToSingleByteFileSystemEncodedFileName(s);
   Do_Rename(PFileTextRecChar(@FileRec(f).Name),PAnsiChar(fs),false,true);
   If InOutRes=0 then
-     FileRec(f).Name:=fs
+    AssignFileName(f,fs);
 {$else FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
   Do_Rename(PFileTextRecChar(@FileRec(f).Name),PUnicodeChar(S),false,false);
   If InOutRes=0 then
-{$ifdef FPC_ANSI_TEXTFILEREC}
-    FileRec(f).Name:=ToSingleByteFileSystemEncodedFileName(s);
-{$else FPC_ANSI_TEXTFILEREC}
-    FileRec(f).Name:=s
-{$endif FPC_ANSI_TEXTFILEREC}
+    AssignFileName(f,S);
 {$endif FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
 End;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
@@ -641,11 +641,7 @@ Begin
 {$endif FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
   Do_Rename(PFileTextRecChar(@FileRec(f).Name),pdst,false,dstchangeable);
   If InOutRes=0 then
-{$if defined(FPC_ANSI_TEXTFILEREC) and not defined(FPCRTL_FILESYSTEM_SINGLE_BYTE_API)}
-    FileRec(f).Name:=ToSingleByteFileSystemEncodedFileName(fs)
-{$else FPC_ANSI_TEXTFILEREC and not FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
-    FileRec(f).Name:=fs
-{$endif FPC_ANSI_TEXTFILEREC and not FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
+    AssignFileName(f,fs);
 End;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
