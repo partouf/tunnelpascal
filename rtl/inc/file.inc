@@ -539,7 +539,14 @@ Begin
       InOutRes:=102;
       exit;
     end;
-  Do_Erase(PFileTextRecChar(@FileRec(f).Name),false);
+{$ifdef USE_FILEREC_FULLNAME}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+  if Assigned(FileRec(f).FullName) then
+    Do_Erase(PFileTextRecChar(FileRec(f).FullName),false)
+  else
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$endif USE_FILEREC_FULLNAME}
+    Do_Erase(PFileTextRecChar(@FileRec(f).Name),false);
 End;
 
 
