@@ -137,7 +137,7 @@ Begin
      { Reopen with filemode 2, to be Tp compatible (PFV) }
 {$ifdef USE_FILEREC_FULLNAME}
      if Assigned(FileRec(f).FullName) then
-       Do_Open(f,FileRec(f).FullName,$1002,false)
+       Do_Open(f,PFileTextRecChar(FileRec(f).FullName),$1002,false)
      else
 {$endif USE_FILEREC_FULLNAME}
        Do_Open(f,PFileTextRecChar(@FileRec(f).Name),$1002,false);
@@ -168,7 +168,7 @@ Begin
    Begin
 {$ifdef USE_FILEREC_FULLNAME}
      if Assigned(FileRec(f).FullName) then
-       Do_Open(f,FileRec(f).FullName,Filemode,false)
+       Do_Open(f,PFileTextRecChar(FileRec(f).FullName),Filemode,false)
      else
 {$endif USE_FILEREC_FULLNAME}
        Do_Open(f,PFileTextRecChar(@FileRec(f).Name),Filemode,false);
