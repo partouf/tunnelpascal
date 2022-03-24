@@ -528,7 +528,13 @@ type
     Procedure TestRecord_Const;
     Procedure TestRecord_TypecastFail;
     Procedure TestRecord_InFunction;
-    Procedure TestRecord_AnonymousFail;
+
+    // anonymous record
+    Procedure TestRecordAnonym_Field;
+    Procedure TestRecordAnonym_Assign;
+    Procedure TestRecordAnonym_Nested;
+    Procedure TestRecordAnonym_Const;
+    Procedure TestRecordAnonym_InFunction;
 
     // advanced record
     Procedure TestAdvRecord_Function;
@@ -847,6 +853,7 @@ type
     Procedure TestRTTI_Double;
     Procedure TestRTTI_ProcType;
     Procedure TestRTTI_ProcType_ArgFromOtherUnit;
+    Procedure TestRTTI_ProcTypeAnonymous;
     Procedure TestRTTI_EnumAndSetType;
     Procedure TestRTTI_EnumRange;
     Procedure TestRTTI_AnonymousEnumType;
@@ -12621,8 +12628,8 @@ begin
   '    1: (i: word);',
   '  end;',
   'begin']);
-  SetExpectedPasResolverError('variant record is not supported',
-    nXIsNotSupported);
+  SetExpectedPasResolverError('Not supported: variant record',
+    nNotSupportedX);
   ConvertProgram;
 end;
 
@@ -12821,16 +12828,240 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestRecord_AnonymousFail;
+procedure TTestModule.TestRecordAnonym_Field;
 begin
   StartProgram(false);
-  Add([
-  'var',
-  '  r: record x: word end;',
-  'begin']);
-  SetExpectedPasResolverError('not yet implemented: :TPasRecordType [20190408224556] "anonymous record type"',
-    nNotYetImplemented);
+  Add(['',
+  'var Rec: record',
+  '    Bold: longint;',
+  '  end;',
+  'begin',
+  '  rec.bold:=123;',
+  '  rec.bold:=rec.bold+7;',
+  '']);
   ConvertProgram;
+  CheckSource('TestRecordAnonym_Field',
+    LinesToStr([ // statements
+    'rtl.recNewT(this, "Rec$a", function () {',
+    '  this.Bold = 0;',
+    '  this.$eq = function (b) {',
+    '    return this.Bold === b.Bold;',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.Bold = s.Bold;',
+    '    return this;',
+    '  };',
+    '});',
+    'this.Rec = this.Rec$a.$new();',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.Rec.Bold = 123;',
+    '$mod.Rec.Bold = $mod.Rec.Bold + 7;',
+    '']));
+end;
+
+procedure TTestModule.TestRecordAnonym_Assign;
+begin
+  StartProgram(false);
+  Add(['',
+  'var S,T: record',
+  '    Bold: longint;',
+  '  end;',
+  '  b: boolean;',
+  'begin',
+  '  S:=T;',
+  '  b:=s=t;',
+  '']);
+  ConvertProgram;
+  CheckSource('TestRecordAnonym_Assign',
+    LinesToStr([ // statements
+    'rtl.recNewT(this, "T$a", function () {',
+    '  this.Bold = 0;',
+    '  this.$eq = function (b) {',
+    '    return this.Bold === b.Bold;',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.Bold = s.Bold;',
+    '    return this;',
+    '  };',
+    '});',
+    'this.S = this.T$a.$new();',
+    'this.T = this.T$a.$new();',
+    'this.b = false;',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.S.$assign($mod.T);',
+    '$mod.b = $mod.S.$eq($mod.T);',
+    '']));
+end;
+
+procedure TTestModule.TestRecordAnonym_Nested;
+begin
+  StartProgram(false);
+  Add(['',
+  'var S,T: record',
+  '    Bold: longint;',
+  '    Sub: record',
+  '        Color: word;',
+  '      end;',
+  '  end;',
+  '  b: boolean;',
+  'begin',
+  '  S:=T;',
+  '  S.Sub:=T.Sub;',
+  '  S.Sub.Color:=T.Sub.Color+3;',
+  '  b:=s=t;',
+  '  b:=s.Sub=t.Sub;',
+  '']);
+  ConvertProgram;
+  CheckSource('TestRecordAnonym_Nested',
+    LinesToStr([ // statements
+    'rtl.recNewT(this, "T$a", function () {',
+    '  this.Bold = 0;',
+    '  rtl.recNewT(this, "Sub$a", function () {',
+    '    this.Color = 0;',
+    '    this.$eq = function (b) {',
+    '      return this.Color === b.Color;',
+    '    };',
+    '    this.$assign = function (s) {',
+    '      this.Color = s.Color;',
+    '      return this;',
+    '    };',
+    '  });',
+    '  this.$new = function () {',
+    '    var r = Object.create(this);',
+    '    r.Sub = this.Sub$a.$new();',
+    '    return r;',
+    '  };',
+    '  this.$eq = function (b) {',
+    '    return (this.Bold === b.Bold) && this.Sub.$eq(b.Sub);',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.Bold = s.Bold;',
+    '    this.Sub.$assign(s.Sub);',
+    '    return this;',
+    '  };',
+    '}, true);',
+    'this.S = this.T$a.$new();',
+    'this.T = this.T$a.$new();',
+    'this.b = false;',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.S.$assign($mod.T);',
+    '$mod.S.Sub.$assign($mod.T.Sub);',
+    '$mod.S.Sub.Color = $mod.T.Sub.Color + 3;',
+    '$mod.b = $mod.S.$eq($mod.T);',
+    '$mod.b = $mod.S.Sub.$eq($mod.T.Sub);',
+    '']));
+end;
+
+procedure TTestModule.TestRecordAnonym_Const;
+begin
+  StartProgram(false);
+  Add(['',
+  'var T: record',
+  '    Bold: longint;',
+  '    Sub: record',
+  '        Color: word;',
+  '      end;',
+  '  end = (Bold: 2; Sub: (Color: 3));',
+  'begin',
+  '']);
+  ConvertProgram;
+  CheckSource('TestRecordAnonym_Const',
+    LinesToStr([ // statements
+    'rtl.recNewT(this, "T$a", function () {',
+    '  this.Bold = 0;',
+    '  rtl.recNewT(this, "Sub$a", function () {',
+    '    this.Color = 0;',
+    '    this.$eq = function (b) {',
+    '      return this.Color === b.Color;',
+    '    };',
+    '    this.$assign = function (s) {',
+    '      this.Color = s.Color;',
+    '      return this;',
+    '    };',
+    '  });',
+    '  this.$new = function () {',
+    '    var r = Object.create(this);',
+    '    r.Sub = this.Sub$a.$new();',
+    '    return r;',
+    '  };',
+    '  this.$eq = function (b) {',
+    '    return (this.Bold === b.Bold) && this.Sub.$eq(b.Sub);',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.Bold = s.Bold;',
+    '    this.Sub.$assign(s.Sub);',
+    '    return this;',
+    '  };',
+    '}, true);',
+    'this.T = this.T$a.$clone({',
+    '  Bold: 2,',
+    '  Sub: this.T$a.Sub$a.$clone({',
+    '      Color: 3',
+    '    })',
+    '});',
+    '']),
+    LinesToStr([ // $mod.$main
+    '']));
+end;
+
+procedure TTestModule.TestRecordAnonym_InFunction;
+begin
+  StartProgram(false);
+  Add(['',
+  'procedure Fly;',
+  'var T: record',
+  '    Bold: longint;',
+  '    Sub: record',
+  '        Color: word;',
+  '      end;',
+  '  end = (Bold: 2; Sub: (Color: 3));',
+  'begin',
+  'end;',
+  'begin',
+  '']);
+  ConvertProgram;
+  CheckSource('TestRecordAnonym_InFunction',
+    LinesToStr([ // statements
+    'var T$a = rtl.recNewT(null, "", function () {',
+    '  this.Bold = 0;',
+    '  rtl.recNewT(this, "Sub$a", function () {',
+    '    this.Color = 0;',
+    '    this.$eq = function (b) {',
+    '      return this.Color === b.Color;',
+    '    };',
+    '    this.$assign = function (s) {',
+    '      this.Color = s.Color;',
+    '      return this;',
+    '    };',
+    '  });',
+    '  this.$new = function () {',
+    '    var r = Object.create(this);',
+    '    r.Sub = this.Sub$a.$new();',
+    '    return r;',
+    '  };',
+    '  this.$eq = function (b) {',
+    '    return (this.Bold === b.Bold) && this.Sub.$eq(b.Sub);',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.Bold = s.Bold;',
+    '    this.Sub.$assign(s.Sub);',
+    '    return this;',
+    '  };',
+    '}, true);',
+    'this.Fly = function () {',
+    '  var T = T$a.$clone({',
+    '    Bold: 2,',
+    '    Sub: T$a.Sub$a.$clone({',
+    '        Color: 3',
+    '      })',
+    '  });',
+    '};',
+    '']),
+    LinesToStr([ // $mod.$main
+    '']));
 end;
 
 procedure TTestModule.TestAdvRecord_Function;
@@ -30426,6 +30657,50 @@ begin
     '});',
     '$impl.p = null;',
     '']) );
+end;
+
+procedure TTestModule.TestRTTI_ProcTypeAnonymous;
+begin
+  WithTypeInfo:=true;
+  StartProgram(false);
+  Add(['var',
+  '  ProcA: procedure;',
+  '  MethodB: procedure of object;',
+  '  ProcC: procedure; varargs;',
+  '  ProcD: procedure(i: longint; const j: string; var c: char; out d: double);',
+  '  ProcE: function: nativeint;',
+  '  p: pointer;',
+  'begin',
+  '  p:=typeinfo(proca);']);
+  ConvertProgram;
+  CheckSource('TestRTTI_ProcTypeAnonymous',
+    LinesToStr([ // statements
+    'this.$rtti.$ProcVar("ProcA$a", {',
+    '  procsig: rtl.newTIProcSig([])',
+    '});',
+    'this.ProcA = null;',
+    'this.$rtti.$MethodVar("MethodB$a", {',
+    '  procsig: rtl.newTIProcSig([]),',
+    '  methodkind: 0',
+    '});',
+    'this.MethodB = null;',
+    'this.$rtti.$ProcVar("ProcC$a", {',
+    '  procsig: rtl.newTIProcSig([], null, 2)',
+    '});',
+    'this.ProcC = null;',
+    'this.$rtti.$ProcVar("ProcD$a", {',
+    '  procsig: rtl.newTIProcSig([["i", rtl.longint], ["j", rtl.string, 2], ["c", rtl.char, 1], ["d", rtl.double, 4]])',
+    '});',
+    'this.ProcD = null;',
+    'this.$rtti.$ProcVar("ProcE$a", {',
+    '  procsig: rtl.newTIProcSig([], rtl.nativeint)',
+    '});',
+    'this.ProcE = null;',
+    'this.p = null;',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.p = $mod.$rtti["ProcA$a"];',
+    '']));
 end;
 
 procedure TTestModule.TestRTTI_EnumAndSetType;

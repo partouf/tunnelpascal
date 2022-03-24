@@ -1612,6 +1612,7 @@ type
     procedure AddType(El: TPasType); virtual;
     procedure AddArrayType(El: TPasArrayType; TypeParams: TFPList); virtual;
     procedure AddRecordType(El: TPasRecordType; TypeParams: TFPList); virtual;
+    procedure AddRecordVariant(El: TPasVariant); virtual;
     procedure AddClassType(El: TPasClassType; TypeParams: TFPList); virtual;
     procedure AddVariable(El: TPasVariable); virtual;
     procedure AddResourceString(El: TPasResString); virtual;
@@ -1665,6 +1666,7 @@ type
     procedure AccessExpr(Expr: TPasExpr; Access: TResolvedRefAccess);
     function MarkArrayExpr(Expr: TParamsExpr; ArrayType: TPasArrayType): boolean; virtual;
     procedure MarkArrayExprRecursive(Expr: TPasExpr; ArrType: TPasArrayType); virtual;
+    procedure DeanonymizeType(El: TPasType); virtual;
     procedure FinishModule(CurModule: TPasModule); virtual;
     procedure FinishUsesClause; virtual;
     procedure FinishSection(Section: TPasSection); virtual;
@@ -6303,82 +6305,15 @@ begin
 end;
 
 procedure TPasResolver.FinishSubElementType(Parent: TPasElement; El: TPasType);
-
-  procedure InsertInFront(NewParent: TPasElement; List: TFPList
-    {$IFDEF CheckPasTreeRefCount};const aId: string{$ENDIF});
-  var
-    i: Integer;
-    p, Prev: TPasElement;
-  begin
-    p:=El.Parent;
-    if NewParent=p.Parent then
-      begin
-      // e.g. m,n:array of longint; -> insert n$a in front of m
-      i:=List.Count-1;
-      while (i>=0) and (List[i]<>Pointer(p)) do
-        dec(i);
-      if P is TPasVariable then
-        begin
-        while (i>0) do
-          begin
-          Prev:=TPasElement(List[i-1]);
-          if (Prev.ClassType=P.ClassType) and (TPasVariable(Prev).VarType=TPasVariable(P).VarType) then
-            dec(i) // e.g. m,n: array of longint
-          else
-            break;
-          end;
-        end;
-      if i<0 then
-        List.Add(El)
-      else
-        List.Insert(i,El);
-      end
-    else
-      begin
-      List.Add(El);
-      end;
-    El.AddRef{$IFDEF CheckPasTreeRefCount}(aID){$ENDIF};
-    El.Parent:=NewParent;
-  end;
-
 var
-  Decl: TPasDeclarations;
   EnumScope: TPasEnumTypeScope;
-  p: TPasElement;
-  MembersType: TPasMembersType;
 begin
   EmitTypeHints(Parent,El);
   if (El.Name<>'') or (AnonymousElTypePostfix='') then exit;
-  if Parent.Name='' then
-    RaiseMsg(20170415165455,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El);
   if El.Parent<>Parent then
-    RaiseNotYetImplemented(20190215085011,Parent);
-  // give anonymous sub type a name
-  El.Name:=Parent.Name+AnonymousElTypePostfix;
-  {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.FinishSubElementType parent="',GetObjName(Parent),'" named anonymous type "',GetObjName(El),'"');
-  {$ENDIF}
+    RaiseNotYetImplemented(20220320123426,Parent,GetElementTypeName(El));
+  DeanonymizeType(El);
 
-  p:=Parent.Parent;
-  repeat
-    if p is TPasDeclarations then
-      begin
-      Decl:=TPasDeclarations(p);
-      InsertInFront(Decl,Decl.Declarations{$IFDEF CheckPasTreeRefCount},'TPasDeclarations.Declarations'{$ENDIF});
-      Decl.Types.Add(El);
-      break;
-      end
-    else if p is TPasMembersType then
-      begin
-      MembersType:=TPasMembersType(p);
-      InsertInFront(MembersType,MembersType.Members{$IFDEF CheckPasTreeRefCount},'TPasMembersType.Members'{$ENDIF});
-      break;
-      end
-    else
-      p:=p.Parent;
-    if p=nil then
-      RaiseMsg(20170416094735,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El);
-  until false;
   if (El.ClassType=TPasEnumType) and (Parent.ClassType=TPasSetType) then
     begin
     // anonymous enumtype
@@ -7408,9 +7343,7 @@ begin
   else if El.Name<>'' then
     begin
     // finished proc type, e.g. type TProcedure = procedure;
-    end
-  else
-    RaiseNotYetImplemented(20160922163411,El.Parent,'anonymous procedure type');
+    end;
 end;
 
 procedure TPasResolver.FinishMethodDeclHeader(Proc: TPasProcedure);
@@ -12097,6 +12030,96 @@ begin
   Traverse(Expr,ArrType,0);
 end;
 
+procedure TPasResolver.DeanonymizeType(El: TPasType);
+
+  procedure InsertInFront(NewParent: TPasElement; List: TFPList
+    {$IFDEF CheckPasTreeRefCount};const aId: string{$ENDIF});
+  var
+    i: Integer;
+    p, Prev: TPasElement;
+  begin
+    p:=El.Parent;
+    if NewParent=p.Parent then
+      begin
+      // e.g. m,n:array of longint; -> insert n$a in front of m
+      i:=List.Count-1;
+      while (i>=0) and (List[i]<>Pointer(p)) do
+        dec(i);
+      if P is TPasVariable then
+        begin
+        while (i>0) do
+          begin
+          Prev:=TPasElement(List[i-1]);
+          if (Prev.ClassType=P.ClassType) and (TPasVariable(Prev).VarType=TPasVariable(P).VarType) then
+            dec(i) // e.g. m,n: array of longint
+          else
+            break;
+          end;
+        end;
+      if i<0 then
+        List.Add(El)
+      else
+        List.Insert(i,El);
+      end
+    else
+      begin
+      List.Add(El);
+      end;
+    El.AddRef{$IFDEF CheckPasTreeRefCount}(aID){$ENDIF};
+    {$IFDEF VerbosePasResolver}
+    if El.Parent<>NewParent then writeln('TPasResolver.DeanonymizeType.InsertInFront OldParent=',GetObjName(El.Parent),' -> ',GetObjPath(NewParent));
+    {$ENDIF}
+    El.Parent:=NewParent;
+  end;
+
+var
+  Decl: TPasDeclarations;
+  p: TPasElement;
+  MembersType: TPasMembersType;
+  CurName: String;
+begin
+  if (AnonymousElTypePostfix='') then
+    exit;
+  if (El.Name<>'') then
+    RaiseNotYetImplemented(20220320121923,El);
+
+  CurName:='';
+  p:=El.Parent;
+  repeat
+    if p=nil then
+      RaiseNotYetImplemented(20220320165553,El);
+    if (p is TPasDeclarations) or (p is TPasMembersType) then
+      begin
+      if CurName='' then
+        RaiseMsg(20220320122946,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El);
+      El.Name:=CurName+AnonymousElTypePostfix;
+      {$IFDEF VerbosePasResolver}
+      writeln('TPasResolver.DeanonymizeType named anonymous type "',GetObjPath(El),'"');
+      {$ENDIF}
+      if p is TPasDeclarations then
+        begin
+        Decl:=TPasDeclarations(p);
+        InsertInFront(Decl,Decl.Declarations{$IFDEF CheckPasTreeRefCount},'TPasDeclarations.Declarations'{$ENDIF});
+        Decl.Types.Add(El);
+        end
+      else if p is TPasMembersType then
+        begin
+        MembersType:=TPasMembersType(p);
+        InsertInFront(MembersType,MembersType.Members{$IFDEF CheckPasTreeRefCount},'TPasMembersType.Members'{$ENDIF});
+        end;
+      break;
+      end
+    else if p.Name<>'' then
+      begin
+      if CurName<>'' then
+        RaiseMsg(20220320132732,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El)
+      else
+        CurName:=p.Name;
+      end;
+    p:=p.Parent;
+  until false;
+end;
+
 procedure TPasResolver.CheckPointerCycle(El: TPasPointerType);
 var
   C: TClass;
@@ -12235,10 +12258,26 @@ end;
 procedure TPasResolver.AddRecordType(El: TPasRecordType; TypeParams: TFPList);
 var
   Scope: TPasRecordScope;
+  C: TClass;
 begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.AddRecordType ',GetObjName(El),' Parent=',GetObjName(El.Parent));
   {$ENDIF}
+  C:=El.Parent.ClassType;
+  if (El.Name='') then
+    begin
+    // anonymous record
+    if (C=TPasVariable)
+        or (C=TPasConst)
+        or (C=TPasVariant) then
+      // ok
+    else
+      RaiseMsg(20220321224331,nCannotNestAnonymousX,sCannotNestAnonymousX,['record'],El);
+    if TypeParams<>nil then
+      RaiseNotYetImplemented(20220322220743,El);
+    DeanonymizeType(El);
+    end;
+
   if TypeParams<>nil then
     begin
     El.SetGenericTemplates(TypeParams);
@@ -12259,7 +12298,7 @@ begin
     FPendingForwardProcs.Add(El); // check forward declarations at the end
   end;
 
-  if El.Parent.ClassType<>TPasVariant then
+  if C<>TPasVariant then
     begin
     Scope:=TPasRecordScope(PushScope(El,ScopeClass_Record));
     Scope.VisibilityContext:=El;
@@ -12271,6 +12310,11 @@ begin
       AddGenericTemplateIdentifiers(TypeParams,Scope);
       end;
     end;
+end;
+
+procedure TPasResolver.AddRecordVariant(El: TPasVariant);
+begin
+  if El=nil then ;
 end;
 
 procedure TPasResolver.AddClassType(El: TPasClassType; TypeParams: TFPList);
@@ -12546,8 +12590,10 @@ procedure TPasResolver.AddProcedureType(El: TPasProcedureType;
   TypeParams: TFPList);
 var
   Scope: TPasProcTypeScope;
+  C: TClass;
 begin
-  if El.Name<>'' then begin
+  if El.Name<>'' then
+    begin
     {$IFDEF VerbosePasResolver}
     writeln('TPasResolver.AddProcedureType ',GetObjName(El),' Parent=',GetObjName(El.Parent));
     {$ENDIF}
@@ -12571,8 +12617,27 @@ begin
       Scope:=TPasProcTypeScope(PushScope(El,ScopeClass_ProcType));
       AddGenericTemplateIdentifiers(TypeParams,Scope);
       end;
-  end else if TypeParams<>nil then
-    RaiseNotYetImplemented(20190813193745,El);
+    end
+  else
+    begin
+    // no name
+    if TypeParams<>nil then
+      RaiseNotYetImplemented(20190813193745,El);
+    if El.Parent=nil then
+      RaiseNotYetImplemented(20220320122040,El);
+    if El.Parent is TPasProcedure then
+      // proctype of procedure has no name -> normal
+    else
+      begin
+      // anonymous procedure type, e.g. "var p: procedure;"
+      C:=El.Parent.ClassType;
+      if C.InheritsFrom(TPasVariable) then
+        // ok
+      else
+        RaiseMsg(20220320165827,nCannotNestAnonymousX,sCannotNestAnonymousX,[GetElementTypeName(El)],El);
+      DeanonymizeType(El);
+      end;
+    end;
 end;
 
 procedure TPasResolver.AddProcedure(El: TPasProcedure; TypeParams: TFPList);
@@ -21172,9 +21237,10 @@ begin
       end
     else if AClass=TPasRecordType then
       AddRecordType(TPasRecordType(El),TypeParams)
+    else if AClass=TPasVariant then
+      AddRecordVariant(TPasVariant(El))
     else if AClass=TPasClassType then
       AddClassType(TPasClassType(El),TypeParams)
-    else if AClass=TPasVariant then
     else if AClass.InheritsFrom(TPasProcedure) then
       AddProcedure(TPasProcedure(El),TypeParams)
     else if AClass=TPasResultElement then
@@ -21212,6 +21278,7 @@ begin
       RaiseMsg(20171018121900,nCantFindUnitX,sCantFindUnitX,[AName],El)
     else
       RaiseNotYetImplemented(20160922163544,El);
+
     Result:=El;
   finally
     if Result=nil then
