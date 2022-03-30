@@ -946,6 +946,7 @@ type
     Procedure TestAWait_Result;
     Procedure TestAWait_ResultPromiseMissingTypeFail; // await(AsyncCallResultPromise) needs T
     Procedure TestAsync_AnonymousProc;
+    Procedure TestAsync_AnonymousProc_PromiseViaDotContext;
     Procedure TestAsync_ProcType;
     Procedure TestAsync_ProcTypeAsyncModMismatchFail;
     Procedure TestAsync_Inherited;
@@ -34714,7 +34715,7 @@ begin
   '  end;',
   '  Func:=function(c:double):word async assembler asm',
   '  end;',
-  '  ']);
+  '']);
   ConvertProgram;
   CheckSource('TestAsync_AnonymousProc',
     LinesToStr([ // statements
@@ -34734,6 +34735,60 @@ begin
     '};',
     '']));
   CheckResolverUnexpectedHints();
+end;
+
+procedure TTestModule.TestAsync_AnonymousProc_PromiseViaDotContext;
+begin
+  StartProgram(false);
+  Add([
+  '{$mode objfpc}',
+  '{$modeswitch externalclass}',
+  'type',
+  '  TJSPromise = class external name ''Promise''',
+  '  end;',
+  '  TObject = class',
+  '  public',
+  '    procedure Fly(Prom: TJSPromise);',
+  '  end;',
+  '  TFunc = reference to procedure(Bird: TObject);',
+  'procedure TObject.Fly(Prom: TJSPromise);',
+  'begin',
+  'end;',
+  'function Crawl: jsvalue; async;',
+  'begin',
+  'end;',
+  'procedure Add(Func: TFunc);',
+  'begin',
+  'end;',
+  'begin',
+  '  Add(procedure(Bird: TObject)',
+  '    begin',
+  '      Bird.Fly(Crawl());',
+  '    end);',
+  '']);
+  ConvertProgram;
+  CheckSource('TestAsync_AnonymousProc_PromiseViaDotContext',
+    LinesToStr([ // statements
+    'rtl.createClass(this, "TObject", null, function () {',
+    '  this.$init = function () {',
+    '  };',
+    '  this.$final = function () {',
+    '  };',
+    '  this.Fly = function (Prom) {',
+    '  };',
+    '});',
+    'this.Crawl = async function () {',
+    '  var Result = undefined;',
+    '  return Result;',
+    '};',
+    'this.Add = function (Func) {',
+    '};',
+    '']),
+    LinesToStr([
+    '$mod.Add(function (Bird) {',
+    '  Bird.Fly($mod.Crawl());',
+    '});',
+    '']));
 end;
 
 procedure TTestModule.TestAsync_ProcType;
