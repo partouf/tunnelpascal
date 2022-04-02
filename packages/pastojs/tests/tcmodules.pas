@@ -493,7 +493,7 @@ type
     Procedure TestArray_SetLengthMultiDim;
     Procedure TestArray_SetLengthDynOfStatic;
     Procedure TestArray_OpenArrayOfString;
-    Procedure TestArray_ArrayOfCharAssignString; // ToDo
+    Procedure TestArray_ArrayOfCharAssignString;
     Procedure TestArray_ConstRef;
     Procedure TestArray_Concat;
     Procedure TestArray_Copy;
@@ -961,8 +961,6 @@ type
     Procedure TestLibrary_Export_Index_Fail;
     Procedure TestLibrary_ExportVar;
     Procedure TestLibrary_ExportUnitFunc;
-    // ToDo: test delayed specialization init
-    // ToDo: shortrefoptimization
   end;
 
 function LinesToStr(Args: array of const): string;
@@ -7247,6 +7245,7 @@ end;
 procedure TTestModule.TestSet_AnonymousEnumTypeChar;
 begin
   exit;
+
   StartProgram(false);
   Add([
   'type',
@@ -8649,7 +8648,7 @@ begin
   '  s:=concat(s,''a'',s);',
   '  s:=#250#269;',
   '  i:=low(s)+high(a);',
-  //'  s:=#$2F804;',
+  '  s:=''a/b'';',
   // ToDo: \uD87E\uDC04 -> \u{2F804}
   '']);
   ConvertProgram;
@@ -8684,6 +8683,7 @@ begin
     '$mod.s = $mod.s.concat("a", $mod.s);',
     '$mod.s = "úč";',
     '$mod.i = 1 + $mod.a.length;',
+    '$mod.s = "a/b";',
     '']));
 end;
 
@@ -11807,7 +11807,9 @@ begin
   'begin',
   '  if TJSArray.isArray(65) then ;',
   '  aObj:=TJSArray(a).concat(a);',
-  '  o:=TJSObject(a);']);
+  '  o:=TJSObject(a);',
+  '  aObj:=TJSArray([''bird'',''ant'']);',
+  '']);
   ConvertProgram;
   CheckSource('TestExternalClass_TypeCastArrayToExternalClass',
     LinesToStr([ // statements
@@ -11819,6 +11821,7 @@ begin
     'if (Array.isArray(65)) ;',
     '$mod.aObj = $mod.a.concat($mod.a);',
     '$mod.o = $mod.a;',
+    '$mod.aObj = ["bird", "ant"];',
     '']));
 end;
 
