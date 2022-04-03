@@ -445,7 +445,7 @@ begin
   While iIn<=Length(S) do
     begin
     C:=S[iIn];
-    If Not (C in ['a'..'z','A'..'Z','_','-']) then
+    If Not (C in ['a'..'z','A'..'Z','_','-','0'..'9']) then
       begin
       inc(iOut);
       Result[iOut]:='\';
@@ -757,7 +757,6 @@ begin
   I:=1;
   if (Length(Value)>2) and (Value[2]=':') then
     I:=2;
-  Writeln('Value ',Value, ' -> ',I);
   Result:=Copy(Value,1,I)+StringToIdentifier(Copy(Value,I+1,Length(Value)-I));
 end;
 
