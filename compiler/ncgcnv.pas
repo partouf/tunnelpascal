@@ -874,7 +874,6 @@ interface
         location_copy(location,call.location);
       end;
 
-
 begin
   ctypeconvnode := tcgtypeconvnode;
   casnode := tcgasnode;

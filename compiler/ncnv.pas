@@ -2910,9 +2910,21 @@ implementation
               te_exact,
               te_equal :
                 begin
-                  result := simplify(false);
-                  if assigned(result) then
-                    exit;
+                  { JVM in particular gets itself in a twist if string consts
+                    aren't prematurely simplified }
+                  if not target_specific_need_equal_typeconv(left.resultdef, resultdef) then
+                    begin
+                      result := simplify(false);
+                      if assigned(result) then
+                        begin
+                          { Make sure the compiler knows that this address is typed
+                            (prevents the warning from tbs/tb0504.pp from triggering) }
+                          if (nf_explicit in flags) and (result.nodetype = addrn) then
+                            include(taddrnode(result).addrnodeflags,anf_typedaddr);
+
+                          exit;
+                        end;
+                    end;
 
                   { in case of bitpacked accesses, the original type must
                     remain so that not too many/few bits are laoded }
@@ -2951,6 +2963,7 @@ implementation
                          result:=left;
                          left:=nil;
                        end;
+
                      exit;
                    end;
                 end;
@@ -3806,6 +3819,37 @@ implementation
             ;
         end;
 {$endif not CPUNO32BITOPS}
+
+      { Finally, let's see if we can strip equal type conversions completely }
+      if (convtype = tc_equal) and
+        (
+          (
+            { Exact def matches are fine regardless }
+            (totypedef = resultdef) and
+            (left.resultdef = resultdef)
+          ) or (
+            { If left.resultdef = resultdef, that's implicitly checked in the condition above }
+            not target_specific_need_equal_typeconv(left.resultdef, resultdef) and
+            { Objects need an explicit conversion }
+            (resultdef.typ <> objectdef) and
+            equal_defs(totypedef, resultdef) and
+            equal_defs(left.resultdef, resultdef) and
+            { Undefined definitions are usually generics that haven't been specialized yet }
+            not is_undefined(resultdef) and
+            not is_undefined(totypedef) and
+            not is_undefined(left.resultdef)
+          )
+        ) and not is_managed_type(resultdef) and not is_managed_type(totypedef) and not is_managed_type(left.resultdef) then
+        begin
+          { Exact conversion - we can remove this typeconv node }
+          if nf_absolute in flags then
+            { Make sure the absolute flag gets transferred }
+            Include(left.flags, nf_absolute);
+
+          Result := left;
+          left := nil;
+          Exit;
+        end;
       end;
 
 
