@@ -266,7 +266,12 @@ implementation
              (FPUX86_HAS_AVX512F in fpu_capabilities[current_settings.fputype]))
            ) then
 {$else cpu64bitalu}
-           (torddef(left.resultdef).ordtype=s32bit) then
+           ((torddef(left.resultdef).ordtype=s32bit)
+{$ifdef i386}
+            or ((torddef(left.resultdef).ordtype=u32bit) and
+             (FPUX86_HAS_AVX512F in fpu_capabilities[current_settings.fputype]))
+{$endif i386}
+           ) then
 {$endif cpu64bitalu}
           begin
             location_reset(location,LOC_MMREGISTER,def_cgsize(resultdef));
