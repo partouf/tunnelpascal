@@ -4516,8 +4516,16 @@ unit aoptx86;
                                 Continue;
                               end;
 
-                            { mov 0,%reg can be efficiently encoded as xor %reg,%reg later }
-                            if (NewVal <> 0) and not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                            if (
+                              { Only do the MOV-to-arithmetic optimisation under
+                                -Os or on very old processors }
+                                (cs_opt_size in current_settings.optimizerswitches)
+{$ifndef x86_64}
+                                or (current_settings.cputype <= cpu_486)
+{$endif not x86_64}
+                              ) and
+                              { mov 0,%reg can be efficiently encoded as xor %reg,%reg later }
+                              (NewVal <> 0) and not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
                               begin
                                 Range := tcgsize2size[reg_cgsize(p_TargetReg)] * 4; { Only half of the range }
                                 if Range > 8 then { Only a saving for 32-bit and 64-bit really }
@@ -4555,7 +4563,6 @@ unit aoptx86;
                                             Exit;
                                           end;
                                       end;
-
                                     { Don't check for ROR and ROL for the remainder of the range, since the
                                       instructions overlap in the first half (e.g. rorq $33,%reg = rolq $31,%reg }
                                     Range := Range shl 1;
