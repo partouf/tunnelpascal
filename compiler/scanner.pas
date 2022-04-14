@@ -3196,107 +3196,80 @@ type
 
 
     procedure tscannerfile.writetoken(t : ttoken);
-      var
-        b : byte;
       begin
         if ord(t)>$7f then
-          begin
-            b:=(ord(t) shr 8) or $80;
-            recordtokenbuf.write(b,1);
-          end;
-        b:=ord(t) and $ff;
-        recordtokenbuf.write(b,1);
+          byte(recordtokenbuf.writeptr(1)^):=(ord(t) shr 8) or $80;
+        byte(recordtokenbuf.writeptr(1)^):=ord(t) and $ff;
       end;
 
     procedure tscannerfile.tokenwritesizeint(val : asizeint);
       begin
-        recordtokenbuf.write(val,sizeof(asizeint));
+        asizeint(recordtokenbuf.writeptr(sizeof(asizeint))^):=val;
       end;
 
     procedure tscannerfile.tokenwritelongint(val : longint);
       begin
-        recordtokenbuf.write(val,sizeof(longint));
+        longint(recordtokenbuf.writeptr(sizeof(longint))^):=val;
       end;
 
     procedure tscannerfile.tokenwriteshortint(val : shortint);
       begin
-        recordtokenbuf.write(val,sizeof(shortint));
+        shortint(recordtokenbuf.writeptr(sizeof(shortint))^):=val;
       end;
 
     procedure tscannerfile.tokenwriteword(val : word);
       begin
-        recordtokenbuf.write(val,sizeof(word));
+        word(recordtokenbuf.writeptr(sizeof(word))^):=val;
       end;
 
     procedure tscannerfile.tokenwritelongword(val : longword);
       begin
-        recordtokenbuf.write(val,sizeof(longword));
+        longword(recordtokenbuf.writeptr(sizeof(longword))^):=val;
       end;
 
     function tscannerfile.tokenreadsizeint : asizeint;
-      var
-        val : asizeint;
       begin
-        replaytokenbuf.read(val,sizeof(asizeint));
+        result:=asizeint(replaytokenbuf.readptr(sizeof(asizeint))^);
         if change_endian_for_replay then
-          val:=swapendian(val);
-        result:=val;
+          result:=swapendian(result);
       end;
 
     function tscannerfile.tokenreadlongword : longword;
-      var
-        val : longword;
       begin
-        replaytokenbuf.read(val,sizeof(longword));
+        result:=longword(replaytokenbuf.readptr(sizeof(longword))^);
         if change_endian_for_replay then
-          val:=swapendian(val);
-        result:=val;
+          result:=swapendian(result);
       end;
 
     function tscannerfile.tokenreadlongint : longint;
-      var
-        val : longint;
       begin
-        replaytokenbuf.read(val,sizeof(longint));
+        result:=longint(replaytokenbuf.readptr(sizeof(longint))^);
         if change_endian_for_replay then
-          val:=swapendian(val);
-        result:=val;
+          result:=swapendian(result);
       end;
 
     function tscannerfile.tokenreadshortint : shortint;
-      var
-        val : shortint;
       begin
-        replaytokenbuf.read(val,sizeof(shortint));
-        result:=val;
+        result:=shortint(replaytokenbuf.readptr(sizeof(shortint))^);
       end;
 
     function tscannerfile.tokenreadbyte : byte;
-      var
-        val : byte;
       begin
-        replaytokenbuf.read(val,sizeof(byte));
-        result:=val;
+        result:=byte(replaytokenbuf.readptr(sizeof(byte))^);
       end;
 
     function tscannerfile.tokenreadsmallint : smallint;
-      var
-        val : smallint;
       begin
-        replaytokenbuf.read(val,sizeof(smallint));
+        result:=smallint(replaytokenbuf.readptr(sizeof(smallint))^);
         if change_endian_for_replay then
-          val:=swapendian(val);
-        result:=val;
+          result:=swapendian(result);
       end;
 
     function tscannerfile.tokenreadword : word;
-      var
-        val : word;
       begin
-        replaytokenbuf.read(val,sizeof(word));
+        result:=word(replaytokenbuf.readptr(sizeof(word))^);
         if change_endian_for_replay then
-          val:=swapendian(val);
-        result:=val;
+          result:=swapendian(result);
       end;
 
    function tscannerfile.tokenreadenum(size : longint) : longword;
@@ -3476,7 +3449,7 @@ type
 
             tokenwriteenum(minfpconstprec,sizeof(tfloattype));
 
-            recordtokenbuf.write(byte(disabledircache),1);
+            byte(recordtokenbuf.writeptr(1)^):=byte(disabledircache);
 
             tokenwriteenum(tlsmodel,sizeof(tlsmodel));
 
@@ -3498,7 +3471,6 @@ type
     procedure tscannerfile.recordtoken;
       var
         t : ttoken;
-        s : tspecialgenerictoken;
         len,msgnb,copy_size : asizeint;
         val : longint;
         b : byte;
@@ -3514,9 +3486,8 @@ type
              sizeof(current_settings)-sizeof(pointer))<>0 then
           begin
             { use a special token to record it }
-            s:=ST_LOADSETTINGS;
             writetoken(t);
-            recordtokenbuf.write(s,1);
+            byte(recordtokenbuf.writeptr(1)^):=byte(ST_LOADSETTINGS);
             copy_size:=sizeof(current_settings)-sizeof(pointer);
             tokenwritesettings(current_settings,copy_size);
             last_settings:=current_settings;
@@ -3525,9 +3496,8 @@ type
         if current_settings.pmessage<>last_message then
           begin
             { use a special token to record it }
-            s:=ST_LOADMESSAGES;
             writetoken(t);
-            recordtokenbuf.write(s,1);
+            byte(recordtokenbuf.writeptr(1)^):=byte(ST_LOADMESSAGES);
             msgnb:=0;
             pmsg:=current_settings.pmessage;
             while assigned(pmsg) do
@@ -3556,35 +3526,29 @@ type
         { file pos changes? }
         if current_tokenpos.fileindex<>last_filepos.fileindex then
           begin
-            s:=ST_FILEINDEX;
             writetoken(t);
-            recordtokenbuf.write(s,1);
+            byte(recordtokenbuf.writeptr(1)^):=byte(ST_FILEINDEX);
             tokenwriteword(current_tokenpos.fileindex);
             last_filepos.fileindex:=current_tokenpos.fileindex;
             last_filepos.line:=0;
           end;
         if current_tokenpos.line<>last_filepos.line then
           begin
-            s:=ST_LINE;
             writetoken(t);
-            recordtokenbuf.write(s,1);
+            byte(recordtokenbuf.writeptr(1)^):=byte(ST_LINE);
             tokenwritelongint(current_tokenpos.line);
             last_filepos.line:=current_tokenpos.line;
             last_filepos.column:=0;
           end;
         if current_tokenpos.column<>last_filepos.column then
           begin
-            s:=ST_COLUMN;
             writetoken(t);
             { can the column be written packed? }
             if current_tokenpos.column<$80 then
-              begin
-                b:=$80 or current_tokenpos.column;
-                recordtokenbuf.write(b,1);
-              end
+              byte(recordtokenbuf.writeptr(1)^):=$80 or current_tokenpos.column
             else
               begin
-                recordtokenbuf.write(s,1);
+                byte(recordtokenbuf.writeptr(1)^):=byte(ST_COLUMN);
                 tokenwriteword(current_tokenpos.column);
               end;
             last_filepos.column:=current_tokenpos.column;
@@ -3618,12 +3582,12 @@ type
               }
               if (token=_INTCONST) and (pattern[1]='-') then
                 delete(pattern,1,1);
-              recordtokenbuf.write(pattern[0],1);
+              byte(recordtokenbuf.writeptr(1)^):=byte(pattern[0]);
               recordtokenbuf.write(pattern[1],length(pattern));
             end;
           _ID :
             begin
-              recordtokenbuf.write(orgpattern[0],1);
+              byte(recordtokenbuf.writeptr(1)^):=byte(orgpattern[0]);
               recordtokenbuf.write(orgpattern[1],length(orgpattern));
             end;
           else
@@ -3661,14 +3625,11 @@ type
 
     function tscannerfile.readtoken: ttoken;
       var
-        b,b2 : byte;
+        b : byte;
       begin
-        replaytokenbuf.read(b,1);
+        b:=byte(replaytokenbuf.readptr(1)^);
         if (b and $80)<>0 then
-          begin
-            replaytokenbuf.read(b2,1);
-            result:=ttoken(((b and $7f) shl 8) or b2);
-          end
+          result:=ttoken(((b and $7f) shl 8) or byte(replaytokenbuf.readptr(1)^))
         else
           result:=ttoken(b);
       end;
@@ -3749,19 +3710,19 @@ type
             _INTCONST,
             _REALNUMBER :
               begin
-                replaytokenbuf.read(pattern[0],1);
+                byte(pattern[0]):=byte(replaytokenbuf.readptr(1)^);
                 replaytokenbuf.read(pattern[1],length(pattern));
                 orgpattern:='';
               end;
             _ID :
               begin
-                replaytokenbuf.read(orgpattern[0],1);
+                byte(orgpattern[0]):=byte(replaytokenbuf.readptr(1)^);
                 replaytokenbuf.read(orgpattern[1],length(orgpattern));
                 pattern:=upper(orgpattern);
               end;
             _GENERICSPECIALTOKEN:
               begin
-                replaytokenbuf.read(specialtoken,1);
+                byte(specialtoken):=byte(replaytokenbuf.readptr(1)^);
                 { packed column? }
                 if (ord(specialtoken) and $80)<>0 then
                   begin

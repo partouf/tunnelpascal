@@ -254,13 +254,10 @@ implementation
 
 
     procedure tarobjectwriter.writesym(const sym:string);
-      var
-        c : char;
       begin
-        c:=#0;
-        symreloc.write(objpos,4);
+        longint(symreloc.writeptr(4)^):=objpos;
         symstr.write(sym[1],length(sym));
-        symstr.write(c,1);
+        char(symstr.writeptr(1)^):=#0;
       end;
 
 
@@ -299,10 +296,9 @@ implementation
            for i:=0to relocs-1 do
             begin
               symreloc.seek(i*4);
-              symreloc.read(l,4);
+              l:=longint(symreloc.readptr(4)^);
               symreloc.seek(i*4);
-              l:=lsb2msb(l+fixup);
-              symreloc.write(l,4);
+              longint(symreloc.writeptr(4)^):=lsb2msb(l+fixup);
             end;
            createarhdr('',4+symreloc.size+symstr.size,'0','0','0');
            arf.Write(arhdr,sizeof(tarhdr));

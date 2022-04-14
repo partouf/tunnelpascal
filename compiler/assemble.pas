@@ -2489,11 +2489,9 @@ Implementation
                    we do not increase the size of section }
                  TmpDataPos:=eabi_section.Data.Pos;
                  eabi_section.Data.seek(1);
-                 ddword:=eabi_section.Size-1;
-                 eabi_section.Data.write(ddword,4);
+                 dword(eabi_section.Data.writeptr(4)^):=eabi_section.Size-1;
                  eabi_section.Data.seek(12);
-                 ddword:=eabi_section.Size-1-4-6;
-                 eabi_section.Data.write(ddword,4);
+                 dword(eabi_section.Data.writeptr(4)^):=eabi_section.Size-1-4-6;
                  eabi_section.Data.Seek(TmpDataPos);
                end;
              else
