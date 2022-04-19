@@ -4214,6 +4214,9 @@ implementation
      level, or any higher level. Replaces the old term, simpl_expr and
      simpl2_expr.}
 
+      const
+        tgeneric_param_nodes = [typen,ordconstn,stringconstn,realconstn,setconstn,niln];
+
       function istypenode(n:tnode):boolean;inline;
       { Checks whether the given node is a type node or a VMT node containing a
         typenode. This is used in the code for inline specializations in the
@@ -4277,12 +4280,13 @@ implementation
           result:=assigned(srsym);
         end;
 
-      function generate_inline_specialization(gendef:tdef;n:tnode;filepos:tfileposinfo;parseddef:tdef;gensym:tsym;p2:tnode):tnode;
+      function generate_inline_specialization(gendef:tdef;n:tnode;filepos:tfileposinfo;parsedparam:tnode;gensym:tsym;p2:tnode):tnode;
         var
           again,
           getaddr : boolean;
           pload : tnode;
           spezcontext : tspecializationcontext;
+          memberdef : tdef;
           structdef,
           inheriteddef : tabstractrecorddef;
           callflags : tcallnodeflags;
@@ -4301,8 +4305,8 @@ implementation
               inheriteddef:=nil;
             end;
 
-          if assigned(parseddef) and assigned(gensym) and assigned(p2) then
-            gendef:=generate_specialization_phase1(spezcontext,gendef,parseddef,gensym.realname,gensym.owner,p2.fileinfo)
+          if assigned(parsedparam) and assigned(gensym) and assigned(p2) then
+            gendef:=generate_specialization_phase1(spezcontext,gendef,parsedparam,gensym.realname,gensym.owner,p2.fileinfo)
           else
             gendef:=generate_specialization_phase1(spezcontext,gendef);
           case gendef.typ of
@@ -4382,18 +4386,18 @@ implementation
                 begin
                   result:=nil;
                   { check if it's a method/class method }
-                  if is_member_read(gensym,gensym.owner,result,parseddef) then
+                  if is_member_read(gensym,gensym.owner,result,memberdef) then
                     begin
                       { if we are accessing a owner procsym from the nested }
                       { class we need to call it as a class member }
                       if (gensym.owner.symtabletype in [ObjectSymtable,recordsymtable]) and
-                          assigned(current_structdef) and (current_structdef<>parseddef) and is_owned_by(current_structdef,parseddef) then
-                        result:=cloadvmtaddrnode.create(ctypenode.create(parseddef));
+                          assigned(current_structdef) and (current_structdef<>memberdef) and is_owned_by(current_structdef,memberdef) then
+                        result:=cloadvmtaddrnode.create(ctypenode.create(memberdef));
                       { not srsymtable.symtabletype since that can be }
                       { withsymtable as well                          }
                       if (gensym.owner.symtabletype in [ObjectSymtable,recordsymtable]) then
                         begin
-                          do_member_read(tabstractrecorddef(parseddef),getaddr,gensym,result,again,[],spezcontext);
+                          do_member_read(tabstractrecorddef(memberdef),getaddr,gensym,result,again,[],spezcontext);
                           spezcontext:=nil;
                         end
                       else
@@ -4427,7 +4431,7 @@ implementation
       label
         SubExprStart;
       var
-        p1,p2,ptmp : tnode;
+        p1,p2,ptmp,parsedparam : tnode;
         oldt    : Ttoken;
         filepos : tfileposinfo;
         gendef,parseddef : tdef;
@@ -4483,7 +4487,7 @@ implementation
                    if getgenericsym(p1,gensym) and
                       { Attention: when nested specializations are supported
                                    p2 could be a loadn if a "<" follows }
-                      istypenode(p2) and
+                      (istypenode(p2) or (p2.nodetype in tgeneric_param_nodes)) and
                        (m_delphi in current_settings.modeswitches) and
                        { TODO : add _LT, _LSHARPBRACKET for nested specializations }
                        (token in [_GT,_RSHARPBRACKET,_COMMA]) then
@@ -4495,12 +4499,18 @@ implementation
                          gendef:=gettypedef(tspecializenode(p1).sym)
                        else
                          gendef:=nil;
-                       parseddef:=gettypedef(p2);
+                       if p2.nodetype=loadvmtaddrn then
+                         parsedparam:=tloadvmtaddrnode(p2).left
+                       else
+                         parsedparam:=p2;
+                       if not assigned(parsedparam.resultdef) then
+                         internalerror(2022012101);
+                       parseddef:=parsedparam.resultdef;
 
                        { check the hints for parseddef }
                        check_hints(parseddef.typesym,parseddef.typesym.symoptions,parseddef.typesym.deprecatedmsg,p1.fileinfo);
 
-                       ptmp:=generate_inline_specialization(gendef,p1,filepos,parseddef,gensym,p2);
+                       ptmp:=generate_inline_specialization(gendef,p1,filepos,parsedparam,gensym,p2);
 
                        { we don't need these nodes anymore }
                        p1.free;

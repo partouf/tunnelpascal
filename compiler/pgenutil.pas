@@ -34,13 +34,13 @@ uses
   { parser }
   pgentype,
   { symtable }
-  symtype,symdef,symbase;
+  node,symtype,symdef,symbase;
 
-    procedure generate_specialization(var tt:tdef;parse_class_parent:boolean;const _prettyname:string;parsedtype:tdef;const symname:string;parsedpos:tfileposinfo);inline;
+    procedure generate_specialization(var tt:tdef;parse_class_parent:boolean;const _prettyname:string;parsedparam:tnode;const symname:string;parsedpos:tfileposinfo);inline;
     procedure generate_specialization(var tt:tdef;parse_class_parent:boolean;const _prettyname:string);inline;
     function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef):tdef;inline;
     function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef;const symname:string;symtable:tsymtable):tdef;inline;
-    function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef;parsedtype:tdef;const symname:string;symtable:tsymtable;parsedpos:tfileposinfo):tdef;
+    function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef;parsedparam:tnode;const symname:string;symtable:tsymtable;parsedpos:tfileposinfo):tdef;
     function generate_specialization_phase2(context:tspecializationcontext;genericdef:tstoreddef;parse_class_parent:boolean;const _prettyname:ansistring):tdef;
     function check_generic_constraints(genericdef:tstoreddef;paramlist:tfpobjectlist;poslist:tfplist):boolean;
     function parse_generic_parameters(allowconstraints:boolean):tfphashobjectlist;
@@ -72,7 +72,7 @@ uses
   symconst,symsym,symtable,defcmp,defutil,procinfo,
   { modules }
   fmodule,
-  node,nobj,ncon,
+  nobj,ncon,
   { parser }
   scanner,
   pbase,pexpr,pdecsub,ptype,psub,pparautl,pdecl;
@@ -489,7 +489,7 @@ uses
           end;
       end;
 
-    function parse_generic_specialization_types_internal(paramlist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring;parsedtype:tdef;parsedpos:tfileposinfo):boolean;
+    function parse_generic_specialization_types_internal(paramlist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring;parsedparam:tnode;parsedpos:tfileposinfo):boolean;
       var
         old_block_type : tblock_type;
         first : boolean;
@@ -514,16 +514,27 @@ uses
         { if parsedtype is set, then the first type identifer was already parsed
           (happens in inline specializations) and thus we only need to parse
           the remaining types and do as if the first one was already given }
-        first:=not assigned(parsedtype);
-        if assigned(parsedtype) then
+        first:=not assigned(parsedparam);
+        if assigned(parsedparam) then
           begin
-            paramlist.Add(parsedtype.typesym);
-            module:=find_module_from_symtable(parsedtype.owner);
+            if parsedparam.nodetype<>typen then
+              paramlist.Add(create_generic_constsym(parsedparam.resultdef,parsedparam,constprettyname))
+            else
+              begin
+                constprettyname:='';
+                paramlist.Add(parsedparam.resultdef.typesym);
+              end;
+            module:=find_module_from_symtable(parsedparam.resultdef.owner);
             if not assigned(module) then
               internalerror(2016112801);
-            namepart:='_$'+hexstr(module.moduleid,8)+'$$'+parsedtype.unique_id_str;
+            namepart:='_$'+hexstr(module.moduleid,8)+'$$'+parsedparam.resultdef.unique_id_str;
+            if constprettyname<>'' then
+              namepart:=namepart+'$$'+constprettyname;
             specializename:='$'+namepart;
-            prettyname:=parsedtype.fullownerhierarchyname(true)+parsedtype.typesym.prettyname;
+            if constprettyname<>'' then
+              prettyname:=constprettyname
+            else
+              prettyname:=parsedparam.resultdef.fullownerhierarchyname(true)+parsedparam.resultdef.typesym.prettyname;
             if assigned(poslist) then
               begin
                 New(parampos);
@@ -658,7 +669,7 @@ uses
 {$pop}
 
 
-    function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef;parsedtype:tdef;const symname:string;symtable:tsymtable;parsedpos:tfileposinfo):tdef;
+    function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef;parsedparam:tnode;const symname:string;symtable:tsymtable;parsedpos:tfileposinfo):tdef;
       var
         found,
         err : boolean;
@@ -697,7 +708,7 @@ uses
             internalerror(2019112401);
           end;
 
-        if not assigned(parsedtype) and not try_to_consume(_LT) then
+        if not assigned(parsedparam) and not try_to_consume(_LT) then
           begin
             consume(_LSHARPBRACKET);
             { handle "<>" }
@@ -714,7 +725,7 @@ uses
         context:=tspecializationcontext.create;
 
         { Parse type parameters }
-        err:=not parse_generic_specialization_types_internal(context.paramlist,context.poslist,context.prettyname,context.specializename,parsedtype,parsedpos);
+        err:=not parse_generic_specialization_types_internal(context.paramlist,context.poslist,context.prettyname,context.specializename,parsedparam,parsedpos);
         if err then
           begin
             if not try_to_consume(_GT) then
@@ -1417,12 +1428,12 @@ uses
       end;
 
 
-    procedure generate_specialization(var tt:tdef;parse_class_parent:boolean;const _prettyname:string;parsedtype:tdef;const symname:string;parsedpos:tfileposinfo);
+    procedure generate_specialization(var tt:tdef;parse_class_parent:boolean;const _prettyname:string;parsedparam:tnode;const symname:string;parsedpos:tfileposinfo);
       var
         context : tspecializationcontext;
         genericdef : tstoreddef;
       begin
-        genericdef:=tstoreddef(generate_specialization_phase1(context,tt,parsedtype,symname,nil,parsedpos));
+        genericdef:=tstoreddef(generate_specialization_phase1(context,tt,parsedparam,symname,nil,parsedpos));
         if genericdef<>generrordef then
           genericdef:=tstoreddef(generate_specialization_phase2(context,genericdef,parse_class_parent,_prettyname));
         tt:=genericdef;
