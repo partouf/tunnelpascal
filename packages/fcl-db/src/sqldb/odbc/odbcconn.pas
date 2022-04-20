@@ -196,7 +196,8 @@ var
   NativeError, NativeError1: SQLINTEGER;
   TextLength:SQLSMALLINT;
   Res:SQLRETURN;
-  SqlState, SQLState1, MessageText, TotalMessage: string;
+  SqlState, SQLState1, TotalMessage: string;
+  MessageText: RawByteString;
   RecNumber:SQLSMALLINT;
 begin
   // check result
@@ -226,6 +227,12 @@ begin
         SetLength(MessageText,TextLength); // note: ansistrings of Length>0 are always terminated by a #0 character, so this is safe
         // actual call
         Res:=SQLGetDiagRec(HandleType,AHandle,RecNumber,@(SqlState[1]),NativeError,@(MessageText[1]),Length(MessageText)+1,TextLength);
+        // convert from ANSI to DefaultSystemCodePage
+        if TEncoding.ANSI.CodePage<>DefaultSystemCodePage then
+        begin
+          SetCodePage(MessageText, TEncoding.ANSI.CodePage, False);
+          SetCodePage(MessageText, CP_ACP, True);
+        end;
         CheckSQLGetDiagResult(Res);
       end;
       // add to TotalMessage
