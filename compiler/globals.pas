@@ -1567,15 +1567,6 @@ implementation
      initdoneprocs : TFPList = nil;
 
 
-   procedure allocinitdoneprocs;
-     begin
-       { Avoid double initialization }
-       if assigned(initdoneprocs) then
-         exit;
-       initdoneprocs:=tfplist.create;
-     end;
-
-
    procedure register_initdone_proc(init,done:tprocedure);
      var
        entry : pinitdoneentry;
@@ -1583,14 +1574,7 @@ implementation
        new(entry);
        entry^.init:=init;
        entry^.done:=done;
-       { Do not rely on the fact that
-         globals unit initialization code
-         has already been executed.
-         Unit initialization order is too
-         uncertian for that. PM }
-       if not assigned(initdoneprocs) then
-         allocinitdoneprocs;
-       initdoneprocs.add(entry);
+       TFPList.AddOnDemand(initdoneprocs,entry);
      end;
 
 
@@ -1617,20 +1601,6 @@ implementation
          with pinitdoneentry(initdoneprocs[i])^ do
            if assigned(done) then
              done();
-     end;
-
-
-   procedure freeinitdoneprocs;
-     var
-       i : longint;
-     begin
-       if not assigned(initdoneprocs) then
-         exit;
-       for i:=0 to initdoneprocs.count-1 do
-         dispose(pinitdoneentry(initdoneprocs[i]));
-       initdoneprocs.free;
-       { Reset variable, to be on the safe side }
-       initdoneprocs:=nil;
      end;
 
 
@@ -1736,12 +1706,11 @@ implementation
      end;
 
 initialization
-  allocinitdoneprocs;
 {$ifdef LLVM}
   cgbackend:=cg_llvm;
 {$else}
   cgbackend:=cg_fpc;
 {$endif}
 finalization
-  freeinitdoneprocs;
+  tfplist.FreeAndNilDisposing(initdoneprocs,TypeInfo(tinitdoneentry));
 end.

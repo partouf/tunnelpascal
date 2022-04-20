@@ -114,8 +114,11 @@ type
     { Add to list, creating it if required. }
     class procedure AddOnDemand(var Lst: TFPList; Item: Pointer); static;
 
-    { FreeAndNil the list, and its items as TObjects. }
+    { FreeAndNil the list, and free its items as TObjects. }
     class procedure FreeAndNilAsObjects(var LstStore: TFPList); static;
+
+    { FreeAndNil the list, and dispose() its items. 'ItemType' is TypeInfo() of items. }
+    class procedure FreeAndNilDisposing(var LstStore: TFPList; ItemType: Pointer); static;
   end;
 
 
@@ -1055,6 +1058,26 @@ begin
       LstStore := nil;
       for I := 0 to Lst.Count-1 do
         TObject(Lst.FList^[I]).Free;
+      Lst.Free;
+    end;
+end;
+
+class procedure TFPList.FreeAndNilDisposing(var LstStore: TFPList; ItemType: Pointer);
+var
+  Lst: TFPList;
+  P: Pointer;
+  I: SizeInt;
+begin
+  Lst := LstStore;
+  if Assigned(Lst) then
+    begin
+      LstStore := nil;
+      for I := 0 to Lst.Count-1 do
+        begin
+          P := Lst.FList^[I];
+          FinalizeArray(P,ItemType,1);
+          FreeMem(P);
+        end;
       Lst.Free;
     end;
 end;
