@@ -759,6 +759,8 @@ uses
             begin
               newtype:=ctypesym.create(def.fullownerhierarchyname(false)+typName[def.typ]+'$'+def.unique_id_str,def);
               newtype.owner:=def.owner;
+              { ensure that there's no warning }
+              newtype.refs:=1;
             end;
           if not assigned(newtype) then
             internalerror(2021020904);
@@ -924,15 +926,36 @@ uses
 
       function handle_procvars(genericparams:tfphashlist;callerparams:tfplist;target_def:tdef;caller_def:tdef):boolean;
         var
+          newparams : tfphashlist;
+
+        procedure handle_generic_param(targetparadef,callerparadef:tdef);
+          var
+            key : string;
+            index : integer;
+          begin
+            if not assigned(callerparadef.typesym) then
+              internalerror(2021020908);
+
+            key:=generic_param_hash(targetparadef);
+
+            { the generic param must not already be used }
+            index:=genericparams.findindexof(key);
+            if index<0 then
+              begin
+                { add the type to the list }
+                index:=newparams.findindexof(key);
+                if index<0 then
+                  newparams.add(key,callerparadef.typesym);
+              end;
+          end;
+
+        var
           i,j : integer;
           paravar : tparavarsym;
           target_proc,
           caller_proc : tprocvardef;
           target_proc_para,
           caller_proc_para : tparavarsym;
-          newparams : tfphashlist;
-          key : string;
-          index : integer;
           valid_params : integer;
         begin
           result := false;
@@ -943,6 +966,11 @@ uses
           { parameter count must match exactly
             currently default values are not considered }
           if target_proc.paras.count<>caller_proc.paras.count then
+            exit;
+
+          { a mixture of functions and procedures is not allowed }
+          if (not assigned(target_proc.returndef) or is_void(target_proc.returndef)) xor
+              (not assigned(caller_proc.returndef) or is_void(caller_proc.returndef)) then
             exit;
 
           { reject generics with constants }
@@ -972,26 +1000,25 @@ uses
                   { find the generic param name in the generic def parameters }
                   j:=target_proc.genericdef.genericparas.findindexof(paravar.vardef.typesym.name);
 
-                  target_def:=tparavarsym(target_proc.paras[j]).vardef;
-                  caller_def:=caller_proc_para.vardef;
-
-                  if not assigned(caller_def.typesym) then
-                    internalerror(2021020908);
-
-                  key:=generic_param_hash(target_def);
-
-                  { the generic param must not already be used }
-                  index:=genericparams.findindexof(key);
-                  if index<0 then
-                    begin
-                      { add the type to the list }
-                      index:=newparams.findindexof(key);
-                      if index<0 then
-                        newparams.add(key,caller_def.typesym);
-                    end;
+                  handle_generic_param(ttypesym(target_proc.genericparas[j]).typedef,caller_proc_para.vardef);
                 end;
 
               inc(valid_params);
+            end;
+
+          if assigned(target_proc.returndef) and not is_void(target_proc.returndef) then
+            begin
+              { or check for exact? }
+              if compare_defs(caller_proc.returndef,target_proc.returndef,nothingn)<te_equal then
+                begin
+                  newparams.free;
+                  exit(false);
+                end;
+
+              if sp_generic_para in target_proc.returndef.typesym.symoptions then
+                begin
+                  handle_generic_param(target_proc.returndef,caller_proc.returndef);
+                end;
             end;
 
           { if the count of valid params matches the target then
@@ -1004,12 +1031,39 @@ uses
           newparams.free;
         end;
 
+      function maybe_inherited_specialization(givendef,desireddef:tstoreddef;out basedef:tstoreddef):boolean;
+        begin
+          result:=false;
+          basedef:=nil;
+          if givendef.typ<>objectdef then
+            begin
+              result:=givendef.is_specialization and (givendef.genericdef=desireddef.genericdef);
+              if result then
+                basedef:=givendef;
+            end
+          else
+            begin
+              while assigned(givendef) do
+                begin
+                  if givendef.is_specialization and (givendef.genericdef=desireddef.genericdef) then
+                    begin
+                      basedef:=givendef;
+                      result:=true;
+                      break;
+                    end;
+
+                  givendef:=tobjectdef(givendef).childof;
+                end;
+            end;
+        end;
+
       { compare generic parameters <T> with call node parameters. }
       function is_possible_specialization(callerparams:tfplist;genericdef:tprocdef;out unnamed_syms:tfplist;out genericparams:tfphashlist):boolean;
         var
           i,j,
           count : integer;
           paravar : tparavarsym;
+          base_def : tstoreddef;
           target_def,
           caller_def : tdef;
           target_key : string;
@@ -1127,11 +1181,10 @@ uses
                   target_def:=tobjectdef(target_def).childof;
                 end
               { handle generic specializations }
-              else if tstoreddef(caller_def).is_specialization and 
-                tstoreddef(target_def).is_specialization and
-                (tstoreddef(caller_def).genericdef=tstoreddef(target_def).genericdef) then
+              else if tstoreddef(target_def).is_specialization and
+                maybe_inherited_specialization(tstoreddef(caller_def),tstoreddef(target_def),base_def) then
                 begin
-                  handle_specializations(genericparams,tstoreddef(target_def),tstoreddef(caller_def));
+                  handle_specializations(genericparams,tstoreddef(target_def),base_def);
                   continue;
                 end
               { handle all other generic params }
