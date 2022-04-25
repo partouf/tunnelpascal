@@ -45,19 +45,23 @@ unit rgobj;
     type
       {
         The interference bitmap contains of 2 layers:
-          layer 1 - 256*256 blocks with pointers to layer 2 blocks
+          layer 1 - size1*size1 blocks (max 256*256) with pointers to layer 2 blocks
           layer 2 - blocks of 32*256 (32 bytes = 256 bits)
       }
-      Tinterferencebitmap2 = array[byte] of set of byte;
       Pinterferencebitmap2 = ^Tinterferencebitmap2;
-      Tinterferencebitmap1 = array[byte] of Pinterferencebitmap2;
-      pinterferencebitmap1 = ^tinterferencebitmap1;
+      Tinterferencebitmap2 = record
+        rows : array[byte] of set of byte;
+        next : Pinterferencebitmap2;
+      end;
+      PPinterferencebitmap2 = ^Pinterferencebitmap2;
 
       Tinterferencebitmap=class
       private
-        maxx1,
-        maxy1    : byte;
-        fbitmap  : pinterferencebitmap1;
+        size1 : sizeuint;
+        fbitmap  : ppinterferencebitmap2;
+        pages : Pinterferencebitmap2;
+        fbitmapStatic : array[0..1,0..1] of pinterferencebitmap2;
+        procedure grow1(newsize1:sizeuint);
         function getbitmap(x,y:tsuperregister):boolean;
         procedure setbitmap(x,y:tsuperregister;b:boolean);
       public
@@ -366,60 +370,78 @@ unit rgobj;
     constructor tinterferencebitmap.create;
       begin
         inherited create;
-        maxx1:=1;
-        fbitmap:=AllocMem(sizeof(tinterferencebitmap1)*2);
+        size1:=length(fbitmapStatic);
+        fbitmap:=ppinterferencebitmap2(fbitmapStatic[0]);
       end;
 
 
     destructor tinterferencebitmap.destroy;
 
-    var i,j:byte;
+    var page,nextpage : pinterferencebitmap2;
 
     begin
-      for i:=0 to maxx1 do
-        for j:=0 to maxy1 do
-          if assigned(fbitmap[i,j]) then
-            dispose(fbitmap[i,j]);
-      freemem(fbitmap);
+      page:=pages;
+      while assigned(page) do
+        begin
+          nextpage:=page^.next;
+          dispose(page);
+          page:=nextpage;
+        end;
+      if fbitmap<>ppinterferencebitmap2(fbitmapStatic[0]) then
+        freemem(fbitmap);
     end;
+
+
+    procedure tinterferencebitmap.grow1(newsize1:sizeuint);
+      var
+        newfbitmap : ppinterferencebitmap2;
+        y : sizeint;
+      begin
+        newsize1:=min(newsize1+newsize1 div 2,256);
+        newfbitmap:=allocmem(newsize1*newsize1*sizeof(pinterferencebitmap2));
+        for y:=0 to sizeint(size1)-1 do
+          move(fbitmap[sizeuint(y)*size1],newfbitmap[sizeuint(y)*newsize1],size1*sizeof(pinterferencebitmap2));
+        if fbitmap<>ppinterferencebitmap2(fbitmapStatic[0]) then
+          freemem(fbitmap);
+        fbitmap:=newfbitmap;
+        size1:=newsize1;
+      end;
 
 
     function tinterferencebitmap.getbitmap(x,y:tsuperregister):boolean;
       var
         page : pinterferencebitmap2;
       begin
-        result:=false;
-        if (x shr 8>maxx1) then
-          exit;
-        page:=fbitmap[x shr 8,y shr 8];
+        if (x shr 8>=size1) or (y shr 8>=size1) then
+          exit(false);
+        page:=fbitmap[y shr 8*size1+x shr 8];
         result:=assigned(page) and
-          ((x and $ff) in page^[y and $ff]);
+          (byte(x) in page^.rows[byte(y)]);
       end;
 
 
     procedure tinterferencebitmap.setbitmap(x,y:tsuperregister;b:boolean);
       var
-        x1,y1 : byte;
+        x1,y1 : sizeuint;
+        page : Pinterferencebitmap2;
       begin
         x1:=x shr 8;
         y1:=y shr 8;
-        if x1>maxx1 then
+        if (x1>=size1) or (y1>=size1) then
+          grow1(max(x1+1,y1+1));
+        page:=fbitmap[y1*size1+x1];
+        if not assigned(page) then
           begin
-            reallocmem(fbitmap,sizeof(tinterferencebitmap1)*(x1+1));
-            fillchar(fbitmap[maxx1+1],sizeof(tinterferencebitmap1)*(x1-maxx1),0);
-            maxx1:=x1;
-          end;
-        if not assigned(fbitmap[x1,y1]) then
-          begin
-            if y1>maxy1 then
-              maxy1:=y1;
-            new(fbitmap[x1,y1]);
-            fillchar(fbitmap[x1,y1]^,sizeof(tinterferencebitmap2),0);
+            new(page);
+            fbitmap[y1*size1+x1]:=page;
+            page^.next:=pages;
+            pages:=page;
+            fillchar(page^.rows,sizeof(tinterferencebitmap2.rows),0);
           end;
         if b then
-          include(fbitmap[x1,y1]^[y and $ff],(x and $ff))
+          include(page^.rows[byte(y)],byte(x))
         else
-          exclude(fbitmap[x1,y1]^[y and $ff],(x and $ff));
+          exclude(page^.rows[byte(y)],byte(x));
       end;
 
 
