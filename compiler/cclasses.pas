@@ -386,6 +386,54 @@ type
        end;
 
 {********************************************
+              TIntrusiveDeque
+********************************************}
+
+{ Also doubly-linked list, but lightweight (any management besides directly related to the deque concept is on user's behalf)
+  and intrusive: you store nodes inside your objects as
+
+  type
+    PMyObject = ^TMyObject;
+    TMyObject = object
+      ...
+      node: TIntrusiveDequeNode;
+      ...
+    end;
+
+  pass them to deque methods as
+
+  deque.PushBack(@myObj.node),
+
+  and recover objects from node pointers by subtracting their offsets:
+
+  myObj := PMyObject(pointer(nodePtr) - PtrUint(@PMyObject(nil)^.node)). }
+
+       PIntrusiveDequeNode = ^TIntrusiveDequeNode;
+       TIntrusiveDequeNode = record
+          Next,Prev : PIntrusiveDequeNode;
+       end;
+
+       TIntrusiveDequeNodeCallback = procedure(node: PIntrusiveDequeNode; param: pointer);
+
+       TIntrusiveDeque = object
+          First,Last : PIntrusiveDequeNode;
+          procedure Init;
+          procedure Done;
+          function  Empty:boolean; {$ifdef CCLASSESINLINE}inline;{$endif}
+          procedure Clear;
+          { Callback is allowed to destroy the node. }
+          procedure Clear(cb : TIntrusiveDequeNodeCallback; param : pointer);
+          procedure PushFront(Item : PIntrusiveDequeNode);
+          procedure PushBack(Item : PIntrusiveDequeNode);
+          procedure Remove(Item : PIntrusiveDequeNode);
+          function  PopFront:PIntrusiveDequeNode;
+          function  PopBack:PIntrusiveDequeNode;
+          { These make p empty. }
+          procedure PushDequeFront(var p : TIntrusiveDeque);
+          procedure PushDequeBack(var p : TIntrusiveDeque);
+       end;
+
+{********************************************
                 TCmdStrList
 ********************************************}
 
@@ -2411,6 +2459,172 @@ end;
         FFirst:=nil;
         FLast:=nil;
         FCount:=0;
+      end;
+
+
+{****************************************************************************
+                             TIntrusiveDeque
+ ****************************************************************************}
+
+    procedure TIntrusiveDeque.Init;
+      begin
+        First:=nil;
+        Last:=nil;
+      end;
+
+
+    procedure TIntrusiveDeque.Done;
+      begin
+        First:=nil;
+        Last:=nil;
+      end;
+
+
+    function  TIntrusiveDeque.Empty:boolean;
+      begin
+        result:=not Assigned(First);
+      end;
+
+
+    procedure TIntrusiveDeque.Clear;
+      begin
+        First:=nil;
+        Last:=nil;
+      end;
+
+
+    procedure TIntrusiveDeque.Clear(cb : TIntrusiveDequeNodeCallback; param : pointer);
+      var
+        Cur,Next : PIntrusiveDequeNode;
+      begin
+        Cur:=First;
+        First:=nil;
+        Last:=nil;
+        while Assigned(Cur) do
+          begin
+            Next:=Cur^.Next;
+            cb(Cur,param);
+            Cur:=Next;
+          end;
+      end;
+
+
+    procedure TIntrusiveDeque.PushFront(Item : PIntrusiveDequeNode);
+      var
+        OrigFirst : PIntrusiveDequeNode;
+      begin
+        OrigFirst:=First;
+        Item^.Next:=OrigFirst;
+        Item^.Prev:=nil;
+        First:=Item;
+        if Assigned(OrigFirst) then
+          OrigFirst^.Prev:=Item
+        else
+          Last:=Item;
+      end;
+
+
+    procedure TIntrusiveDeque.PushBack(Item : PIntrusiveDequeNode);
+      var
+        OrigLast : PIntrusiveDequeNode;
+      begin
+        OrigLast:=Last;
+        Item^.Next:=nil;
+        Item^.Prev:=OrigLast;
+        Last:=Item;
+        if Assigned(OrigLast) then
+          OrigLast^.Next:=Item
+        else
+          First:=Item;
+      end;
+
+
+    procedure TIntrusiveDeque.Remove(Item : PIntrusiveDequeNode);
+      var
+        Next,Prev : PIntrusiveDequeNode;
+      begin
+        Next:=Item^.Next;
+        Prev:=Item^.Prev;
+        if Assigned(Next) then
+          Next^.Prev:=Prev
+        else
+          Last:=Prev;
+        if Assigned(Prev) then
+          Prev^.Next:=Next
+        else
+          First:=Next;
+      end;
+
+
+    function TIntrusiveDeque.PopFront:PIntrusiveDequeNode;
+      var
+        NewFirst : PIntrusiveDequeNode;
+      begin
+        result:=First;
+        if Assigned(result) then
+          begin
+            NewFirst:=result^.Next;
+            First:=NewFirst;
+            if Assigned(NewFirst) then
+              NewFirst^.Prev:=nil
+            else
+              Last:=nil;
+          end;
+      end;
+
+
+    function TIntrusiveDeque.PopBack:PIntrusiveDequeNode;
+      var
+        NewLast : PIntrusiveDequeNode;
+      begin
+        result:=Last;
+        if Assigned(result) then
+          begin
+            NewLast:=result^.Prev;
+            Last:=NewLast;
+            if Assigned(NewLast) then
+              NewLast^.Next:=nil
+            else
+              First:=nil;
+          end;
+      end;
+
+
+    procedure TIntrusiveDeque.PushDequeFront(var p : TIntrusiveDeque);
+      var
+        PLast,OrigFirst : PIntrusiveDequeNode;
+      begin
+        PLast:=p.Last;
+        if not Assigned(PLast) then
+          exit;
+        OrigFirst:=First;
+        First:=p.First;
+        PLast^.Next:=OrigFirst;
+        p.First:=nil;
+        p.Last:=nil;
+        if Assigned(OrigFirst) then
+          OrigFirst^.Prev:=PLast
+        else
+          Last:=PLast;
+      end;
+
+
+    procedure TIntrusiveDeque.PushDequeBack(var p : TIntrusiveDeque);
+      var
+        PFirst,OrigLast : PIntrusiveDequeNode;
+      begin
+        PFirst:=p.First;
+        if not Assigned(PFirst) then
+          exit;
+        OrigLast:=Last;
+        Last:=p.Last;
+        PFirst^.Prev:=OrigLast;
+        p.First:=nil;
+        p.Last:=nil;
+        if Assigned(OrigLast) then
+          OrigLast^.Next:=PFirst
+        else
+          First:=PFirst;
       end;
 
 
