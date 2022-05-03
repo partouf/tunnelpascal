@@ -308,6 +308,7 @@ interface
       TSubRegisterSet = set of TSubRegister;
 
       TSuperRegister = type word;
+      PSuperRegister = ^TSuperRegister;
 
       {
         The new register coding:
@@ -364,27 +365,36 @@ interface
         shuffles : array[1..1] of word;
       end;
 
-      Tsuperregisterarray=array[0..$ffff] of Tsuperregister;
-      Psuperregisterarray=^Tsuperregisterarray;
+      Tsuperregistercomparefunc = function(a, b: TSuperRegister; param: pointer): boolean;
 
-      Tsuperregisterworklist=object
-        buflength,
-        buflengthinc,
-        length:word;
-        buf:Psuperregisterarray;
+      Tsuperregisterworkhashlist=object
         constructor init;
-        constructor copyfrom(const x:Tsuperregisterworklist);
+        constructor copyfrom(const x:Tsuperregisterworkhashlist);
         destructor  done;
         procedure clear;
         procedure add(s:tsuperregister);
         function addnodup(s:tsuperregister): boolean;
         { returns the last element and removes it from the list }
         function get:tsuperregister;
-        function readidx(i:word):tsuperregister;
-        procedure deleteidx(i:word);
+        procedure deleteidx(i:SizeInt);
         function delete(s:tsuperregister):boolean;
+        procedure sort(less:Tsuperregistercomparefunc; param:pointer);
+      private
+        { Either a region is allocated for FItems+h+next, or the table is empty with hmask=0, fake 'h' pointing to a single -1, and distinctive FItems=nil. }
+        FItems : Psuperregister;
+        h : PInt32; { Count of 'h's is always hmask+1 and is always a power of two. h[i]=-1 means empty, h[i]=hi>=0 references FItems[hi]. }
+        next : PInt32; { Chaining to allow duplicates and resolve collisions. }
+        FNItems : int32; { signed to allow subtracting one without surprises... }
+        hmask,minItems,maxItems : uint32;
+        procedure rehash(forItems:SizeUint);
+        class function allocateregion(
+          nh,amaxitems:uint32; out aitems:Psuperregister; out ah:PInt32; out anext:PInt32):SizeUint; static;
+        class procedure rebuildh(aitems:Psuperregister; ah,anext:PInt32; ahmask,anitems:int32); static;
+      public
+        property length: int32 read FNItems;
+        property buf: Psuperregister read FItems;
       end;
-      psuperregisterworklist=^tsuperregisterworklist;
+      Psuperregisterworkhashlist = ^Tsuperregisterworkhashlist;
 
     const
        { alias for easier understanding }
@@ -535,115 +545,259 @@ implementation
       verbose,
       cutils;
 
+
 {******************************************************************************
-                             tsuperregisterworklist
+                          tsuperregisterworkhashlist
 ******************************************************************************}
 
-    constructor tsuperregisterworklist.init;
+    const
+      SuperRegisterWorkHashList_EmptyH: int32 = -1;
 
+
+    constructor Tsuperregisterworkhashlist.init;
     begin
-      length:=0;
-      buflength:=0;
-      buflengthinc:=16;
-      buf:=nil;
-    end;
-
-    constructor Tsuperregisterworklist.copyfrom(const x:Tsuperregisterworklist);
-
-    begin
-      self:=x;
-      if x.buf<>nil then
-        begin
-          getmem(buf,buflength*sizeof(Tsuperregister));
-          move(x.buf^,buf^,length*sizeof(Tsuperregister));
-        end;
-    end;
-
-    destructor tsuperregisterworklist.done;
-
-    begin
-      if assigned(buf) then
-        freemem(buf);
+      h:=@SuperRegisterWorkHashList_EmptyH;
     end;
 
 
-    procedure tsuperregisterworklist.add(s:tsuperregister);
-
-    begin
-      inc(length);
-      { Need to increase buffer length? }
-      if length>=buflength then
-        begin
-          inc(buflength,buflengthinc);
-          buflengthinc:=buflengthinc*2;
-          if buflengthinc>256 then
-             buflengthinc:=256;
-          reallocmem(buf,buflength*sizeof(Tsuperregister));
-        end;
-      buf^[length-1]:=s;
-    end;
-
-
-    function tsuperregisterworklist.addnodup(s:tsuperregister): boolean;
-
-    begin
-      addnodup := false;
-      if indexword(buf^,length,s) = -1 then
-        begin
-          add(s);
-          addnodup := true;
-        end;
-    end;
-
-
-    procedure tsuperregisterworklist.clear;
-
-    begin
-      length:=0;
-    end;
-
-
-    procedure tsuperregisterworklist.deleteidx(i:word);
-
-    begin
-      if i>=length then
-        internalerror(200310144);
-      buf^[i]:=buf^[length-1];
-      dec(length);
-    end;
-
-
-    function tsuperregisterworklist.readidx(i:word):tsuperregister;
-      begin
-        if (i >= length) then
-          internalerror(2005010601);
-        result := buf^[i];
-      end;
-
-
-    function tsuperregisterworklist.get:tsuperregister;
-
-    begin
-      if length=0 then
-        internalerror(200310142);
-      dec(length);
-      get:=buf^[length];
-    end;
-
-
-    function tsuperregisterworklist.delete(s:tsuperregister):boolean;
-
+    constructor Tsuperregisterworkhashlist.copyfrom(const x:Tsuperregisterworkhashlist);
     var
-      i:longint;
-
+      datasize : SizeUint;
     begin
-      delete:=false;
-      { indexword in 1.0.x and 1.9.4 is broken }
-      i:=indexword(buf^,length,s);
-      if i<>-1 then
+      if x.FNItems=0 then
+        h:=@SuperRegisterWorkHashList_EmptyH
+      else
         begin
-          deleteidx(i);
-          delete := true;
+          datasize:=allocateregion(1+x.hmask,x.maxItems,FItems,h,next);
+          Move(x.FItems^,FItems^,datasize);
+          FNItems:=x.FNItems;
+          hmask:=x.hmask;
+          minItems:=x.minItems;
+          maxItems:=x.maxItems;
+        end;
+    end;
+
+
+    destructor Tsuperregisterworkhashlist.done;
+    begin
+      if Assigned(FItems) then
+        FreeMem(FItems);
+    end;
+
+
+    procedure Tsuperregisterworkhashlist.clear;
+    begin
+      if Assigned(FItems) then
+        begin
+          FreeMem(FItems);
+          FItems:=nil;
+          h:=@SuperRegisterWorkHashList_EmptyH;
+          FNItems:=0;
+          hmask:=0;
+          minItems:=0;
+          maxItems:=0;
+        end;
+    end;
+
+
+    procedure Tsuperregisterworkhashlist.add(s:tsuperregister);
+    var
+      ii : SizeInt;
+      hp : PInt32;
+    begin
+      ii:=FNItems;
+      if uint32(ii)=maxItems then
+        rehash(ii+1);
+      FItems[ii]:=s;
+      hp:=h+s and hmask;
+      next[ii]:=hp^;
+      hp^:=ii;
+      FNItems:=ii+1;
+    end;
+
+
+    function Tsuperregisterworkhashlist.addnodup(s:tsuperregister):boolean;
+    var
+      ii : SizeInt;
+    begin
+      ii:=h[s and hmask];
+      while ii>=0 do
+        begin
+          if FItems[ii]=s then
+            exit(false);
+          ii:=next[ii];
+        end;
+      add(s);
+      result:=true;
+    end;
+
+
+    function Tsuperregisterworkhashlist.get:tsuperregister;
+    var
+      ii : SizeInt;
+    begin
+      ii:=length-1;
+      if ii<0 then
+        internalerror(202205030);
+      result:=FItems[ii];
+      deleteidx(ii);
+    end;
+
+
+    procedure Tsuperregisterworkhashlist.deleteidx(i: SizeInt);
+    var
+      ii,ilast : SizeInt;
+      nextp : PInt32;
+    begin
+      if (i<0) or (i>=length) then
+        internalerror(202205031);
+      { Remove #i reference from h/next. }
+      nextp:=h+FItems[i] and hmask;
+      repeat
+        ii:=nextp^;
+        if ii=i then
+          break;
+        nextp:=next+ii;
+      until false;
+      nextp^:=next[ii];
+
+      { Move item #length-1 = #ilast to #i and fix up its reference in h/next. }
+      ilast:=length-1;
+      if i<>ilast then
+        begin
+          nextp:=h+FItems[ilast] and hmask;
+          repeat
+            ii:=nextp^;
+            if ii=ilast then
+              break;
+            nextp:=next+ii;
+          until false;
+          nextp^:=i;
+          FItems[i]:=FItems[ilast];
+          next[i]:=next[ilast];
+        end;
+
+      FNItems:=ilast;
+      if ilast<SizeInt(minItems) then
+        rehash(ilast);
+    end;
+
+
+    function Tsuperregisterworkhashlist.delete(s: tsuperregister): boolean;
+    var
+      ii : SizeInt;
+    begin
+      ii:=h[s and hmask];
+      while ii>=0 do
+        begin
+          if FItems[ii]=s then
+            begin
+              deleteidx(ii);
+              exit(true);
+            end;
+          ii:=next[ii];
+        end;
+      result:=false;
+    end;
+
+
+    procedure Tsuperregisterworkhashlist.sort(less:Tsuperregistercomparefunc; param:pointer);
+    var
+      p,ih,i:SizeUint;
+      t:Tsuperregister;
+    begin
+      if length<2 then
+        exit;
+      p:=SizeUint(1) shl BsrDWord(length-1);
+      repeat
+        for ih:=p to length-1 do
+          begin
+            i:=ih;
+            t:=buf[i];
+            repeat
+              if not less(t,buf[i-p],param) then
+                break;
+              buf[i]:=buf[i-p];
+              dec(i,p)
+            until i<p;
+            buf[i]:=t;
+          end;
+        p:=p shr 1;
+      until p=0;
+      rebuildh(FItems,h,next,hmask,FNItems);
+    end;
+
+
+    procedure Tsuperregisterworkhashlist.rehash(forItems: SizeUint);
+    var
+      newHMask,newMinItems,newMaxItems : int32;
+      newItems : Psuperregister;
+      newH,newNext : PInt32;
+    begin
+      if forItems=0 then
+        begin
+          clear;
+          exit;
+        end;
+      newMaxItems:=4+forItems+forItems div 2;
+      newHMask:=1 shl (1+BsrDWord(newMaxItems div 8 or 1))-1; { UpToPow2(newMaxItems div 8)-1. Load factor = newMaxItems/newHMask = 400% to 800%. }
+      { Well, the whole hash thing is only to prevent the slowdown in extreme cases like webtbs/tw2242, saner loads aren't even desirable:
+        for example, load factors 50..100% increase max Tsuperregisterworkhashlist data size in webtbs/tw2242 to 1 Mb up from 500 Kb without any speedup. }
+      newMinItems:=SizeUint(forItems) div 8*4;
+      if newMinItems=0 then
+        newMinItems:=1; { force rehash(0) on emptying. Not necessarily a good idea... }
+
+      allocateregion(1+newHMask,newMaxItems,newItems,newH,newNext);
+
+      Move(FItems^,newItems^,FNItems*sizeof(Tsuperregister));
+      if hmask=newHMask then
+        begin
+          { Shortcut re-adding items if hash mask hasn't changed. }
+          Move(h^,newH^,(1+newHMask)*sizeof(h^));
+          Move(next^,newNext^,FNItems*sizeof(next^));
+        end
+      else
+        rebuildh(newItems,newH,newNext,newHMask,FNItems);
+
+      if Assigned(FItems) then
+        FreeMem(FItems);
+      FItems:=newItems;
+      h:=newH;
+      next:=newNext;
+      hmask:=newHMask;
+      minItems:=newMinItems;
+      maxItems:=newMaxItems;
+    end;
+
+
+    class function Tsuperregisterworkhashlist.allocateregion(
+      nh,amaxitems:uint32; out aitems:Psuperregister; out ah:PInt32; out anext:PInt32):SizeUint;
+    var
+      hOffset,nextOffset,ofs: SizeUint;
+    begin
+      ofs:=align(sizeof(Tsuperregister)*amaxitems,sizeof(int32)); { items + align to h }
+      hOffset:=ofs;
+      ofs:=align(ofs+nh*sizeof(int32),sizeof(int32)); { + h + align to next }
+      nextOffset:=ofs;
+      result:=ofs+amaxitems*sizeof(int32); { + next }
+      aitems:=GetMem(result);
+      ah:=pointer(aitems)+hOffset;
+      anext:=pointer(aitems)+nextOffset;
+    end;
+
+
+    class procedure Tsuperregisterworkhashlist.rebuildh(aitems:Psuperregister; ah,anext:PInt32; ahmask,anitems:int32);
+    var
+      ii : SizeInt;
+      hp : PInt32;
+    begin
+      FillDWord(ah^,1+ahmask,dword(-1));
+      FillDWord(anext^,anitems,dword(-1));
+      for ii:=0 to anitems-1 do
+        begin
+          hp:=ah+aitems[ii] and ahmask;
+          anext[ii]:=hp^;
+          hp^:=ii;
         end;
     end;
 

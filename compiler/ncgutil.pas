@@ -41,7 +41,7 @@ interface
 
       pusedregvars = ^tusedregvars;
       tusedregvars = record
-        intregvars, addrregvars, fpuregvars, mmregvars: Tsuperregisterworklist;
+        intregvars, addrregvars, fpuregvars, mmregvars: Tsuperregisterworkhashlist;
       end;
 
 {
@@ -1203,16 +1203,16 @@ implementation
 
     procedure gen_sync_regvars(list:TAsmList; var rv: tusedregvars);
       var
-        count: longint;
+        i: longint;
       begin
-        for count := 1 to rv.intregvars.length do
-          cg.a_reg_sync(list,newreg(R_INTREGISTER,rv.intregvars.readidx(count-1),R_SUBWHOLE));
-        for count := 1 to rv.addrregvars.length do
-          cg.a_reg_sync(list,newreg(R_ADDRESSREGISTER,rv.addrregvars.readidx(count-1),R_SUBWHOLE));
-        for count := 1 to rv.fpuregvars.length do
-          cg.a_reg_sync(list,newreg(R_FPUREGISTER,rv.fpuregvars.readidx(count-1),R_SUBWHOLE));
-        for count := 1 to rv.mmregvars.length do
-          cg.a_reg_sync(list,newreg(R_MMREGISTER,rv.mmregvars.readidx(count-1),R_SUBWHOLE));
+        for i := 0 to rv.intregvars.length-1 do
+          cg.a_reg_sync(list,newreg(R_INTREGISTER,rv.intregvars.buf[i],R_SUBWHOLE));
+        for i := 0 to rv.addrregvars.length-1 do
+          cg.a_reg_sync(list,newreg(R_ADDRESSREGISTER,rv.addrregvars.buf[i],R_SUBWHOLE));
+        for i := 0 to rv.fpuregvars.length-1 do
+          cg.a_reg_sync(list,newreg(R_FPUREGISTER,rv.fpuregvars.buf[i],R_SUBWHOLE));
+        for i := 0 to rv.mmregvars.length-1 do
+          cg.a_reg_sync(list,newreg(R_MMREGISTER,rv.mmregvars.buf[i],R_SUBWHOLE));
       end;
 
 
