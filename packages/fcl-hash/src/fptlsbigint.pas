@@ -7,13 +7,15 @@
 {$MODE OBJFPC}
 {$h+}
 {$MODESWITCH advancedrecords}
+{$R-}
+
 unit fpTLSBigInt;
 
 interface
 
 uses SysUtils;
 
-{$DEFINE BIGINT_DEBUG}         // Enable debug output/functions for BitInt unit
+{ $DEFINE BIGINT_DEBUG}         // Enable debug output/functions for BitInt unit
 
 const
   // Maintain a number of precomputed variables when doing reduction
