@@ -369,7 +369,13 @@ var
   List: TStringList;
   ASNType, ASNSize: integer;
 begin
-  RSA:=Default(TX509RSAPrivateKey);
+  if PrivateKeyDER = nil then begin
+    RSA := nil;
+    exit;
+  end
+  else
+    RSA:=Default(TX509RSAPrivateKey);
+    
   List:=TStringList.Create;
   try
     ASNParse(PrivateKeyDER,List);
