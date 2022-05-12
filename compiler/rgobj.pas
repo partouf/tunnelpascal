@@ -78,7 +78,6 @@ unit rgobj;
       Tmoveins=class(Tlinkedlistitem)
         moveset:Tmoveset;
         x,y:Tsuperregister;
-        id:uint32;
       end;
 
       PTmoveins=^Tmoveins;
@@ -91,6 +90,7 @@ unit rgobj;
         procedure done;
         procedure add(ins:Tmoveins); { no-op if exists }
         procedure rehash(foritems:sizeuint);
+        class function hashins(m:Tmoveins):sizeuint; static; {$ifdef USEINLINE} inline; {$endif}
       end;
 
       Treginfoflag=(
@@ -258,7 +258,6 @@ unit rgobj;
         has_usedmarks: boolean;
         has_directalloc: boolean;
         spillinfo : array of tspillinfo;
-        moveins_id_counter: uint32;
 
         { Disposes of the reginfo array.}
         procedure dispose_reginfo;
@@ -405,10 +404,9 @@ unit rgobj;
       end;
 
     procedure Tmovehashlist.add(ins:Tmoveins);
-      var hashRest : uint32;
-          ih,ii : sizeuint;
+      var hashRest,ih,ii : sizeuint;
       begin
-        hashRest:=ins.id;
+        hashRest:=hashins(ins);
         ih:=hashRest and hmask;
         repeat
           ii:=h[ih];
@@ -440,8 +438,7 @@ unit rgobj;
       var newh : puint32;
           newitems : PTmoveins;
           item : Tmoveins;
-          newhmask,newmaxitems,itemsOffset,iitem,ih : sizeuint;
-          hashRest : uint32;
+          newhmask,newmaxitems,itemsOffset,iitem,ih,hashRest : sizeuint;
       begin
         if foritems shr (bitsizeof(h^)-3)<>0 then
           internalerror(202204251); { too big table }
@@ -466,7 +463,7 @@ unit rgobj;
             while iitem<nitems do
               begin
                 item:=newitems[iitem];
-                hashRest:=item.id;
+                hashRest:=hashins(item);
                 ih:=hashRest and newhmask;
                 repeat
                   if newh[ih]=0 then
@@ -489,6 +486,11 @@ unit rgobj;
         items:=newitems;
         hmask:=newhmask;
         maxitems:=newmaxitems;
+      end;
+
+    class function tmovehashlist.hashins(m:Tmoveins):sizeuint;
+      begin
+        result:=PtrUint(m) div (4*sizeof(pointer)); { "div approximate Tmoveins.InstanceSize". }
       end;
 
 
@@ -520,7 +522,6 @@ unit rgobj;
          { Get reginfo for CPU registers }
          maxreginfo:=first_imaginary;
          maxreginfoinc:=16;
-         moveins_id_counter:=0;
          worklist_moves:=Tlinkedlist.create;
          move_garbage:=TLinkedList.Create;
          reginfo:=allocmem(first_imaginary*sizeof(treginfo));
@@ -1000,13 +1001,7 @@ unit rgobj;
       { How should we handle m68k move %d0,%a0? }
       if (getregtype(sreg)<>getregtype(dreg)) then
         exit;
-{$push} {$q-,r-}
-      inc(moveins_id_counter);
-{$pop}
-      if moveins_id_counter=0 then
-        internalerror(2021112701);
       i:=Tmoveins.create;
-      i.id:=moveins_id_counter;
       i.moveset:=ms_worklist_moves;
       worklist_moves.insert(i);
       ssupreg:=getsupreg(sreg);
