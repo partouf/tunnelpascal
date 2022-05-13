@@ -67,9 +67,9 @@ interface
     foreachnodefunction = function(var n: tnode; arg: pointer): foreachnoderesult of object;
     staticforeachnodefunction = function(var n: tnode; arg: pointer): foreachnoderesult;
 
-    function foreachnode(var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
+    function foreachnode(var n: tnode; f: foreachnodefunction; arg: pointer): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function foreachnode(procmethod : tforeachprocmethod; var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
-    function foreachnodestatic(var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean;
+    function foreachnodestatic(var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function foreachnodestatic(procmethod : tforeachprocmethod; var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean;
 
     { checks if the given node tree contains only nodes of the given type,
@@ -276,13 +276,18 @@ implementation
           result := foreachnode(procmethod,tunarynode(n).left,f,arg) or result;
       end;
 
+    var
+      rootresult: foreachnoderesult;
+      childresult: Boolean;
     begin
       result := false;
       if not assigned(n) then
         exit;
       if procmethod=pm_preprocess then
         result:=process_children(result);
-      case f(n,arg) of
+
+      rootresult:=f(n,arg);
+      case rootresult of
         fen_norecurse_false:
           exit;
         fen_norecurse_true:
@@ -298,28 +303,20 @@ implementation
         else
           ;
       end;
-      if (procmethod=pm_postprocess) or (procmethod=pm_postandagain) then
-        result:=process_children(result);
-      if procmethod=pm_postandagain then
+      if (procmethod in [pm_postprocess,pm_postandagain]) then
         begin
-          case f(n,arg) of
-            fen_norecurse_false:
-              exit;
-            fen_norecurse_true:
-              begin
-                result := true;
-                exit;
-              end;
-            fen_true:
-              result := true;
-            else
-              ;
-          end;
+          childresult:=process_children(result);
+          result:=result or childresult;
+          { Don't parse the root node again if neither it nor its children were
+            changed }
+          if childresult and (procmethod=pm_postandagain) then
+            { Result is already True because childresult is }
+            f(n,arg);
         end;
     end;
 
 
-    function foreachnode(var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
+    function foreachnode(var n: tnode; f: foreachnodefunction; arg: pointer): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         result:=foreachnode(pm_postprocess,n,f,arg);
       end;
@@ -384,13 +381,18 @@ implementation
           result := foreachnodestatic(procmethod,tunarynode(n).left,f,arg) or result;
       end;
 
+    var
+      rootresult: foreachnoderesult;
+      childresult: Boolean;
     begin
       result := false;
       if not assigned(n) then
         exit;
       if procmethod=pm_preprocess then
         result:=process_children(result);
-      case f(n,arg) of
+
+      rootresult:=f(n,arg);
+      case rootresult of
         fen_norecurse_false:
           exit;
         fen_norecurse_true:
@@ -406,28 +408,20 @@ implementation
         else
           ;
       end;
-      if (procmethod=pm_postprocess) or (procmethod=pm_postandagain) then
-        result:=process_children(result);
-      if procmethod=pm_postandagain then
+      if (procmethod in [pm_postprocess,pm_postandagain]) then
         begin
-          case f(n,arg) of
-            fen_norecurse_false:
-              exit;
-            fen_norecurse_true:
-              begin
-                result := true;
-                exit;
-              end;
-            fen_true:
-              result := true;
-            else
-              ;
-          end;
+          childresult:=process_children(result);
+          result:=result or childresult;
+          { Don't parse the root node again if neither it nor its children were
+            changed }
+          if childresult and (procmethod=pm_postandagain) then
+            { Result is already True because childresult is }
+            f(n,arg);
         end;
     end;
 
 
-    function foreachnodestatic(var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean;
+    function foreachnodestatic(var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         result:=foreachnodestatic(pm_postprocess,n,f,arg);
       end;
