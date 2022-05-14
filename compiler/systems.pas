@@ -86,7 +86,7 @@ interface
           id          : tasm;
           idtxt       : string[12];
           asmbin      : string[16];
-          asmcmd      : string[113];
+          asmcmd      : string[121];
           supported_targets : set of tsystem;
           flags        : set of tasmflags;
           labelprefix : string[3];
@@ -685,14 +685,12 @@ function set_target_dbg(t:tdbg):boolean;
 begin
   result:=false;
 { no debugging support for llvm yet }
-{$ifndef llvm}
   if assigned(dbginfos[t]) then
    begin
      target_dbg:=dbginfos[t]^;
      result:=true;
      exit;
    end;
-{$endif}
 end;
 
 
