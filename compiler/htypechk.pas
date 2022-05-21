@@ -2332,15 +2332,35 @@ implementation
             exit(true);
         end;
 
+      function processallhelpers(def:tdef;constref hashedid:THashedIDString): boolean;
+        var
+          helperdef:tobjectdef;
+          helperlist : TFPObjectList;
+          i : integer;
+        begin
+          result:=false;
+          helperlist:=get_objectpascal_helpers(def);
+          if assigned(helperlist) and (helperlist.count>0) then
+            begin
+              i:=helperlist.count-1;
+              repeat
+                helperdef:=tobjectdef(helperlist[i]);
+                if (helperdef.owner.symtabletype in [staticsymtable,globalsymtable]) or
+                   is_visible_for_object(helperdef.typesym,helperdef) then
+                     if processhelper(hashedid,helperdef) then
+                       exit(true);
+                dec(i);
+              until (i<0);
+            end;
+        end;
+
       var
         srsym      : tsym;
         hashedid   : THashedIDString;
         hasoverload,
         foundanything : boolean;
         extendeddef : tabstractrecorddef;
-        helperdef  : tobjectdef;
-        helperlist : TFPObjectList;
-        i : integer;
+        helperdef   : tobjectdef;
       begin
         if FOperator=NOTOKEN then
           hashedid.id:=FProcsym.name
@@ -2362,23 +2382,19 @@ implementation
              begin
                if m_multi_helpers in current_settings.modeswitches then
                  begin
-                   helperlist:=get_objectpascal_helpers(structdef);
-                   if assigned(helperlist) and (helperlist.count>0) then
-                     begin
-                       i:=helperlist.count-1;
-                       repeat
-                         helperdef:=tobjectdef(helperlist[i]);
-                         if (helperdef.owner.symtabletype in [staticsymtable,globalsymtable]) or
-                            is_visible_for_object(helperdef.typesym,helperdef) then
-                              if processhelper(hashedid,helperdef) then
-                                exit;
-                         dec(i);
-                       until (i<0);
-                     end;
+                   if processallhelpers(structdef,hashedid) then
+                     exit;
                  end
                else if search_last_objectpascal_helper(structdef,nil,helperdef) and processhelper(hashedid,helperdef) then
                   exit;
              end;
+            { when multi+type helpers are enabled we need to search in the extended type for additional overloads }
+            if (m_multi_helpers in current_settings.modeswitches) and 
+               searchhelpers and 
+               is_objectpascal_helper(structdef) and 
+               (tobjectdef(structdef).helpertype=ht_type) and
+               processallhelpers(tobjectdef(structdef).extendeddef,hashedid) then
+              exit;
            { now search in the type itself }
            srsym:=tsym(structdef.symtable.FindWithHash(hashedid));
            if assigned(srsym) and
