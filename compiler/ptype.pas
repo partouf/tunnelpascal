@@ -1279,12 +1279,7 @@ implementation
                                Message(parser_e_no_generics_as_types);
                                def:=generrordef;
                              end;
-                         end
-                       else if is_classhelper(def) then
-                         begin
-                           Message(parser_e_no_category_as_types);
-                           def:=generrordef
-                         end
+                         end;
                      end;
                  end
                else
@@ -1962,7 +1957,7 @@ implementation
                 case idtoken of
                   _HELPER:
                     begin
-                      if hadtypetoken and
+                      if (hadtypetoken or assigned(genericdef)) and
                          (m_type_helpers in current_settings.modeswitches) then
                         begin
                           { reset hadtypetoken, so that calling code knows that it should not be handled
@@ -1972,7 +1967,7 @@ implementation
                           def:=object_dec(odt_helper,name,newsym,genericdef,genericlist,nil,ht_type);
                         end
                       else
-                        expr_type
+                        expr_type;
                     end;
                   _REFERENCE:
                     begin

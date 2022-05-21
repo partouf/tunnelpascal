@@ -1531,6 +1531,24 @@ uses
           consume(_RSHARPBRACKET);
       end;
 
+    procedure add_generic_helper_specialization(def: tobjectdef);
+      var
+        s: tsymstr;
+        list: TFPObjectList;
+        extendeddef: tstoreddef;
+      begin
+        extendeddef:=tstoreddef(def.extendeddef);
+        s:=generate_objectpascal_helper_key(extendeddef);
+        Message1(sym_d_adding_helper_for,s);
+        list:=TFPObjectList(current_module.extendeddefs.Find(s));
+        if not assigned(list) then
+          begin
+            list:=TFPObjectList.Create(false);
+            current_module.extendeddefs.Add(s,list);
+          end;
+        list.add(def);
+      end;
+
     function generate_specialization_phase2(context:tspecializationcontext;genericdef:tstoreddef;parse_class_parent:boolean;const _prettyname:ansistring):tdef;
 
         procedure unset_forwarddef(def: tdef);
@@ -2087,6 +2105,10 @@ uses
             { procdefs are only added once we know which overload we use }
             if not parse_generic and (result.typ<>procdef) then
               current_module.pendingspecializations.add(result.typename,result);
+
+            { add generic helper specialization to extended defs }
+            if is_objectpascal_helper(result) and (df_specialization in tobjectdef(result).defoptions) then
+              add_generic_helper_specialization(tobjectdef(result));
           end;
 
         generictypelist.free;
