@@ -2956,8 +2956,14 @@ implementation
           internalerror(2013020501);
         if def.typ in [recorddef,objectdef] then
           result:=make_mangledname('',tabstractrecorddef(def).symtable,'')
+        else if def.typ in [arraydef,setdef] then
+          { generic helpers allow anonymous arrays and sets so we use
+            the system unit and def type name for the key }
+          result:=make_mangledname('',systemunit,def.GetTypeName)
+        else if assigned(def.typesym) then
+          result:=make_mangledname('',def.owner,def.typesym.name)
         else
-          result:=make_mangledname('',def.owner,def.typesym.name);
+          internalerror(2022052201);
       end;
 
 
@@ -4321,14 +4327,13 @@ implementation
             else
               exit;
           end;
-        { no helpers for anonymous types }
+        { no helpers for anonymous types (except for dynamic arrays and sets) }
         if ((pd.typ in [recorddef,objectdef]) and
             (
               not assigned(tabstractrecorddef(pd).objrealname) or
               (tabstractrecorddef(pd).objrealname^='')
             )
-           ) or
-           not assigned(pd.typesym) then
+           ) or (not assigned(pd.typesym) and (not(is_dynamic_array(pd) or not(is_set(pd))))) then
           exit;
         { if pd is defined inside a procedure we must not use make_mangledname
           (as a helper may not be defined in a procedure this is no problem...)}

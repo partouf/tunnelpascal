@@ -778,7 +778,7 @@ implementation
 
         { generic helpers support additional extended types }
         if (df_generic in current_objectdef.defoptions) or (df_specialization in current_objectdef.defoptions) then
-          single_type(hdef,[stoAllowSpecialization,stoParseClassParent])
+          single_type(hdef,[stoAllowSpecialization,stoAllowArray,stoParseClassParent])
         else
           single_type(hdef,[stoParseClassParent]);
 
@@ -1737,10 +1737,8 @@ implementation
             if st.symtabletype in [staticsymtable,globalsymtable] then
               begin
                 s:=generate_objectpascal_helper_key(current_objectdef.extendeddef);
-                { don't add generic helper specializations to extended defs }
-                if (not(df_generic in current_structdef.defoptions)) or (
-                      (df_generic in current_structdef.defoptions) and not(df_specialization in current_structdef.defoptions)
-                    ) then
+                { don't add generic helpers to extended defs }
+                if not(df_generic in current_structdef.defoptions) and not(df_specialization in current_structdef.defoptions) then
                   begin
                     Message1(sym_d_adding_helper_for,s);
                     list:=TFPObjectList(current_module.extendeddefs.Find(s));

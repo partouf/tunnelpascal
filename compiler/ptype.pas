@@ -34,7 +34,8 @@ interface
         stoIsForwardDef,          { foward declaration         }
         stoAllowTypeDef,          { allow type definitions     }
         stoAllowSpecialization,   { allow type specialization  }
-        stoParseClassParent       { parse of parent class type }
+        stoParseClassParent,      { parse of parent class type }
+        stoAllowArray             { allow array definitions }
       );
       TSingleTypeOptions=set of TSingleTypeOption;
 
@@ -460,6 +461,234 @@ implementation
       end;
 
 
+    procedure array_dec(is_packed:boolean;genericdef:tstoreddef;genericlist:tfphashobjectlist;var def:tdef);
+      var
+        isgeneric : boolean;
+        lowval,
+        highval   : TConstExprInt;
+        indexdef  : tdef;
+        hdef      : tdef;
+        arrdef    : tarraydef;
+
+      procedure setdefdecl(def:tdef);
+        begin
+          case def.typ of
+            enumdef :
+              begin
+                lowval:=tenumdef(def).min;
+                highval:=tenumdef(def).max;
+                if (m_fpc in current_settings.modeswitches) and
+                   (tenumdef(def).has_jumps) then
+                 Message(type_e_array_index_enums_with_assign_not_possible);
+                indexdef:=def;
+              end;
+            orddef :
+              begin
+                if torddef(def).ordtype in [uchar,
+                  u8bit,
+                  s8bit,s16bit,
+{$if defined(cpu32bitaddr) or defined(cpu64bitaddr)}
+                  u16bit,s32bit,
+{$endif defined(cpu32bitaddr) or defined(cpu64bitaddr)}
+{$ifdef cpu64bitaddr}
+                  u32bit,s64bit,
+{$endif cpu64bitaddr}
+                  pasbool1,pasbool8,pasbool16,pasbool32,pasbool64,
+                  bool8bit,bool16bit,bool32bit,bool64bit,
+                  uwidechar] then
+                  begin
+                     lowval:=torddef(def).low;
+                     highval:=torddef(def).high;
+                     indexdef:=def;
+                  end
+                else
+                  Message1(parser_e_type_cant_be_used_in_array_index,def.typename);
+              end;
+            { generic parameter? }
+            undefineddef:
+              begin
+                lowval:=0;
+                highval:=1;
+                indexdef:=def;
+                isgeneric:=true;
+              end;
+            else
+              Message(sym_e_error_in_type_def);
+          end;
+        end;
+
+      var
+        old_current_genericdef,
+        old_current_specializedef: tstoreddef;
+        first,
+        old_parse_generic: boolean;
+        pt: tnode;
+        tt2: tdef;
+      begin
+         old_current_genericdef:=current_genericdef;
+         old_current_specializedef:=current_specializedef;
+         old_parse_generic:=parse_generic;
+
+         current_genericdef:=nil;
+         current_specializedef:=nil;
+         first:=true;
+         arrdef:=carraydef.create(0,0,s32inttype);
+         consume(_ARRAY);
+
+         { usage of specialized type inside its generic template }
+         if assigned(genericdef) then
+           current_specializedef:=arrdef
+         { reject declaration of generic class inside generic class }
+         else if assigned(genericlist) then
+           current_genericdef:=arrdef;
+         symtablestack.push(arrdef.symtable);
+         insert_generic_parameter_types(arrdef,genericdef,genericlist,false);
+         { there are two possibilties for the following to be true:
+           * the array declaration itself is generic
+           * the array is declared inside a generic
+           in both cases we need "parse_generic" and "current_genericdef"
+           so that e.g. specializations of another generic inside the
+           current generic can be used (either inline ones or "type" ones) }
+         if old_parse_generic then
+           include(arrdef.defoptions,df_generic);
+         parse_generic:=(df_generic in arrdef.defoptions);
+         if parse_generic and not assigned(current_genericdef) then
+           current_genericdef:=old_current_genericdef;
+
+         { open array? }
+         if try_to_consume(_LECKKLAMMER) then
+           begin
+              { defaults }
+              indexdef:=generrordef;
+              isgeneric:=false;
+              { use defaults which don't overflow the compiler }
+              lowval:=0;
+              highval:=0;
+              repeat
+                { read the expression and check it, check apart if the
+                  declaration is an enum declaration because that needs to
+                  be parsed by readtype (PFV) }
+                if token=_LKLAMMER then
+                 begin
+                   read_anon_type(hdef,true);
+                   setdefdecl(hdef);
+                 end
+                else
+                 begin
+                   pt:=expr(true);
+                   isgeneric:=false;
+                   if pt.nodetype=typen then
+                     setdefdecl(pt.resultdef)
+                   else
+                     begin
+                       if pt.nodetype=rangen then
+                         begin
+                           if nf_generic_para in pt.flags then
+                             isgeneric:=true;
+                           { pure ordconstn expressions can be checked for
+                             generics as well, but don't give an error in case
+                             of parsing a generic if that isn't yet the case }
+                           if (trangenode(pt).left.nodetype=ordconstn) and
+                              (trangenode(pt).right.nodetype=ordconstn) then
+                             begin
+                               { make both the same type or give an error. This is not
+                                 done when both are integer values, because typecasting
+                                 between -3200..3200 will result in a signed-unsigned
+                                 conflict and give a range check error (PFV) }
+                               if not(is_integer(trangenode(pt).left.resultdef) and is_integer(trangenode(pt).left.resultdef)) then
+                                 inserttypeconv(trangenode(pt).left,trangenode(pt).right.resultdef);
+                               lowval:=tordconstnode(trangenode(pt).left).value;
+                               highval:=tordconstnode(trangenode(pt).right).value;
+                               if highval<lowval then
+                                begin
+                                  { ignore error if node is generic param }
+                                  if not (nf_generic_para in pt.flags) then
+                                    Message(parser_e_array_lower_less_than_upper_bound);
+                                  highval:=lowval;
+                                end
+                               else if (lowval<int64(low(asizeint))) or
+                                       (highval>high(asizeint)) then
+                                 begin
+                                   Message(parser_e_array_range_out_of_bounds);
+                                   lowval :=0;
+                                   highval:=0;
+                                 end;
+                               if is_integer(trangenode(pt).left.resultdef) then
+                                 range_to_type(lowval,highval,indexdef)
+                               else
+                                 indexdef:=trangenode(pt).left.resultdef;
+                             end
+                           else
+                             if not parse_generic then
+                               Message(type_e_cant_eval_constant_expr)
+                             else
+                               { we need a valid range for debug information }
+                               range_to_type(lowval,highval,indexdef);
+                         end
+                       else
+                         Message(sym_e_error_in_type_def)
+                     end;
+                   pt.free;
+                 end;
+
+                { if we are not at the first dimension, add the new arrray
+                  as element of the existing array, otherwise modify the existing array }
+                if not(first) then
+                  begin
+                    arrdef.elementdef:=carraydef.create(lowval.svalue,highval.svalue,indexdef);
+                    { push new symtable }
+                    symtablestack.pop(arrdef.symtable);
+                    arrdef:=tarraydef(arrdef.elementdef);
+                    symtablestack.push(arrdef.symtable);
+                  end
+                else
+                  begin
+                    arrdef.lowrange:=lowval.svalue;
+                    arrdef.highrange:=highval.svalue;
+                    arrdef.rangedef:=indexdef;
+                    def:=arrdef;
+                    first:=false;
+                  end;
+                if is_packed then
+                  include(arrdef.arrayoptions,ado_IsBitPacked);
+                if isgeneric then
+                  include(arrdef.arrayoptions,ado_IsGeneric);
+
+                if token=_COMMA then
+                  consume(_COMMA)
+                else
+                  break;
+              until false;
+              consume(_RECKKLAMMER);
+           end
+         else
+           begin
+              if is_packed then
+                Message(parser_e_packed_dynamic_open_array);
+              arrdef.lowrange:=0;
+              arrdef.highrange:=-1;
+              arrdef.rangedef:=s32inttype;
+              include(arrdef.arrayoptions,ado_IsDynamicArray);
+              def:=arrdef;
+           end;
+         consume(_OF);
+         read_anon_type(tt2,true);
+         { set element type of the last array definition }
+         if assigned(arrdef) then
+           begin
+             symtablestack.pop(arrdef.symtable);
+             arrdef.elementdef:=tt2;
+             if is_packed and
+                is_managed_type(tt2) then
+               Message(type_e_no_packed_inittable);
+           end;
+         { restore old state }
+         parse_generic:=old_parse_generic;
+         current_genericdef:=old_current_genericdef;
+         current_specializedef:=old_current_specializedef;
+      end;
+
+
     procedure single_type(out def:tdef;options:TSingleTypeOptions);
 
        function handle_dummysym(sym:tsym):tdef;
@@ -491,6 +720,15 @@ implementation
              case token of
                _STRING:
                  string_dec(def,stoAllowTypeDef in options);
+
+               _ARRAY:
+                 if stoAllowArray in options then
+                   array_dec(false,nil,nil,def)
+                 else
+                   begin
+                     message(type_e_type_id_expected);
+                     def:=generrordef;
+                   end;
 
                _FILE:
                  begin
@@ -1094,7 +1332,6 @@ implementation
     { reads a type definition and returns a pointer to it }
     procedure read_named_type(var def:tdef;const newsym:tsym;genericdef:tstoreddef;genericlist:tfphashobjectlist;parseprocvardir:boolean;var hadtypetoken:boolean);
       var
-        pt : tnode;
         tt2 : tdef;
         aktenumdef : tenumdef;
         s : TIDString;
@@ -1327,233 +1564,6 @@ implementation
            def:=generrordef;
         end;
 
-
-      procedure array_dec(is_packed:boolean;genericdef:tstoreddef;genericlist:tfphashobjectlist);
-        var
-          isgeneric : boolean;
-          lowval,
-          highval   : TConstExprInt;
-          indexdef  : tdef;
-          hdef      : tdef;
-          arrdef    : tarraydef;
-
-        procedure setdefdecl(def:tdef);
-          begin
-            case def.typ of
-              enumdef :
-                begin
-                  lowval:=tenumdef(def).min;
-                  highval:=tenumdef(def).max;
-                  if (m_fpc in current_settings.modeswitches) and
-                     (tenumdef(def).has_jumps) then
-                   Message(type_e_array_index_enums_with_assign_not_possible);
-                  indexdef:=def;
-                end;
-              orddef :
-                begin
-                  if torddef(def).ordtype in [uchar,
-                    u8bit,
-                    s8bit,s16bit,
-{$if defined(cpu32bitaddr) or defined(cpu64bitaddr)}
-                    u16bit,s32bit,
-{$endif defined(cpu32bitaddr) or defined(cpu64bitaddr)}
-{$ifdef cpu64bitaddr}
-                    u32bit,s64bit,
-{$endif cpu64bitaddr}
-                    pasbool1,pasbool8,pasbool16,pasbool32,pasbool64,
-                    bool8bit,bool16bit,bool32bit,bool64bit,
-                    uwidechar] then
-                    begin
-                       lowval:=torddef(def).low;
-                       highval:=torddef(def).high;
-                       indexdef:=def;
-                    end
-                  else
-                    Message1(parser_e_type_cant_be_used_in_array_index,def.typename);
-                end;
-              { generic parameter? }
-              undefineddef:
-                begin
-                  lowval:=0;
-                  highval:=1;
-                  indexdef:=def;
-                  isgeneric:=true;
-                end;
-              else
-                Message(sym_e_error_in_type_def);
-            end;
-          end;
-
-        var
-          old_current_genericdef,
-          old_current_specializedef: tstoreddef;
-          first,
-          old_parse_generic: boolean;
-        begin
-           old_current_genericdef:=current_genericdef;
-           old_current_specializedef:=current_specializedef;
-           old_parse_generic:=parse_generic;
-
-           current_genericdef:=nil;
-           current_specializedef:=nil;
-           first:=true;
-           arrdef:=carraydef.create(0,0,s32inttype);
-           consume(_ARRAY);
-
-           { usage of specialized type inside its generic template }
-           if assigned(genericdef) then
-             current_specializedef:=arrdef
-           { reject declaration of generic class inside generic class }
-           else if assigned(genericlist) then
-             current_genericdef:=arrdef;
-           symtablestack.push(arrdef.symtable);
-           insert_generic_parameter_types(arrdef,genericdef,genericlist,false);
-           { there are two possibilties for the following to be true:
-             * the array declaration itself is generic
-             * the array is declared inside a generic
-             in both cases we need "parse_generic" and "current_genericdef"
-             so that e.g. specializations of another generic inside the
-             current generic can be used (either inline ones or "type" ones) }
-           if old_parse_generic then
-             include(arrdef.defoptions,df_generic);
-           parse_generic:=(df_generic in arrdef.defoptions);
-           if parse_generic and not assigned(current_genericdef) then
-             current_genericdef:=old_current_genericdef;
-
-           { open array? }
-           if try_to_consume(_LECKKLAMMER) then
-             begin
-                { defaults }
-                indexdef:=generrordef;
-                isgeneric:=false;
-                { use defaults which don't overflow the compiler }
-                lowval:=0;
-                highval:=0;
-                repeat
-                  { read the expression and check it, check apart if the
-                    declaration is an enum declaration because that needs to
-                    be parsed by readtype (PFV) }
-                  if token=_LKLAMMER then
-                   begin
-                     read_anon_type(hdef,true);
-                     setdefdecl(hdef);
-                   end
-                  else
-                   begin
-                     pt:=expr(true);
-                     isgeneric:=false;
-                     if pt.nodetype=typen then
-                       setdefdecl(pt.resultdef)
-                     else
-                       begin
-                         if pt.nodetype=rangen then
-                           begin
-                             if nf_generic_para in pt.flags then
-                               isgeneric:=true;
-                             { pure ordconstn expressions can be checked for
-                               generics as well, but don't give an error in case
-                               of parsing a generic if that isn't yet the case }
-                             if (trangenode(pt).left.nodetype=ordconstn) and
-                                (trangenode(pt).right.nodetype=ordconstn) then
-                               begin
-                                 { make both the same type or give an error. This is not
-                                   done when both are integer values, because typecasting
-                                   between -3200..3200 will result in a signed-unsigned
-                                   conflict and give a range check error (PFV) }
-                                 if not(is_integer(trangenode(pt).left.resultdef) and is_integer(trangenode(pt).left.resultdef)) then
-                                   inserttypeconv(trangenode(pt).left,trangenode(pt).right.resultdef);
-                                 lowval:=tordconstnode(trangenode(pt).left).value;
-                                 highval:=tordconstnode(trangenode(pt).right).value;
-                                 if highval<lowval then
-                                  begin
-                                    { ignore error if node is generic param }
-                                    if not (nf_generic_para in pt.flags) then
-                                      Message(parser_e_array_lower_less_than_upper_bound);
-                                    highval:=lowval;
-                                  end
-                                 else if (lowval<int64(low(asizeint))) or
-                                         (highval>high(asizeint)) then
-                                   begin
-                                     Message(parser_e_array_range_out_of_bounds);
-                                     lowval :=0;
-                                     highval:=0;
-                                   end;
-                                 if is_integer(trangenode(pt).left.resultdef) then
-                                   range_to_type(lowval,highval,indexdef)
-                                 else
-                                   indexdef:=trangenode(pt).left.resultdef;
-                               end
-                             else
-                               if not parse_generic then
-                                 Message(type_e_cant_eval_constant_expr)
-                               else
-                                 { we need a valid range for debug information }
-                                 range_to_type(lowval,highval,indexdef);
-                           end
-                         else
-                           Message(sym_e_error_in_type_def)
-                       end;
-                     pt.free;
-                   end;
-
-                  { if we are not at the first dimension, add the new arrray
-                    as element of the existing array, otherwise modify the existing array }
-                  if not(first) then
-                    begin
-                      arrdef.elementdef:=carraydef.create(lowval.svalue,highval.svalue,indexdef);
-                      { push new symtable }
-                      symtablestack.pop(arrdef.symtable);
-                      arrdef:=tarraydef(arrdef.elementdef);
-                      symtablestack.push(arrdef.symtable);
-                    end
-                  else
-                    begin
-                      arrdef.lowrange:=lowval.svalue;
-                      arrdef.highrange:=highval.svalue;
-                      arrdef.rangedef:=indexdef;
-                      def:=arrdef;
-                      first:=false;
-                    end;
-                  if is_packed then
-                    include(arrdef.arrayoptions,ado_IsBitPacked);
-                  if isgeneric then
-                    include(arrdef.arrayoptions,ado_IsGeneric);
-
-                  if token=_COMMA then
-                    consume(_COMMA)
-                  else
-                    break;
-                until false;
-                consume(_RECKKLAMMER);
-             end
-           else
-             begin
-                if is_packed then
-                  Message(parser_e_packed_dynamic_open_array);
-                arrdef.lowrange:=0;
-                arrdef.highrange:=-1;
-                arrdef.rangedef:=s32inttype;
-                include(arrdef.arrayoptions,ado_IsDynamicArray);
-                def:=arrdef;
-             end;
-           consume(_OF);
-           read_anon_type(tt2,true);
-           { set element type of the last array definition }
-           if assigned(arrdef) then
-             begin
-               symtablestack.pop(arrdef.symtable);
-               arrdef.elementdef:=tt2;
-               if is_packed and
-                  is_managed_type(tt2) then
-                 Message(type_e_no_packed_inittable);
-             end;
-           { restore old state }
-           parse_generic:=old_parse_generic;
-           current_genericdef:=old_current_genericdef;
-           current_specializedef:=old_current_specializedef;
-        end;
-
-
         function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist):tdef;
           var
             is_func:boolean;
@@ -1767,7 +1777,7 @@ implementation
               end;
             _ARRAY:
               begin
-                array_dec(false,genericdef,genericlist);
+                array_dec(false,genericdef,genericlist,def);
               end;
             _SET:
               begin
@@ -1819,7 +1829,7 @@ implementation
                   (token = _BITPACKED);
                 consume(token);
                 if token=_ARRAY then
-                  array_dec(bitpacking,genericdef,genericlist)
+                  array_dec(bitpacking,genericdef,genericlist,def)
                 else if token=_SET then
                   set_dec
                 else if token=_FILE then
