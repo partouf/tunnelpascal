@@ -801,7 +801,10 @@ Function GetJSONStringParserHandler: TJSONStringParserHandler;
 
 implementation
 
-Uses typinfo,sysconst;
+Uses typinfo;
+
+const
+  HexDigits: array[0..15] of char = '0123456789ABCDEF';
 
 Resourcestring
   SErrCannotConvertFromNull = 'Cannot convert data from Null value';
