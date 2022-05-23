@@ -778,7 +778,12 @@ implementation
 
         { generic helpers support additional extended types }
         if (df_generic in current_objectdef.defoptions) or (df_specialization in current_objectdef.defoptions) then
-          single_type(hdef,[stoAllowSpecialization,stoAllowArray,stoParseClassParent])
+          begin
+            if helpertype=ht_type then
+              single_type(hdef,[stoAllowSpecialization,stoAllowArray,stoAllowSet,stoParseClassParent])
+            else
+              single_type(hdef,[stoAllowSpecialization,stoParseClassParent]);
+          end
         else
           single_type(hdef,[stoParseClassParent]);
 
