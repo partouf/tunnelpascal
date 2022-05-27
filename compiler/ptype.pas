@@ -35,7 +35,8 @@ interface
         stoAllowTypeDef,          { allow type definitions     }
         stoAllowSpecialization,   { allow type specialization  }
         stoParseClassParent,      { parse of parent class type }
-        stoAllowArray             { allow array definitions }
+        stoAllowArray,            { allow array definitions }
+        stoAllowSet               { allow set definitions }
       );
       TSingleTypeOptions=set of TSingleTypeOption;
 
@@ -689,6 +690,47 @@ implementation
       end;
 
 
+    procedure set_dec(var def:tdef);
+      var
+        tt2: tdef;
+      begin
+        consume(_SET);
+        consume(_OF);
+        read_anon_type(tt2,true);
+        if assigned(tt2) then
+         begin
+           case tt2.typ of
+             { don't forget that min can be negativ  PM }
+             enumdef :
+               if (tenumdef(tt2).min>=0) and
+                  (tenumdef(tt2).max<=255) then
+                // !! def:=csetdef.create(tt2,tenumdef(tt2.def).min,tenumdef(tt2.def).max),true)
+                def:=csetdef.create(tt2,tenumdef(tt2).min,tenumdef(tt2).max,true)
+               else
+                Message(sym_e_ill_type_decl_set);
+             orddef :
+               begin
+                 if (torddef(tt2).ordtype<>uvoid) and
+                    (torddef(tt2).ordtype<>uwidechar) and
+                    (torddef(tt2).low>=0) then
+                   // !! def:=csetdef.create(tt2,torddef(tt2.def).low,torddef(tt2.def).high),true)
+                   if Torddef(tt2).high>int64(high(byte)) then
+                     message(sym_e_ill_type_decl_set)
+                   else
+                     def:=csetdef.create(tt2,torddef(tt2).low.svalue,torddef(tt2).high.svalue,true)
+                 else
+                   Message(sym_e_ill_type_decl_set);
+               end;
+             // TODO: helpers support undefined set types but how do we pass that down here...
+             else
+               Message(sym_e_ill_type_decl_set);
+           end;
+         end
+        else
+         def:=generrordef;
+      end;
+
+
     procedure single_type(out def:tdef;options:TSingleTypeOptions);
 
        function handle_dummysym(sym:tsym):tdef;
@@ -724,6 +766,15 @@ implementation
                _ARRAY:
                  if stoAllowArray in options then
                    array_dec(false,nil,nil,def)
+                 else
+                   begin
+                     message(type_e_type_id_expected);
+                     def:=generrordef;
+                   end;
+
+               _SET:
+                 if stoAllowSet in options then
+                   set_dec(def)
                  else
                    begin
                      message(type_e_type_id_expected);
@@ -1526,44 +1577,6 @@ implementation
            block_type:=old_block_type;
         end;
 
-
-      procedure set_dec;
-        begin
-          consume(_SET);
-          consume(_OF);
-          read_anon_type(tt2,true);
-          if assigned(tt2) then
-           begin
-             case tt2.typ of
-               { don't forget that min can be negativ  PM }
-               enumdef :
-                 if (tenumdef(tt2).min>=0) and
-                    (tenumdef(tt2).max<=255) then
-                  // !! def:=csetdef.create(tt2,tenumdef(tt2.def).min,tenumdef(tt2.def).max),true)
-                  def:=csetdef.create(tt2,tenumdef(tt2).min,tenumdef(tt2).max,true)
-                 else
-                  Message(sym_e_ill_type_decl_set);
-               orddef :
-                 begin
-                   if (torddef(tt2).ordtype<>uvoid) and
-                      (torddef(tt2).ordtype<>uwidechar) and
-                      (torddef(tt2).low>=0) then
-                     // !! def:=csetdef.create(tt2,torddef(tt2.def).low,torddef(tt2.def).high),true)
-                     if Torddef(tt2).high>int64(high(byte)) then
-                       message(sym_e_ill_type_decl_set)
-                     else
-                       def:=csetdef.create(tt2,torddef(tt2).low.svalue,torddef(tt2).high.svalue,true)
-                   else
-                     Message(sym_e_ill_type_decl_set);
-                 end;
-               else
-                 Message(sym_e_ill_type_decl_set);
-             end;
-           end
-          else
-           def:=generrordef;
-        end;
-
         function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist):tdef;
           var
             is_func:boolean;
@@ -1781,7 +1794,7 @@ implementation
               end;
             _SET:
               begin
-                set_dec;
+                set_dec(def);
               end;
            _CARET:
               begin
@@ -1831,7 +1844,7 @@ implementation
                 if token=_ARRAY then
                   array_dec(bitpacking,genericdef,genericlist,def)
                 else if token=_SET then
-                  set_dec
+                  set_dec(def)
                 else if token=_FILE then
                   single_type(def,[stoAllowTypeDef])
                 else
