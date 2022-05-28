@@ -84,7 +84,11 @@ interface
       // additional memory
       'memory.grow 0', 'memory.size 0',
       // bulk memory operations
-      'memory.copy 0,0', 'memory.fill 0',
+      'memory.copy 0,0', 'memory.fill 0', 'memory.init', 'data.drop',
+      // reference instructions
+      'ref.null', 'ref.is_null', 'ref.func',
+      // table instructions
+      'table.get', 'table.set', 'table.size', 'table.grow', 'table.fill', 'table.copy', 'table.init', 'elem.drop',
       // exceptions
       'try','catch','catch_all','delegate','throw','rethrow','end_try',
       // atomic memory accesses - load/store
@@ -116,7 +120,7 @@ interface
       'memory.atomic.wait32', 'memory.atomic.wait64', 'memory.atomic.notify', 'atomic.fence'
     );
 
-    gas_wasm_basic_type_str : array [TWasmBasicType] of string = ('i32','i64','f32','f64');
+    gas_wasm_basic_type_str : array [TWasmBasicType] of string = ('i32','i64','f32','f64','funcref','externref','v128');
 
     function gas_regname(r:Tregister):string;
 

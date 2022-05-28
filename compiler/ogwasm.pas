@@ -169,7 +169,7 @@ interface
 implementation
 
     uses
-      verbose;
+      verbose,version,globals;
 
     procedure WriteUleb5(d: tdynamicarray; v: uint64);
       var
@@ -1497,6 +1497,8 @@ implementation
                           WriteByte(FWasmSections[wsiGlobal],$00);
                           WriteByte(FWasmSections[wsiGlobal],$0B);  { end }
                         end;
+                      else
+                        internalerror(2022052801);
                     end;
                   end;
               end;
@@ -1653,6 +1655,31 @@ implementation
         Writer.write(WasmModuleMagic,SizeOf(WasmModuleMagic));
         Writer.write(WasmVersion,SizeOf(WasmVersion));
 
+        if ts_wasm_threads in current_settings.targetswitches then
+          begin
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],4);
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'atomics');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'bulk-memory');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'mutable-globals');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'sign-ext');
+          end;
+
+        { Write the producers section:
+          https://github.com/WebAssembly/tool-conventions/blob/main/ProducersSection.md }
+        WriteUleb(FWasmCustomSections[wcstProducers],2);
+        WriteName(FWasmCustomSections[wcstProducers],'language');
+        WriteUleb(FWasmCustomSections[wcstProducers],1);
+        WriteName(FWasmCustomSections[wcstProducers],'Pascal');
+        WriteName(FWasmCustomSections[wcstProducers],'');
+        WriteName(FWasmCustomSections[wcstProducers],'processed-by');
+        WriteUleb(FWasmCustomSections[wcstProducers],1);
+        WriteName(FWasmCustomSections[wcstProducers],'Free Pascal Compiler (FPC)');
+        WriteName(FWasmCustomSections[wcstProducers],full_version_string+' ['+date_string+'] for '+target_cpu_string+' - '+target_info.shortname);
+
         code_section_nr:=-1;
         data_section_nr:=-1;
         section_nr:=0;
@@ -1704,6 +1731,13 @@ implementation
         if segment_count>0 then
           begin
             WriteWasmCustomSection(wcstRelocData);
+            Inc(section_nr);
+          end;
+        WriteWasmCustomSection(wcstProducers);
+        Inc(section_nr);
+        if ts_wasm_threads in current_settings.targetswitches then
+          begin
+            WriteWasmCustomSection(wcstTargetFeatures);
             Inc(section_nr);
           end;
 
