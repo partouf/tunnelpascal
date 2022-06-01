@@ -123,6 +123,9 @@ interface
     { # Returns whether def is needs to load RTTI for reference counting }
     function is_rtti_managed_type(def: tdef) : boolean;
 
+    {# Returns whether def is an undefined generic type, is an array of such, or points to such }
+    function is_undefined(p: tdef) : boolean;
+
 {    function is_in_limit_value(val_from:TConstExprInt;def_from,def_to : tdef) : boolean;}
 
 {*****************************************************************************
@@ -811,6 +814,33 @@ implementation
           )
         );
       end;
+
+
+    function is_undefined(p: tdef): boolean;
+
+      function is_undefined_recursive(def: tdef): Boolean;
+        begin
+          case def.typ of
+            undefineddef:
+              Result := True;
+            arraydef:
+              Result := is_undefined_recursive(tarraydef(def).elementdef);
+            pointerdef:
+              Result := is_undefined_recursive(tabstractpointerdef(def).pointeddef);
+            else
+              Result := False;
+            end;
+        end;
+
+      begin
+        { If a definition is a cycle of pointers or arrays, it's not undefined,
+          but we need to avoid a stack overflow }
+        if is_cyclic(p) then
+          Exit(False);
+
+        result := is_undefined_recursive(p);
+      end;
+
 
 
     { true, if p points to an open array def }
