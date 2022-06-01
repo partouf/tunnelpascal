@@ -1077,6 +1077,9 @@ implementation
         i: TTypeConvNodeFlag;
       begin
         inherited XMLPrintNodeInfo(T);
+        if resultdef <> totypedef then
+          { Print only if it's different }
+          Write(T,' totypedef="', totypedef.typename, '"');
         Write(T,' convtype="', convtype);
         First := True;
         for i := Low(TTypeConvNodeFlag) to High(TTypeConvNodeFlag) do
