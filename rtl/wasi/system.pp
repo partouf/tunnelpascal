@@ -18,6 +18,7 @@ unit system;
 interface
 
 {$define FPC_IS_SYSTEM}
+{$define USE_NOTHREADMANAGER}
 
 {$I systemh.inc}
 
@@ -57,6 +58,21 @@ implementation
 
 {$I wasitypes.inc}
 {$I wasiprocs.inc}
+
+function WasiAlloc (aLength : Longint) : Pointer; [public, alias: 'wasiAlloc'];
+
+begin
+  Result:=GetMem(aLength);
+end;
+
+procedure WasiFree (aMem : pointer); [public, alias: 'wasiFree'];
+
+begin
+  FreeMem(aMem);
+end;
+
+exports 
+  WasiAlloc,WasiFree;
 
 function ConvertToFdRelativePath(path: RawByteString; out fd: LongInt; out relfd_path: RawByteString): Word; forward;
 
@@ -132,6 +148,11 @@ End;
 
 procedure System_exit;
 begin
+  if ExitCode>=126 then
+    begin
+      writeln(stderr,'##WASI-EXITCODE: ',ExitCode,' -> 125##');
+      ExitCode:=125;
+    end;
   __wasi_proc_exit(ExitCode);
 End;
 

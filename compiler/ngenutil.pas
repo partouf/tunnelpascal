@@ -146,8 +146,6 @@ interface
       class procedure RegisterModuleInitFunction(pd: tprocdef); virtual;
       class procedure RegisterModuleFiniFunction(pd: tprocdef); virtual;
 
-      class procedure GenerateObjCImageInfo; virtual;
-
      strict protected
       class procedure add_main_procdef_paras(pd: tdef); virtual;
     end;
@@ -336,6 +334,8 @@ implementation
 
 
   class procedure tnodeutils.sym_maybe_initialize(p: TObject; arg: pointer);
+    var
+      hp : tnode;
     begin
       if ((tsym(p).typ = localvarsym) or
           { check staticvarsym for record management opeators and for objects
@@ -360,7 +360,10 @@ implementation
           ((m_iso in current_settings.modeswitches) and (tabstractvarsym(p).vardef.typ=filedef))
          ) then
         begin
-          addstatement(tstatementnode(arg^),initialize_data_node(cloadnode.create(tsym(p),tsym(p).owner),false));
+          hp:=cloadnode.create(tsym(p),tsym(p).owner);
+          { ensure that a function reference is not converted to a call }
+          include(hp.flags,nf_load_procvar);
+          addstatement(tstatementnode(arg^),initialize_data_node(hp,false));
         end;
     end;
 
@@ -433,6 +436,8 @@ implementation
       hp:=cloadnode.create(sym,sym.owner);
       if (sym.typ=staticvarsym) and (vo_force_finalize in tstaticvarsym(sym).varoptions) then
         include(tloadnode(hp).loadnodeflags,loadnf_isinternal_ignoreconst);
+      { ensure that a function reference interface is not converted to a call }
+      include(hp.flags,nf_load_procvar);
       addstatement(stat,finalize_data_node(hp));
     end;
 
@@ -782,6 +787,7 @@ implementation
            (vo_is_funcret in tabstractnormalvarsym(p).varoptions)
           )
          ) and
+         not (vo_is_parentfp in tabstractnormalvarsym(p).varoptions) and
          not assigned(tabstractnormalvarsym(p).defaultconstsym);
     end;
 
@@ -1282,7 +1288,7 @@ implementation
 
   class procedure tnodeutils.InsertThreadvars;
     var
-      s : string;
+      s : TSymStr;
       tcb: ttai_typedconstbuilder;
       sym: tasmsymbol;
       tabledef: trecorddef;
@@ -1612,8 +1618,25 @@ implementation
 
 
   class procedure tnodeutils.InsertObjectInfo;
+    var
+      tcb: ttai_typedconstbuilder;
     begin
-      { don't do anything by default }
+      if (m_objectivec1 in current_settings.modeswitches) then
+        begin
+          { first 4 bytes contain version information about this section (currently version 0),
+            next 4 bytes contain flags (currently only regarding whether the code in the object
+            file supports or requires garbage collection)
+          }
+          tcb:=ctai_typedconstbuilder.create([tcalo_new_section,tcalo_no_dead_strip]);
+          tcb.emit_ord_const(0,u64inttype);
+          current_asmdata.asmlists[al_objc_data].concatList(
+            tcb.get_final_asmlist(
+              current_asmdata.DefineAsmSymbol(target_asm.labelprefix+'_OBJC_IMAGE_INFO',AB_LOCAL,AT_DATA,u64inttype),
+              u64inttype,sec_objc_image_info,'_OBJC_IMAGE_INFO',const_align(sizeof(pint))
+            )
+          );
+          tcb.free;
+        end;
     end;
 
 
@@ -1637,26 +1660,6 @@ implementation
     end;
 
 
-  class procedure tnodeutils.GenerateObjCImageInfo;
-    var
-      tcb: ttai_typedconstbuilder;
-    begin
-      { first 4 bytes contain version information about this section (currently version 0),
-        next 4 bytes contain flags (currently only regarding whether the code in the object
-        file supports or requires garbage collection)
-      }
-      tcb:=ctai_typedconstbuilder.create([tcalo_new_section,tcalo_no_dead_strip]);
-      tcb.emit_ord_const(0,u64inttype);
-      current_asmdata.asmlists[al_objc_data].concatList(
-        tcb.get_final_asmlist(
-          current_asmdata.DefineAsmSymbol(target_asm.labelprefix+'_OBJC_IMAGE_INFO',AB_LOCAL,AT_DATA,u64inttype),
-          u64inttype,sec_objc_image_info,'_OBJC_IMAGE_INFO',const_align(sizeof(pint))
-        )
-      );
-      tcb.free;
-    end;
-
-
    class procedure tnodeutils.add_main_procdef_paras(pd: tdef);
      var
        pvs: tparavarsym;
@@ -1666,11 +1669,11 @@ implementation
           (target_info.system in (systems_darwin+[system_powerpc_macosclassic]+systems_aix)) then
          begin
            pvs:=cparavarsym.create('ARGC',1,vs_const,s32inttype,[]);
-           tprocdef(pd).parast.insert(pvs);
+           tprocdef(pd).parast.insertsym(pvs);
            pvs:=cparavarsym.create('ARGV',2,vs_const,cpointerdef.getreusable(charpointertype),[]);
-           tprocdef(pd).parast.insert(pvs);
+           tprocdef(pd).parast.insertsym(pvs);
            pvs:=cparavarsym.create('ARGP',3,vs_const,cpointerdef.getreusable(charpointertype),[]);
-           tprocdef(pd).parast.insert(pvs);
+           tprocdef(pd).parast.insertsym(pvs);
            tprocdef(pd).calcparas;
          end
        { package stub for Windows is a DLLMain }
@@ -1678,11 +1681,11 @@ implementation
            (target_info.system in systems_all_windows+systems_nativent) then
          begin
            pvs:=cparavarsym.create('HINSTANCE',1,vs_const,uinttype,[]);
-           tprocdef(pd).parast.insert(pvs);
+           tprocdef(pd).parast.insertsym(pvs);
            pvs:=cparavarsym.create('DLLREASON',2,vs_const,u32inttype,[]);
-           tprocdef(pd).parast.insert(pvs);
+           tprocdef(pd).parast.insertsym(pvs);
            pvs:=cparavarsym.create('DLLPARAM',3,vs_const,voidpointertype,[]);
-           tprocdef(pd).parast.insert(pvs);
+           tprocdef(pd).parast.insertsym(pvs);
            tprocdef(pd).returndef:=bool32type;
            insert_funcret_para(tprocdef(pd));
            tprocdef(pd).calcparas;

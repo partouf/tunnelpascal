@@ -889,6 +889,8 @@ implementation
 
            ait_section :
              begin
+               ResetSourceLines;
+
                if tai_section(hp).sectype<>sec_none then
                  if replaceforbidden then
                    WriteSection(tai_section(hp).sectype,ApplyAsmSymbolRestrictions(tai_section(hp).name^),tai_section(hp).secorder,
@@ -1301,12 +1303,14 @@ implementation
 
            ait_label :
              begin
-               if (tai_label(hp).labsym.is_used) then
-                begin
 {$ifdef DEBUG_LABEL}
                   writer.AsmWrite(asminfo^.comment);
                   writer.AsmWriteLn('References = ' + tostr(tai_label(hp).labsym.getrefs));
+                  if tai_label(hp).labsym.getrefs=0 then
+                    writer.AsmWriteln(asminfo^.comment+'Optimized out label '+tai_label(hp).labsym.name);
 {$endif DEBUG_LABEL}
+               if (tai_label(hp).labsym.is_used) then
+                begin
                   if tai_label(hp).labsym.bind in [AB_GLOBAL,AB_PRIVATE_EXTERN] then
                    begin
                      if (tai_label(hp).labsym.bind=AB_PRIVATE_EXTERN) then

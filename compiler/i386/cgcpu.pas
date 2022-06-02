@@ -378,6 +378,10 @@ unit cgcpu;
             list.concat(Taicpu.Op_reg(A_POP,S_W,NR_FS));
             list.concat(Taicpu.Op_reg(A_POP,S_W,NR_GS));
             { this restores the flags }
+
+            if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
+              list.concat(tai_regalloc.dealloc(NR_STACK_POINTER_REG,nil));
+
             list.concat(Taicpu.Op_none(A_IRET,S_NO));
           end
         { Routines with the poclearstack flag set use only a ret }
@@ -388,6 +392,9 @@ unit cgcpu;
            { but not on win32 }
            { and not for safecall with hidden exceptions, because the result }
            { wich contains the exception is passed in EAX }
+           if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
+             list.concat(tai_regalloc.dealloc(NR_STACK_POINTER_REG,nil));
+
            if ((target_info.system <> system_i386_win32) or
                (target_info.abi=abi_old_win32_gnu)) and
               not ((current_procinfo.procdef.proccalloption = pocall_safecall) and
@@ -398,16 +405,27 @@ unit cgcpu;
            else
              list.concat(Taicpu.Op_none(A_RET,S_NO));
          end
+
         { ... also routines with parasize=0 }
         else if (parasize=0) then
-         list.concat(Taicpu.Op_none(A_RET,S_NO))
+         begin
+           if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
+             list.concat(tai_regalloc.dealloc(NR_STACK_POINTER_REG,nil));
+
+           list.concat(Taicpu.Op_none(A_RET,S_NO))
+         end
         else
          begin
            { parameters are limited to 65535 bytes because ret allows only imm16 }
            if (parasize>65535) then
              CGMessage(cg_e_parasize_too_big);
+
+           if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
+             list.concat(tai_regalloc.dealloc(NR_STACK_POINTER_REG,nil));
+
            list.concat(Taicpu.Op_const(A_RET,S_W,parasize));
          end;
+
       end;
 
 
@@ -459,8 +477,10 @@ unit cgcpu;
              current_asmdata.getjumplabel(again);
              current_asmdata.getjumplabel(ok);
              a_label(list,again);
+             cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
              list.concat(Taicpu.op_const_reg(A_CMP,S_L,winstackpagesize,NR_EDI));
              a_jmp_cond(list,OC_B,ok);
+             cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
              list.concat(Taicpu.op_const_reg(A_SUB,S_L,winstackpagesize-4,NR_ESP));
              list.concat(Taicpu.op_reg(A_PUSH,S_L,NR_EDI));
              list.concat(Taicpu.op_const_reg(A_SUB,S_L,winstackpagesize,NR_EDI));
@@ -690,8 +710,10 @@ unit cgcpu;
               { so we've to do some tricks here                           }
               current_asmdata.getjumplabel(l1);
               current_asmdata.getjumplabel(l2);
+              cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
               list.Concat(taicpu.op_const_reg(A_TEST,S_B,32,NR_CL));
               cg.a_jmp_flags(list,F_E,l1);
+              cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
               tmpreg:=cg.getintregister(list,OS_32);
               case op of
                 OP_SHL:
@@ -823,8 +845,10 @@ unit cgcpu;
               { so we've to do some tricks here                           }
               current_asmdata.getjumplabel(l1);
               current_asmdata.getjumplabel(l2);
+              cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
               list.Concat(taicpu.op_const_reg(A_TEST,S_B,32,NR_CL));
               cg.a_jmp_flags(list,F_E,l1);
+              cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
               case op of
                 OP_SHL:
                   begin

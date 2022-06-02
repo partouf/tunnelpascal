@@ -41,6 +41,9 @@ implementation
 
 {$i gemdos.inc}
 
+var
+  basepage: PPD; external name '__base';
+
 procedure Error2DosError(errno: longint);
 begin
   case errno of
@@ -382,18 +385,44 @@ begin
 end;
 
 function EnvCount: Longint;
+var
+  hp : pchar;
 begin
   EnvCount:=0;
+  hp:=basepage^.p_env;
+  If (Hp<>Nil) then
+    while hp^<>#0 do
+      begin
+      Inc(EnvCount);
+      hp:=hp+strlen(hp)+1;
+      end;
 end;
 
 function EnvStr(Index: LongInt): String;
+var
+  hp : pchar;
 begin
   EnvStr:='';
+  hp:=basepage^.p_env;
+  If (Hp<>Nil) then
+    begin
+      while (hp^<>#0) and (Index>1) do
+        begin
+          Dec(Index);
+          hp:=hp+strlen(hp)+1;
+        end;
+    If (hp^<>#0) then
+      begin
+        EnvStr:=hp;
+      end;
+    end;
 end;
+
+function fpGetEnv(const envvar : ShortString): RawByteString; external name '_fpc_atari_getenv';
 
 function GetEnv(envvar : String): String;
 begin
-  GetEnv:='';
+   GetEnv := fpgetenv(envvar);
 end;
 
 

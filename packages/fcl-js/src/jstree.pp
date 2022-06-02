@@ -140,14 +140,13 @@ Type
     FResultType: TJSTypeDef;
     FTypedParams: TJSTypedParams;
     FGenericParams : TJSElementNodes;
-    procedure SetParams(const AValue: TStrings);
   Public
     Constructor Create;
     Destructor Destroy; override;
     Procedure UpdateParams;
     Property TypedParams : TJSTypedParams Read FTypedParams;
     Property ResultType : TJSTypeDef Read FResultType Write FResultType;
-    Property Params : TStrings Read FParams; deprecated;
+    Property Params : TStrings Read FParams; deprecated 'use TypedParams instead';
     Property Body : TJSFunctionBody Read FBody Write FBody; // can be nil
     Property Name : TJSString Read FName Write FName;
     Property IsEmpty : Boolean Read FIsEmpty Write FIsEmpty;
@@ -158,7 +157,7 @@ Type
   end;
 
   { TJSElement }
-
+  
   TJSElement = Class(TJSObject)
   private
     FData: TObject;
@@ -167,8 +166,10 @@ Type
     FColumn: Integer;
     FSource: String;
   Public
+    Type
+      TFreeNotifyEvent = Procedure(aEl : TJSElement) of object;
     class var
-      GlobalFreeHook : Procedure(aEl : TJSElement) of object;
+      GlobalFreeHook : TFreeNotifyEvent;
   Public
     Constructor Create(ALine,AColumn : Integer; Const ASource : String = ''); virtual;
     Destructor Destroy; override;
@@ -998,8 +999,10 @@ Type
   end;
 
   { TJSExportStatement - e.g. 'export Declaration' }
-  // 'export * as NameSpaceExport from ModuleName' NameSpaceExport and ModuleName are optional
-  // 'export { ExportNames[1], ExportNames[2], ... } from ModuleName' ModuleName is optional
+  // export [default] Declaration
+  // export [default] NameSpaceExport [from ModuleName]
+  // export [default] * [from ModuleName]
+  // export { ExportNames[1], ExportNames[2], ... } [from ModuleName]
 
   TJSExportStatement = class(TJSStatement)
   Private
@@ -1012,9 +1015,9 @@ Type
     function GetNamedExports: TJSExportNameElements;
   Public
     Destructor Destroy; override;
-    Property IsDefault : Boolean Read FIsDefault Write FIsDefault;
+    Property IsDefault : Boolean Read FIsDefault Write FIsDefault; // write "default"
     Property Declaration : TJSElement Read FDeclaration Write FDeclaration;
-    Property NameSpaceExport : TJSString Read FNameSpaceExport Write FNameSpaceExport;
+    Property NameSpaceExport : TJSString Read FNameSpaceExport Write FNameSpaceExport;// can be '*'
     Property ModuleName : TJSString Read FModuleName Write FModuleName;
     Property HaveExportNames : Boolean Read GetHaveNamedExports;
     Property ExportNames : TJSExportNameElements Read GetNamedExports;
@@ -1171,7 +1174,7 @@ Type
   Public
     Destructor Destroy; override;
     Procedure ClearNodes;
-    Function GetEnumerator : TElementNodeEnumerator;
+    Function GetEnumerator : TElementNodeEnumerator; reintroduce;
     Function AddNode(aIsAmbient : Boolean = False; aIsExport : Boolean = False) : TJSElementNode;
     Function AddNode(aEl : TJSElement; aIsAmbient : Boolean = False; aIsExport : Boolean = False) : TJSElementNode;
     Function InsertNode(Index: integer) : TJSElementNode;
@@ -1231,15 +1234,15 @@ Type
 
   TJSSourceElements = Class(TJSElement)
   private
+    FClasses: TJSElementNodes;
+    FEnums: TJSElementNodes;
     FFunctions: TJSElementNodes;
+    FInterfaces : TJSElementNodes;
     FModules: TJSElementNodes;
     FNamespaces: TJSElementNodes;
     FStatements: TJSElementNodes;
-    FInterfaces : TJSElementNodes;
     FTypes: TJSElementNodes;
-    FEnums: TJSElementNodes;
     FVars: TJSElementNodes;
-    FClasses: TJSElementNodes;
   Public
     Constructor Create(ALine,AColumn : Integer; const ASource : String = ''); override;
     Destructor Destroy; override;
@@ -1732,6 +1735,8 @@ Type
     Property Decl : TJSModuleDeclaration Read FDecl Write FDecl;
   end;
 
+  { TJSNamespaceDeclaration }
+
   TJSNamespaceDeclaration = Class(TJSNamedMembersDeclaration)
   Private
     FIsGlobal : Boolean;
@@ -1965,6 +1970,11 @@ end;
 
 destructor TJSAmbientClassDeclaration.Destroy;
 begin
+  if Members<>nil then
+    begin
+    Members.Vars.ClearNodes;
+    Members.Functions.ClearNodes;
+    end;
   FreeAndNil(FClassDef);
   inherited Destroy;
 end;
@@ -2062,8 +2072,8 @@ begin
   if FExtends=Nil then
     FExtends:=TJSElementNodes.Create(TJSElementNode);
   Lit:=TJSLiteral.Create(0,0,'');
-  Lit.Value:=TJSValue.Create(aName);
-  FExtends.AddNode().Node:=Lit
+  Lit.Value.AsString:=aName;
+  FExtends.AddNode().Node:=Lit;
 end;
 
 { TJSEnumStatement }
@@ -2328,6 +2338,7 @@ end;
 
 destructor TJSMembersDeclaration.Destroy;
 begin
+  FreeAndNil(FMembers);
   inherited Destroy;
 end;
 
@@ -3430,8 +3441,7 @@ end;
 
 { TJSSourceElements }
 
-constructor TJSSourceElements.Create(ALine, AColumn: Integer; const ASource: String
-  );
+constructor TJSSourceElements.Create(ALine, AColumn: Integer; const ASource: String);
 
   Function CN(aName : String; DoClear : Boolean = True) : TJSElementNodes;
   begin
@@ -3442,30 +3452,28 @@ constructor TJSSourceElements.Create(ALine, AColumn: Integer; const ASource: Str
 
 begin
   inherited Create(ALine, AColumn, ASource);
-  FStatements:=CN('Statements',False);
-  FFunctions:=CN('Functions',False);
-  FVars:=CN('Vars');
   FClasses:=CN('Classes');
+  FEnums:=CN('Enums');
+  FFunctions:=CN('Functions',False);
+  FInterfaces:=CN('Interfaces');
   FModules:=CN('Modules');
   FNamespaces:=CN('Namespaces');
+  FStatements:=CN('Statements',False);
   FTypes:=CN('Types');
-  FInterfaces:=CN('Interfaces');
-  FEnums:=CN('Enums');
+  FVars:=CN('Vars');
 end;
 
 destructor TJSSourceElements.Destroy;
-
-
 begin
   // Vars, types, enums, classes, interfaces are owned by their statements, and those are freed later
   FreeAndNil(FVars);
-  FreeAndNil(FClasses);
-  FreeAndNil(FEnums);
   FreeAndNil(FTypes);
-  FreeAndNil(FInterfaces);
-  FreeAndNil(FModules);
   FreeAndNil(FNamespaces);
+  FreeAndNil(FModules);
+  FreeAndNil(FInterfaces);
   FreeAndNil(FFunctions);
+  FreeAndNil(FEnums);
+  FreeAndNil(FClasses);
   // Must come last
   FreeAndNil(FStatements);
   inherited Destroy;
@@ -3534,7 +3542,7 @@ end;
 
 { TJSFunction }
 
-destructor TJSFunctionDeclarationStatement.Destroy;
+destructor TJSFunctionStatement.Destroy;
 begin
   FreeAndNil(FFuncDef);
   inherited Destroy;
@@ -3566,14 +3574,6 @@ end;
 
 { TJSFuncDef }
 
-procedure TJSFuncDef.SetParams(const AValue: TStrings);
-begin
-  if FParams=AValue then exit;
-  FParams.Assign(AValue);
-  TStringList(FParams).OwnsObjects:=True;
-end;
-
-
 constructor TJSFuncDef.Create;
 begin
   FParams:=TStringList.Create;
@@ -3598,7 +3598,7 @@ Var
 begin
   FParams.Clear;
   For I:=0 to TypedParams.Count-1 do
-    FParams.Add(UTF8Encode(TypedParams.Names[i]));
+    FParams.Add({$ifdef FPC_HAS_CPSTRING}UTF8Encode(TypedParams.Names[i]){$ELSE}TypedParams.Names[i]{$ENDIF});
 end;
 
 { TJSBracketMemberExpression }

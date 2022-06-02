@@ -256,6 +256,9 @@ implementation
                  hp:=ttypeconvnode(hp).left;
                  realdef:=hp.resultdef;
                end;
+             { could become an errordef in case of errors }
+             if realdef.typ<>orddef then
+               exit;
              if is_constintnode(left) then
                with torddef(realdef) do
                  case nodetype of
@@ -460,11 +463,16 @@ implementation
       function TransformLengthZero(n1,n2 : tnode) : tnode;
         var
           len : Tconstexprint;
+          lentype : tdef;
         begin
           if is_dynamic_array(tinlinenode(n1).left.resultdef) then
             len:=-1
           else
             len:=0;
+          if is_widestring(tinlinenode(n1).left.resultdef) and (tf_winlikewidestring in target_info.flags) then
+            lentype:=u32inttype
+          else
+            lentype:=sizesinttype;
           result:=caddnode.create_internal(orn,
             caddnode.create_internal(equaln,ctypeconvnode.create_internal(tinlinenode(n1).left.getcopy,voidpointertype),
                 cpointerconstnode.create(0,voidpointertype)),
@@ -472,10 +480,10 @@ implementation
                 ctypeconvnode.create_internal(
                   cderefnode.create(
                     caddnode.create_internal(subn,ctypeconvnode.create_internal(tinlinenode(n1).left.getcopy,voidpointertype),
-                      cordconstnode.create(sizesinttype.size,sizesinttype,false))
-                  ),sizesinttype
+                      cordconstnode.create(lentype.size,lentype,false))
+                  ),lentype
                 ),
-              cordconstnode.create(len,sizesinttype,false))
+              cordconstnode.create(len,lentype,false))
             );
         end;
 
@@ -592,6 +600,7 @@ implementation
 
 
       var
+        hp: taddnode;
         t,vl,lefttarget,righttarget: tnode;
         lt,rt,nt : tnodetype;
         hdef,
@@ -1486,6 +1495,26 @@ implementation
                   begin
                     Result:=SwapLeftWithRightRight;
                     exit;
+                  end;
+
+                {
+                  reorder string expressions with parentheses:
+                  (s1+(s2+(s3+s4...))) into s1+s2+s3+s4 ...
+                  so fpc_*_concat_multi can be used efficiently
+                }
+                hp:=self;
+                while (hp.right.nodetype=hp.nodetype) and (hp.resultdef.typ=stringdef) and
+                  (compare_defs(hp.resultdef,hp.right.resultdef,nothingn)=te_exact) and
+                  (compare_defs(hp.resultdef,hp.left.resultdef,nothingn)=te_exact) and
+                  (compare_defs(hp.resultdef,taddnode(hp.right).left.resultdef,nothingn)=te_exact) and
+                  (compare_defs(hp.resultdef,taddnode(hp.right).right.resultdef,nothingn)=te_exact) do
+                  begin
+                    t:=hp.left;
+                    hp.left:=hp.right;
+                    hp.right:=taddnode(hp.left).right;
+                    taddnode(hp.left).right:=taddnode(hp.left).left;
+                    taddnode(hp.left).left:=t;
+                    hp:=taddnode(hp.left);
                   end;
               end;
 
@@ -2516,6 +2545,7 @@ implementation
                    the result also unsigned. This is compatible with Delphi (PFV) }
                  if is_signed(ld) or
                     is_signed(rd) or
+                    (([m_iso,m_extpas]*current_settings.modeswitches)<>[]) or
 {$if defined(cpu16bitalu)}
                     (m_tp7 in current_settings.modeswitches) or
 {$endif}
@@ -3263,7 +3293,7 @@ implementation
       var
         p: tnode;
         newstatement : tstatementnode;
-        tempnode (*,tempnode2*) : ttempcreatenode;
+        tempnode : ttempcreatenode;
         cmpfuncname: string;
         para: tcallparanode;
       begin
@@ -3372,8 +3402,6 @@ implementation
               { generate better code for comparison with empty string, we
                 only need to compare the length with 0 }
               if (nodetype in [equaln,unequaln,gtn,gten,ltn,lten]) and
-                { windows widestrings are too complicated to be handled optimized }
-                not(is_widestring(left.resultdef) and (target_info.system in systems_windows)) and
                  (((left.nodetype=stringconstn) and (tstringconstnode(left).len=0)) or
                   ((right.nodetype=stringconstn) and (tstringconstnode(right).len=0))) then
                 begin
@@ -3392,40 +3420,18 @@ implementation
                     result := caddnode.create(nodetype,
                       cinlinenode.create(in_length_x,false,left),
                       cordconstnode.create(0,s8inttype,false))
-                  else
+                  else { nodetype in [equaln,unequaln] }
                     begin
-                      (*
-                      if is_widestring(left.resultdef) and
-                        (target_info.system in system_windows) then
+                      if is_widestring(left.resultdef) and (tf_winlikewidestring in target_info.flags) then
                         begin
                           { windows like widestrings requires that we also check the length }
-                          result:=internalstatements(newstatement);
-                          tempnode:=ctempcreatenode.create(voidpointertype,voidpointertype.size,tt_persistent,true);
-                          tempnode2:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
-                          addstatement(newstatement,tempnode);
-                          addstatement(newstatement,tempnode2);
-                          { poor man's cse }
-                          addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(tempnode),
-                            ctypeconvnode.create_internal(left,voidpointertype))
-                          );
-                          addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(tempnode2),
-                            caddnode.create(orn,
-                              caddnode.create(nodetype,
-                                ctemprefnode.create(tempnode),
-                                cpointerconstnode.create(0,voidpointertype)
-                              ),
-                              caddnode.create(nodetype,
-                                ctypeconvnode.create_internal(cderefnode.create(ctemprefnode.create(tempnode)),s32inttype),
-                                cordconstnode.create(0,s32inttype,false)
-                              )
-                            )
-                          ));
-                          addstatement(newstatement,ctempdeletenode.create_normal_temp(tempnode));
-                          addstatement(newstatement,ctempdeletenode.create_normal_temp(tempnode2));
-                          addstatement(newstatement,ctemprefnode.create(tempnode2));
+                          result:=cinlinenode.create(in_length_x,false,left);
+                          { and compare its result with 0 }
+                          result:=caddnode.create(equaln,result,cordconstnode.create(0,s8inttype,false));
+                          if nodetype=unequaln then
+                            result:=cnotnode.create(result);
                         end
                       else
-                      *)
                         begin
                           { compare the pointer with nil (for ansistrings etc), }
                           { faster than getting the length (JM)                 }

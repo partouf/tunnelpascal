@@ -588,7 +588,7 @@ implementation
           internaltypeprefixName[itp_vardisp_calldesc]+current_module.modulename^+'$'+tostr(current_module.localsymtable.SymList.count),
           vs_const,tcb.end_anonymous_record,[vo_is_public,vo_is_typed_const]);
         calldescsym.varstate:=vs_initialised;
-        current_module.localsymtable.insert(calldescsym);
+        current_module.localsymtable.insertsym(calldescsym);
         current_asmdata.AsmLists[al_typedconsts].concatList(
           tcb.get_final_asmlist(
             current_asmdata.DefineAsmSymbol(calldescsym.mangledname,AB_GLOBAL,AT_DATA,calldescsym.vardef),
@@ -2157,7 +2157,10 @@ implementation
             else
               begin
                 loadp:=p;
-                refp:=ctemprefnode.create(ptemp)
+                refp:=ctemprefnode.create(ptemp);
+                { ensure that an invokable isn't called again }
+                if is_invokable(hdef) then
+                  include(ttemprefnode(refp).flags,nf_load_procvar);
               end;
             add_init_statement(ptemp);
             add_init_statement(cassignmentnode.create(
@@ -3628,6 +3631,7 @@ implementation
         statements : tstatementnode;
         converted_result_data : ttempcreatenode;
         calltype: tdispcalltype;
+        invokesym : tsym;
       begin
          result:=nil;
          candidates:=nil;
@@ -3664,7 +3668,18 @@ implementation
                 if codegenerror then
                   exit;
 
-                procdefinition:=tabstractprocdef(right.resultdef);
+                if is_invokable(right.resultdef) then
+                  begin
+                    procdefinition:=get_invoke_procdef(tobjectdef(right.resultdef));
+                    if assigned(methodpointer) then
+                      internalerror(2021041004);
+                    methodpointer:=right;
+                    { don't convert again when this is used as the self parameter }
+                    include(right.flags,nf_load_procvar);
+                    right:=nil;
+                  end
+                else
+                  procdefinition:=tabstractprocdef(right.resultdef);
 
                 { Compare parameters from right to left }
                 paraidx:=procdefinition.Paras.count-1;
@@ -3867,20 +3882,29 @@ implementation
                      ensure that it is }
                    procdefinition.register_def;
                    if procdefinition.is_specialization and (procdefinition.typ=procdef) then
-                     maybe_add_pending_specialization(procdefinition);
+                     maybe_add_pending_specialization(procdefinition,candidates.para_anon_syms);
 
                    candidates.free;
                  end; { end of procedure to call determination }
              end;
 
-            { check for hints (deprecated etc) }
             if procdefinition.typ = procdef then
-              check_hints(tprocdef(procdefinition).procsym,tprocdef(procdefinition).symoptions,tprocdef(procdefinition).deprecatedmsg);
+              begin
+                { check for hints (deprecated etc) }
+                check_hints(tprocdef(procdefinition).procsym,tprocdef(procdefinition).symoptions,tprocdef(procdefinition).deprecatedmsg);
 
-            { add reference to corresponding procsym; may not be the one
-              originally found/passed to the constructor because of overloads }
-            if procdefinition.typ = procdef then
-              addsymref(tprocdef(procdefinition).procsym,procdefinition);
+                { add reference to corresponding procsym; may not be the one
+                  originally found/passed to the constructor because of overloads }
+                addsymref(tprocdef(procdefinition).procsym,procdefinition);
+
+                { ensure that the generic is considered as used as for an
+                  implicit specialization must only be called after the final
+                  overload was picked }
+                if assigned(tprocdef(procdefinition).genericdef) and
+                    assigned(tprocdef(tprocdef(procdefinition).genericdef).procsym) and
+                    (tprocdef(tprocdef(procdefinition).genericdef).procsym.refs=0) then
+                  addsymref(tprocdef(tprocdef(procdefinition).genericdef).procsym);
+              end;
 
             { add needed default parameters }
             if (paralength<procdefinition.maxparacount) then
@@ -4175,6 +4199,13 @@ implementation
            typecheckpass(call_self_node);
          if assigned(call_vmt_node) then
            typecheckpass(call_vmt_node);
+
+         if assigned(current_procinfo) and
+             (procdefinition.typ=procdef) and
+             (procdefinition.parast.symtablelevel<=current_procinfo.procdef.parast.symtablelevel) and
+             (procdefinition.parast.symtablelevel>normal_function_level) and
+             (current_procinfo.procdef.parast.symtablelevel>normal_function_level) then
+           current_procinfo.add_captured_sym(tprocdef(procdefinition).procsym,fileinfo);
 
          finally
            aktcallnode:=oldcallnode;
@@ -4902,6 +4933,14 @@ implementation
              function called in the inlined code }
            (pushconstaddr and
             not valid_for_addr(para.left,false)) then
+          exit(true);
+
+        { insert value parameters directly if they are complex instead
+          of inserting a reference to the temp.
+          - this keeps the node tree simpler
+          - alignment is propagated }
+        if (para.parasym.varspez=vs_value) and
+          complexpara then
           exit(true);
 
         result:=false;

@@ -10,7 +10,8 @@ interface
 
 uses
   Classes, SysUtils, fpcunit, PasTree, PScanner, PasResolver, tcbaseparser,
-  testregistry, strutils, tcresolver, PasUseAnalyzer, PasResolveEval;
+  testregistry, strutils, tcresolver, PasUseAnalyzer,
+  PasResolveEval;
 
 type
 
@@ -151,6 +152,7 @@ type
     procedure TestWP_UnitFinalization;
     procedure TestWP_CallInherited;
     procedure TestWP_ProgramPublicDeclarations;
+    procedure TestWP_LibraryDeclarations;
     procedure TestWP_ClassOverride;
     procedure TestWP_ClassDefaultProperty;
     procedure TestWP_BeforeConstruction;
@@ -280,7 +282,9 @@ begin
   aMarker:=FirstSrcMarker;
   while aMarker<>nil do
     begin
+    {$IFDEF VerbosePasAnalyzer}
     writeln('TCustomTestUseAnalyzer.CheckUsedMarkers ',aMarker^.Identifier,' Line=',aMarker^.Row,' StartCol=',aMarker^.StartCol,' EndCol=',aMarker^.EndCol);
+    {$ENDIF}
     p:=RPos('_',aMarker^.Identifier);
     if p>1 then
       begin
@@ -303,7 +307,9 @@ begin
         for i:=0 to Elements.Count-1 do
           begin
           El:=TPasElement(Elements[i]);
+          {$IFDEF VerbosePasAnalyzer}
           writeln('TCustomTestUseAnalyzer.CheckUsedMarkers ',aMarker^.Identifier,' ',i,'/',Elements.Count,' El=',GetObjName(El),' ',GetObjName(El.CustomData));
+          {$ENDIF}
           case ExpectedUsed of
           uUsed,uNotUsed:
             if Analyzer.IsUsed(El) then
@@ -2643,6 +2649,39 @@ begin
   Add('procedure {#DoPublic_used}DoPublic; public; begin end;');
   Add('procedure {#DoPrivate_notused}DoPrivate; begin end;');
   Add('begin');
+  AnalyzeWholeProgram;
+end;
+
+procedure TTestUseAnalyzer.TestWP_LibraryDeclarations;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  {#TObject_used}TObject = class',
+  '  end;',
+  '  {#TBird_used}TBird = class',
+  '  private',
+  '    procedure {#TBirdRun_notused}Run;',
+  '  protected',
+  '    procedure {#TBirdTweet_notused}Tweet;',
+  '  public',
+  '    procedure {#TBirdFly_used}Fly;',
+  '  end;',
+  'procedure TBird.Run;',
+  'begin',
+  'end;',
+  'procedure TBird.Tweet;',
+  'begin',
+  'end;',
+  'procedure TBird.Fly;',
+  'begin',
+  'end;',
+  'function {#GetBird_used}GetBird: TBird;',
+  'begin',
+  'end;',
+  'exports',
+  '  GetBird;',
+  'begin']);
   AnalyzeWholeProgram;
 end;
 

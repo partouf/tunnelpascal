@@ -336,7 +336,7 @@ implementation
                           proc_add_definition will give an error }
                       end;
                     { add method with the correct visibility }
-                    pd:=tprocdef(parentpd.getcopyas(procdef,pc_normal_no_hidden,''));
+                    pd:=tprocdef(parentpd.getcopyas(procdef,pc_normal_no_hidden,'',true));
                     { get rid of the import accessorname for inherited virtual class methods,
                       it has to be regenerated rather than amended }
                     if [po_classmethod,po_virtualmethod]<=pd.procoptions then
@@ -396,7 +396,7 @@ implementation
           begin
             { getter/setter could have parameters in case of indexed access
               -> copy original procdef }
-            pd:=tprocdef(orgaccesspd.getcopyas(procdef,pc_normal_no_hidden,''));
+            pd:=tprocdef(orgaccesspd.getcopyas(procdef,pc_normal_no_hidden,'',true));
             exclude(pd.procoptions,po_abstractmethod);
             exclude(pd.procoptions,po_overridingmethod);
             { can only construct the artificial accessorname now, because it requires
@@ -416,7 +416,7 @@ implementation
            (sym.owner<>owner)  then
           begin
             ps:=cprocsym.create(accessorname);
-            obj.symtable.insert(ps);
+            obj.symtable.insertsym(ps);
           end
         else
           ps:=tprocsym(sym);
@@ -444,7 +444,7 @@ implementation
               begin
                 { parameter with value to set }
                 pvs:=cparavarsym.create('__fpc_newval__',10,vs_const,propdef,[]);
-                pd.parast.insert(pvs);
+                pd.parast.insertsym(pvs);
               end;
             if (ppo_hasparameters in propoptions) and
                not assigned(orgaccesspd) then
@@ -477,7 +477,7 @@ implementation
         tmpaccesslist:=callthroughprop.propaccesslist[accesstyp];
         callthroughprop.propaccesslist[accesstyp]:=propaccesslist[accesstyp];
         propaccesslist[accesstyp]:=tmpaccesslist;
-        owner.insert(callthroughprop);
+        owner.insertsym(callthroughprop);
 
         pd.skpara:=callthroughprop;
         { needs to be exported }

@@ -116,7 +116,7 @@ Type
     class procedure SetCompressedJSON(AValue: Boolean); {$IFNDEF PAS2JS}static;{$ENDIF}
   protected
     Class Procedure DoError(Const Msg : String);
-    Class Procedure DoError(Const Fmt : String; const Args : Array of {$IFDEF PAS2JS}jsvalue{$else}Const{$ENDIF});
+    Class Procedure DoError(Const Fmt : String; const Args : Array of Const);
     Function DoFindPath(Const APath : TJSONStringType; Out NotFound : TJSONStringType) : TJSONdata; virtual;
     function GetAsBoolean: Boolean; virtual; abstract;
     function GetAsFloat: TJSONFloat; virtual; abstract;
@@ -803,6 +803,11 @@ implementation
 
 Uses typinfo;
 
+{$IFNDEF Pas2js}
+const
+  HexDigits: array[0..15] of char = '0123456789ABCDEF';
+{$ENDIF}
+
 Resourcestring
   SErrCannotConvertFromNull = 'Cannot convert data from Null value';
   SErrCannotConvertToNull = 'Cannot convert data to Null value';
@@ -879,43 +884,96 @@ begin
 end;
 
 function StringToJSONString(const S: TJSONStringType; Strict : Boolean = False): TJSONStringType;
+{$IFDEF Pas2js}
+begin
+  Result:=TJSJSON.stringify(S);
+  if Strict then
+    Result:=TJSString(Result).replaceAll('/','\\\/');
+end;
+{$ELSE}
+var
+  ResultPos: PChar;
 
-Var
-  I,J,L : Integer;
+  procedure W(p: PChar; Count: SizeInt);
+  begin
+    Move(p^,ResultPos^,Count);
+    inc(ResultPos,Count);
+  end;
+
+var
+  hex : array[0..5] of char;
   C : Char;
+  i, ResultLen, SLen: SizeInt;
+  SPos, SEnd, SLastPos: PChar;
 
 begin
-  I:=1;
-  J:=1;
-  Result:='';
-  L:=Length(S);
-  While I<=L do
-    begin
-    C:=S[I];
+  SLen:=length(S);
+  if SLen=0 then exit('');
+
+  ResultLen:=0;
+  for i:=1 to SLen do
+  begin
+    case S[i] of
+    '/' : if Strict then
+            inc(ResultLen,2)
+          else
+            inc(ResultLen);
+    '\',
+    '"',
+    #8,
+    #9,
+    #10,
+    #12,
+    #13 : inc(ResultLen,2);
+    #0..#7,#11,#14..#31: inc(ResultLen,6);
+    else
+      inc(ResultLen);
+    end;
+  end;
+  if ResultLen=SLen then
+    exit(S);
+
+  SetLength(Result,ResultLen);
+  ResultPos:=PChar(Result);
+
+  hex:='\u00';
+  SPos:=PChar(S);
+  SEnd:=SPos+SLen;
+  SLastPos:=SPos;
+  While SPos<SEnd do
+  begin
+    C:=SPos^;
     if (C in ['"','/','\',#0..#31]) then
       begin
-      Result:=Result+Copy(S,J,I-J);
-      Case C of
-        '\' : Result:=Result+'\\';
-        '/' : if Strict then
-                Result:=Result+'\/'
-              else
-                Result:=Result+'/';
-        '"' : Result:=Result+'\"';
-        #8  : Result:=Result+'\b';
-        #9  : Result:=Result+'\t';
-        #10 : Result:=Result+'\n';
-        #12 : Result:=Result+'\f';
-        #13 : Result:=Result+'\r';
-      else
-        Result:=Result+'\u'+HexStr(Ord(C),4);
+        if SPos>SLastPos then
+          W(SLastPos,SPos-SLastPos);
+        Case C of
+          '\' : W('\\',2);
+          '/' : if Strict then
+                  W('\/',2)
+                else
+                  W('/',1);
+          '"' : W('\"',2);
+          #8  : W('\b',2);
+          #9  : W('\t',2);
+          #10 : W('\n',2);
+          #12 : W('\f',2);
+          #13 : W('\r',2);
+        else
+          begin
+            hex[4]:=hexdigits[(ord(C) shr 4)];
+            hex[5]:=hexdigits[(ord(C) and $F)];
+            W(@hex[0],6);
+          end;
+        end;
+        SLastPos:=SPos+1;
       end;
-      J:=I+1;
-      end;
-    Inc(I);
-    end;
-  Result:=Result+Copy(S,J,I-1);
+    Inc(SPos);
+  end;
+  if SPos>SLastPos then
+    W(SLastPos,SPos-SLastPos);
 end;
+{$ENDIF}
 
 function JSONStringToString(const S: TJSONStringType): TJSONStringType;
 
@@ -1492,7 +1550,7 @@ begin
 end;
 
 class procedure TJSONData.DoError(const Fmt: String;
-  const Args: array of {$IFDEF PAS2JS}jsvalue{$else}Const{$ENDIF});
+  const Args: array of Const);
 begin
   Raise EJSON.CreateFmt(Fmt,Args);
 end;

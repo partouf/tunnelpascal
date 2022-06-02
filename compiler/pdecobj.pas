@@ -105,7 +105,7 @@ implementation
         result:=nil;
         consume(_CONSTRUCTOR);
         { must be at same level as in implementation }
-        parse_proc_head(current_structdef,potype_class_constructor,false,nil,nil,pd);
+        parse_proc_head(current_structdef,potype_class_constructor,[],nil,nil,pd);
         if not assigned(pd) then
           begin
             consume(_SEMICOLON);
@@ -130,7 +130,7 @@ implementation
         result:=nil;
         consume(_CONSTRUCTOR);
         { must be at same level as in implementation }
-        parse_proc_head(current_structdef,potype_constructor,false,nil,nil,pd);
+        parse_proc_head(current_structdef,potype_constructor,[],nil,nil,pd);
         if not assigned(pd) then
           begin
             consume(_SEMICOLON);
@@ -244,7 +244,7 @@ implementation
       begin
         result:=nil;
         consume(_DESTRUCTOR);
-        parse_proc_head(current_structdef,potype_class_destructor,false,nil,nil,pd);
+        parse_proc_head(current_structdef,potype_class_destructor,[],nil,nil,pd);
         if not assigned(pd) then
           begin
             consume(_SEMICOLON);
@@ -268,7 +268,7 @@ implementation
       begin
         result:=nil;
         consume(_DESTRUCTOR);
-        parse_proc_head(current_structdef,potype_destructor,false,nil,nil,pd);
+        parse_proc_head(current_structdef,potype_destructor,[],nil,nil,pd);
         if not assigned(pd) then
           begin
             consume(_SEMICOLON);
@@ -342,13 +342,7 @@ implementation
         if find_implemented_interface(current_objectdef,intfdef)<>nil then
           Message1(sym_e_duplicate_id,intfdef.objname^)
         else
-          begin
-            { allocate and prepare the GUID only if the class
-              implements some interfaces. }
-            if current_objectdef.ImplementedInterfaces.count = 0 then
-              current_objectdef.prepareguid;
-            current_objectdef.ImplementedInterfaces.Add(TImplementedInterface.Create(intfdef));
-          end;
+          current_objectdef.register_implemented_interface(intfdef,true);
       end;
 
 
@@ -382,9 +376,7 @@ implementation
         if find_implemented_interface(current_objectdef,intfdef)<>nil then
           Message1(sym_e_duplicate_id,intfdef.objname^)
         else
-          begin
-            current_objectdef.ImplementedInterfaces.Add(TImplementedInterface.Create(intfdef));
-          end;
+          current_objectdef.register_implemented_interface(intfdef,false);
       end;
 
 
@@ -906,6 +898,7 @@ implementation
 
       var
         oldparse_only: boolean;
+        flags : tparse_proc_flags;
       begin
         case token of
           _PROCEDURE,
@@ -917,7 +910,12 @@ implementation
 
               oldparse_only:=parse_only;
               parse_only:=true;
-              result:=parse_proc_dec(is_classdef,astruct,hadgeneric);
+              flags:=[];
+              if is_classdef then
+                include(flags,ppf_classmethod);
+              if hadgeneric then
+                include(flags,ppf_generic);
+              result:=parse_proc_dec(flags,astruct);
 
               { this is for error recovery as well as forward }
               { interface mappings, i.e. mapping to a method  }
@@ -1194,18 +1192,27 @@ implementation
                   Message(parser_e_type_var_const_only_in_records_and_classes);
                 consume(_TYPE);
                 object_member_blocktype:=bt_type;
+                { expect at least one type declaration }
+                if token<>_ID then
+                  consume(_ID);
               end;
             _VAR :
               begin
                 check_unbound_attributes;
                 rtti_attrs_def := nil;
                 parse_var(false);
+                { expect at least one var declaration }
+                if token<>_ID then
+                  consume(_ID);
               end;
             _CONST:
               begin
                 check_unbound_attributes;
                 rtti_attrs_def := nil;
-                parse_const
+                parse_const;
+                { expect at least one constant declaration }
+                if token<>_ID then
+                  consume(_ID);
               end;
             _THREADVAR :
               begin
@@ -1217,6 +1224,9 @@ implementation
                     is_classdef:=true;
                   end;
                 parse_var(true);
+                { expect at least one threadvar declaration }
+                if token<>_ID then
+                  consume(_ID);
               end;
             _ID :
               begin
@@ -1429,7 +1439,7 @@ implementation
         old_current_specializedef: tstoreddef;
         old_parse_generic: boolean;
         list: TFPObjectList;
-        s: String;
+        s: TSymStr;
         st: TSymtable;
         olddef: tdef;
       begin
@@ -1450,7 +1460,7 @@ implementation
         { reuse forward objectdef? }
         if assigned(fd) then
           begin
-            if fd.objecttype<>objecttype then
+            if (fd.objecttype<>objecttype) or ((fd.is_generic or fd.is_specialization) xor assigned(genericlist)) then
               begin
                 Message(parser_e_forward_mismatch);
                 { recover }
@@ -1567,6 +1577,19 @@ implementation
             { add to the list of definitions to check that the forward
               is resolved. this is required for delphi mode }
             current_module.checkforwarddefs.add(current_structdef);
+
+            symtablestack.push(current_structdef.symtable);
+            insert_generic_parameter_types(current_structdef,genericdef,genericlist,false);
+            { when we are parsing a generic already then this is a generic as
+              well }
+            if old_parse_generic then
+              include(current_structdef.defoptions,df_generic);
+            parse_generic:=(df_generic in current_structdef.defoptions);
+
+            { *don't* add the strict private symbol for non-Delphi modes for
+              forward defs }
+
+            symtablestack.pop(current_structdef.symtable);
           end
         else
           begin
@@ -1586,7 +1609,7 @@ implementation
               parse_object_options;
 
             symtablestack.push(current_structdef.symtable);
-            insert_generic_parameter_types(current_structdef,genericdef,genericlist);
+            insert_generic_parameter_types(current_structdef,genericdef,genericlist,assigned(fd));
             { when we are parsing a generic already then this is a generic as
               well }
             if old_parse_generic then
@@ -1594,7 +1617,7 @@ implementation
             parse_generic:=(df_generic in current_structdef.defoptions);
 
             { in non-Delphi modes we need a strict private symbol without type
-              count and type parameters in the name to simply resolving }
+              count and type parameters in the name to simplify resolving }
             maybe_insert_generic_rename_symbol(n,genericlist);
 
             { parse list of parent classes }
@@ -1611,6 +1634,11 @@ implementation
             { parse extended type for helpers }
             if is_objectpascal_helper(current_structdef) then
               parse_extended_type(helpertype);
+
+            if is_interface(current_objectdef) and
+                is_interface(current_objectdef.childof) and
+                (oo_is_invokable in tobjectdef(current_objectdef.childof).objectoptions) then
+              include(current_objectdef.objectoptions,oo_is_invokable);
 
             { parse optional GUID for interfaces }
             parse_guid;

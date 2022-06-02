@@ -417,14 +417,18 @@ implementation
         if not(current_module.is_unit) and (target_info.system=system_xtensa_freertos) then
           if (current_settings.controllertype=ct_esp32) then
             begin
-              if idf_version>=40200 then
+              if (idf_version>=40100) and (idf_version<40200) then
+                AddUnit('espidf_40100')
+              else if (idf_version>=40200) and (idf_version<40400) then
                 AddUnit('espidf_40200')
+              else if idf_version>=40400 then
+                AddUnit('espidf_40400')
               else
                 Comment(V_Warning, 'Unsupported esp-idf version');
             end
           else if (current_settings.controllertype=ct_esp8266) then
             begin
-              if idf_version=30300 then
+              if (idf_version>=30300) and (idf_version<30400) then
                 AddUnit('esp8266rtos_30300')
               else if idf_version>=30400 then
                 AddUnit('esp8266rtos_30400')
@@ -660,7 +664,7 @@ implementation
             sym:=tsym(current_module.localsymtable.symlist[i]);
             { this also frees sym, as the symbols are owned by the symtable }
             if not sym.is_registered then
-              current_module.localsymtable.Delete(sym);
+              current_module.localsymtable.DeleteSym(sym);
           end;
       end;
 
@@ -675,7 +679,7 @@ implementation
       end;
 
 
-    function create_main_proc(const name:string;potype:tproctypeoption;st:TSymtable):tcgprocinfo;
+    function create_main_proc(const name:TSymStr;potype:tproctypeoption;st:TSymtable):tcgprocinfo;
       var
         ps  : tprocsym;
         pd  : tprocdef;
@@ -689,7 +693,7 @@ implementation
         ps.register_sym;
         { main are allways used }
         inc(ps.refs);
-        st.insert(ps);
+        st.insertsym(ps);
         pd:=tprocdef(cnodeutils.create_main_procdef(target_info.cprefix+name,potype,ps));
         { We don't need a local symtable, change it into the static symtable }
         if not (potype in [potype_mainstub,potype_pkgstub,potype_libmainstub]) then
@@ -740,7 +744,7 @@ implementation
              gotvarsym:=cstaticvarsym.create('_GLOBAL_OFFSET_TABLE_',
                           vs_value,voidpointertype,[vo_is_external]);
              gotvarsym.set_mangledname('_GLOBAL_OFFSET_TABLE_');
-             current_module.localsymtable.insert(gotvarsym);
+             current_module.localsymtable.insertsym(gotvarsym);
              { avoid unnecessary warnings }
              gotvarsym.varstate:=vs_read;
              gotvarsym.refs:=1;
@@ -773,7 +777,7 @@ implementation
 
     procedure copy_macro(p:TObject; arg:pointer);
       begin
-        current_module.globalmacrosymtable.insert(tmacro(p).getcopy);
+        current_module.globalmacrosymtable.insertsym(tmacro(p).getcopy);
       end;
 
     function try_consume_hintdirective(var moduleopt:tmoduleoptions; var deprecatedmsg:pshortstring):boolean;
@@ -850,7 +854,7 @@ implementation
           include(def.objectoptions,oo_is_sealed);
           def.objextname:=stringdup(current_module.realmodulename^);
           typesym:=ctypesym.create('__FPC_JVM_Module_Class_Alias$',def);
-          symtablestack.top.insert(typesym);
+          symtablestack.top.insertsym(typesym);
         end;
 {$endif jvm}
 
@@ -1291,7 +1295,7 @@ type
                 not(has_no_code(init_procinfo.code)) then
                begin
                  init_procinfo.code:=cnodeutils.wrap_proc_body(init_procinfo.procdef,init_procinfo.code);
-                 init_procinfo.generate_code;
+                 init_procinfo.generate_code_tree;
                  include(current_module.moduleflags,mf_init);
                end
              else
@@ -1306,7 +1310,7 @@ type
                 not(has_no_code(finalize_procinfo.code)) then
                begin
                  finalize_procinfo.code:=cnodeutils.wrap_proc_body(finalize_procinfo.procdef,finalize_procinfo.code);
-                 finalize_procinfo.generate_code;
+                 finalize_procinfo.generate_code_tree;
                  include(current_module.moduleflags,mf_finalize);
                end
              else
@@ -2150,7 +2154,7 @@ type
              for i:=0 to high(sc) do
                begin
                  ps:=cprogramparasym.create(sc[i].name,sc[i].nr);
-                 current_module.localsymtable.insert(ps,true);
+                 current_module.localsymtable.insertsym(ps,true);
                end;
            end;
 
@@ -2304,7 +2308,7 @@ type
            tstoredsymtable(current_module.localsymtable).checklabels;
 
          { See remark in unit init/final }
-         main_procinfo.generate_code;
+         main_procinfo.generate_code_tree;
          main_procinfo.resetprocdef;
          release_main_proc(main_procinfo);
          if assigned(init_procinfo) then
@@ -2323,7 +2327,7 @@ type
                 not(has_no_code(finalize_procinfo.code)) then
                begin
                  finalize_procinfo.code:=cnodeutils.wrap_proc_body(finalize_procinfo.procdef,finalize_procinfo.code);
-                 finalize_procinfo.generate_code;
+                 finalize_procinfo.generate_code_tree;
                  include(current_module.moduleflags,mf_finalize);
                end;
              finalize_procinfo.resetprocdef;

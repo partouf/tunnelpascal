@@ -320,7 +320,10 @@ interface
          ts_wasm_js_exceptions,
          { native WebAssembly exceptions support:
            https://github.com/WebAssembly/exception-handling/blob/master/proposals/exception-handling/Exceptions.md }
-         ts_wasm_native_exceptions
+         ts_wasm_native_exceptions,
+         { support multithreading via the WebAssembly threading proposal:
+           https://github.com/WebAssembly/threads/blob/master/proposals/threads/Overview.md }
+         ts_wasm_threads
        );
        ttargetswitches = set of ttargetswitch;
 
@@ -454,7 +457,8 @@ interface
          (name: 'NOEXCEPTIONS';        hasvalue: false; isglobal: true ; define: 'FPC_WASM_NO_EXCEPTIONS'),
          (name: 'BFEXCEPTIONS';        hasvalue: false; isglobal: true ; define: 'FPC_WASM_BRANCHFUL_EXCEPTIONS'),
          (name: 'JSEXCEPTIONS';        hasvalue: false; isglobal: true ; define: 'FPC_WASM_JS_EXCEPTIONS'),
-         (name: 'WASMEXCEPTIONS';      hasvalue: false; isglobal: true ; define: 'FPC_WASM_NATIVE_EXCEPTIONS')
+         (name: 'WASMEXCEPTIONS';      hasvalue: false; isglobal: true ; define: 'FPC_WASM_NATIVE_EXCEPTIONS'),
+         (name: 'WASMTHREADS';         hasvalue: false; isglobal: true ; define: 'FPC_WASM_THREADS')
        );
 
        { switches being applied to all CPUs at the given level }
@@ -528,7 +532,10 @@ interface
          m_multi_helpers,       { helpers can appear in multiple scopes simultaneously }
          m_array2dynarray,      { regular arrays can be implicitly converted to dynamic arrays }
          m_prefixed_attributes, { enable attributes that are defined before the type they belong to }
-         m_underscoreisseparator{ _ can be used as separator to group digits in numbers }
+         m_underscoreisseparator,{ _ can be used as separator to group digits in numbers }
+         m_implicit_function_specialization,    { attempt to specialize generic function by inferring types from parameters }
+         m_function_references, { enable Delphi-style function references }
+         m_anonymous_functions  { enable Delphi-style anonymous functions }
        );
        tmodeswitches = set of tmodeswitch;
 
@@ -679,7 +686,7 @@ interface
 
        cstylearrayofconst = [pocall_cdecl,pocall_cppdecl,pocall_mwpascal,pocall_sysv_abi_cdecl,pocall_ms_abi_cdecl];
 
-       modeswitchstr : array[tmodeswitch] of string[21] = ('',
+       modeswitchstr : array[tmodeswitch] of string[30] = ('',
          '','','','','','','',
          {$ifdef gpc_mode}'',{$endif}
          { more specific }
@@ -721,7 +728,10 @@ interface
          'MULTIHELPERS',
          'ARRAYTODYNARRAY',
          'PREFIXEDATTRIBUTES',
-         'UNDERSCOREISSEPARATOR'
+         'UNDERSCOREISSEPARATOR',
+         'IMPLICITFUNCTIONSPECIALIZATION',
+         'FUNCTIONREFERENCES',
+         'ANONYMOUSFUNCTIONS'
          );
 
 
@@ -835,13 +845,17 @@ interface
       plongint   = ^longint;
       plongintarray = plongint;
 
+      tfileposline = longint;
+      tfileposcolumn = word;
+      tfileposfileindex = word;
+      tfileposmoduleindex = word;
       pfileposinfo = ^tfileposinfo;
       tfileposinfo = record
         { if types of column or fileindex are changed, modify tcompilerppufile.putposinfo }
-        line      : longint;
-        column    : word;
-        fileindex : word;
-        moduleindex : word;
+        line      : tfileposline;
+        column    : tfileposcolumn;
+        fileindex : tfileposfileindex;
+        moduleindex : tfileposmoduleindex;
       end;
 
   {$ifndef xFPC}

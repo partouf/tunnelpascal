@@ -445,7 +445,7 @@ scan_e_unexpected_endif=02108_E_$ENDIF directive found without a matching $IF(N)
 #
 # Parser
 #
-# 03361 is the last used one
+# 03364 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1027,11 +1027,11 @@ parser_e_illegal_field_or_method=03181_E_Unknown class field or method identifie
 parser_w_proc_overriding_calling=03182_W_Overriding calling convention "$1" with "$2"
 % There are two directives in the procedure declaration that specify a calling
 % convention. Only the last directive will be used.
-parser_e_no_procvarobj_const=03183_E_Typed constants of the type "procedure of object" can only be initialized with NIL
-% You cannot assign the address of a method to a typed constant which has a
-% 'procedure of object' type, because such a constant requires two addresses:
-% that of the method (which is known at compile time) and that of the object or
-% class instance it operates on (which cannot be known at compile time).
+parser_e_no_procvarobj_const=03183_E_Typed constants of the type "procedure of object" need a Self pointer that's known at compile time
+% In order to initialize a method pointer with a method, the value of the \var{Self}
+% pointer for calling that method at run time must be known at compile time.
+% Thus, a method pointer can be initialized either with \var{Nil}, or with a class
+% method that is accessed via a class type or a class reference type.
 parser_e_default_value_only_one_para=03184_E_Default value can only be assigned to one parameter
 % It is not possible to specify a default value for several parameters at once.
 % The following is invalid:
@@ -1635,12 +1635,19 @@ parser_e_constructurs_cannot_take_type_parameters=03360_E_Constructors cannot ta
 parser_e_raise_with_noreturn_not_allowed=03361_E_Raise in subroutines declared as noreturn is not allowed
 % \var{noreturn} tells the compiler that the activation scope of the subroutine is never left. This includes exceptions
 % goto or any other mean. While the compiler cannot detect all such cases some are trivial and the compiler gives an error.
+parser_e_section_directive_not_allowed_for_target=03362_E_Directive section not allowed for this target
+% Only some targets (e.g. Embedded and FreeRTOS) support the section directive.
+parser_e_absolute_sym_cannot_reference_itself=03363_E_Absolute variable cannot reference itself
+parser_e_syscall_format_not_support=03364_E_Syntax of syscall directive not supported by current target
+% On a certain target, not all syntax variants of the syscall directive make sense and thus those making
+% no sense are not supported
+% Declarations like \var{var i: Integer absolute i;} are not allowed
 %
 % \end{description}
 %
 # Type Checking
 #
-# 04128 is the last used one
+# 04131 is the last used one
 #
 % \section{Type checking errors}
 % This section lists all errors that can occur when type checking is
@@ -2092,12 +2099,16 @@ type_e_cant_read_write_type_in_iso_mode=04129_E_Can't read or write variables of
 % file of type text, which doesn't support that variable's type in the selected language mode (iso mode).
 type_w_array_size_does_not_match_size_of_constant_string=04130_W_The length of the constant string (length is $1) must be equal to the number of array elements ($2 elements)
 % ISO Pascal requires that string constants have the same length as the array to which them they are assigned.
+type_e_nested_procvar_to_funcref=04131_E_A nested function variable can not be assigned to a function reference.
+% Function references can live beyond the scope of the function they're contained in while
+% nested functions assigned to nested function variables can't. Due to this discrepancy
+% in design assigning a nested function variable to a function reference is forbidden.
 %
 % \end{description}
 #
 # Symtable
 #
-# 05098 is the last used one
+# 05099 is the last used one
 #
 % \section{Symbol handling}
 % This section lists all the messages that concern the handling of symbols.
@@ -2415,6 +2426,9 @@ sym_e_generic_type_param_decl=05097_E_Generic type parameter declared as "$1"
 % is found between a declaration and the definition.
 sym_e_type_must_be_rec_or_object=05098_E_Record or object type expected
 % The variable or expression isn't of the type \var{record} or \var{object}.
+sym_e_symbol_no_capture=05099_E_Symbol "$1" can not be captured
+% The specified symbol can not be captured to be used in a function reference.
+% For example \var{var} or \var{out} parameters can not be captured in that way.
 % \end{description}
 #
 # Codegenerator
@@ -2942,7 +2956,7 @@ asmr_e_a64_regset_too_large=07147_E_Too many registers in register set.
 #
 # Assembler/binary writers
 #
-# 08036 is the last used one
+# 08037 is the last used one
 #
 asmw_f_too_many_asm_files=08000_F_Too many assembler files
 % With smartlinking enabled, there are too many assembler
@@ -3000,6 +3014,7 @@ asmw_e_brxx_out_of_range=08033_E_Asm: conditional branch destination is out of r
 asmw_e_illegal_use_of_rip=08034_E_Asm: RIP cannot be used as index register or with another register in a reference
 asmw_e_seh_invalid_data_size=08035_F_Illegal function size for SEH function
 asmw_e_illegal_use_of_sp=08036_E_Asm: ESP/RSP cannot be used as index register
+asmw_e_illegal_unset_index=08037_E_Wasm32 symbol $1 without index value error
 #
 # Executing linker/assembler
 #
@@ -3212,7 +3227,7 @@ link_e_undefined_symbol=09222_E_Undefined symbol: $1
 #
 # Unit loading
 #
-# 10068 is the last used one
+# 10069 is the last used one
 #
 # BeginOfTeX
 % \section{Unit loading messages.}
@@ -3439,6 +3454,9 @@ unit_u_ppu_llvm_mismatch=10067_U_Skipping unit, PPU and compiler have to be both
 % and vice versa.
 unit_u_ppu_invalid_wasm_exceptions_mode=10068_U_PPU is compiled for another WebAssembly exceptions mode
 % This unit file was compiled for a different WebAssembly exceptions mode.
+unit_u_ppu_symansistr_mismatch=10069_U_Skipping unit, PPU and compiler have to be both compiled with or without SYMANSISTR support
+% Units compiled by a compiler built with -dSYMANSISTR cannot be used with a regular compiler built without,
+% and vice versa.
 % \end{description}
 # EndOfTeX
 
@@ -3708,7 +3726,7 @@ package_e_duplicate_package=13003_E_Duplicate package $1
 % a second time.
 package_e_unit_deny_package=13004_E_Unit $1 can not be part of a package
 % The unit can not be part of a package because the DenyPackageUnit directive is enabled for the unit.
-package_n_implicit_unit_import=13005_N_Unit $1 is implicitely imported into package $2
+package_n_implicit_unit_import=13005_N_Unit $1 is implicitly imported into package $2
 % The unit was not specified as part of the \var{contains} section and is also not included in one of the
 % required packages. Add the unit to the \var{contains} section to increase compatibility with other packages.
 package_f_cant_create_pcp=13006_F_Failed to create PCP file $2 for package $1
@@ -3939,9 +3957,14 @@ P*2Aas_Assemble using GNU AS
 S*2Aas_Assemble using GNU AS
 s*2Aas_Assemble using GNU AS
 v*2Aas_Assemble using GNU AS
-W*2Abinaryen_Assemble using GNU AS for wasm32 (wasm-as)
-W*2Allvm-mc_Assemble using llvm-mc
-W*2Awabt_Assemble using wasa
+W*2Awasm_Assemble using the internal object writer for wasm32 (experimental)
+W*2Abinaryen_Assemble using GNU AS for wasm32 (wasm-as) (experimental)
+W*2Allvm-mc-10_Assemble using llvm-mc-10
+W*2Allvm-mc-11_Assemble using llvm-mc-11
+W*2Allvm-mc-12_Assemble using llvm-mc-12
+W*2Allvm-mc-13_Assemble using llvm-mc-13
+W*2Allvm-mc_Assemble using llvm-mc (version 14 or later)
+W*2Awabt_Assemble using wasa (experimental)
 x*2Aas_Assemble using GNU AS
 Z*2Asdcc-sdasz80_Assemble using SDCC-SDASZ80
 Z*2Avasm_Assemble using Vasm
@@ -4004,8 +4027,9 @@ J*3CTlowercaseprocstart_  Lowercase the first character of procedure/function/me
 A*3CTthumbinterworking_ Generate Thumb interworking-safe code if possible
 W*3CTnoexceptions_        Disable the exception support. Raising an exception will abort the program.
 W*3CTbfexceptions_        Enable the branchful exception support for WebAssembly
-W*3CTjsexceptions_        Enable the JavaScript-based exception support for WebAssembly
+W*3CTjsexceptions_        Enable the JavaScript-based exception support for WebAssembly (experimental)
 W*3CTwasmexceptions_      Enable the native WebAssembly exceptions support
+W*3CTwasmthreads_         Enable WebAssembly threads support (experimental)
 J*2Cv_Var/out parameter copy-out checking
 A*2CV<x>_Set section threadvar model to <x>
 **2CX_Create also smartlinked library
@@ -4271,6 +4295,7 @@ x*2Tfreertos_FreeRTOS
 x*2Tlinux_Linux
 # z80 targets
 Z*2Tembedded_Embedded
+Z*2Tamstradcpc_Amstrad CPC
 Z*2Tmsxdos_MSX-DOS
 Z*2Tzxspectrum_ZX Spectrum
 # wasm32 targets
@@ -4327,6 +4352,7 @@ A*2We_Use external resources (Darwin)
 P*2We_Use external resources (Darwin)
 p*2We_Use external resources (Darwin)
 3*2WF_Specify full-screen type application (EMX, OS/2)
+6*2WF<x>_Set TOS program flags to <x> (Atari)
 3*2WG_Specify graphic type application (EMX, OS/2, Windows)
 4*2WG_Specify graphic type application (Windows)
 A*2WG_Specify graphic type application (Windows)
@@ -4371,6 +4397,9 @@ A*2WR_Generate relocation code (Windows)
 8*2Wt<x>_Set the target executable format
 8*3Wtcom_Create a DOS .COM file (requires tiny memory model)
 8*3Wtexe_Create a DOS .EXE file (default)
+6*2Wt<x>_Set the target executable format (Atari)
+6*3Wttos_Create TOS executable file (default)
+6*3Wtmint_Create a MiNT executable file
 P*2WT_Specify MPW tool type application (Classic Mac OS)
 6*2WQ<x>_Set executable metadata format (Sinclair QL)
 6*3WQqhdr_Set metadata to QDOS File Header style (default)
@@ -4402,7 +4431,7 @@ F*2Xp<x>_First search for the compiler binary in the directory <x>
 **2Xt_Link with static libraries (-static is passed to linker)
 **2Xu_Generate executable in UF2 format  (embedded targets only)
 **2Xv_Generate table for Virtual Entry calls
-**2XV_Use VLink as external linker       (default on Amiga, MorphOS)
+**2XV_Use VLink as external linker       (default on Amiga, Atari, Sinclair QL)
 **2XX_Try to smartlink units             (defines FPC_LINK_SMART)
 **1*_
 **1?_Show this help

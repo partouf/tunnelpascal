@@ -88,8 +88,8 @@ Const
       (controllertypestr:''; controllerunitstr:''; cputype:cpu_none; fputype:fpu_none; flashbase:0; flashsize:0; srambase:0; sramsize:0),
 
       { Raspberry Pi 3/4 }
-      (controllertypestr:'RASPI3'; controllerunitstr:'RASPI3'; cputype:cpu_armv8a; fputype:fpu_vfp; flashbase:$00000000; flashsize:$00000000; srambase:$00008000; sramsize:$10000000),
-      (controllertypestr:'RASPI4'; controllerunitstr:'RASPI4'; cputype:cpu_armv8a; fputype:fpu_vfp; flashbase:$00000000; flashsize:$00000000; srambase:$00008000; sramsize:$10000000)
+      (controllertypestr:'RASPI3'; controllerunitstr:'RASPI3'; cputype:cpu_armv8a; fputype:fpu_vfp; flashbase:$00000000; flashsize:$00000000; srambase:$00080000; sramsize:$10000000),
+      (controllertypestr:'RASPI4'; controllerunitstr:'RASPI4'; cputype:cpu_armv8a; fputype:fpu_vfp; flashbase:$00000000; flashsize:$00000000; srambase:$00080000; sramsize:$10000000)
 
       );
    {$POP}
@@ -140,7 +140,7 @@ Const
    level1optimizerswitches = genericlevel1optimizerswitches;
    level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches +
      [{$ifndef llvm}cs_opt_regvar,{$endif}cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse,cs_opt_consts];
-   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches;
    level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [];
 
 type

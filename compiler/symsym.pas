@@ -128,11 +128,17 @@ interface
        { tprocsym }
 
        tprocsym = class(tstoredsym)
+       protected type
+          tprocdefcomparer = function(pd:tprocdef;arg:tobject):tequaltype;
        protected
           FProcdefList   : TFPObjectList;
           FProcdefDerefList : TFPList;
           fgenprocsymovlds : tfpobjectlist;
           fgenprocsymovldsderefs : tfplist;
+
+          function find_procdef_with_comparer(comparer:tprocdefcomparer;arg:tobject):tprocdef;
+          class function compare_procvardef(pd:tprocdef;arg:tobject):tequaltype;static;
+          class function compare_funcrefdef(pd:tprocdef;arg:tobject):tequaltype;static;
        public
           constructor create(const n : TSymStr);virtual;
           constructor ppuload(ppufile:tcompilerppufile);
@@ -153,9 +159,11 @@ interface
           function find_procdef_bytype_and_para(pt:Tproctypeoption;para:TFPObjectList;retdef:tdef;cpoptions:tcompare_paras_options):Tprocdef;
           function find_procdef_byoptions(ops:tprocoptions): Tprocdef;
           function find_procdef_byprocvardef(d:Tprocvardef):Tprocdef;
+          function find_procdef_byfuncrefdef(d:tobjectdef):tprocdef;
           function find_procdef_assignment_operator(fromdef,todef:tdef;var besteq:tequaltype;isexplicit:boolean):Tprocdef;
           function find_procdef_enumerator_operator(fromdef,todef:tdef;var besteq:tequaltype):Tprocdef;
           procedure add_generic_overload(sym:tprocsym);
+          function could_be_implicitly_specialized:boolean;inline;
           property ProcdefList:TFPObjectList read FProcdefList;
           { only valid if sp_generic_dummy is set and either an overload was
             added using add_generic_overload or this was loaded from a ppu }
@@ -259,12 +267,15 @@ interface
           { the variable is not living at entry of the scope, so it does not need to be initialized if it is a reg. var
             (not written to ppu, because not important and would change interface crc) }
           noregvarinitneeded : boolean;
+          { not stored in PPU! }
+          capture_sym : tsym;
           constructor create(st:tsymtyp;const n : TSymStr;vsp:tvarspez;def:tdef;vopts:tvaroptions);
           constructor ppuload(st:tsymtyp;ppufile:tcompilerppufile);
           function globalasmsym: boolean;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
           procedure buildderef;override;
           procedure deref;override;
+          function is_captured:boolean;
       end;
 
       tlocalvarsym = class(tabstractnormalvarsym)
@@ -1098,7 +1109,6 @@ implementation
           end;
       end;
 
-
     function Tprocsym.Find_procdef_bytype(pt:Tproctypeoption):Tprocdef;
       var
         i  : longint;
@@ -1226,7 +1236,7 @@ implementation
           end;
       end;
 
-    function Tprocsym.Find_procdef_byprocvardef(d:Tprocvardef):Tprocdef;
+    function Tprocsym.find_procdef_with_comparer(comparer:tprocdefcomparer;arg:tobject):tprocdef;
       var
         i  : longint;
         bestpd,
@@ -1246,7 +1256,7 @@ implementation
           for i:=0 to ps.ProcdefList.Count-1 do
             begin
               pd:=tprocdef(ps.ProcdefList[i]);
-              eq:=proc_to_procvar_equal(pd,d,false);
+              eq:=comparer(pd,arg);
               if eq>=te_convert_l1 then
                 begin
                   { multiple procvars with the same equal level }
@@ -1283,6 +1293,32 @@ implementation
         until (besteq>=te_equal) or
               not assigned(ps);
         result:=bestpd;
+      end;
+
+
+    class function Tprocsym.compare_procvardef(pd:tprocdef;arg:tobject):tequaltype;
+      begin
+        result:=proc_to_procvar_equal(pd,tprocvardef(arg),false);
+      end;
+
+
+    class function Tprocsym.compare_funcrefdef(pd:tprocdef;arg:tobject):tequaltype;
+      begin
+        result:=proc_to_funcref_equal(pd,tobjectdef(arg));
+      end;
+
+
+    function Tprocsym.Find_procdef_byprocvardef(d:Tprocvardef):Tprocdef;
+      begin
+        result:=find_procdef_with_comparer(@compare_procvardef,d);
+      end;
+
+
+    function Tprocsym.Find_procdef_byfuncrefdef(d:tobjectdef):Tprocdef;
+      begin
+        if not is_invokable(d) then
+          internalerror(2022033001);
+        result:=find_procdef_with_comparer(@compare_funcrefdef,d);
       end;
 
 
@@ -1477,6 +1513,13 @@ implementation
       end;
 
 
+    function tprocsym.could_be_implicitly_specialized:boolean;
+      begin
+        result:=(m_implicit_function_specialization in current_settings.modeswitches) and 
+                (sp_generic_dummy in symoptions) and
+                assigned(genprocsymovlds);          
+      end;
+
 {****************************************************************************
                                   TERRORSYM
 ****************************************************************************}
@@ -1626,12 +1669,12 @@ implementation
             if assigned(readprocdef) then
               begin
                 hparavs:=cparavarsym.create(orig.RealName,orig.paranr,orig.varspez,orig.vardef,[]);
-                readprocdef.parast.insert(hparavs);
+                readprocdef.parast.insertsym(hparavs);
               end;
             if assigned(writeprocdef) then
               begin
                 hparavs:=cparavarsym.create(orig.RealName,orig.paranr,orig.varspez,orig.vardef,[]);
-                writeprocdef.parast.insert(hparavs);
+                writeprocdef.parast.insertsym(hparavs);
               end;
           end;
       end;
@@ -1645,12 +1688,12 @@ implementation
         if assigned(readprocdef) then
           begin
             hparavs:=cparavarsym.create('$index',10*paranr,vs_value,indexdef,[]);
-            readprocdef.parast.insert(hparavs);
+            readprocdef.parast.insertsym(hparavs);
           end;
         if assigned(writeprocdef) then
           begin
             hparavs:=cparavarsym.create('$index',10*paranr,vs_value,indexdef,[]);
-            writeprocdef.parast.insert(hparavs);
+            writeprocdef.parast.insertsym(hparavs);
           end;
       end;
 
@@ -1862,7 +1905,7 @@ implementation
                   (varregable <> vr_none)) or
                  (not refpara and
                   not(varregable in [vr_none,vr_addr])))
-{$if not defined(powerpc) and not defined(powerpc64) and not defined(aarch64)}
+{$if not defined(powerpc) and not defined(powerpc64)}
                 and ((vardef.typ <> recorddef) or
                      (varregable = vr_addr) or
                      tabstractrecordsymtable(tabstractrecorddef(vardef).symtable).has_single_field(tempdef) or
@@ -2117,6 +2160,12 @@ implementation
       begin
          inherited ppuwrite(ppufile);
          ppufile.putderef(defaultconstsymderef);
+      end;
+
+
+    function tabstractnormalvarsym.is_captured:boolean;
+      begin
+        result:=assigned(capture_sym);
       end;
 
 

@@ -55,8 +55,8 @@ interface
           procedure writesyms(ppufile:tcompilerppufile);
        public
           constructor create(const s:string);
-          procedure insert(sym:TSymEntry;checkdup:boolean=true);override;
-          procedure delete(sym:TSymEntry);override;
+          procedure insertsym(sym:TSymEntry;checkdup:boolean=true);override;
+          procedure deletesym(sym:TSymEntry);override;
           { load/write }
           procedure ppuload(ppufile:tcompilerppufile);virtual;
           procedure ppuwrite(ppufile:tcompilerppufile);virtual;
@@ -291,7 +291,7 @@ interface
 
        tenumsymtable = class(tabstractsubsymtable)
        public
-          procedure insert(sym: TSymEntry; checkdup: boolean = true); override;
+          procedure insertsym(sym: TSymEntry; checkdup: boolean = true); override;
           constructor create(adefowner:tdef);
        end;
 
@@ -324,7 +324,7 @@ interface
     function  FullTypeName(def,otherdef:tdef):string;
     function generate_nested_name(symtable:tsymtable;const delimiter:string):string;
     { def is the extended type of a helper }
-    function generate_objectpascal_helper_key(def:tdef):string;
+    function generate_objectpascal_helper_key(def:tdef):TSymStr;
     procedure incompatibletypes(def1,def2:tdef);
     procedure hidesym(sym:TSymEntry);
     procedure duplicatesym(var hashedid: THashedIDString; dupsym, origsym:TSymEntry; warn: boolean);
@@ -506,16 +506,16 @@ implementation
       end;
 
 
-    procedure tstoredsymtable.insert(sym:TSymEntry;checkdup:boolean=true);
+    procedure tstoredsymtable.insertsym(sym:TSymEntry;checkdup:boolean=true);
       begin
-        inherited insert(sym,checkdup);
+        inherited insertsym(sym,checkdup);
         init_final_check_done:=false;
       end;
 
 
-    procedure tstoredsymtable.delete(sym:TSymEntry);
+    procedure tstoredsymtable.deletesym(sym:TSymEntry);
       begin
-        inherited delete(sym);
+        inherited deletesym(sym);
         init_final_check_done:=false;
       end;
 
@@ -635,7 +635,7 @@ implementation
            end;
            if assigned(sym) then
              tstoredsym(sym).ppuload_subentries(ppufile);
-           Insert(sym,false);
+           InsertSym(sym,false);
          until false;
       end;
 
@@ -1885,7 +1885,7 @@ implementation
 
             { add to this record symtable, checking for duplicate names }
 //            unionst.SymList.List.List^[i].Data:=nil;
-            insert(sym);
+            insertsym(sym);
             varalign:=tfieldvarsym(sym).vardef.alignment;
             if varalign=0 then
               varalign:=size_2_align(tfieldvarsym(sym).getsize);
@@ -1987,8 +1987,10 @@ implementation
 
          { procsym and propertysym have special code
            to override values in inherited classes. For other
-           symbols check for duplicates }
-         if not(sym.typ in [procsym,propertysym]) then
+           symbols check for duplicates (but for internal symbols only in this
+           symtable, not the whole hierarchy) }
+         if not(sym.typ in [procsym,propertysym]) and
+            not (sp_internal in tsym(sym).symoptions) then
            begin
               { but private ids can be reused }
               hsym:=search_struct_member(tobjectdef(defowner),hashedid.id);
@@ -2635,7 +2637,7 @@ implementation
         n,ns:string;
         oldsym:TSymEntry;
       begin
-        insert(sym);
+        insertsym(sym);
         n:=sym.realname;
         p:=pos('.',n);
         ns:='';
@@ -2648,7 +2650,7 @@ implementation
             system.delete(n,1,p);
             oldsym:=findnamespace(upper(ns));
             if not assigned(oldsym) then
-              insert(cnamespacesym.create(ns));
+              insertsym(cnamespacesym.create(ns));
             p:=pos('.',n);
           end;
       end;
@@ -2847,7 +2849,7 @@ implementation
                           TEnumSymtable
 ****************************************************************************}
 
-    procedure tenumsymtable.insert(sym: TSymEntry; checkdup: boolean);
+    procedure tenumsymtable.insertsym(sym: TSymEntry; checkdup: boolean);
       var
         value: longint;
         def: tenumdef;
@@ -2877,7 +2879,7 @@ implementation
                   def.setmax(value);
               end;
           end;
-        inherited insert(sym, checkdup);
+        inherited insertsym(sym, checkdup);
       end;
 
     constructor tenumsymtable.create(adefowner: tdef);
@@ -2950,7 +2952,7 @@ implementation
       end;
 
 
-    function generate_objectpascal_helper_key(def:tdef):string;
+    function generate_objectpascal_helper_key(def:tdef):TSymStr;
       begin
         if not assigned(def) then
           internalerror(2013020501);
@@ -3308,7 +3310,7 @@ implementation
                        ) or
                        (
                         assigned(contextobjdef) and
-                        (contextobjdef.owner.symtabletype in [globalsymtable,staticsymtable,ObjectSymtable,recordsymtable]) and
+                        (contextobjdef.owner.symtabletype in [globalsymtable,staticsymtable,ObjectSymtable,recordsymtable,localsymtable]) and
                         (contextobjdef.owner.iscurrentunit) and
                         def_is_related(contextobjdef,symownerdef)
                        ) or
@@ -3368,8 +3370,8 @@ implementation
       begin
         if sym.typ=procsym then
           begin
-            { A procsym is visible, when there is at least one of the procdefs visible }
             result:=false;
+            { A procsym is visible, when there is at least one of the procdefs visible }
             for i:=0 to tprocsym(sym).ProcdefList.Count-1 do
               begin
                 pd:=tprocdef(tprocsym(sym).ProcdefList[i]);
@@ -3379,6 +3381,16 @@ implementation
                     result:=true;
                     exit;
                   end;
+              end;
+            { check dummy sym visbility by following associated procsyms }
+            if tprocsym(sym).could_be_implicitly_specialized then
+              begin
+                for i:=0 to tprocsym(sym).genprocsymovlds.count-1 do
+                  if is_visible_for_object(tsym(tprocsym(sym).genprocsymovlds[i]),contextobjdef) then
+                    begin
+                      result:=true;
+                      exit;
+                    end;
               end;
             if (tprocsym(sym).procdeflist.count=0) and (sp_generic_dummy in tprocsym(sym).symoptions) then
               result:=is_visible_for_object(sym.owner,sym.visibility,contextobjdef);
@@ -4293,7 +4305,7 @@ implementation
 
     function get_objectpascal_helpers(pd : tdef):TFPObjectList;
       var
-        s : string;
+        s : TSymStr;
         st : tsymtable;
       begin
         result:=nil;
@@ -4695,9 +4707,9 @@ implementation
            begin
              mac:=tmacro.create(s);
              if assigned(current_module) then
-               current_module.localmacrosymtable.insert(mac)
+               current_module.localmacrosymtable.insertsym(mac)
              else
-               initialmacrosymtable.insert(mac);
+               initialmacrosymtable.insertsym(mac);
            end;
          Message1(parser_c_macro_defined,mac.name);
          mac.defined:=true;
@@ -4717,9 +4729,9 @@ implementation
            begin
              mac:=tmacro.create(s);
              if assigned(current_module) then
-               current_module.localmacrosymtable.insert(mac)
+               current_module.localmacrosymtable.insertsym(mac)
              else
-               initialmacrosymtable.insert(mac);
+               initialmacrosymtable.insertsym(mac);
            end
          else
            begin
@@ -4749,9 +4761,9 @@ implementation
              mac:=tmacro.create(s);
              mac.is_compiler_var:=true;
              if assigned(current_module) then
-               current_module.localmacrosymtable.insert(mac)
+               current_module.localmacrosymtable.insertsym(mac)
              else
-               initialmacrosymtable.insert(mac);
+               initialmacrosymtable.insertsym(mac);
            end
          else
            begin

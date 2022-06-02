@@ -92,7 +92,7 @@ const
       '',
       'string',             // ftFixedChar
       'string.uni',         // ftWideString
-      'i8',
+      'i8',                 // ftLargeint
       '',
       '',
       '',
@@ -112,7 +112,8 @@ const
       'ui4',                // ftLongWord
       'i1',                 // ftShortint
       'ui1',                // ftByte
-      ''                    // ftExtended
+      '',                   // ftExtended
+      'r4'                  // ftSingle
     );
 
 resourcestring
@@ -305,7 +306,8 @@ end;
 procedure TXMLDatapacketReader.InitLoadRecords;
 
 var ChangeLogStr : String;
-    i,cp         : integer;
+    C, StartC    : PChar;
+    cp           : integer;
     ps           : string;
 
 begin
@@ -318,12 +320,17 @@ begin
     ChangeLogStr:='';
   ps := '';
   cp := 0;
-  if ChangeLogStr<>'' then for i := 1 to length(ChangeLogStr)+1 do
-    begin
-    if not (ChangeLogStr[i] in [' ',#0]) then
-      ps := ps + ChangeLogStr[i]
-    else
+  if ChangeLogStr='' then
+    Exit;
+
+  C := PChar(ChangeLogStr);
+  StartC := C;
+  repeat
+    if (C^ in [' ',#0]) then
       begin
+      SetLength(ps, C-StartC);
+      if Length(ps)>0 then
+        Move(StartC^, ps[1], C-StartC);
       case (cp mod 3) of
         0 : begin
             SetLength(FChangeLog,length(FChangeLog)+1);
@@ -339,10 +346,11 @@ begin
               FChangeLog[cp div 3].UpdateKind:=ukModify;
             end;
       end; {case}
-      ps := '';
       inc(cp);
+      StartC := C+1;
       end;
-    end;
+    Inc(C);
+  until C^=#0;
 end;
 
 procedure TXMLDatapacketReader.RestoreRecord;

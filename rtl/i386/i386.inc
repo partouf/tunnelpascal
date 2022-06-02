@@ -1184,8 +1184,6 @@ end;
 function cpudeclocked(var l : longint) : boolean;assembler;nostackframe;
 
   asm
-     { this check should be done because a lock takes a lot }
-     { of time!                                             }
      lock
      decl       (%eax)
      setzb      %al
@@ -1500,9 +1498,12 @@ end;
 
 procedure ReadBarrier;assembler;nostackframe;
 asm
+{$ifdef CPUX86_HAS_SSE2}
+  lfence
+{$else CPUX86_HAS_SSE2}
   lock
   addl $0,0(%esp)
-  { alternative: lfence on SSE capable CPUs }
+{$endif CPUX86_HAS_SSE2}
 end;
 
 procedure ReadDependencyBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
@@ -1512,14 +1513,19 @@ end;
 
 procedure ReadWriteBarrier;assembler;nostackframe;
 asm
+{$ifdef CPUX86_HAS_SSE2}
+  mfence
+{$else CPUX86_HAS_SSE2}
   lock
   addl $0,0(%esp)
-  { alternative: mfence on SSE capable CPUs }
+{$endif CPUX86_HAS_SSE2}
 end;
 
 procedure WriteBarrier;assembler;nostackframe;
 asm
-  { no write reordering on intel CPUs (yet) }
+{$ifdef CPUX86_HAS_SSEUNIT}
+  sfence
+{$endif CPUX86_HAS_SSEUNIT}
 end;
 
 {$endif}

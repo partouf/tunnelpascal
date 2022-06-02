@@ -30,7 +30,11 @@ unit itcpugas;
 
     const
       gas_op2str: array[tasmop] of string[14] = ('<none>',
-        'nop','call',
+        'nop','call','la','lla','lga','li','mv','not','neg','negw',
+        'sext.b','sext.h','zext.b','zext.h','seqz','sneg','sltz','sgtz',
+        'fmv.s','fabs.s','fneg.s','fmv.d','fabs.d','fneg.d',
+        'beqz','bnez','blez','bgez','bltz','bgtz','gt','ble',
+        'bgtu','bleu','j','jr','ret','tail',
         'lui','auipc','jal','jalr',
         'b','lb','lh','lw','lbu','lhu',
         'sb','sh','sw',
@@ -46,12 +50,14 @@ unit itcpugas;
         { 64-bit }
         'addiw','slliw','srliw','sraiw',
         'addw','sllw','srlw','subw','sraw',
-        'ld','sd','lwu',
+        { pseudo instructions }
+        'ld','sd','lwu','sext.w','zext.w',
 {$endif RISCV64}
 
         { m-extension }
         'mul','mulh','mulhsu','mulhu',
         'div','divu','rem','remu',
+
 {$ifdef RISCV64}
         { 64-bit }
         'mulw',
@@ -107,7 +113,11 @@ unit itcpugas;
         'wfi',
 
         { Supervisor mode }
-        'sfence.vm'
+        'sfence.vm',
+
+        { pseudo instructions for accessiong control and status registers }
+        'rdinstret','rdinstreth','rdcycle','rdcycleh','rdtime','rdtimeh','csrr','csrw','csrs','csrc','csrwi',
+        'csrsi','csrci'
         );
 
     function gas_regnum_search(const s: string): Tregister;
@@ -120,6 +130,7 @@ unit itcpugas;
       cutils,verbose, systems,
       rgbase;
 
+{$ifdef riscv32}
     const
       gas_regname_table : TRegNameTable = (
         {$i rrv32std.inc}
@@ -128,7 +139,18 @@ unit itcpugas;
       gas_regname_index : array[tregisterindex] of tregisterindex = (
         {$i rrv32sri.inc}
       );
+{$endif riscv32}
 
+{$ifdef riscv64}
+    const
+      gas_regname_table : TRegNameTable = (
+        {$i rrv64std.inc}
+      );
+
+      gas_regname_index : array[tregisterindex] of tregisterindex = (
+        {$i rrv64sri.inc}
+      );
+{$endif riscv64}
 
     function findreg_by_gasname(const s:string):tregisterindex;
       var

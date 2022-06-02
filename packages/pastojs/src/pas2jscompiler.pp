@@ -44,7 +44,7 @@ uses
 
 const
   VersionMajor = 2;
-  VersionMinor = 1;
+  VersionMinor = 3;
   VersionRelease = 1;
   VersionExtra = '';
   DefaultConfigFile = 'pas2js.cfg';
@@ -139,6 +139,7 @@ type
     coKeepNotUsedPrivates, // -O-
     coKeepNotUsedDeclarationsWPO, // -O-
     coShortRefGlobals, // -O2
+    coObfuscateLocalIdentifiers, // -O2
     // source map
     coSourceMapCreate,
     coSourceMapInclude,
@@ -163,10 +164,11 @@ const
   DefaultResourceMode = rmHTML;
 
   coShowAll = [coShowErrors..coShowDebug];
-  coAllOptimizations = [coEnumValuesAsNumbers..coShortRefGlobals];
+  coAllOptimizations = [coEnumValuesAsNumbers..coObfuscateLocalIdentifiers];
   coO0 = [coKeepNotUsedPrivates,coKeepNotUsedDeclarationsWPO];
   coO1 = [coEnumValuesAsNumbers];
-  coO2 = coO1+[coShortRefGlobals];
+  coO2 = coO1+[coShortRefGlobals
+    {$IFDEF EnableObfuscateIdentifiers},coObfuscateLocalIdentifiers{$ENDIF}];
 
   p2jscoCaption: array[TP2jsCompilerOption] of string = (
     // only used by experts or programs parsing the pas2js output, no need for resourcestrings
@@ -200,6 +202,7 @@ const
     'Keep not used private declarations',
     'Keep not used declarations (WPO)',
     'Create short local variables for globals',
+    'Obfuscate local identifiers',
     'Create source map',
     'Include Pascal sources in source map',
     'Do not shorten filenames in source map',
@@ -1066,6 +1069,8 @@ begin
     Include(Result,fppas2js.coEnumNumbers);
   if (coShortRefGlobals in Compiler.Options) or IsUnitReadFromPCU then
     Include(Result,fppas2js.coShortRefGlobals);
+  if coObfuscateLocalIdentifiers in Compiler.Options then
+    Include(Result,fppas2js.coObfuscateLocalIdentifiers);
 
   if coLowerCase in Compiler.Options then
     Include(Result,fppas2js.coLowerCase)
@@ -2405,11 +2410,11 @@ begin
     ParamFatal('[20210919141030] linklib options not supported');
 
   Imp:=CreateImportStatement;
-  Imp.NameSpaceImport:=aLibAlias;
+  Imp.NameSpaceImport:=TJSString(aLibAlias);
   LibModuleName:=aLibName;
   if ExtractFileExt(LibModuleName)='' then
     LibModuleName:=LibModuleName+'.js';
-  Imp.ModuleName:=LibModuleName;
+  Imp.ModuleName:=TJSString(LibModuleName);
   // pas.$imports.libalias:=libalias
   // LHS
   pePas:=TJSPrimaryExpressionIdent.Create(0,0,'');
@@ -2805,9 +2810,6 @@ begin
     FResources.DoneUnit(aFile.isMainFile);
     EmitJavaScript(aFile,aFileWriter);
 
-    if aFile.IsMainFile and (TargetPlatform in [PlatformNodeJS,PlatformModule]) then
-      aFileWriter.WriteFile('rtl.run();'+LineEnding,aFile.UnitFilename);
-
     if isSingleFile or aFile.isMainFile then
       begin
       if aFile.IsMainFile  then
@@ -2815,7 +2817,10 @@ begin
       if Assigned(PostProcessorSupport) then
         PostProcessorSupport.CallPostProcessors(aFile.JSFilename,aFileWriter);
 
-      MapFilename:=aFileWriter.DestFilename+'.map';
+      if SrcMapEnable then
+        MapFilename:=aFileWriter.DestFilename+'.map'
+      else
+        MapFilename:='';
 
       CheckOutputDir(aFileWriter.DestFileName);
 
@@ -3051,7 +3056,7 @@ procedure TPas2jsCompiler.Terminate(TheExitCode: integer);
 begin
   ExitCode:=TheExitCode;
   if Log<>nil then Log.Flush;
-  raise ECompilerTerminate.Create('');
+  raise ECompilerTerminate.Create('TPas2jsCompiler.Terminate');
 end;
 
 function TPas2jsCompiler.GetShowDebug: boolean;
@@ -3827,6 +3832,7 @@ begin
      'removenotusedprivates': SetOption(coKeepNotUsedPrivates,not Enable);
      'removenotuseddeclarations': SetOption(coKeepNotUsedDeclarationsWPO,not Enable);
      'shortrefglobals': SetOption(coShortRefGlobals,Enable);
+     'obfuscatelocalidentifiers': SetOption(coObfuscateLocalIdentifiers,Enable);
     else
       Log.LogMsgIgnoreFilter(nUnknownOptimizationOption,[QuoteStr(aValue)]);
     end;
@@ -4833,6 +4839,9 @@ begin
   w('      -OoRemoveNotUsedDeclarations[-]: Default enabled for programs with -Jc');
   w('      -OoRemoveNotUsedPublished[-] : Default is disabled');
   w('      -OoShortRefGlobals[-]: Insert JS local var for types, modules and static functions. Default enabled in -O2');
+  {$IFDEF EnableObfuscateIdentifiers}
+  w('      -OoObfuscateLocalIdentifiers[-]: Use auto generated names for private and local Pascal identifiers. Default enabled in -O2');
+  {$ENDIF}
   w('  -P<x>  : Set target processor. Case insensitive:');
   w('    -Pecmascript5: default');
   w('    -Pecmascript6');
@@ -5243,7 +5252,7 @@ begin
       if Filename='' then
       begin
         Log.LogMsg(nCustomJSFileNotFound,[InsertFilenames[i]]);
-        raise EFileNotFoundError.Create('');
+        Terminate(ExitCodeFileNotFound);
       end;
       aFile:=LoadFile(Filename);
       if aFile.Source='' then continue;
@@ -5269,7 +5278,7 @@ begin
       if Filename='' then
       begin
         Log.LogMsg(nCustomJSFileNotFound,[AppendFilenames[i]]);
-        raise EFileNotFoundError.Create('');
+        Terminate(ExitCodeFileNotFound);
       end;
       aFile:=LoadFile(Filename);
       if aFile.Source='' then continue;

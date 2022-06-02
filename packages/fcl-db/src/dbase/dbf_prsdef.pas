@@ -1,5 +1,19 @@
 unit dbf_prsdef;
+{
+    This file is part of the Free Pascal run time library.
+    Copyright (c) 1999-2022 by Pascal Ganaye,Micha Nelissen and other members of the
+    Free Pascal development team
 
+    DBF expression definitions
+
+    See the file COPYING.FPC, included in this distribution,
+    for details about the copyright.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+ **********************************************************************}
 interface
 
 {$I dbf_common.inc}
@@ -90,6 +104,8 @@ type
     ExprFunc: TExprFunc;
   end;
 
+  { TExprWord }
+
   TExprWord = class(TObject)
   private
     FName: string;
@@ -112,8 +128,9 @@ type
   public
     constructor Create(AName: string; AExprFunc: TExprFunc);
 
-    function LenAsPointer: PInteger; virtual;
     function AsPointer: PChar; virtual;
+    function LenAsPointer: PInteger; virtual;
+    function IsNullAsPointer: PBoolean; virtual;
     function IsFunction: Boolean; virtual;
 
     property ExprFunc: TExprFunc read FExprFunc;
@@ -225,14 +242,26 @@ type
     property Value: Boolean read FValue write FValue;
   end;
 
+  { TNullConstant }
+
+  TNullConstant = class(TConstant)
+  private
+  public
+    constructor Create;
+  end;
+
+  { TVariable }
+
   TVariable = class(TExprWord)
   private
     FResultType: TExpressionType;
+    FIsNull: PBoolean;
   protected
     function GetCanVary: Boolean; override;
     function GetResultType: TExpressionType; override;
   public
     constructor Create(AName: string; AVarType: TExpressionType; AExprFunc: TExprFunc);
+    function IsNullAsPointer: PBoolean; override;
   end;
 
   TFloatVariable = class(TVariable)
@@ -252,7 +281,7 @@ type
     function GetFixedLen: Integer; override;
     procedure SetFixedLen(NewLen: integer); override;
   public
-    constructor Create(AName: string; AValue: PPChar);
+    constructor Create(AName: string; AValue: PPChar; AIsNull: PBoolean);
 
     function LenAsPointer: PInteger; override;
     function AsPointer: PChar; override;
@@ -273,7 +302,7 @@ type
   private
     FValue: PInteger;
   public
-    constructor Create(AName: string; AValue: PInteger);
+    constructor Create(AName: string; AValue: PInteger; AIsNull: PBoolean);
 
     function AsPointer: PChar; override;
   end;
@@ -372,6 +401,7 @@ begin
     'F': Result := etFloat;
     'D': Result := etDateTime;
     'S': Result := etString;
+    'U': Result := etUnknown;
   else
     Result := etUnknown;
   end;
@@ -405,6 +435,10 @@ begin
     if length = -1 then
       length := StrLen(PPChar(Args[0])^);
     Res.Append(PPChar(Args[0])^, length);
+    // NULL indicator (placed after NULL terminated string)
+    length := StrLen(PPChar(Args[0])^)+1;
+    Res.AssureSpace(length+1);
+    PBoolean(Res.Memory^+length)^ := Assigned(Args[2]) and PBoolean(Args[2])^;
   end;
 end;
 
@@ -416,8 +450,10 @@ end;
 
 procedure _IntegerVariable(Param: PExpressionRec);
 begin
-  with Param^ do
+  with Param^ do begin
     PInteger(Res.MemoryPos^)^ := PInteger(Args[0])^;
+    PBoolean(Res.MemoryPos^+8)^ := Assigned(Args[2]) and PBoolean(Args[2])^; // NULL indicator
+  end;
 end;
 
 {
@@ -429,14 +465,17 @@ end;
 }
 
 {$ifdef SUPPORT_INT64}
-
 procedure _LargeIntVariable(Param: PExpressionRec);
 begin
   with Param^ do
     PLargeInt(Res.MemoryPos^)^ := PLargeInt(Args[0])^;
 end;
-
 {$endif}
+
+procedure _NullConstant(Param: PExpressionRec);
+begin
+  // NOP
+end;
 
 { TExpressionWord }
 
@@ -532,6 +571,11 @@ begin
 end;
 
 function TExprWord.LenAsPointer: PInteger;
+begin
+  Result := nil;
+end;
+
+function TExprWord.IsNullAsPointer: PBoolean;
 begin
   Result := nil;
 end;
@@ -665,6 +709,13 @@ begin
 end;
 {$endif}
 
+{ TNullConstant }
+
+constructor TNullConstant.Create;
+begin
+  inherited Create('NULL', etUnknown, _NullConstant);
+end;
+
 { TVariable }
 
 constructor TVariable.Create(AName: string; AVarType: TExpressionType; AExprFunc: TExprFunc);
@@ -684,6 +735,11 @@ begin
   Result := FResultType;
 end;
 
+function TVariable.IsNullAsPointer: PBoolean;
+begin
+  Result := FIsNull;
+end;
+
 { TFloatVariable }
 
 constructor TFloatVariable.Create(AName: string; AValue: PDouble);
@@ -699,7 +755,7 @@ end;
 
 { TStringVariable }
 
-constructor TStringVariable.Create(AName: string; AValue: PPChar);
+constructor TStringVariable.Create(AName: string; AValue: PPChar; AIsNull: PBoolean);
 begin
   // variable or fixed length?
   inherited Create(AName, etString, _StringVariable);
@@ -707,6 +763,7 @@ begin
   // store pointer to string
   FValue := AValue;
   FFixedLen := -1;
+  FIsNull := AIsNull;
 end;
 
 function TStringVariable.AsPointer: PChar;
@@ -744,10 +801,11 @@ end;
 
 { TIntegerVariable }
 
-constructor TIntegerVariable.Create(AName: string; AValue: PInteger);
+constructor TIntegerVariable.Create(AName: string; AValue: PInteger; AIsNull: PBoolean);
 begin
   inherited Create(AName, etInteger, _IntegerVariable);
   FValue := AValue;
+  FIsNull := AIsNull;
 end;
 
 function TIntegerVariable.AsPointer: PChar;
@@ -1070,6 +1128,7 @@ begin
   Inc(FMemoryPos^, Length);
   // null-terminate
   FMemoryPos^^ := #0;
+  Inc(FMemoryPos^);
 end;
 
 procedure TDynamicType.AppendInteger(Source: Integer);
@@ -1078,6 +1137,7 @@ begin
   AssureSpace(12);
   Inc(FMemoryPos^, GetStrFromInt(Source, FMemoryPos^));
   FMemoryPos^^ := #0;
+  Inc(FMemoryPos^);
 end;
 
 end.

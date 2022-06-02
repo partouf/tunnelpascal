@@ -73,7 +73,7 @@ interface
       flast_added_tai: tai;
       fqueued_tai_opidx: longint;
 
-      procedure finalize_asmlist(sym: tasmsymbol; def: tdef; section: TAsmSectiontype; const secname: TSymStr; alignment: shortint; const options: ttcasmlistoptions); override;
+      procedure finalize_asmlist(asmsym: tasmsymbol; sym: tsym; def: tdef; section: TAsmSectiontype; const secname: TSymStr; alignment: shortint; const options: ttcasmlistoptions); override;
       { outerai: the ai that should become fqueued_tai in case it's still nil,
           or that should be filled in the fqueued_tai_opidx of the current
           fqueued_tai if it's not nil
@@ -106,6 +106,8 @@ interface
       procedure emit_dynarray_offset(const ll: tasmlabofs; const arrlength: asizeint; const arrdef: tarraydef; const arrconstdatadef: trecorddef); override;
       procedure queue_init(todef: tdef); override;
       procedure queue_vecn(def: tdef; const index: tconstexprint); override;
+      procedure queue_pointeraddn(def: tpointerdef; const index: tconstexprint); override;
+      procedure queue_pointersubn(def: tpointerdef; const index: tconstexprint); override;
       procedure queue_subscriptn(def: tabstractrecorddef; vs: tfieldvarsym); override;
       procedure queue_typeconvn(fromdef, todef: tdef); override;
       procedure queue_emit_staticvar(vs: tstaticvarsym); override;
@@ -181,7 +183,7 @@ implementation
     end;
 
 
-  procedure tllvmtai_typedconstbuilder.finalize_asmlist(sym: tasmsymbol; def: tdef; section: TAsmSectiontype; const secname: TSymStr; alignment: shortint; const options: ttcasmlistoptions);
+  procedure tllvmtai_typedconstbuilder.finalize_asmlist(asmsym: tasmsymbol; sym: tsym; def: tdef; section: TAsmSectiontype; const secname: TSymStr; alignment: shortint; const options: ttcasmlistoptions);
     var
       newasmlist: tasmlist;
       decl: taillvmdecl;
@@ -192,7 +194,7 @@ implementation
         def:=foverriding_def;
       { llvm declaration with as initialisation data all the elements from the
         original asmlist }
-      decl:=taillvmdecl.createdef(sym,def,fasmlist,section,alignment);
+      decl:=taillvmdecl.createdef(asmsym,sym,def,fasmlist,section,alignment);
       if fappendingdef then
         include(decl.flags,ldf_appending);
       if section=sec_user then
@@ -214,9 +216,9 @@ implementation
           why it's done like this, but this is how Clang does it) }
         if (target_info.system in systems_darwin) and
            (section in [low(TObjCAsmSectionType)..high(TObjCAsmSectionType)]) then
-          cnodeutils.RegisterUsedAsmSym(sym,def,false)
+          cnodeutils.RegisterUsedAsmSym(asmsym,def,false)
         else
-          cnodeutils.RegisterUsedAsmSym(sym,def,true);
+          cnodeutils.RegisterUsedAsmSym(asmsym,def,true);
       newasmlist.concat(decl);
       fasmlist:=newasmlist;
     end;
@@ -668,6 +670,28 @@ implementation
       end;
       aityped:=wrap_with_type(ai,cpointerdef.getreusable(eledef));
       update_queued_tai(cpointerdef.getreusable(eledef),aityped,ai,1);
+    end;
+
+
+  procedure tllvmtai_typedconstbuilder.queue_pointeraddn(def: tpointerdef; const index: tconstexprint);
+    begin
+      queue_pointersubn(def, -index);
+    end;
+
+
+  procedure tllvmtai_typedconstbuilder.queue_pointersubn(def: tpointerdef; const index: tconstexprint);
+    var
+      ai: taillvm;
+      aityped: tai;
+    begin
+      { update range checking info }
+      inherited;
+      if index.svalue<>low(int64) then
+        ai:=taillvm.getelementptr_reg_tai_size_const(NR_NO,nil,ptrsinttype,-index.svalue,false)
+      else
+        ai:=taillvm.getelementptr_reg_tai_size_const(NR_NO,nil,ptrsinttype,index.svalue,false);
+      aityped:=wrap_with_type(ai,def);
+      update_queued_tai(def,aityped,ai,1);
     end;
 
 

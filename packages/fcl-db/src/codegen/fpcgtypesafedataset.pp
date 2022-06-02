@@ -1,3 +1,18 @@
+{
+    This file is part of the Free Pascal run time library.
+    Copyright (c) 1999-2022 by Michael van Canneyt and other members of the
+    Free Pascal development team
+
+    Typesafe dataset  
+
+    See the file COPYING.FPC, included in this distribution,
+    for details about the copyright.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+ **********************************************************************}
 unit fpcgtypesafedataset;
 
 {$mode objfpc}{$H+}
@@ -128,6 +143,7 @@ Type
     Constructor Create(AOwner : TComponent); override;
     Destructor Destroy; override;
     Class Function NeedsSQL: Boolean; override;
+    Class Function NeedsFieldDefs : Boolean; override;
     Property SafeOpts : TGenTypeSafeDatasetOptions Read GetSafeOpts;
   end;
 
@@ -814,6 +830,12 @@ begin
 end;
 
 class function TDDTypeSafeDatasetCodeGenerator.NeedsSQL: Boolean;
+begin
+  Result:=True;
+end;
+
+Class Function TDDTypeSafeDatasetCodeGenerator.NeedsFieldDefs : Boolean; 
+
 begin
   Result:=True;
 end;

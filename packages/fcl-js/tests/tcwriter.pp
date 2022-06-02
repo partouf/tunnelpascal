@@ -101,6 +101,7 @@ type
     Procedure TestConstDeclarationStatement;
     Procedure TestDebuggerStatement;
     Procedure TestVarListDeclarationStatement;
+    Procedure TestConstListDeclarationStatement;
     Procedure TestVarListDeclarationStatement2Vars;
     Procedure TestVarListDeclarationStatement3Vars;
     Procedure TestReturnStatement;
@@ -1058,6 +1059,23 @@ begin
   AssertWrite('simple var','var a',S);
 end;
 
+procedure TTestStatementWriter.TestConstListDeclarationStatement;
+Var
+  S : TJSVariableStatement;
+  V : TJSVarDeclaration;
+  L : TJSVariableDeclarationList;
+
+begin
+  S:=TJSVariableStatement.Create(0,0);
+  L:=TJSVariableDeclarationList.Create(0,0);
+  V:=TJSVarDeclaration.Create(0,0);
+  S.VarType:=vtConst;
+  L.A:=V;
+  S.VarDecl:=L;
+  V.Name:='a';
+  AssertWrite('simple const','const a',S);
+end;
+
 procedure TTestStatementWriter.TestVarListDeclarationStatement2Vars;
 Var
   S : TJSVariableStatement;
@@ -1843,9 +1861,9 @@ begin
   FD:=TJSFunctionDeclarationStatement.Create(0,0);
   FD.AFunction:=TJSFuncDef.Create;
   FD.AFunction.Name:='a';
-  FD.AFunction.Params.Add('b');
-  FD.AFunction.Params.Add('c');
-  FD.AFunction.Params.Add('d');
+  FD.AFunction.TypedParams.AddParam('b');
+  FD.AFunction.TypedParams.AddParam('c');
+  FD.AFunction.TypedParams.AddParam('d');
 
   AssertWrite('Empty function, 3 params',
      'function a(b, c, d) {'+sLineBreak
@@ -1862,9 +1880,9 @@ begin
   FD:=TJSFunctionDeclarationStatement.Create(0,0);
   FD.AFunction:=TJSFuncDef.Create;
   FD.AFunction.Name:='a';
-  FD.AFunction.Params.Add('b');
-  FD.AFunction.Params.Add('c');
-  FD.AFunction.Params.Add('d');
+  FD.AFunction.TypedParams.AddParam('b');
+  FD.AFunction.TypedParams.AddParam('c');
+  FD.AFunction.TypedParams.AddParam('d');
   AssertWrite('Empty function, 3 params, compact','function a(b,c,d) {}',FD);
 end;
 
@@ -1923,7 +1941,7 @@ begin
   FD.AFunction:=TJSFuncDef.Create;
   FD.AFunction.Name:='a';
   FD.AFunction.Body:=TJSFunctionBody.Create(0,0);
-  FD.AFunction.Params.Add('b');
+  FD.AFunction.TypedParams.AddParam('b');
   R:=TJSReturnStatement.Create(0,0);
   R.Expr:=CreateIdent('b');
   L:=TJSStatementList.Create(0,0);
@@ -1958,7 +1976,7 @@ begin
   FD.AFunction:=TJSFuncDef.Create;
   FD.AFunction.Name:='a';
   FD.AFunction.Body:=TJSFunctionBody.Create(0,0);
-  FD.AFunction.Params.Add('b');
+  FD.AFunction.TypedParams.AddParam('b');
   R:=TJSReturnStatement.Create(0,0);
   R.Expr:=CreateIdent('b');
   L:=TJSStatementList.Create(0,0);
@@ -2620,7 +2638,7 @@ Var
 begin
   L:=TJSLiteral.Create(0,0,'');
   L.Value.AsString:='ab/cd';
-  AssertWrite('ab/cd','"ab\/cd"',L);
+  AssertWrite('ab/cd','"ab/cd"',L);
 end;
 
 Procedure TTestLiteralWriter.TestStringsBack;

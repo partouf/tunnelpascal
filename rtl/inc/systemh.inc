@@ -269,6 +269,19 @@ Type
   {$endif}
 {$endif CPUMIPS32}
 
+{$if defined(CPUMIPS64) or defined(CPUMIPS64EL)}
+  {$define DEFAULT_DOUBLE}
+
+  {$define FPC_INCLUDE_SOFTWARE_SHIFT_INT64}
+
+  {$define SUPPORT_SINGLE}
+  {$define SUPPORT_DOUBLE}
+
+  {$define FPC_INCLUDE_SOFTWARE_INT64_TO_DOUBLE}
+
+  ValReal = Double;
+{$endif CPUMIPS64}
+
 
 {$ifdef CPUARM}
   {$define DEFAULT_DOUBLE}
@@ -1027,14 +1040,14 @@ function NtoLE(const AValue: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
 {$define FPC_HAS_INTERNAL_ROX_WORD}
 {$endif defined(cpux86_64) or defined(cpui386) or defined(cpui8086)}
 
-{$if defined(cpux86_64) or defined(cpui386) or defined(cpuarm) or defined(cpupowerpc) or defined(cpupowerpc64) or defined(cpuaarch64)}
+{$if defined(cpux86_64) or defined(cpui386) or defined(cpuarm) or defined(cpupowerpc) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuwasm32)}
 {$define FPC_HAS_INTERNAL_ROX_DWORD}
-{$endif defined(cpux86_64) or defined(cpui386) or defined(cpuarm) or defined(cpupowerpc) or defined(cpupowerpc64) or defined(cpuaarch64)}
+{$endif defined(cpux86_64) or defined(cpui386) or defined(cpuarm) or defined(cpupowerpc) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuwasm32)}
 
-{$if defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64)}
+{$if defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuwasm32)}
 {$define FPC_HAS_INTERNAL_ROX_QWORD}
 {$define FPC_HAS_INTERNAL_ROX_ASSIGN_QWORD}
-{$endif defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64)}
+{$endif defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuwasm32)}
 
 {$endif FPC_HAS_INTERNAL_ROX}
 
@@ -1109,10 +1122,10 @@ function RolQWord(Const AValue : QWord;const Dist : Byte): QWord;{$ifdef SYSTEMI
 {$define FPC_HAS_INTERNAL_SAR_DWORD}
 { $endif defined(cpux86_64) or defined(cpui386) or defined(cpuarm) or defined(cpupowerpc) or defined(cpupowerpc64) or defined(cpumips) or defined(cpumipsel)}
 
-{$if defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuriscv64)}
+{$if defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuriscv64) or defined(cpuwasm32)}
 {$define FPC_HAS_INTERNAL_SAR_QWORD}
 {$define FPC_HAS_INTERNAL_SAR_ASSIGN_QWORD}
-{$endif defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuriscv64)}
+{$endif defined(cpux86_64) or defined(cpupowerpc64) or defined(cpuaarch64) or defined(cpuriscv64) or defined(cpuwasm32)}
 
 {$endif FPC_HAS_INTERNAL_SAR}
 

@@ -28,6 +28,9 @@ unit fpmkunit;
 
 Interface
 
+{$ifdef CPULLVM}
+  {$define LLVM_INTERFACE_PROBLEM}
+{$endif CPULLVM}
 {$IFDEF MORPHOS}
  {$DEFINE NO_UNIT_PROCESS}
  {$DEFINE NO_THREADING}
@@ -1239,6 +1242,7 @@ Type
     FOnFinishCopy: TNotifyEvent;
 
     FCachedlibcPath: string;
+    GCCLibWarningIssued : boolean;
 {$ifndef NO_THREADING}
     FGeneralCriticalSection: TRTLCriticalSection;
 {$endif NO_THREADING}
@@ -5962,6 +5966,7 @@ begin
       begin
       Log(vlError,SErrInstaller);
       Log(vlError,E.Message);
+      DumpExceptionBacktrace(stderr);
       Result:=False;
       end;
   end;
@@ -7237,7 +7242,11 @@ begin
         begin
           s:=GetDefaultLibGCCDir(Defaults.CPU, Defaults.OS,ErrS);
           if s='' then
-            Log(vlWarning, SWarngcclibpath +' '+ErrS)
+            begin
+              if (ErrS<>'') and not (GCCLibWarningIssued) then
+                Log(vlWarning, SWarngcclibpath +' '+ErrS);
+             GCCLibWarningIssued:=True;
+           end
           else
             begin
 {$ifndef NO_THREADING}
@@ -10125,12 +10134,14 @@ Initialization
   GetPluginManager.RegisterPlugin(TfpmResolvePackagePathsPlugin);
 
 Finalization
+{$ifndef LLVM_INTERFACE_PROBLEM}
   FreeAndNil(CustomFpMakeCommandlineValues);
   FreeAndNil(CustomFpmakeCommandlineOptions);
   FreeAndNil(DefInstaller);
   FreeAndNil(GlobalDictionary);
   FreeAndNil(Defaults);
   FreeAndNil(GPluginManager);
+{$endif ndef LLVM_INTERFACE_PROBLEM}
 end.
 
 

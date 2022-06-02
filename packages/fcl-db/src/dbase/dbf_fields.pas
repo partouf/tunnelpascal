@@ -1,5 +1,19 @@
 unit dbf_fields;
+{
+    This file is part of the Free Pascal run time library.
+    Copyright (c) 1999-2022 by Pascal Ganaye,Micha Nelissen and other members of the
+    Free Pascal development team
 
+    DBF avl tree implementation
+
+    See the file COPYING.FPC, included in this distribution,
+    for details about the copyright.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+ **********************************************************************}
 interface
 
 {$I dbf_common.inc}
@@ -477,7 +491,7 @@ begin
       , ftLargeInt
 {$endif}
 {$ifdef SUPPORT_LONGWORD}
-      , ftLongWord, ftShortInt, ftByte, ftExtended
+      , ftLongWord, ftShortInt, ftByte, ftExtended, ftSingle
 {$endif}
                :
       FNativeFieldType := 'N'; //numerical
@@ -576,7 +590,7 @@ begin
         FSize := 3;
         FPrecision := 0;
       end;
-    ftExtended:
+    ftExtended, ftSingle:
       begin
         FSize := 19;
         FPrecision := 8;

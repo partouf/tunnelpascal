@@ -251,6 +251,7 @@ type
     );
   TTokens = set of TToken;
 
+  // for the fpc counterparts see fpc/compiler/globtype.pas
   TModeSwitch = (
     msNone,
     { generic }
@@ -296,12 +297,17 @@ type
     msISOLikeProgramsPara, { program parameters as it required by an ISO compatible compiler }
     msISOLikeMod,          { mod operation as it is required by an iso compatible compiler }
     msArrayOperators,      { use Delphi compatible array operators instead of custom ones ("+") }
-    msExternalClass,       { Allow external class definitions }
-    msPrefixedAttributes,  { Allow attributes, disable proc modifier [] }
-    msOmitRTTI,            { treat class section 'published' as 'public' and typeinfo does not work on symbols declared with this switch }
     msMultiHelpers,        { off=only one helper per type, on=all }
-    msImplicitFunctionSpec, { implicit function specialization }
-    msMultiLineStrings      { Multiline strings }
+    msArray2DynArray,      { regular arrays can be implicitly converted to dynamic arrays }
+    msPrefixedAttributes,  { Allow attributes, disable proc modifier [] }
+    msUnderscoreIsSeparator, { _ can be used as separator to group digits in numbers }
+    msImplicitFunctionSpec,{ implicit function specialization }
+    msFunctionReferences,  { enable Delphi-style function references }
+    msAnonymousFunctions,  { enable Delphi-style anonymous functions }
+
+    msExternalClass,       { pas2js: Allow external class definitions }
+    msOmitRTTI,            { pas2js: treat class section 'published' as 'public' and typeinfo does not work on symbols declared with this switch }
+    msMultiLineStrings     { pas2js: Multiline strings }
     );
   TModeSwitches = Set of TModeSwitch;
 
@@ -749,8 +755,8 @@ type
     FModuleRow: Integer;
     FMacros: TStrings; // Objects are TMacroDef
     FDefines: TStrings;
-    FMultilineLineFeedStyle: TEOLStyle;
-    FMultilineLineTrimLeft: Integer;
+    FMultilineStringsEOLStyle: TEOLStyle;
+    FMultilineStringsTrimLeft: Integer;
     FNonTokens: TTokens;
     FOnComment: TPScannerCommentEvent;
     FOnDirective: TPScannerDirectiveEvent;
@@ -856,8 +862,8 @@ type
     procedure HandleWarnIdentifier(Identifier, Value: String); virtual;
     procedure PushStackItem; virtual;
     procedure PopStackItem; virtual;
-    function DoFetchTextToken: TToken;
-    function DoFetchMultilineTextToken: TToken;
+    function DoFetchTextToken: TToken; // including quotes
+    function DoFetchMultilineTextToken: TToken; // back ticks are converted to apostrophs, unindented
     function DoFetchToken: TToken;
     procedure ClearFiles;
     Procedure ClearMacros;
@@ -931,8 +937,8 @@ type
     property SkipGlobalSwitches: Boolean read FSkipGlobalSwitches write FSkipGlobalSwitches;
     property MaxIncludeStackDepth: integer read FMaxIncludeStackDepth write FMaxIncludeStackDepth default DefaultMaxIncludeStackDepth;
     property ForceCaret : Boolean read GetForceCaret;
-    Property MultilineLineFeedStyle : TEOLStyle Read FMultilineLineFeedStyle Write FMultilineLineFeedStyle;
-    Property MultilineLineTrimLeft : Integer Read FMultilineLineTrimLeft Write FMultilineLineTrimLeft;
+    Property MultilineStringsEOLStyle : TEOLStyle Read FMultilineStringsEOLStyle Write FMultilineStringsEOLStyle;
+    Property MultilineStringsTrimLeft : Integer Read FMultilineStringsTrimLeft Write FMultilineStringsTrimLeft; // All=-2, Auto=-1, None=0, >1 fixed amount
     Property OnDirectiveForConditionals : Boolean Read FOnDirectiveForConditionals Write FOnDirectiveForConditionals;
     property LogEvents : TPScannerLogEvents read FLogEvents write FLogEvents;
     property OnLog : TPScannerLogHandler read FOnLog write FOnLog;
@@ -1121,11 +1127,15 @@ const
     'ISOPROGRAMPARAS',
     'ISOMOD',
     'ARRAYOPERATORS',
-    'EXTERNALCLASS',
-    'PREFIXEDATTRIBUTES',
-    'OMITRTTI',
     'MULTIHELPERS',
+    'ARRAY2DYNARRAYS',
+    'PREFIXEDATTRIBUTES',
+    'UNDERSCOREISSEPARARTOR',
     'IMPLICITFUNCTIONSPECIALIZATION',
+    'FUNCTIONREFERENCES',
+    'ANONYMOUSFUNCTIONS',
+    'EXTERNALCLASS',
+    'OMITRTTI',
     'MULTILINESTRINGS'
     );
 
@@ -1213,7 +1223,8 @@ const
      msPointer2Procedure,msAutoDeref,msTPProcVar,msInitFinal,msDefaultAnsistring,
      msOut,msDefaultPara,msDuplicateNames,msHintDirective,
      msProperty,msDefaultInline,msExcept,msAdvancedRecords,msTypeHelpers,
-     msPrefixedAttributes,msArrayOperators,msImplicitFunctionSpec
+     msPrefixedAttributes,msArrayOperators,msImplicitFunctionSpec,
+     msFunctionReferences,msAnonymousFunctions
      ];
 
   DelphiUnicodeModeSwitches = delphimodeswitches + [msSystemCodePage,msDefaultUnicodestring];
@@ -1251,9 +1262,15 @@ function FilenameIsWinAbsolute(const TheFilename: string): boolean;
 function FilenameIsUnixAbsolute(const TheFilename: string): boolean;
 function IsNamedToken(Const AToken : String; Out T : TToken) : Boolean;
 Function ExtractFilenameOnly(Const AFileName : String) : String;
+function ExtractFileUnitName(aFilename: string): string;
 
 procedure CreateMsgArgs(var MsgArgs: TMessageArgs; Args: array of const);
 function SafeFormat(const Fmt: string; Args: array of const): string;
+
+{$IFNDEF Pas2js}
+procedure ReadNextPascalToken(var Position: PChar; out TokenStart: PChar;
+  NestedComments: boolean; SkipDirectives: boolean);
+{$ENDIF}
 
 implementation
 
@@ -1272,6 +1289,22 @@ begin
   Result:=ChangeFileExt(ExtractFileName(aFileName),'');
 end;
 
+function ExtractFileUnitName(aFilename: string): string;
+var
+  p: Integer;
+begin
+  Result:=ExtractFileName(aFilename);
+  if Result='' then exit;
+  for p:=length(Result) downto 1 do
+    case Result[p] of
+    '/','\': exit;
+    '.':
+      begin
+      Delete(Result,p,length(Result));
+      exit;
+      end;
+    end;
+end;
 
 Procedure SortTokenInfo;
 
@@ -1420,6 +1453,274 @@ begin
     Result:='{'+Fmt+'}['+Result+']';
   end;
 end;
+
+{$IFNDEF Pas2js}
+procedure ReadNextPascalToken(var Position: PChar; out TokenStart: PChar;
+  NestedComments: boolean; SkipDirectives: boolean);
+const
+  IdentChars = ['a'..'z','A'..'Z','_','0'..'9'];
+  HexNumberChars = ['0'..'9','a'..'f','A'..'F'];
+var
+  c1:char;
+  CommentLvl: Integer;
+  Src: PChar;
+begin
+  Src:=Position;
+  // read till next atom
+  while true do
+    begin
+    case Src^ of
+    #0: break;
+    #1..#32:  // spaces and special characters
+      inc(Src);
+    #$EF:
+      if (Src[1]=#$BB)
+      and (Src[2]=#$BF) then
+        begin
+        // skip UTF BOM
+        inc(Src,3);
+        end
+      else
+        break;
+    '{':    // comment start or compiler directive
+      if (Src[1]='$') and (not SkipDirectives) then
+        // compiler directive
+        break
+      else begin
+        // Pascal comment => skip
+        CommentLvl:=1;
+        while true do
+          begin
+          inc(Src);
+          case Src^ of
+          #0: break;
+          '{':
+            if NestedComments then
+              inc(CommentLvl);
+          '}':
+            begin
+            dec(CommentLvl);
+            if CommentLvl=0 then
+              begin
+              inc(Src);
+              break;
+              end;
+            end;
+          end;
+        end;
+      end;
+    '/':  // comment or real division
+      if (Src[1]='/') then
+        begin
+        // comment start -> read til line end
+        inc(Src);
+        while not (Src^ in [#0,#10,#13]) do
+          inc(Src);
+        end
+      else
+        break;
+    '(':  // comment, bracket or compiler directive
+      if (Src[1]='*') then
+        begin
+        if (Src[2]='$') and (not SkipDirectives) then
+          // compiler directive
+          break
+        else
+          begin
+          // comment start -> read til comment end
+          inc(Src,2);
+          CommentLvl:=1;
+          while true do
+            begin
+            case Src^ of
+            #0: break;
+            '(':
+              if NestedComments and (Src[1]='*') then
+                inc(CommentLvl);
+            '*':
+              if (Src[1]=')') then
+                begin
+                dec(CommentLvl);
+                if CommentLvl=0 then
+                  begin
+                  inc(Src,2);
+                  break;
+                  end;
+                inc(Position);
+                end;
+            end;
+            inc(Src);
+            end;
+        end;
+      end else
+        // round bracket open
+        break;
+    else
+      break;
+    end;
+    end;
+  // read token
+  TokenStart:=Src;
+  c1:=Src^;
+  case c1 of
+  #0:
+    ;
+  'A'..'Z','a'..'z','_':
+    begin
+    // identifier
+    inc(Src);
+    while Src^ in IdentChars do
+      inc(Src);
+    end;
+  '0'..'9': // number
+    begin
+    inc(Src);
+    // read numbers
+    while (Src^ in ['0'..'9']) do
+      inc(Src);
+    if (Src^='.') and (Src[1]<>'.') then
+      begin
+      // real type number
+      inc(Src);
+      while (Src^ in ['0'..'9']) do
+        inc(Src);
+      end;
+    if (Src^ in ['e','E']) then
+      begin
+      // read exponent
+      inc(Src);
+      if (Src^='-') then inc(Src);
+      while (Src^ in ['0'..'9']) do
+        inc(Src);
+      end;
+    end;
+  '''','#','`':  // string constant
+    while true do
+      case Src^ of
+      #0: break;
+      '#':
+        begin
+        inc(Src);
+        while Src^ in ['0'..'9'] do
+          inc(Src);
+        end;
+      '''':
+        begin
+        inc(Src);
+        while not (Src^ in ['''',#0,#10,#13]) do
+          inc(Src);
+        if Src^='''' then
+          inc(Src);
+        end;
+      '`':
+        begin
+        inc(Src);
+        while not (Src^ in ['`',#0]) do
+          inc(Src);
+        if Src^='''' then
+          inc(Src);
+        end;
+      else
+        break;
+      end;
+  '$':  // hex constant
+    begin
+    inc(Src);
+    while Src^ in HexNumberChars do
+      inc(Src);
+    end;
+  '&':  // octal constant or keyword as identifier (e.g. &label)
+    begin
+    inc(Src);
+    if Src^ in ['0'..'7'] then
+      while Src^ in ['0'..'7'] do
+        inc(Src)
+    else
+      while Src^ in IdentChars do
+        inc(Src);
+    end;
+  '{':  // compiler directive (it can't be a comment, because see above)
+    begin
+    CommentLvl:=1;
+    while true do
+      begin
+      inc(Src);
+      case Src^ of
+      #0: break;
+      '{':
+        if NestedComments then
+          inc(CommentLvl);
+      '}':
+        begin
+        dec(CommentLvl);
+        if CommentLvl=0 then
+          begin
+          inc(Src);
+          break;
+          end;
+        end;
+      end;
+      end;
+    end;
+  '(':  // bracket or compiler directive
+    if (Src[1]='*') then
+      begin
+      // compiler directive -> read til comment end
+      inc(Src,2);
+      while (Src^<>#0) and ((Src^<>'*') or (Src[1]<>')')) do
+        inc(Src);
+      inc(Src,2);
+      end
+    else
+      // round bracket open
+      inc(Src);
+  #192..#255:
+    begin
+    // read UTF8 character
+    inc(Src);
+    if ((ord(c1) and %11100000) = %11000000) then
+      begin
+      // could be 2 byte character
+      if (ord(Src[0]) and %11000000) = %10000000 then
+        inc(Src);
+      end
+    else if ((ord(c1) and %11110000) = %11100000) then
+      begin
+      // could be 3 byte character
+      if ((ord(Src[0]) and %11000000) = %10000000)
+      and ((ord(Src[1]) and %11000000) = %10000000) then
+        inc(Src,2);
+      end
+    else if ((ord(c1) and %11111000) = %11110000) then
+      begin
+      // could be 4 byte character
+      if ((ord(Src[0]) and %11000000) = %10000000)
+      and ((ord(Src[1]) and %11000000) = %10000000)
+      and ((ord(Src[2]) and %11000000) = %10000000) then
+        inc(Src,3);
+      end;
+    end;
+  else
+    inc(Src);
+    case c1 of
+    '<': if Src^ in ['>','='] then inc(Src);
+    '.': if Src^='.' then inc(Src);
+    '@':
+      if Src^='@' then
+        begin
+        // @@ label
+        repeat
+          inc(Src);
+        until not (Src^ in IdentChars);
+        end
+    else
+      if (Src^='=') and (c1 in [':','+','-','/','*','<','>']) then
+        inc(Src);
+    end;
+  end;
+  Position:=Src;
+end;
+{$ENDIF}
 
 type
   TIncludeStackItem = class
@@ -2277,6 +2578,7 @@ var
   {$else}
   Src: string;
   p, l, StartP: Integer;
+  c: char;
   {$endif}
 begin
   Result:='';
@@ -2290,8 +2592,23 @@ begin
       StartP:=p;
       repeat
         case p^ of
-        #0: Log(mtError,nErrInvalidCharacter,SErrInvalidCharacter,['#0']);
+        #0,#10,#13: Log(mtError,nErrInvalidCharacter,SErrInvalidCharacter,['#0']);
         '''': break;
+        else inc(p);
+        end;
+      until false;
+      if p>StartP then
+        Result:=Result+copy(Expression,StartP-PChar(Expression)+1,p-StartP);
+      inc(p);
+      end;
+    '`':
+      begin
+      inc(p);
+      StartP:=p;
+      repeat
+        case p^ of
+        #0: Log(mtError,nErrInvalidCharacter,SErrInvalidCharacter,['#0']);
+        '`': break;
         else inc(p);
         end;
       until false;
@@ -2307,17 +2624,20 @@ begin
   Src:=Expression;
   l:=length(Src);
   repeat
-    if (p>l) or (Src[p]<>'''') then
+    if (p>l) or not (Src[p] in ['''','`']) then
       Log(mtError,nErrInvalidCharacter,SErrInvalidCharacter,['#0'])
     else
       begin
+      c:=Src[p];
       inc(p);
       StartP:=p;
       repeat
-        if p>l then
+        if (p>l) then
           Log(mtError,nErrInvalidCharacter,SErrInvalidCharacter,['#0'])
-        else if Src[p]='''' then
+        else if Src[p]=c then
           break
+        else if (c='''') and (Src[p] in [#10,#13]) then
+          Log(mtError,nErrInvalidCharacter,SErrInvalidCharacter,['#'+IntToStr(ord(Src[p]))])
         else
           inc(p);
       until false;
@@ -3352,7 +3672,7 @@ Var
 
 
 begin
-  aStyle:=MultilineLineFeedStyle;
+  aStyle:=MultilineStringsEOLStyle;
   if aStyle=elSource then
     aStyle:=aReader.LastEOLStyle;
   case aStyle of
@@ -3366,149 +3686,9 @@ begin
   Result:=aLF;
 end;
 
-function TPascalScanner.DoFetchMultilineTextToken:TToken;
-
-var
-  StartPos,OldLength     : Integer;
-  TokenStart    : {$ifdef UsePChar}PChar{$else}integer{$endif};
-  {$ifndef UsePChar}
-  s: String;
-  l: integer;
-  {$endif}
-
-
-  Procedure AddToCurString(addLF : Boolean);
-  var
-    SectionLength,i : Integer;
-    aLF : String;
-
-  begin
-    i:=MultilineLineTrimLeft;
-    if I=-1 then
-      I:=StartPos+1;
-    if I>0 then
-      begin
-      While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) and (I>0) do
-        begin
-        Inc(TokenStart);
-        Dec(I);
-        end;
-      end
-    else if I=-2 then
-      begin
-      While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) do
-        Inc(TokenStart);
-      end;
-
-    SectionLength := FTokenPos - TokenStart+Ord(AddLF);
-    {$ifdef UsePChar}
-    SetLength(FCurTokenString, OldLength + SectionLength);
-    if SectionLength > 0 then
-      Move(TokenStart^, FCurTokenString[OldLength + 1], SectionLength);
-    {$else}
-    FCurTokenString:=FCurTokenString+copy(FCurLine,TokenStart,SectionLength);
-    {$endif}
-    if AddLF then
-      begin
-      alf:=GetMultiLineStringLineEnd(FCurSourceFile);
-      FCurTokenString:=FCurTokenString+aLF;
-      Inc(OldLength,Length(aLF));
-      end;
-    Inc(OldLength, SectionLength);
-  end;
-
-begin
-  Result:=tkEOF;
-  OldLength:=0;
-  FCurTokenString := '';
-  {$ifndef UsePChar}
-  s:=FCurLine;
-  l:=length(s);
-  StartPos:=FTokenPos;
-  {$ELSE}
-  StartPos:=FTokenPos-PChar(FCurLine);
-  {$endif}
-
-  repeat
-    {$ifndef UsePChar}
-    if FTokenPos>l then break;
-    {$endif}
-    case {$ifdef UsePChar}FTokenPos[0]{$else}s[FTokenPos]{$endif} of
-      '^' :
-        begin
-        TokenStart := FTokenPos;
-        Inc(FTokenPos);
-        if {$ifdef UsePChar}FTokenPos[0] in Letters{$else}(FTokenPos<l) and (s[FTokenPos] in Letters){$endif} then
-          Inc(FTokenPos);
-        if Result=tkEOF then Result := tkChar else Result:=tkString;
-        end;
-      '#':
-        begin
-        TokenStart := FTokenPos;
-        Inc(FTokenPos);
-        if {$ifdef UsePChar}FTokenPos[0]='$'{$else}(FTokenPos<l) and (s[FTokenPos]='$'){$endif} then
-        begin
-          Inc(FTokenPos);
-          repeat
-            Inc(FTokenPos);
-          until {$ifdef UsePChar}not (FTokenPos[0] in HexDigits){$else}(FTokenPos>l) or not (s[FTokenPos] in HexDigits){$endif};
-        end else
-          repeat
-            Inc(FTokenPos);
-          until {$ifdef UsePChar}not (FTokenPos[0] in Digits){$else}(FTokenPos>l) or not (s[FTokenPos] in Digits){$endif};
-        if Result=tkEOF then Result := tkChar else Result:=tkString;
-        end;
-      '`':
-        begin
-          TokenStart := FTokenPos;
-          Inc(FTokenPos);
-
-          while true do
-          begin
-            if {$ifdef UsePChar}FTokenPos[0] = '`'{$else}(FTokenPos<=l) and (s[FTokenPos]=''''){$endif} then
-              if {$ifdef UsePChar}FTokenPos[1] = '`'{$else}(FTokenPos<l) and (s[FTokenPos+1]=''''){$endif} then
-                Inc(FTokenPos)
-              else
-                break;
-
-            if {$ifdef UsePChar}FTokenPos[0] = #0{$else}FTokenPos>l{$endif} then
-              begin
-              FTokenPos:=FTokenPos-1;
-              AddToCurString(true);
-              // Writeln('Curtokenstring : >>',FCurTOkenString,'<<');
-              if not Self.FetchLine then
-                Error(nErrOpenString,SErrOpenString);
-              // Writeln('Current line is now : ',FCurLine);
-              {$ifndef UsePChar}
-              s:=FCurLine;
-              l:=length(s);
-              {$ELSE}
-              FTokenPos:=PChar(FCurLine);
-              {$endif}
-              TokenStart:=FTokenPos;
-              end
-            else
-              Inc(FTokenPos);
-          end;
-          Inc(FTokenPos);
-          Result := tkString;
-        end;
-    else
-      Break;
-    end;
-    AddToCurString(false);
-  until false;
-  if length(FCurTokenString)>1 then
-    begin
-    FCurTokenString[1]:='''';
-    FCurTokenString[Length(FCurTokenString)]:='''';
-    end;
-end;
-
 function TPascalScanner.DoFetchTextToken:TToken;
 var
-  OldLength     : Integer;
-  TokenStart    : {$ifdef UsePChar}PChar{$else}integer{$endif};
+  TokenStart, StartP : {$ifdef UsePChar}PChar{$else}integer{$endif};
   SectionLength : Integer;
   {$ifndef UsePChar}
   s: String;
@@ -3516,13 +3696,13 @@ var
   {$endif}
 begin
   Result:=tkEOF;
-  OldLength:=0;
   FCurTokenString := '';
   {$ifndef UsePChar}
   s:=FCurLine;
   l:=length(s);
   {$endif}
 
+  StartP := FTokenPos;
   repeat
     {$ifndef UsePChar}
     if FTokenPos>l then break;
@@ -3530,15 +3710,16 @@ begin
     case {$ifdef UsePChar}FTokenPos[0]{$else}s[FTokenPos]{$endif} of
       '^' :
         begin
-        TokenStart := FTokenPos;
         Inc(FTokenPos);
         if {$ifdef UsePChar}FTokenPos[0] in Letters{$else}(FTokenPos<l) and (s[FTokenPos] in Letters){$endif} then
           Inc(FTokenPos);
-        if Result=tkEOF then Result := tkChar else Result:=tkString;
+        if Result=tkEOF then
+          Result := tkChar
+        else
+          Result := tkString;
         end;
       '#':
         begin
-        TokenStart := FTokenPos;
         Inc(FTokenPos);
         if {$ifdef UsePChar}FTokenPos[0]='$'{$else}(FTokenPos<l) and (s[FTokenPos]='$'){$endif} then
         begin
@@ -3550,7 +3731,10 @@ begin
           repeat
             Inc(FTokenPos);
           until {$ifdef UsePChar}not (FTokenPos[0] in Digits){$else}(FTokenPos>l) or not (s[FTokenPos] in Digits){$endif};
-        if Result=tkEOF then Result := tkChar else Result:=tkString;
+        if Result=tkEOF then
+          Result := tkChar
+        else
+          Result := tkString;
         end;
       '''':
         begin
@@ -3561,7 +3745,13 @@ begin
           begin
             if {$ifdef UsePChar}FTokenPos[0] = ''''{$else}(FTokenPos<=l) and (s[FTokenPos]=''''){$endif} then
               if {$ifdef UsePChar}FTokenPos[1] = ''''{$else}(FTokenPos<l) and (s[FTokenPos+1]=''''){$endif} then
-                Inc(FTokenPos)
+                begin
+                Inc(FTokenPos);
+                if Result=tkEOF then
+                  Result:=tkChar
+                else
+                  Result:=tkString;
+                end
               else
                 break;
 
@@ -3571,7 +3761,7 @@ begin
             Inc(FTokenPos);
           end;
           Inc(FTokenPos);
-          if ((FTokenPos - TokenStart)=3) then // 'z'
+          if (Result=tkEOF) and ((FTokenPos - TokenStart)=3) then // 'z'
             Result := tkChar
           else
             Result := tkString;
@@ -3579,15 +3769,223 @@ begin
     else
       Break;
     end;
-    SectionLength := FTokenPos - TokenStart;
+  until false;
+  SectionLength := FTokenPos - StartP;
+  {$ifdef UsePChar}
+  SetLength(FCurTokenString, SectionLength);
+  if SectionLength > 0 then
+    Move(StartP^, FCurTokenString[1], SectionLength);
+  {$else}
+  FCurTokenString:=FCurTokenString+copy(FCurLine,StartP,SectionLength);
+  {$endif}
+end;
+
+function TPascalScanner.DoFetchMultilineTextToken:TToken;
+// works similar to DoFetchTextToken, except changes indentation
+
+var
+  StartPos: Integer;
+  TokenStart: {$ifdef UsePChar}PChar{$else}integer{$endif};
+  {$ifdef UsePChar}
+  OldLength: integer;
+  {$else}
+  s: String;
+  l: integer;
+  {$endif}
+  Apostroph, CurLF : String;
+
+  {$IFDEF UsePChar}
+  procedure Add(StartP: PChar; Cnt: integer);
+  begin
+    if Cnt=0 then exit;
+    if OldLength+Cnt>length(FCurTokenString) then
+      SetLength(FCurTokenString,length(FCurTokenString)*2+128);
+    Move(StartP^,FCurTokenString[OldLength+1],Cnt);
+    inc(OldLength,Cnt);
+  end;
+  {$ELSE}
+  procedure Add(const S: string);
+  begin
+    FCurTokenString:=FCurTokenString+S;
+  end;
+  {$ENDIF}
+
+  Procedure AddToCurString(addLF : Boolean);
+  var
+    i : Integer;
+
+  begin
+    i:=MultilineStringsTrimLeft;
+    if I=-1 then
+      // auto unindent -> use line indent of first line
+      I:=StartPos+1;
+    if I>0 then
+      begin
+      // fixed unindent -> remove up to I leading spaces
+      While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) and (I>0) do
+        begin
+        Inc(TokenStart);
+        Dec(I);
+        end;
+      end
+    else if I=-2 then
+      begin
+      // no indent -> remove all leading spaces
+      While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) do
+        Inc(TokenStart);
+      end;
+
     {$ifdef UsePChar}
-    SetLength(FCurTokenString, OldLength + SectionLength);
-    if SectionLength > 0 then
-      Move(TokenStart^, FCurTokenString[OldLength + 1], SectionLength);
+    Add(TokenStart,FTokenPos - TokenStart);
     {$else}
-    FCurTokenString:=FCurTokenString+copy(FCurLine,TokenStart,SectionLength);
+    Add(copy(FCurLine,TokenStart,FTokenPos - TokenStart));
+    {$ENDIF}
+    if addLF then
+      begin
+      {$IFDEF UsePChar}
+      Add(@CurLF[1],length(CurLF));
+      {$ELSE}
+      Add(CurLF);
+      {$endif}
+      end;
+  end;
+
+  procedure AddApostroph;
+  begin
+    {$IFDEF UsePChar}
+    Add(@Apostroph[1],length(Apostroph));
+    {$ELSE}
+    Add(Apostroph);
+    {$ENDIF}
+  end;
+
+begin
+  Result:=tkEOF;
+  FCurTokenString := '';
+  {$ifndef UsePChar}
+  s:=FCurLine;
+  l:=length(s);
+  StartPos:=FTokenPos;
+  {$ELSE}
+  OldLength:=0;
+  StartPos:=FTokenPos-PChar(FCurLine);
+  {$endif}
+  Apostroph:='''';
+  CurLF:=GetMultiLineStringLineEnd(FCurSourceFile);
+
+  repeat
+    {$ifndef UsePChar}
+    if FTokenPos>l then break;
     {$endif}
-    Inc(OldLength, SectionLength);
+    case {$ifdef UsePChar}FTokenPos[0]{$else}s[FTokenPos]{$endif} of
+      '^' :
+        begin
+        TokenStart := FTokenPos;
+        Inc(FTokenPos);
+        if {$ifdef UsePChar}FTokenPos[0] in Letters{$else}(FTokenPos<l) and (s[FTokenPos] in Letters){$endif} then
+          Inc(FTokenPos);
+        {$IFDEF UsePChar}
+        Add(TokenStart,FTokenPos-TokenStart);
+        {$ELSE}
+        Add(copy(FCurLine,TokenStart,FTokenPos-TokenStart));
+        {$ENDIF}
+        if Result=tkEOF then
+          Result := tkChar
+        else
+          Result := tkString;
+        end;
+      '#':
+        begin
+        TokenStart := FTokenPos;
+        Inc(FTokenPos);
+        if {$ifdef UsePChar}FTokenPos[0]='$'{$else}(FTokenPos<l) and (s[FTokenPos]='$'){$endif} then
+        begin
+          Inc(FTokenPos);
+          repeat
+            Inc(FTokenPos);
+          until {$ifdef UsePChar}not (FTokenPos[0] in HexDigits){$else}(FTokenPos>l) or not (s[FTokenPos] in HexDigits){$endif};
+        end else
+          repeat
+            Inc(FTokenPos);
+          until {$ifdef UsePChar}not (FTokenPos[0] in Digits){$else}(FTokenPos>l) or not (s[FTokenPos] in Digits){$endif};
+        {$IFDEF UsePChar}
+        Add(TokenStart,FTokenPos-TokenStart);
+        {$ELSE}
+        Add(copy(FCurLine,TokenStart,FTokenPos-TokenStart));
+        {$ENDIF}
+        if Result=tkEOF then
+          Result := tkChar
+        else
+          Result := tkString;
+        end;
+      '`':
+        begin
+          AddApostroph;
+          Inc(FTokenPos);
+          TokenStart := FTokenPos;
+
+          while true do
+          begin
+            if {$ifdef UsePChar}FTokenPos[0] = #0{$else}FTokenPos>l{$endif} then
+              begin
+              AddToCurString(true);
+              // Writeln('Curtokenstring : >>',FCurTokenString,'<<');
+              if not Self.FetchLine then
+                begin
+                {$IFDEF UsePChar}
+                SetLength(FCurTokenString,OldLength);
+                {$ENDIF}
+                Error(nErrOpenString,SErrOpenString);
+                end;
+              // Writeln('Current line is now : ',FCurLine);
+              {$ifndef UsePChar}
+              s:=FCurLine;
+              l:=length(s);
+              {$ELSE}
+              FTokenPos:=PChar(FCurLine);
+              {$endif}
+              TokenStart:=FTokenPos;
+              end
+            else
+              begin
+              case {$ifdef UsePChar}FTokenPos^{$else}s[FTokenPos]{$endif} of
+              '`':
+                if {$ifdef UsePChar}FTokenPos[1] = '`'{$else}(FTokenPos<l) and (s[FTokenPos+1]='`'){$endif} then
+                  begin
+                  // treat two backticks as one
+                  Inc(FTokenPos);
+                  AddToCurString(false);
+                  Inc(FTokenPos);
+                  TokenStart := FTokenPos;
+                  continue;
+                  end
+                else
+                  begin
+                  AddToCurString(false);
+                  AddApostroph;
+                  break;
+                  end;
+              '''':
+                begin
+                // convert apostroph to two apostrophs
+                Inc(FTokenPos);
+                AddToCurString(false);
+                AddApostroph;
+                TokenStart := FTokenPos;
+                end;
+              end;
+              Inc(FTokenPos);
+              end;
+          end;
+          Inc(FTokenPos);
+          Result := tkString;
+        end;
+    else
+      {$IFDEF UsePChar}
+      SetLength(FCurTokenString,OldLength);
+      {$ENDIF}
+      Break;
+    end;
   until false;
 end;
 
@@ -3968,14 +4366,14 @@ Var
   MName,MValue : String;
 
 begin
-  Param := UpperCase(Param);
+  // Param is already trimmed on entry.
   Index:=Pos(':=',Param);
   If (Index=0) then
     AddDefine(GetMacroName(Param))
   else
     begin
-    MValue:=Trim(Param);
-    MName:=Trim(Copy(MValue,1,Index-1));
+    MValue:=Param;
+    MName:=UpperCase(Trim(Copy(MValue,1,Index-1)));
     Delete(MValue,1,Index+1);
     AddMacro(MName,Trim(MValue));
     end;
@@ -4642,8 +5040,7 @@ begin
     If not TryStrToInt(S,I) then
       I:=0;
   end;
-  MultilineLineTrimLeft:=I;
-
+  MultilineStringsTrimLeft:=I;
 end;
 
 procedure TPascalScanner.HandleMultilineStringLineEnding(const AParam: string);
@@ -4661,7 +5058,7 @@ begin
   else
     Error(nErrInvalidMultiLineLineEnding,sErrInvalidMultiLineLineEnding);
   end;
-  MultilineLineFeedStyle:=S;
+  MultilineStringsEOLStyle:=S;
 end;
 
 function TPascalScanner.DoFetchToken: TToken;
@@ -5729,6 +6126,7 @@ begin
   while (p<=length(Result)) and (Result[p] in ['a'..'z','A'..'Z','0'..'9','_']) do
     inc(p);
   SetLength(Result,p-1);
+  Result:=UpperCase(Result);
 end;
 
 procedure TPascalScanner.SetCurMsg(MsgType: TMessageType; MsgNumber: integer;

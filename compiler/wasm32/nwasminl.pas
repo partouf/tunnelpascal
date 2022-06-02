@@ -26,7 +26,7 @@ unit nwasminl;
 interface
 
     uses
-      node,ncginl;
+      node,ncginl,cpubase;
 
     type
 
@@ -39,18 +39,25 @@ interface
         function first_sqrt_real:tnode;override;
         function first_trunc_real:tnode;override;
         function first_round_real:tnode;override;
+        function first_popcnt:tnode;override;
         procedure second_abs_real;override;
         procedure second_int_real;override;
         procedure second_sqrt_real;override;
         procedure second_trunc_real;override;
         procedure second_round_real;override;
         procedure second_high; override;
+        procedure second_popcnt;override;
         procedure second_memory_size;
         procedure second_memory_grow;
         procedure second_memory_fill;
         procedure second_memory_copy;
         procedure second_unreachable;
         procedure second_throw_fpcexception;
+        procedure second_atomic_fence;
+        procedure second_atomic_load(op: TAsmOp);
+        procedure second_atomic_store(op: TAsmOp);
+        procedure second_atomic_rmw_x_y(op: TAsmOp);
+        procedure second_atomic_rmw_x_y_z(op: TAsmOp);
       protected
         function first_sqr_real: tnode; override;
       public
@@ -65,7 +72,6 @@ implementation
 
     uses
       ninl,ncal,compinnr,
-      cpubase,
       aasmbase,aasmdata,aasmcpu,
       cgbase,cgutils,
       hlcgobj,hlcgcpu,
@@ -105,6 +111,13 @@ implementation
 
 
     function twasminlinenode.first_round_real: tnode;
+      begin
+        expectloc:=LOC_REGISTER;
+        result:=nil;
+      end;
+
+
+    function twasminlinenode.first_popcnt: tnode;
       begin
         expectloc:=LOC_REGISTER;
         result:=nil;
@@ -284,6 +297,24 @@ implementation
       end;
 
 
+    procedure twasminlinenode.second_popcnt;
+      begin
+        secondpass(left);
+
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,left.resultdef,left.location.register);
+
+        if is_64bit(left.resultdef) then
+          current_asmdata.CurrAsmList.Concat(taicpu.op_none(a_i64_popcnt))
+        else
+          current_asmdata.CurrAsmList.Concat(taicpu.op_none(a_i32_popcnt));
+
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        location.register:=hlcg.getregisterfordef(current_asmdata.CurrAsmList,resultdef);
+        thlcgwasm(hlcg).a_load_stack_loc(current_asmdata.CurrAsmList,resultdef,location);
+      end;
+
+
     procedure twasminlinenode.second_memory_size;
       begin
         current_asmdata.CurrAsmList.Concat(taicpu.op_none(a_memory_size));
@@ -396,6 +427,120 @@ implementation
       end;
 
 
+    procedure twasminlinenode.second_atomic_fence;
+      begin
+        location_reset(location,LOC_VOID,OS_NO);
+        current_asmdata.CurrAsmList.Concat(taicpu.op_none(a_atomic_fence));
+      end;
+
+
+    procedure twasminlinenode.second_atomic_load(op: TAsmOp);
+      begin
+        secondpass(left);
+
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,left.resultdef,left.location.register);
+
+        current_asmdata.CurrAsmList.Concat(taicpu.op_const(op,0));
+
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        location.register:=hlcg.getregisterfordef(current_asmdata.CurrAsmList,resultdef);
+        thlcgwasm(hlcg).a_load_stack_loc(current_asmdata.CurrAsmList,resultdef,location);
+      end;
+
+    procedure twasminlinenode.second_atomic_store(op: TAsmOp);
+      begin
+        location_reset(location,LOC_VOID,OS_NO);
+
+        secondpass(tcallparanode(tcallparanode(left).right).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(left).right).left.location,
+          tcallparanode(tcallparanode(left).right).left.resultdef,
+          tcallparanode(tcallparanode(left).right).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(left).right).left.resultdef,
+          tcallparanode(tcallparanode(left).right).left.location.register);
+
+        secondpass(tcallparanode(left).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(left).left.location,
+          tcallparanode(left).left.resultdef,
+          tcallparanode(left).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(left).left.resultdef,
+          tcallparanode(left).left.location.register);
+
+        current_asmdata.CurrAsmList.Concat(taicpu.op_const(op,0));
+        thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,2);
+      end;
+
+
+    procedure twasminlinenode.second_atomic_rmw_x_y(op: TAsmOp);
+      begin
+        secondpass(tcallparanode(tcallparanode(left).right).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(left).right).left.location,
+          tcallparanode(tcallparanode(left).right).left.resultdef,
+          tcallparanode(tcallparanode(left).right).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(left).right).left.resultdef,
+          tcallparanode(tcallparanode(left).right).left.location.register);
+
+        secondpass(tcallparanode(left).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(left).left.location,
+          tcallparanode(left).left.resultdef,
+          tcallparanode(left).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(left).left.resultdef,
+          tcallparanode(left).left.location.register);
+
+        current_asmdata.CurrAsmList.Concat(taicpu.op_const(op,0));
+        thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,1);
+
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        location.register:=hlcg.getregisterfordef(current_asmdata.CurrAsmList,resultdef);
+        thlcgwasm(hlcg).a_load_stack_loc(current_asmdata.CurrAsmList,resultdef,location);
+      end;
+
+    procedure twasminlinenode.second_atomic_rmw_x_y_z(op: TAsmOp);
+      begin
+        secondpass(tcallparanode(tcallparanode(tcallparanode(left).right).right).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(tcallparanode(left).right).right).left.location,
+          tcallparanode(tcallparanode(tcallparanode(left).right).right).left.resultdef,
+          tcallparanode(tcallparanode(tcallparanode(left).right).right).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(tcallparanode(left).right).right).left.resultdef,
+          tcallparanode(tcallparanode(tcallparanode(left).right).right).left.location.register);
+
+        secondpass(tcallparanode(tcallparanode(left).right).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(left).right).left.location,
+          tcallparanode(tcallparanode(left).right).left.resultdef,
+          tcallparanode(tcallparanode(left).right).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(tcallparanode(left).right).left.resultdef,
+          tcallparanode(tcallparanode(left).right).left.location.register);
+
+        secondpass(tcallparanode(left).left);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,
+          tcallparanode(left).left.location,
+          tcallparanode(left).left.resultdef,
+          tcallparanode(left).left.resultdef,false);
+        thlcgwasm(hlcg).a_load_reg_stack(current_asmdata.CurrAsmList,
+          tcallparanode(left).left.resultdef,
+          tcallparanode(left).left.location.register);
+
+        current_asmdata.CurrAsmList.Concat(taicpu.op_const(op,0));
+        thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,2);
+
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        location.register:=hlcg.getregisterfordef(current_asmdata.CurrAsmList,resultdef);
+        thlcgwasm(hlcg).a_load_stack_loc(current_asmdata.CurrAsmList,resultdef,location);
+      end;
+
+
     function twasminlinenode.first_sqr_real: tnode;
       begin
         expectloc:=LOC_FPUREGISTER;
@@ -437,6 +582,114 @@ implementation
               CheckParameters(3);
               resultdef:=voidtype;
             end;
+          in_wasm32_atomic_fence:
+            begin
+              CheckParameters(0);
+              resultdef:=voidtype;
+            end;
+
+          in_wasm32_i32_atomic_rmw8_add_u,
+          in_wasm32_i32_atomic_rmw16_add_u,
+          in_wasm32_i32_atomic_rmw_add,
+          in_wasm32_i32_atomic_rmw8_sub_u,
+          in_wasm32_i32_atomic_rmw16_sub_u,
+          in_wasm32_i32_atomic_rmw_sub,
+          in_wasm32_i32_atomic_rmw8_and_u,
+          in_wasm32_i32_atomic_rmw16_and_u,
+          in_wasm32_i32_atomic_rmw_and,
+          in_wasm32_i32_atomic_rmw8_or_u,
+          in_wasm32_i32_atomic_rmw16_or_u,
+          in_wasm32_i32_atomic_rmw_or,
+          in_wasm32_i32_atomic_rmw8_xor_u,
+          in_wasm32_i32_atomic_rmw16_xor_u,
+          in_wasm32_i32_atomic_rmw_xor,
+          in_wasm32_i32_atomic_rmw8_xchg_u,
+          in_wasm32_i32_atomic_rmw16_xchg_u,
+          in_wasm32_i32_atomic_rmw_xchg:
+            begin
+              CheckParameters(2);
+              resultdef:=u32inttype;
+            end;
+          in_wasm32_i64_atomic_rmw8_add_u,
+          in_wasm32_i64_atomic_rmw16_add_u,
+          in_wasm32_i64_atomic_rmw32_add_u,
+          in_wasm32_i64_atomic_rmw_add,
+          in_wasm32_i64_atomic_rmw8_sub_u,
+          in_wasm32_i64_atomic_rmw16_sub_u,
+          in_wasm32_i64_atomic_rmw32_sub_u,
+          in_wasm32_i64_atomic_rmw_sub,
+          in_wasm32_i64_atomic_rmw8_and_u,
+          in_wasm32_i64_atomic_rmw16_and_u,
+          in_wasm32_i64_atomic_rmw32_and_u,
+          in_wasm32_i64_atomic_rmw_and,
+          in_wasm32_i64_atomic_rmw8_or_u,
+          in_wasm32_i64_atomic_rmw16_or_u,
+          in_wasm32_i64_atomic_rmw32_or_u,
+          in_wasm32_i64_atomic_rmw_or,
+          in_wasm32_i64_atomic_rmw8_xor_u,
+          in_wasm32_i64_atomic_rmw16_xor_u,
+          in_wasm32_i64_atomic_rmw32_xor_u,
+          in_wasm32_i64_atomic_rmw_xor,
+          in_wasm32_i64_atomic_rmw8_xchg_u,
+          in_wasm32_i64_atomic_rmw16_xchg_u,
+          in_wasm32_i64_atomic_rmw32_xchg_u,
+          in_wasm32_i64_atomic_rmw_xchg:
+            begin
+              CheckParameters(2);
+              resultdef:=u64inttype;
+            end;
+          in_wasm32_i32_atomic_rmw8_cmpxchg_u,
+          in_wasm32_i32_atomic_rmw16_cmpxchg_u,
+          in_wasm32_i32_atomic_rmw_cmpxchg:
+            begin
+              CheckParameters(3);
+              resultdef:=u32inttype;
+            end;
+          in_wasm32_i64_atomic_rmw8_cmpxchg_u,
+          in_wasm32_i64_atomic_rmw16_cmpxchg_u,
+          in_wasm32_i64_atomic_rmw32_cmpxchg_u,
+          in_wasm32_i64_atomic_rmw_cmpxchg:
+            begin
+              CheckParameters(3);
+              resultdef:=u64inttype;
+            end;
+          in_wasm32_memory_atomic_wait32,
+          in_wasm32_memory_atomic_wait64:
+            begin
+              CheckParameters(3);
+              resultdef:=s32inttype;
+            end;
+          in_wasm32_memory_atomic_notify:
+            begin
+              CheckParameters(2);
+              resultdef:=u32inttype;
+            end;
+          in_i32_atomic_load8_u,
+          in_i32_atomic_load16_u,
+          in_i32_atomic_load:
+            begin
+              CheckParameters(1);
+              resultdef:=u32inttype;
+            end;
+          in_i64_atomic_load8_u,
+          in_i64_atomic_load16_u,
+          in_i64_atomic_load32_u,
+          in_i64_atomic_load:
+            begin
+              CheckParameters(1);
+              resultdef:=u64inttype;
+            end;
+          in_i32_atomic_store8,
+          in_i32_atomic_store16,
+          in_i32_atomic_store,
+          in_i64_atomic_store8,
+          in_i64_atomic_store16,
+          in_i64_atomic_store32,
+          in_i64_atomic_store:
+            begin
+              CheckParameters(2);
+              resultdef:=voidtype;
+            end;
           else
             Result:=inherited pass_typecheck_cpu;
         end;
@@ -453,8 +706,76 @@ implementation
           in_wasm32_memory_fill,
           in_wasm32_memory_copy,
           in_wasm32_unreachable,
-          in_wasm32_throw_fpcexception:
+          in_wasm32_throw_fpcexception,
+          in_wasm32_atomic_fence,
+          in_i32_atomic_store8,
+          in_i32_atomic_store16,
+          in_i32_atomic_store,
+          in_i64_atomic_store8,
+          in_i64_atomic_store16,
+          in_i64_atomic_store32,
+          in_i64_atomic_store:
             expectloc:=LOC_VOID;
+          in_wasm32_i32_atomic_rmw8_add_u,
+          in_wasm32_i32_atomic_rmw16_add_u,
+          in_wasm32_i32_atomic_rmw_add,
+          in_wasm32_i64_atomic_rmw8_add_u,
+          in_wasm32_i64_atomic_rmw16_add_u,
+          in_wasm32_i64_atomic_rmw32_add_u,
+          in_wasm32_i64_atomic_rmw_add,
+          in_wasm32_i32_atomic_rmw8_sub_u,
+          in_wasm32_i32_atomic_rmw16_sub_u,
+          in_wasm32_i32_atomic_rmw_sub,
+          in_wasm32_i64_atomic_rmw8_sub_u,
+          in_wasm32_i64_atomic_rmw16_sub_u,
+          in_wasm32_i64_atomic_rmw32_sub_u,
+          in_wasm32_i64_atomic_rmw_sub,
+          in_wasm32_i32_atomic_rmw8_and_u,
+          in_wasm32_i32_atomic_rmw16_and_u,
+          in_wasm32_i32_atomic_rmw_and,
+          in_wasm32_i64_atomic_rmw8_and_u,
+          in_wasm32_i64_atomic_rmw16_and_u,
+          in_wasm32_i64_atomic_rmw32_and_u,
+          in_wasm32_i64_atomic_rmw_and,
+          in_wasm32_i32_atomic_rmw8_or_u,
+          in_wasm32_i32_atomic_rmw16_or_u,
+          in_wasm32_i32_atomic_rmw_or,
+          in_wasm32_i64_atomic_rmw8_or_u,
+          in_wasm32_i64_atomic_rmw16_or_u,
+          in_wasm32_i64_atomic_rmw32_or_u,
+          in_wasm32_i64_atomic_rmw_or,
+          in_wasm32_i32_atomic_rmw8_xor_u,
+          in_wasm32_i32_atomic_rmw16_xor_u,
+          in_wasm32_i32_atomic_rmw_xor,
+          in_wasm32_i64_atomic_rmw8_xor_u,
+          in_wasm32_i64_atomic_rmw16_xor_u,
+          in_wasm32_i64_atomic_rmw32_xor_u,
+          in_wasm32_i64_atomic_rmw_xor,
+          in_wasm32_i32_atomic_rmw8_xchg_u,
+          in_wasm32_i32_atomic_rmw16_xchg_u,
+          in_wasm32_i32_atomic_rmw_xchg,
+          in_wasm32_i64_atomic_rmw8_xchg_u,
+          in_wasm32_i64_atomic_rmw16_xchg_u,
+          in_wasm32_i64_atomic_rmw32_xchg_u,
+          in_wasm32_i64_atomic_rmw_xchg,
+          in_wasm32_i32_atomic_rmw8_cmpxchg_u,
+          in_wasm32_i32_atomic_rmw16_cmpxchg_u,
+          in_wasm32_i32_atomic_rmw_cmpxchg,
+          in_wasm32_i64_atomic_rmw8_cmpxchg_u,
+          in_wasm32_i64_atomic_rmw16_cmpxchg_u,
+          in_wasm32_i64_atomic_rmw32_cmpxchg_u,
+          in_wasm32_i64_atomic_rmw_cmpxchg,
+          in_wasm32_memory_atomic_wait32,
+          in_wasm32_memory_atomic_wait64,
+          in_wasm32_memory_atomic_notify,
+          in_i32_atomic_load8_u,
+          in_i32_atomic_load16_u,
+          in_i32_atomic_load,
+          in_i64_atomic_load8_u,
+          in_i64_atomic_load16_u,
+          in_i64_atomic_load32_u,
+          in_i64_atomic_load:
+            expectloc:=LOC_REGISTER;
           else
             Result:=inherited first_cpu;
         end;
@@ -476,6 +797,140 @@ implementation
             second_unreachable;
           in_wasm32_throw_fpcexception:
             second_throw_fpcexception;
+          in_wasm32_atomic_fence:
+            second_atomic_fence;
+          in_wasm32_i32_atomic_rmw8_add_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw8_add_u);
+          in_wasm32_i32_atomic_rmw16_add_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw16_add_u);
+          in_wasm32_i32_atomic_rmw_add:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw_add);
+          in_wasm32_i64_atomic_rmw8_add_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw8_add_u);
+          in_wasm32_i64_atomic_rmw16_add_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw16_add_u);
+          in_wasm32_i64_atomic_rmw32_add_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw32_add_u);
+          in_wasm32_i64_atomic_rmw_add:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw_add);
+          in_wasm32_i32_atomic_rmw8_sub_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw8_sub_u);
+          in_wasm32_i32_atomic_rmw16_sub_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw16_sub_u);
+          in_wasm32_i32_atomic_rmw_sub:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw_sub);
+          in_wasm32_i64_atomic_rmw8_sub_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw8_sub_u);
+          in_wasm32_i64_atomic_rmw16_sub_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw16_sub_u);
+          in_wasm32_i64_atomic_rmw32_sub_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw32_sub_u);
+          in_wasm32_i64_atomic_rmw_sub:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw_sub);
+          in_wasm32_i32_atomic_rmw8_and_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw8_and_u);
+          in_wasm32_i32_atomic_rmw16_and_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw16_and_u);
+          in_wasm32_i32_atomic_rmw_and:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw_and);
+          in_wasm32_i64_atomic_rmw8_and_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw8_and_u);
+          in_wasm32_i64_atomic_rmw16_and_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw16_and_u);
+          in_wasm32_i64_atomic_rmw32_and_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw32_and_u);
+          in_wasm32_i64_atomic_rmw_and:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw_and);
+          in_wasm32_i32_atomic_rmw8_or_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw8_or_u);
+          in_wasm32_i32_atomic_rmw16_or_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw16_or_u);
+          in_wasm32_i32_atomic_rmw_or:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw_or);
+          in_wasm32_i64_atomic_rmw8_or_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw8_or_u);
+          in_wasm32_i64_atomic_rmw16_or_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw16_or_u);
+          in_wasm32_i64_atomic_rmw32_or_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw32_or_u);
+          in_wasm32_i64_atomic_rmw_or:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw_or);
+          in_wasm32_i32_atomic_rmw8_xor_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw8_xor_u);
+          in_wasm32_i32_atomic_rmw16_xor_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw16_xor_u);
+          in_wasm32_i32_atomic_rmw_xor:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw_xor);
+          in_wasm32_i64_atomic_rmw8_xor_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw8_xor_u);
+          in_wasm32_i64_atomic_rmw16_xor_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw16_xor_u);
+          in_wasm32_i64_atomic_rmw32_xor_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw32_xor_u);
+          in_wasm32_i64_atomic_rmw_xor:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw_xor);
+          in_wasm32_i32_atomic_rmw8_xchg_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw8_xchg_u);
+          in_wasm32_i32_atomic_rmw16_xchg_u:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw16_xchg_u);
+          in_wasm32_i32_atomic_rmw_xchg:
+            second_atomic_rmw_x_y(a_i32_atomic_rmw_xchg);
+          in_wasm32_i64_atomic_rmw8_xchg_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw8_xchg_u);
+          in_wasm32_i64_atomic_rmw16_xchg_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw16_xchg_u);
+          in_wasm32_i64_atomic_rmw32_xchg_u:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw32_xchg_u);
+          in_wasm32_i64_atomic_rmw_xchg:
+            second_atomic_rmw_x_y(a_i64_atomic_rmw_xchg);
+          in_wasm32_i32_atomic_rmw8_cmpxchg_u:
+            second_atomic_rmw_x_y_z(a_i32_atomic_rmw8_cmpxchg_u);
+          in_wasm32_i32_atomic_rmw16_cmpxchg_u:
+            second_atomic_rmw_x_y_z(a_i32_atomic_rmw16_cmpxchg_u);
+          in_wasm32_i32_atomic_rmw_cmpxchg:
+            second_atomic_rmw_x_y_z(a_i32_atomic_rmw_cmpxchg);
+          in_wasm32_i64_atomic_rmw8_cmpxchg_u:
+            second_atomic_rmw_x_y_z(a_i64_atomic_rmw8_cmpxchg_u);
+          in_wasm32_i64_atomic_rmw16_cmpxchg_u:
+            second_atomic_rmw_x_y_z(a_i64_atomic_rmw16_cmpxchg_u);
+          in_wasm32_i64_atomic_rmw32_cmpxchg_u:
+            second_atomic_rmw_x_y_z(a_i64_atomic_rmw32_cmpxchg_u);
+          in_wasm32_i64_atomic_rmw_cmpxchg:
+            second_atomic_rmw_x_y_z(a_i64_atomic_rmw_cmpxchg);
+          in_wasm32_memory_atomic_wait32:
+            second_atomic_rmw_x_y_z(a_memory_atomic_wait32);
+          in_wasm32_memory_atomic_wait64:
+            second_atomic_rmw_x_y_z(a_memory_atomic_wait64);
+          in_wasm32_memory_atomic_notify:
+            second_atomic_rmw_x_y(a_memory_atomic_notify);
+          in_i32_atomic_load8_u:
+            second_atomic_load(a_i32_atomic_load8_u);
+          in_i32_atomic_load16_u:
+            second_atomic_load(a_i32_atomic_load16_u);
+          in_i32_atomic_load:
+            second_atomic_load(a_i32_atomic_load);
+          in_i64_atomic_load8_u:
+            second_atomic_load(a_i64_atomic_load8_u);
+          in_i64_atomic_load16_u:
+            second_atomic_load(a_i64_atomic_load16_u);
+          in_i64_atomic_load32_u:
+            second_atomic_load(a_i64_atomic_load32_u);
+          in_i64_atomic_load:
+            second_atomic_load(a_i64_atomic_load);
+          in_i32_atomic_store8:
+            second_atomic_store(a_i32_atomic_store8);
+          in_i32_atomic_store16:
+            second_atomic_store(a_i32_atomic_store16);
+          in_i32_atomic_store:
+            second_atomic_store(a_i32_atomic_store);
+          in_i64_atomic_store8:
+            second_atomic_store(a_i64_atomic_store8);
+          in_i64_atomic_store16:
+            second_atomic_store(a_i64_atomic_store16);
+          in_i64_atomic_store32:
+            second_atomic_store(a_i64_atomic_store32);
+          in_i64_atomic_store:
+            second_atomic_store(a_i64_atomic_store);
           else
             inherited pass_generate_code_cpu;
         end;

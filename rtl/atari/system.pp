@@ -21,7 +21,7 @@ interface
 {$define FPC_IS_SYSTEM}
 {$define FPC_STDOUT_TRUE_ALIAS}
 {$define FPC_ANSI_TEXTFILEREC}
-{$define FPC_ATARI_USE_TINYHEAP}
+{.$define FPC_ATARI_USE_TINYHEAP}
 
 {$ifdef FPC_ATARI_USE_TINYHEAP}
 {$define HAS_MEMORYMANAGER}
@@ -56,13 +56,14 @@ const
     UnusedHandle    = $ffff;
     StdInputHandle  = 0;
     StdOutputHandle = 1;
-    StdErrorHandle  = $ffff;
+    StdErrorHandle  = 2;
 
 var
     args: PChar;
     argc: LongInt;
     argv: PPChar;
     envp: PPChar;
+    AppFlag: Boolean;			{ Application or Accessory				}
 
 
     {$if defined(FPUSOFT)}
@@ -72,7 +73,6 @@ var
     {$undef fpc_softfpu_interface}
 
     {$endif defined(FPUSOFT)}
-
 
   implementation
 
@@ -119,7 +119,7 @@ var
   procedure SysInitParamsAndEnv;
   begin
     // [0] index contains the args length...
-    args:=@basepage^.p_cmdlin[1];
+    args:=@basepage^.p_cmdlin[0];
     GenerateArgs;
   end;
 
@@ -130,26 +130,90 @@ var
     randseed:=xbios_random;
   end;
 
+function fpGetEnv(const envvar : ShortString): RawByteString; public name '_fpc_atari_getenv';
+  var
+    hp : pchar;
+    i : longint;
+    upperenv, str : RawByteString;
+begin
+   fpGetEnv:='';
+   hp:=basepage^.p_env;
+   if (hp=nil) then
+      exit;
+   upperenv:=upcase(envvar);
+   while hp^<>#0 do
+     begin
+        str:=hp;
+        i:=pos('=',str);
+        if upcase(copy(str,1,i-1))=upperenv then
+          begin
+             fpGetEnv:=copy(str,i+1,length(str)-i);
+             break;
+          end;
+        { next string entry}
+        hp:=hp+strlen(hp)+1;
+     end;
+end;
+
 {*****************************************************************************
                          System Dependent Exit code
 *****************************************************************************}
+procedure haltproc(e:longint); cdecl; external name 'haltproc';
+
 Procedure system_exit;
 begin
-  gemdos_pterm(ExitCode);
+  haltproc(ExitCode);
 end;
 
 {*****************************************************************************
                          SystemUnit Initialization
 *****************************************************************************}
 
+Procedure ConsoleRead(var t:TextRec);
+var
+  dosResult: longint;
+Begin
+  dosResult:=gemdos_fread(t.Handle,t.BufSize,t.Bufptr);
+  t.BufPos:=0;
+  { Reading from console on TOS does not include the terminating CR/LF }
+  if (dosResult >= 0) then
+    begin
+      t.BufEnd := dosResult;
+      if (dosResult>=1) and (t.Bufptr^[dosResult-1] = #10) then
+        begin end
+      else
+      if (t.BufEnd < t.BufSize) then
+        begin
+          t.BufPtr^[t.BufEnd] := #13;
+          inc(t.BufEnd);
+        end;
+      if (t.BufEnd < t.BufSize) then
+        begin
+          t.BufPtr^[t.BufEnd] := #10;
+          inc(t.BufEnd);
+        end;
+    end
+  else
+    Error2InOutRes(dosResult);
+End;
+
+procedure myOpenStdIO(var f:text;mode:longint;hdl:thandle);
+begin
+  OpenStdIO(f, mode, hdl);
+  if (InOutRes=0) and (Mode=fmInput) and Do_Isdevice(hdl) then
+  begin
+    TextRec(f).InOutFunc:=@ConsoleRead;
+  end;
+end;
+
 procedure SysInitStdIO;
 begin
-  OpenStdIO(Input,fmInput,StdInputHandle);
-  OpenStdIO(Output,fmOutput,StdOutputHandle);
-  OpenStdIO(ErrOutput,fmOutput,StdErrorHandle);
+  myOpenStdIO(Input,fmInput,StdInputHandle);
+  myOpenStdIO(Output,fmOutput,StdOutputHandle);
+  myOpenStdIO(ErrOutput,fmOutput,StdErrorHandle);
 {$ifndef FPC_STDOUT_TRUE_ALIAS}
-  OpenStdIO(StdOut,fmOutput,StdOutputHandle);
-  OpenStdIO(StdErr,fmOutput,StdErrorHandle);
+  myOpenStdIO(StdOut,fmOutput,StdOutputHandle);
+  myOpenStdIO(StdErr,fmOutput,StdErrorHandle);
 {$endif FPC_STDOUT_TRUE_ALIAS}
 end;
 

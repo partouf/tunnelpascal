@@ -6,7 +6,7 @@ unit jsonconftest;
 interface
 
 uses
-  Classes, SysUtils, fpcunit, testutils, testregistry, jsonconf;
+  Classes, SysUtils, fpcunit, testregistry, jsonconf;
 
 type
 
@@ -310,12 +310,15 @@ begin
     C.SetValue('a','abc');
     C.GetValue('a',L,'');
     AssertStrings('String',L,['abc']);
+    C.SetValue('a','a'#1#2);
+    C.GetValue('a',L,'');
+    AssertStrings('String',L,['a'#1#2]);
     C.SetValue('a',Integer(1));
     C.GetValue('a',L,'');
     AssertStrings('integer',L,['1']);
     C.SetValue('a',True);
     C.GetValue('a',L,'');
-    AssertStrings('integer',L,['True']);
+    AssertStrings('integer',L,['true']);
     C.SetValue('a',Int64(1));
     C.GetValue('a',L,'');
     AssertStrings('int64',L,['1']);

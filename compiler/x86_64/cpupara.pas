@@ -1659,9 +1659,24 @@ unit cpupara;
           begin
             hp:=tparavarsym(paras[i]);
             paradef:=hp.vardef;
-            { on win64, if a record has only one field and that field is a
+
+            { in syscalls the libbase might be set as explicit paraloc }
+            if (vo_has_explicit_paraloc in hp.varoptions) then
+              if not (vo_is_syscall_lib in hp.varoptions) then
+                internalerror(2022010501)
+              else
+                begin
+                  paracgsize:=def_cgsize(paradef);
+                  hp.paraloc[side].def:=paradef;
+                  hp.paraloc[side].size:=paracgsize;
+                  hp.paraloc[side].intsize:=tcgsize2size[paracgsize];
+                  hp.paraloc[side].alignment:=sizeof(pint);
+                  continue;
+                end;
+
+            { on vectorcall, if a record has only one field and that field is a
               single or double, it has to be handled like a single/double }
-            if use_ms_abi and
+            if (p.proccalloption=pocall_vectorcall) and
                ((paradef.typ=recorddef) {or
                is_object(paradef)}) and
                tabstractrecordsymtable(tabstractrecorddef(paradef).symtable).has_single_field(fdef) and

@@ -45,6 +45,7 @@ uses
       { checks whether the type needs special methodptr-like handling, when stored
         in a LOC_REGISTER location. This applies to the following types:
           - method pointers
+          - 8-byte records
           - nested proc ptrs
         When stored in a LOC_REGISTER tlocation, these types use both register
         and registerhi with the following sizes:
@@ -301,15 +302,16 @@ implementation
 
   function thlcgwasm.is_methodptr_like_type(d:tdef): boolean;
     var
-      is_methodptr, is_nestedprocptr: Boolean;
+      is_8byterecord, is_methodptr, is_nestedprocptr: Boolean;
     begin
+      is_8byterecord:=(d.typ=recorddef) and (d.size=8);
       is_methodptr:=(d.typ=procvardef)
         and (po_methodpointer in tprocvardef(d).procoptions)
         and not(po_addressonly in tprocvardef(d).procoptions);
       is_nestedprocptr:=(d.typ=procvardef)
         and is_nested_pd(tprocvardef(d))
         and not(po_addressonly in tprocvardef(d).procoptions);
-      result:=is_methodptr or is_nestedprocptr;
+      result:=is_8byterecord or is_methodptr or is_nestedprocptr;
     end;
 
   constructor thlcgwasm.create;
@@ -1732,9 +1734,11 @@ implementation
               current_asmdata.getjumplabel(lab);
               { can be optimized by removing duplicate xor'ing to convert dst from
                 signed to unsigned quadrant }
+              list.concat(taicpu.op_none(a_block));
               a_cmp_reg_reg_label(list,size,OC_B,dst,src1,lab);
               a_cmp_reg_reg_label(list,size,OC_B,dst,src2,lab);
               a_op_const_stack(list,OP_XOR,s32inttype,1);
+              list.concat(taicpu.op_none(a_end_block));
               a_label(list,lab);
             end;
           a_load_stack_reg(list,s32inttype,ovloc.register);
@@ -1787,7 +1791,12 @@ implementation
       else if l=current_procinfo.CurrExitLabel then
         list.concat(taicpu.op_sym(a_br,l))
       else
-        Internalerror(2019091806); // unexpected jump
+        begin
+{$ifndef EXTDEBUG}
+          Internalerror(2019091806); // unexpected jump
+{$endif EXTDEBUG}
+          list.concat(tai_comment.create(strpnew('Unable to find destination of label '+l.name)));
+        end;
     end;
 
   procedure thlcgwasm.a_loadfpu_ref_ref(list: TAsmList; fromsize, tosize: tdef; const ref1, ref2: treference);
@@ -2137,12 +2146,10 @@ implementation
       else
         a_load_const_stack(list,maxdef,tcgint(int64(hto-lto)),R_INTREGISTER);
 
-      a_reg_alloc(list, NR_DEFAULTFLAGS);
       a_cmp_stack_stack(list,maxdef,OC_A);
 
       current_asmdata.CurrAsmList.concat(taicpu.op_none(a_if));
       thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,1);
-      a_reg_dealloc(list, NR_DEFAULTFLAGS);
 
       g_call_system_proc(list,'fpc_rangeerror',[],nil).resetiftemp;
 
@@ -2162,8 +2169,10 @@ implementation
       if not(cs_check_overflow in current_settings.localswitches) then
         exit;
       current_asmdata.getjumplabel(hl);
+      list.concat(taicpu.op_none(a_block));
       a_cmp_const_loc_label(list,s32inttype,OC_EQ,0,ovloc,hl);
       g_call_system_proc(list,'fpc_overflow',[],nil);
+      list.concat(taicpu.op_none(a_end_block));
       a_label(list,hl);
     end;
 

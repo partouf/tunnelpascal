@@ -56,7 +56,9 @@
              cpu_riscv32,                  { 19 }
              cpu_riscv64,                  { 20 }
              cpu_xtensa,                   { 21 }
-             cpu_z80                       { 22 }
+             cpu_z80,                      { 22 }
+             cpu_mips64,                   { 23 }
+             cpu_mips64el                  { 24 }
        );
 
        tasmmode= (asmmode_none
@@ -205,7 +207,9 @@
              system_m68k_sinclairql,    { 113 }
              system_wasm32_wasi,        { 114 }
              system_aarch64_freebsd,    { 115 }
-             system_aarch64_embedded    { 116 }
+             system_aarch64_embedded,   { 116 }
+             system_mips64_linux,       { 117 }
+             system_mips64el_linux      { 118 }
        );
 
      type
@@ -267,9 +271,14 @@
              ,as_z80_vasm
              ,as_z80_rel
              ,as_wasm32_wabt
-             ,as_wasm32_llvm_mc        { WebAssembly code assembled by llvm-mc (llvm machine code playground) }
+             ,as_wasm32_llvm_mc_v10    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 10 }
+             ,as_wasm32_llvm_mc_v11    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 11 }
+             ,as_wasm32_llvm_mc_v12    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 12 }
+             ,as_wasm32_llvm_mc_v13    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 13 }
+             ,as_wasm32_llvm_mc        { WebAssembly code assembled by llvm-mc (llvm machine code playground) from the latest stable LLVM version (14 or later) }
              ,as_arm_vasm
              ,as_wasm32_wasm
+             ,as_clang_llvm_darwin
        );
 
        tlink = (ld_none,
@@ -343,7 +352,7 @@
 
        tdbg = (dbg_none
             ,dbg_stabs,dbg_stabx,dbg_dwarf2,dbg_dwarf3,dbg_dwarf4,dbg_jasmin
-            ,dbg_codeview
+            ,dbg_codeview,dbg_llvm
        );
 
        tscripttype = (script_none

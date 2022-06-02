@@ -592,12 +592,13 @@ Const
    level1optimizerswitches = genericlevel1optimizerswitches;
    level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches +
      [{$ifndef llvm}cs_opt_regvar,{$endif}cs_opt_stackframe,cs_opt_tailrecursion];
-   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches;
    level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [];
 
  type
    tcpuflags =
       (CPUAVR_HAS_JMP_CALL,
+       CPUAVR_HAS_ADIW,
        CPUAVR_HAS_MOVW,
        CPUAVR_HAS_LPMX,
        CPUAVR_HAS_MUL,
@@ -613,18 +614,18 @@ Const
  const
    cpu_capabilities : array[tcputype] of set of tcpuflags =
      ( { cpu_none      } [],
-       { cpu_avrtiny   } [CPUAVR_16_REGS,CPUAVR_2_BYTE_PC,CPUAVR_NOMEMMAPPED_REGS],
+       { cpu_avrtiny   } [CPUAVR_HAS_ADIW,CPUAVR_16_REGS,CPUAVR_2_BYTE_PC,CPUAVR_NOMEMMAPPED_REGS],
        { cpu_avr1      } [CPUAVR_2_BYTE_PC],
-       { cpu_avr2      } [CPUAVR_HAS_LPMX,CPUAVR_2_BYTE_PC],
-       { cpu_avr25     } [CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_2_BYTE_PC],
-       { cpu_avr3      } [CPUAVR_HAS_JMP_CALL,CPUAVR_2_BYTE_PC],
-       { cpu_avr31     } [CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_RAMPZ,CPUAVR_HAS_ELPM,CPUAVR_2_BYTE_PC],
-       { cpu_avr35     } [CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_2_BYTE_PC],
-       { cpu_avr4      } [CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_2_BYTE_PC],
-       { cpu_avr5      } [CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_2_BYTE_PC],
-       { cpu_avr51     } [CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_HAS_RAMPZ,CPUAVR_HAS_ELPM,CPUAVR_HAS_ELPMX,CPUAVR_2_BYTE_PC],
-       { cpu_avr6      } [CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_HAS_RAMPZ,CPUAVR_HAS_ELPM,CPUAVR_HAS_ELPMX,CPUAVR_3_BYTE_PC],
-       { cpu_avrxmega3 } [CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_2_BYTE_PC,CPUAVR_NOMEMMAPPED_REGS]
+       { cpu_avr2      } [CPUAVR_HAS_ADIW,CPUAVR_HAS_LPMX,CPUAVR_2_BYTE_PC],
+       { cpu_avr25     } [CPUAVR_HAS_ADIW,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_2_BYTE_PC],
+       { cpu_avr3      } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_2_BYTE_PC],
+       { cpu_avr31     } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_RAMPZ,CPUAVR_HAS_ELPM,CPUAVR_2_BYTE_PC],
+       { cpu_avr35     } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_2_BYTE_PC],
+       { cpu_avr4      } [CPUAVR_HAS_ADIW,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_2_BYTE_PC],
+       { cpu_avr5      } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_2_BYTE_PC],
+       { cpu_avr51     } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_HAS_RAMPZ,CPUAVR_HAS_ELPM,CPUAVR_HAS_ELPMX,CPUAVR_2_BYTE_PC],
+       { cpu_avr6      } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_HAS_RAMPZ,CPUAVR_HAS_ELPM,CPUAVR_HAS_ELPMX,CPUAVR_3_BYTE_PC],
+       { cpu_avrxmega3 } [CPUAVR_HAS_ADIW,CPUAVR_HAS_JMP_CALL,CPUAVR_HAS_MOVW,CPUAVR_HAS_LPMX,CPUAVR_HAS_MUL,CPUAVR_2_BYTE_PC,CPUAVR_NOMEMMAPPED_REGS]
      );
 
 Implementation

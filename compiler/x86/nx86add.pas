@@ -39,7 +39,7 @@ unit nx86add;
         procedure left_must_be_reg(opdef: tdef; opsize:TCGSize;noswap:boolean);
         procedure force_left_and_right_fpureg;
         procedure prepare_x87_locations(out refnode: tnode);
-        procedure emit_op_right_left(op:TAsmOp;opsize:TCgSize);
+        procedure emit_op_right_left(op:TAsmOp;opsize:TCgSize;AllocFlags:boolean);
         procedure emit_generic_code(op:TAsmOp;opsize:TCgSize;unsigned,extra_not,mboverflow:boolean);
 
         procedure second_cmpfloatvector;
@@ -48,6 +48,7 @@ unit nx86add;
         procedure second_addfloatavx;
       public
         function pass_1 : tnode;override;
+        function simplify(forinline : boolean) : tnode; override;
         function use_fma : boolean;override;
         procedure second_addfloat;override;
 {$ifndef i8086}
@@ -78,8 +79,8 @@ unit nx86add;
       symconst,symdef,
       cgobj,hlcgobj,cgx86,cga,cgutils,
       tgobj,ncgutil,
-      ncon,nset,ninl,ncnv,
-      defutil,
+      ncon,nset,ninl,ncnv,ncal,nmat,
+      defutil,defcmp,constexp,
       htypechk;
 
 { Range check must be disabled explicitly as the code serves
@@ -97,8 +98,12 @@ unit nx86add;
         r     : Tregister;
         href  : treference;
         overflowcheck: boolean;
+        comparison: boolean;
       begin
         overflowcheck:=needoverflowcheck;
+        comparison:=
+          (op=A_CMP) or (op=A_TEST) or (op=A_BT) or is_boolean(resultdef);
+
         { at this point, left.location.loc should be LOC_REGISTER }
         if right.location.loc=LOC_REGISTER then
          begin
@@ -119,6 +124,10 @@ unit nx86add;
                 emit_reg(A_NOT,TCGSize2Opsize[opsize],right.location.register);
               if (op=A_ADD) or (op=A_OR) or (op=A_AND) or (op=A_XOR) or (op=A_IMUL) then
                 location_swap(left.location,right.location);
+
+              if comparison then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
               emit_reg_reg(op,TCGSize2Opsize[opsize],right.location.register,left.location.register);
             end;
          end
@@ -131,6 +140,10 @@ unit nx86add;
                 cg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_NOT,opsize,left.location.register,left.location.register);
               r:=cg.getintregister(current_asmdata.CurrAsmList,opsize);
               hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,cgsize_orddef(opsize),right.location,r);
+
+              if comparison then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
               emit_reg_reg(op,TCGSize2Opsize[opsize],left.location.register,r);
               cg.a_load_reg_reg(current_asmdata.CurrAsmList,opsize,opsize,r,left.location.register);
             end
@@ -199,18 +212,13 @@ unit nx86add;
                         hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,cgsize_orddef(opsize),right.location,r);
                         emit_reg(A_NOT,TCGSize2Opsize[opsize],r);
 
-                        if mboverflow and overflowcheck then
+                        if comparison or (mboverflow and overflowcheck) then
                           cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
 
                         emit_reg_reg(A_AND,TCGSize2Opsize[opsize],r,left.location.register);
                      end
                    else
-                     begin
-                       if mboverflow and overflowcheck then
-                         cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
-
-                       emit_op_right_left(op,opsize);
-                     end;
+                     emit_op_right_left(op,opsize,comparison or (mboverflow and overflowcheck));
                  end;
             end;
          end;
@@ -228,7 +236,9 @@ unit nx86add;
                 cg.a_jmp_flags(current_asmdata.CurrAsmList,F_AE,hl4)
               else
                 cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NO,hl4);
-              cg.a_reg_dealloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
+              if not comparison then
+                cg.a_reg_dealloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
               cg.a_call_name(current_asmdata.CurrAsmList,'FPC_OVERFLOW',false);
               cg.a_label(current_asmdata.CurrAsmList,hl4);
             end;
@@ -358,7 +368,7 @@ unit nx86add;
       end;
 
 
-    procedure tx86addnode.emit_op_right_left(op:TAsmOp;opsize:TCgsize);
+    procedure tx86addnode.emit_op_right_left(op:TAsmOp;opsize:TCgsize;AllocFlags:boolean);
 {$ifdef x86_64}
       var
         tmpreg : tregister;
@@ -370,11 +380,18 @@ unit nx86add;
         case right.location.loc of
           LOC_REGISTER,
           LOC_CREGISTER :
-            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,TCGSize2Opsize[opsize],right.location.register,left.location.register));
+            begin
+              if AllocFlags then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,TCGSize2Opsize[opsize],right.location.register,left.location.register));
+            end;
           LOC_REFERENCE,
           LOC_CREFERENCE :
             begin
               tcgx86(cg).make_simple_ref(current_asmdata.CurrAsmList,right.location.reference);
+              if AllocFlags then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
               current_asmdata.CurrAsmList.concat(taicpu.op_ref_reg(op,TCGSize2Opsize[opsize],right.location.reference,left.location.register));
             end;
           LOC_CONSTANT :
@@ -386,11 +403,18 @@ unit nx86add;
                 begin
                   tmpreg:=cg.getintregister(current_asmdata.CurrAsmList,opsize);
                   cg.a_load_const_reg(current_asmdata.CurrAsmList,opsize,right.location.value,tmpreg);
+                  if AllocFlags then
+                    cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
                   current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,TCGSize2Opsize[opsize],tmpreg,left.location.register));
                 end
               else
 {$endif x86_64}
-                current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(op,TCGSize2Opsize[opsize],right.location.value,left.location.register));
+                begin
+                  if AllocFlags then
+                    cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
+                  current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(op,TCGSize2Opsize[opsize],right.location.value,left.location.register));
+                end;
             end;
           else
             internalerror(200203232);
@@ -636,7 +660,7 @@ unit nx86add;
                  ((nf_swapped in flags) and (nodetype = gten)) then
                 swapleftright;
               hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,false);
-              emit_op_right_left(A_AND,opsize);
+              emit_op_right_left(A_AND,opsize,False);
               op:=A_CMP;
               { warning: ugly hack, we need a JE so change the node to equaln }
               nodetype:=equaln;
@@ -1185,6 +1209,331 @@ unit nx86add;
       end;
 
 
+    function tx86addnode.simplify(forinline : boolean) : tnode;
+      var
+        t, m, ThisNode, ConstNode: TNode;
+        lt,rt, ThisType: TNodeType;
+        ThisDef: TDef;
+        DoOptimisation: Boolean;
+
+        reciprocal, comparison, divisor: AWord;
+        shift, N: Byte;
+      begin
+        { Load into local variables to reduce the number of pointer deallocations }
+        rt:=right.nodetype;
+        lt:=left.nodetype;
+
+        DoOptimisation:=False;
+
+{$if defined(cpu64bitalu) or defined(cpu32bitalu) or defined(cpu16bitalu)}
+        if (cs_opt_level1 in current_settings.optimizerswitches) and
+          { The presence of overflow checks tends to cause internal errors with the multiplication nodes }
+          not (cs_check_overflow in current_settings.localswitches) and
+          (nodetype in [equaln,unequaln]) then
+          begin
+            if (lt=modn) and (rt=ordconstn) and (TOrdConstNode(right).value.uvalue=0) then
+              begin
+                t:=left;
+                m:=right;
+              end
+            else if (rt=modn) and (lt=ordconstn) and (TOrdConstNode(left).value.uvalue=0) then
+              begin
+                t:=right;
+                m:=left;
+              end
+            else
+              begin
+                t:=nil;
+                m:=nil;
+              end;
+
+            if Assigned(t) and (TModDivNode(t).right.nodetype=ordconstn) and
+{$ifndef cpu64bitalu}
+              { Converting Int64 and QWord division doesn't work under i386 }
+{$ifndef cpu32bitalu}
+              (TModDivNode(t).resultdef.size < 4) and
+{$else cpu32bitalu}
+              (TModDivNode(t).resultdef.size < 8) and
+{$endif cpu32bitalu}
+{$endif cpu64bitalu}
+              (TOrdConstNode(TModDivNode(t).right).value>=3) then
+              begin
+                divisor:=TOrdConstNode(TModDivNode(t).right).value.uvalue;
+
+                { Exclude powers of 2, as there are more efficient ways to handle those }
+                if PopCnt(divisor)>1 then
+                  begin
+                    if is_signed(TModDivNode(t).left.resultdef) then
+                      begin
+                        { See pages 250-251 of Hacker's Delight, Second Edition
+                          for an explanation and proof of the algorithm, but
+                          essentially, we're doing the following:
+
+                          - Convert the divisor d to the form k.2^b if it isn't
+                            already odd (in which case, k = d and b = 0)
+                          - Calculate r, the multiplicative inverse of k modulo 2^N
+                          - Calculate c = floor(2^(N-1) / k) & -(2^b)
+                          - Let q = ((n * r) + c) ror b (mod 2^N)
+                          - Repurpose c to equal floor(2c / 2^b) = c shr (b - 1)
+                            (some RISC platforms will benefit from doing this over
+                            precalculating the modified constant. For x86,
+                            it's better with the constant precalculated for
+                            32-bit and under, but for 64-bit, use SHR. )
+                          - If q is below or equal to c, then (n mod d) = 0
+                          }
+                        while True do
+                          begin
+                            ThisNode:=TModDivNode(t).left;
+                            case ThisNode.nodetype of
+                              typeconvn:
+                                begin
+                                  ThisDef:=TTypeConvNode(ThisNode).left.resultdef;
+                                  { See if we can simplify things to a smaller ordinal to
+                                    reduce code size and increase speed }
+                                  if is_signed(ThisDef) and
+                                    is_integer(ThisDef) and
+                                    { Byte-sized multiplications can cause problems }
+                                    (ThisDef.size>=2) and
+                                    { Make sure the divisor is in range }
+                                    (divisor>=TOrdDef(ThisDef).low) and
+                                    (divisor<=TOrdDef(ThisDef).high) then
+                                    begin
+                                      TOrdConstNode(TModDivNode(t).right).resultdef:=ThisDef;
+                                      TOrdConstNode(m).resultdef:=ThisDef;
+                                      TModDivNode(t).resultdef:=ThisDef;
+
+                                      { Destroy the typeconv node }
+                                      TModDivNode(t).left:=TTypeConvNode(ThisNode).left;
+                                      TTypeConvNode(ThisNode).left:=nil;
+                                      ThisNode.Free;
+                                      Continue;
+                                    end;
+                                  end;
+                              ordconstn:
+                                begin
+                                  { Just simplify into a constant }
+                                  Result:=inherited simplify(forinline);
+                                  Exit;
+                                end;
+                              else
+                                ;
+                            end;
+
+                            DoOptimisation:=True;
+                            Break;
+                          end;
+
+                        if DoOptimisation then
+                          begin
+                            ThisDef:=TModDivNode(t).left.resultdef;
+
+                            if nodetype = equaln then
+                              ThisType:=lten
+                            else
+                              ThisType:=gtn;
+
+                            N:=ThisDef.size*8;
+                            calc_mul_inverse(N, TOrdConstNode(TModDivNode(t).right).value.uvalue, reciprocal, shift);
+
+                            { Construct the following node tree for odd divisors:
+                                <lten> (for equaln) or <gtn> (for notequaln)
+                                  <addn>
+                                    <muln>
+                                      <typeconv signed-to-unsigned>
+                                        <numerator node (TModDivNode(t).left)>
+                                      <reciprocal constant>
+                                    <comparison constant (effectively a signed shift)>
+                                  <comparison constant * 2>
+
+                              For even divisors, convert them to the form k.2^b, with
+                              odd k, then construct the following:
+                                <lten> (for equaln) or <gtn> (for notequaln)
+                                  <ror>
+                                    (b)
+                                    <addn>
+                                      <muln>
+                                        <typeconv signed-to-unsigned>
+                                          <numerator node (TModDivNode(t).left)>
+                                        <reciprocal constant>
+                                      <comparison constant (effectively a signed shift)>
+                                  <comparison constant shr (b - 1)>
+                            }
+
+                            ThisNode:=ctypeconvnode.create_internal(TModDivNode(t).left, ThisDef);
+                            TTypeConvNode(ThisNode).convtype:=tc_int_2_int;
+                            ThisDef:=get_unsigned_inttype(ThisDef);
+                            ThisNode.resultdef:=ThisDef;
+
+                            TModDivNode(t).left:=nil;
+
+                            ConstNode:=cordconstnode.create(reciprocal, ThisDef, False);
+                            ConstNode.resultdef:=ThisDef;
+
+                            ThisNode:=caddnode.create_internal(muln, ThisNode, ConstNode);
+                            ThisNode.resultdef:=ThisDef;
+
+{$push}
+{$warnings off}
+                            if shift>0 then
+                              comparison:=((aWord(1) shl ((N-1) and (SizeOf(aWord)*8-1))) div (divisor shr shift)) and -(1 shl shift)
+                            else
+                              comparison:=(aWord(1) shl ((N-1) and (SizeOf(aWord)*8-1))) div divisor;
+{$pop}
+                            ConstNode:=cordconstnode.create(comparison, ThisDef, False);
+                            ConstNode.resultdef:=ThisDef;
+
+                            ThisNode:=caddnode.create_internal(addn, ThisNode, ConstNode);
+                            ThisNode.resultdef:=ThisDef;
+
+                            if shift>0 then
+                              begin
+                                ConstNode:=cordconstnode.create(shift, u8inttype, False);
+                                ConstNode.resultdef:=u8inttype;
+                                ThisNode:=cinlinenode.createintern(in_ror_x_y,false,
+                                  ccallparanode.create(ConstNode,
+                                  ccallparanode.create(ThisNode, nil)));
+
+                                ThisNode.resultdef:=ThisDef;
+
+                                ConstNode:=cordconstnode.create(comparison shr (shift - 1), ThisDef, False);
+                              end
+                            else
+                              ConstNode:=cordconstnode.create(comparison*2, ThisDef, False);
+
+                            ConstNode.resultdef:=ThisDef;
+
+                            Result:=CAddNode.create_internal(ThisType, ThisNode, ConstNode);
+                            Result.resultdef:=resultdef;
+                            Exit;
+                          end;
+                      end
+                    else
+                      begin
+                        { For bit length N, convert "(x mod d) = 0" or "(x mod d) <> 0", where
+                          d is an odd-numbered integer constant, to "(x * r) <= m", where
+                          dr = 1 (mod 2^N) and m = floor(2^N / d).
+
+                          If d is even, convert to the form k.2^b, where k is odd, then
+                          convert to "(x * r) ror b <= m", where kr = 1 (mod 2^N) and
+                          m = floor(2^N / d) = floor(2^(N-b) / k) }
+                        while True do
+                          begin
+                            ThisNode:=TModDivNode(t).left;
+                            case ThisNode.nodetype of
+                              typeconvn:
+                                begin
+                                  ThisDef:=TTypeConvNode(ThisNode).left.resultdef;
+                                  { See if we can simplify things to a smaller ordinal to
+                                    reduce code size and increase speed }
+                                  if not is_signed(ThisDef) and
+                                    is_integer(ThisDef) and
+                                    { Byte-sized multiplications can cause problems }
+                                    (ThisDef.size>=2) and
+                                    { Make sure the divisor is in range }
+                                    (divisor>=TOrdDef(ThisDef).low) and
+                                    (divisor<=TOrdDef(ThisDef).high) then
+                                    begin
+                                      TOrdConstNode(TModDivNode(t).right).resultdef:=ThisDef;
+                                      TOrdConstNode(m).resultdef:=ThisDef;
+                                      TModDivNode(t).resultdef:=ThisDef;
+
+                                      { Destroy the typeconv node }
+                                      TModDivNode(t).left:=TTypeConvNode(ThisNode).left;
+                                      TTypeConvNode(ThisNode).left:=nil;
+                                      ThisNode.Free;
+                                      Continue;
+                                    end;
+                                  end;
+                              ordconstn:
+                                begin
+                                  { Just simplify into a constant }
+                                  Result:=inherited simplify(forinline);
+                                  Exit;
+                                end;
+                              else
+                                ;
+                            end;
+
+                            DoOptimisation:=True;
+                            Break;
+                          end;
+
+                        if DoOptimisation then
+                          begin
+                            ThisDef:=TModDivNode(t).left.resultdef;
+
+                            { Construct the following node tree for odd divisors:
+                                <lten> (for equaln) or <gtn> (for notequaln)
+                                  <muln>
+                                    <numerator node (TModDivNode(t).left)>
+                                    <reciprocal constant>
+                                  (2^N / divisor)
+
+                              For even divisors, convert them to the form k.2^b, with
+                              odd k, then construct the following:
+                                <lten> (for equaln) or <gtn> (for notequaln)
+                                  <ror>
+                                    (b)
+                                    <muln>
+                                      <numerator node (TModDivNode(t).left)>
+                                      <reciprocal constant>
+                                  (2^N / divisor)
+                            }
+
+                            if nodetype=equaln then
+                              ThisType:=lten
+                            else
+                              ThisType:=gtn;
+
+                            N:=ThisDef.size*8;
+                            calc_mul_inverse(N, TOrdConstNode(TModDivNode(t).right).value.uvalue, reciprocal, shift);
+
+                            ConstNode:=cordconstnode.create(reciprocal, ThisDef, False);
+                            ConstNode.resultdef:=ThisDef;
+
+                            ThisNode:=caddnode.create_internal(muln, TModDivNode(t).left, ConstNode);
+                            ThisNode.resultdef:=ThisDef;
+
+                            TModDivNode(t).left:=nil;
+
+                            if shift>0 then
+                              begin
+                                ConstNode:=cordconstnode.create(shift, u8inttype, False);
+                                ConstNode.resultdef:=u8inttype;
+                                ThisNode:=cinlinenode.createintern(in_ror_x_y,false,
+                                  ccallparanode.create(ConstNode,
+                                  ccallparanode.create(ThisNode, nil)));
+
+                                ThisNode.resultdef:=ThisDef;
+
+                                comparison:=(aWord(1) shl ((N-shift) and (SizeOf(aWord)*8-1))) div (divisor shr shift);
+                              end
+                            else
+                              begin
+{$push}
+{$warnings off}
+                                { Because 2^N and divisor are relatively prime,
+                                  floor(2^N / divisor) = floor((2^N - 1) / divisor) }
+                                comparison:=(aWord(not 0) shr (((SizeOf(aWord)*8)-N) and (SizeOf(aWord)*8-1))) div divisor;
+{$pop}
+                              end;
+
+                            ConstNode:=cordconstnode.create(comparison, ThisDef, False);
+                            ConstNode.resultdef:=ThisDef;
+
+                            Result:=CAddNode.create_internal(ThisType, ThisNode, ConstNode);
+                            Result.resultdef:=resultdef;
+                            Exit;
+                          end;
+                      end;
+                  end;
+              end;
+          end;
+{$ifend defined(cpu64bitalu) or defined(cpu32bitalu) or defined(cpu16bitalu)}
+        Result:=inherited simplify(forinline);
+      end;
+
+
     function tx86addnode.use_fma : boolean;
       begin
 {$ifndef i8086}
@@ -1718,6 +2067,7 @@ unit nx86add;
 {$endif x86_64}
          then
            begin
+             cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
              emit_const_ref(A_CMP, TCGSize2Opsize[opsize], right.location.value, left.location.reference);
              location_freetemp(current_asmdata.CurrAsmList,left.location);
            end

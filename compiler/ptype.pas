@@ -84,7 +84,7 @@ implementation
        nset,ncnv,ncon,nld,
        { parser }
        scanner,
-       pbase,pexpr,pdecsub,pdecvar,pdecobj,pdecl,pgenutil,pparautl
+       pbase,pexpr,pdecsub,pdecvar,pdecobj,pdecl,pgenutil,pparautl,procdefutil
 {$ifdef jvm}
        ,pjvm
 {$endif}
@@ -229,6 +229,10 @@ implementation
                   if not(m_fpc in current_settings.modeswitches) and
                      (oo_is_forward in tobjectdef(def).objectoptions) then
                     MessagePos1(def.typesym.fileinfo,type_e_type_is_not_completly_defined,def.typename);
+                  { generate specializations for generic forwarddefs }
+                  if not (oo_is_forward in tobjectdef(def).objectoptions) and
+                      tstoreddef(def).is_generic then
+                    generate_specializations_for_forwarddef(def);
                  end;
               else
                 internalerror(200811071);
@@ -457,6 +461,21 @@ implementation
 
 
     procedure single_type(out def:tdef;options:TSingleTypeOptions);
+
+       function handle_dummysym(sym:tsym):tdef;
+         begin
+           sym:=resolve_generic_dummysym(sym.name);
+           if assigned(sym) and
+               not (sp_generic_dummy in sym.symoptions) and
+               (sym.typ=typesym) then
+             result:=ttypesym(sym).typedef
+           else
+             begin
+               Message(parser_e_no_generics_as_types);
+               result:=generrordef;
+             end;
+         end;
+
        var
          t2 : tdef;
          isspecialize,
@@ -597,16 +616,7 @@ implementation
                   )
                 then
               begin
-                srsym:=resolve_generic_dummysym(srsym.name);
-                if assigned(srsym) and
-                    not (sp_generic_dummy in srsym.symoptions) and
-                    (srsym.typ=typesym) then
-                  def:=ttypesym(srsym).typedef
-                else
-                  begin
-                    Message(parser_e_no_generics_as_types);
-                    def:=generrordef;
-                  end;
+                def:=handle_dummysym(srsym);
               end
             else if (def.typ=undefineddef) and
                 (sp_generic_dummy in srsym.symoptions) then
@@ -617,24 +627,14 @@ implementation
                   begin
                     if m_delphi in current_settings.modeswitches then
                       begin
-                        srsym:=resolve_generic_dummysym(srsym.name);
-                        if assigned(srsym) and
-                            not (sp_generic_dummy in srsym.symoptions) and
-                            (srsym.typ=typesym) then
-                          def:=ttypesym(srsym).typedef
-                        else
-                          begin
-                            Message(parser_e_no_generics_as_types);
-                            def:=generrordef;
-                          end;
+                        def:=handle_dummysym(srsym);
                       end
                     else
                       def:=current_genericdef;
                   end
                 else
                   begin
-                    Message(parser_e_no_generics_as_types);
-                    def:=generrordef;
+                    def:=handle_dummysym(srsym);
                   end;
               end
             else if is_classhelper(def) and
@@ -1037,7 +1037,7 @@ implementation
              (df_generic in old_current_structdef.defoptions) then
            include(current_structdef.defoptions,df_generic);
 
-         insert_generic_parameter_types(current_structdef,genericdef,genericlist);
+         insert_generic_parameter_types(current_structdef,genericdef,genericlist,false);
          { when we are parsing a generic already then this is a generic as
            well }
          if old_parse_generic then
@@ -1068,7 +1068,10 @@ implementation
            begin
              consume(_ID);
              alignment:=get_intconst.svalue;
-             if not(alignment in [1,2,4,8,16,32,64]) then
+             { "(alignment and not $7F) = 0" means it's between 0 and 127, and
+               PopCnt = 1 for powers of 2 }
+             if ((alignment and not $7F) <> 0) or (PopCnt(Byte(alignment))<>1) then
+               message(scanner_e_illegal_alignment_directive)
              else
                recst.recordalignment:=shortint(alignment);
            end;
@@ -1412,7 +1415,7 @@ implementation
            else if assigned(genericlist) then
              current_genericdef:=arrdef;
            symtablestack.push(arrdef.symtable);
-           insert_generic_parameter_types(arrdef,genericdef,genericlist);
+           insert_generic_parameter_types(arrdef,genericdef,genericlist,false);
            { there are two possibilties for the following to be true:
              * the array declaration itself is generic
              * the array is declared inside a generic
@@ -1559,14 +1562,14 @@ implementation
         end;
 
 
-        function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist):tdef;
+        function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist;sym:tsym;doregister:boolean):tdef;
           var
             is_func:boolean;
-            pd:tabstractprocdef;
-            newtype:ttypesym;
+            pd:tprocvardef;
             old_current_genericdef,
             old_current_specializedef: tstoreddef;
             old_parse_generic: boolean;
+            olddef : tdef;
           begin
             old_current_genericdef:=current_genericdef;
             old_current_specializedef:=current_specializedef;
@@ -1574,10 +1577,18 @@ implementation
 
             current_genericdef:=nil;
             current_specializedef:=nil;
+            olddef:=nil;
 
             is_func:=(token=_FUNCTION);
             consume(token);
-            pd:=cprocvardef.create(normal_function_level);
+            pd:=cprocvardef.create(normal_function_level,doregister);
+
+            if assigned(sym) then
+              begin
+                pd.typesym:=sym;
+                olddef:=ttypesym(sym).typedef;
+                ttypesym(sym).typedef:=pd;
+              end;
 
             { usage of specialized type inside its generic template }
             if assigned(genericdef) then
@@ -1586,7 +1597,7 @@ implementation
             else if assigned(genericlist) then
               current_genericdef:=pd;
             symtablestack.push(pd.parast);
-            insert_generic_parameter_types(pd,genericdef,genericlist);
+            insert_generic_parameter_types(pd,genericdef,genericlist,false);
             { there are two possibilties for the following to be true:
               * the procvar declaration itself is generic
               * the procvar is declared inside a generic
@@ -1606,8 +1617,11 @@ implementation
             if is_func then
               begin
                 consume(_COLON);
+                pd.proctypeoption:=potype_function;
                 pd.returndef:=result_type([stoAllowSpecialization]);
-              end;
+              end
+            else
+              pd.proctypeoption:=potype_procedure;
             if try_to_consume(_OF) then
               begin
                 consume(_OBJECT);
@@ -1622,18 +1636,11 @@ implementation
               end;
             symtablestack.pop(pd.parast);
             tparasymtable(pd.parast).readonly:=false;
-            result:=pd;
             { possible proc directives }
             if parseprocvardir then
               begin
                 if check_proc_directive(true) then
-                  begin
-                    newtype:=ctypesym.create('unnamed',result);
-                    parse_var_proc_directives(tsym(newtype));
-                    newtype.typedef:=nil;
-                    result.typesym:=nil;
-                    newtype.free;
-                  end;
+                  parse_proctype_directives(pd);
                 { Add implicit hidden parameters and function result }
                 handle_calling_convention(pd,hcc_default_actions_intf);
               end;
@@ -1641,6 +1648,14 @@ implementation
             parse_generic:=old_parse_generic;
             current_genericdef:=old_current_genericdef;
             current_specializedef:=old_current_specializedef;
+
+            if assigned(sym) then
+              begin
+                pd.typesym:=nil;
+                ttypesym(sym).typedef:=olddef;
+              end;
+
+            result:=pd;
           end;
 
       const
@@ -1758,9 +1773,9 @@ implementation
                           Message(parser_w_enumeration_out_of_range)
                         else
                           Message(parser_e_enumeration_out_of_range);
-                      tenumsymtable(aktenumdef.symtable).insert(cenumsym.create(s,aktenumdef,longint(l.svalue)));
+                      tenumsymtable(aktenumdef.symtable).insertsym(cenumsym.create(s,aktenumdef,longint(l.svalue)));
                       if not (cs_scopedenums in current_settings.localswitches) then
-                        tstoredsymtable(aktenumdef.owner).insert(cenumsym.create(s,aktenumdef,longint(l.svalue)));
+                        tstoredsymtable(aktenumdef.owner).insertsym(cenumsym.create(s,aktenumdef,longint(l.svalue)));
                       current_tokenpos:=storepos;
                     end;
                 until not try_to_consume(_COMMA);
@@ -1952,7 +1967,7 @@ implementation
             _PROCEDURE,
             _FUNCTION:
               begin
-                def:=procvar_dec(genericdef,genericlist);
+                def:=procvar_dec(genericdef,genericlist,nil,true);
 {$ifdef jvm}
                 jvm_create_procvar_class(name,def);
 {$endif}
@@ -1976,15 +1991,19 @@ implementation
                     end;
                   _REFERENCE:
                     begin
-                      if m_blocks in current_settings.modeswitches then
+                      if current_settings.modeswitches*[m_blocks,m_function_references]<>[] then
                         begin
                           consume(_REFERENCE);
                           consume(_TO);
-                          def:=procvar_dec(genericdef,genericlist);
+                          { don't register the def as a non-cblock function
+                            reference will be converted to an interface }
+                          def:=procvar_dec(genericdef,genericlist,newsym,false);
                           { could be errordef in case of a syntax error }
                           if assigned(def) and
                              (def.typ=procvardef) then
-                            include(tprocvardef(def).procoptions,po_is_function_ref);
+                            begin
+                              include(tprocvardef(def).procoptions,po_is_function_ref);
+                            end;
                         end
                       else
                         expr_type;

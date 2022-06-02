@@ -102,7 +102,8 @@ type
     ssLeft, ssRight, ssMiddle, ssDouble,
     // Extra additions
     ssMeta, ssSuper, ssHyper, ssAltGr, ssCaps, ssNum,
-    ssScroll,ssTriple,ssQuad,ssExtra1,ssExtra2);
+    ssScroll,ssTriple,ssQuad,ssExtra1,ssExtra2,
+    ssTouch, ssPen, ssHorizontal);
 
 {$packset 1}
   TShiftState = set of TShiftStateEnum;
@@ -151,6 +152,9 @@ type
 
 
 Const
+  // Delphi compatibility
+  ssCommand = ssMeta;
+  
   SGUIDObserved = '{663C603C-3F3C-4CC5-823C-AC8079F979E5}';
   SGUIDObserver = '{BC7376EA-199C-4C2A-8684-F4805F0691CA}';
 
@@ -849,8 +853,9 @@ type
     procedure InsertItem(Index: Integer; const S: string); virtual;
     procedure InsertItem(Index: Integer; const S: string; O: TObject); virtual;
     Function DoCompareText(const s1,s2 : string) : PtrInt; override;
-
   public
+    Constructor Create;
+    Constructor Create(anOwnsObjects : Boolean);
     destructor Destroy; override;
     function Add(const S: string): Integer; override;
     procedure Clear; override;
@@ -957,10 +962,12 @@ type
     function Read(var Buffer; Count: Longint): Longint; virtual; overload;
     function Read(var Buffer: TBytes; Count: Longint): Longint; overload;
     function Read( Buffer : TBytes; aOffset, Count: Longint): Longint; overload;
+    function Read64( Buffer : TBytes; aOffset, Count: Int64): Int64; overload;
 
     function Write(const Buffer: TBytes; Offset, Count: Longint): Longint; overload;
     function Write(const Buffer: TBytes; Count: Longint): Longint; overload;
     function Write(const Buffer; Count: Longint): Longint; virtual; overload;
+    function Write64(const Buffer: TBytes; Offset, Count: Int64): Int64;
 
     function Seek(Offset: Longint; Origin: Word): Longint; virtual; overload;
     function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; virtual; overload;
@@ -999,7 +1006,7 @@ type
     function ReadData(var Buffer: TExtended80Rec): NativeInt; overload;
     function ReadData(var Buffer: TExtended80Rec; Count: NativeInt): NativeInt; overload;
 {$ENDIF}
-    procedure ReadBuffer(var Buffer; Count: Longint);
+    procedure ReadBuffer(var Buffer; Count: NativeInt);
     procedure ReadBuffer(var Buffer: TBytes; Count: NativeInt); overload;
     procedure ReadBuffer(var Buffer: TBytes; Offset, Count: NativeInt); overload;
 
@@ -1035,7 +1042,7 @@ type
     procedure ReadBufferData(var Buffer: TExtended80Rec); overload;
     procedure ReadBufferData(var Buffer: TExtended80Rec; Count: NativeInt); overload;
 {$ENDIF}
-    procedure WriteBuffer(const Buffer; Count: Longint);
+    procedure WriteBuffer(const Buffer; Count: NativeInt);
     procedure WriteBuffer(const Buffer: TBytes; Count: NativeInt); overload;
     procedure WriteBuffer(const Buffer: TBytes; Offset, Count: NativeInt); overload;
 
@@ -1185,6 +1192,7 @@ type
     constructor Create(const AFileName: string; Mode: Word);
     constructor Create(const AFileName: string; Mode: Word; Rights: Cardinal);
     destructor Destroy; override;
+    Function Flush : Boolean;
     property FileName : String Read FFilename;
   end;
 
@@ -1840,6 +1848,9 @@ type
   EThreadDestroyCalled = class(EThread);
   TSynchronizeProcVar = procedure;
   TThreadMethod = procedure of object;
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+  TThreadProcedure = reference to procedure;
+{$endif}
 
   TThreadReportStatus = Procedure(Const status : String) of Object;
 
@@ -1862,8 +1873,9 @@ type
     PThreadQueueEntry = ^TThreadQueueEntry;
     TThreadQueueEntry = record
       Method: TThreadMethod;
-      // uncomment once closures are supported
-      //ThreadProc: TThreadProcedure;
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+      ThreadProc: TThreadProcedure;
+{$endif}
       Thread: TThread;
       ThreadID: TThreadID;
       Exception: TObject;
@@ -1893,6 +1905,9 @@ type
     class function GetCurrentThread: TThread; static;
     class function GetIsSingleProcessor: Boolean; static; inline;
     class procedure InternalQueue(aThread: TThread; aMethod: TThreadMethod; aQueueIfMain: Boolean); static;
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    class procedure InternalQueue(aThread: TThread; aProcedure: TThreadProcedure; aQueueIfMain: Boolean); static;
+{$endif}
     procedure CallOnTerminate;
     function GetPriority: TThreadPriority;
     procedure SetPriority(Value: TThreadPriority);
@@ -1910,7 +1925,13 @@ type
     procedure TerminatedSet; virtual;
     procedure Execute; virtual; abstract;
     procedure Synchronize(AMethod: TThreadMethod);
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    procedure Synchronize(AProcedure : TThreadProcedure);
+{$endif}
     procedure Queue(aMethod: TThreadMethod);
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    procedure Queue(aProcedure: TThreadProcedure);
+{$endif}
     procedure ForceQueue(aMethod: TThreadMethod); inline;
     property ReturnValue: Integer read FReturnValue write FReturnValue;
     property Terminated: Boolean read FTerminated;
@@ -1953,7 +1974,13 @@ type
     class procedure SetReturnValue(aValue: Integer); static;
     class function CheckTerminated: Boolean; static;
     class procedure Synchronize(AThread: TThread; AMethod: TThreadMethod);
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    class procedure Synchronize(AThread: TThread; AProcedure : TThreadProcedure);
+    {$endif}
     class procedure Queue(aThread: TThread; aMethod: TThreadMethod); static;
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    class procedure Queue(aThread: TThread; AProcedure : TThreadProcedure); static;
+    {$endif}
     class procedure ForceQueue(aThread: TThread; aMethod: TThreadMethod); inline; static;
     class procedure RemoveQueuedEvents(aThread: TThread; aMethod: TThreadMethod); static;
     class procedure RemoveQueuedEvents(aMethod: TThreadMethod); static;

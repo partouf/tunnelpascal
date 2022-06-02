@@ -85,12 +85,59 @@ uses
       // additional memory
       a_memory_grow, a_memory_size,
       // bulk memory operations
-      a_memory_copy, a_memory_fill,
+      a_memory_copy, a_memory_fill, a_memory_init, a_data_drop,
+      // reference instructions
+      a_ref_null, a_ref_is_null, a_ref_func,
+      // table instructions
+      a_table_get, a_table_set, a_table_size, a_table_grow, a_table_fill, a_table_copy, a_table_init, a_elem_drop,
+      // saturating truncation instructions
+      a_i32_trunc_sat_f32_s,
+      a_i32_trunc_sat_f32_u,
+      a_i32_trunc_sat_f64_s,
+      a_i32_trunc_sat_f64_u,
+      a_i64_trunc_sat_f32_s,
+      a_i64_trunc_sat_f32_u,
+      a_i64_trunc_sat_f64_s,
+      a_i64_trunc_sat_f64_u,
       // exceptions
-      a_try,a_catch,a_catch_all,a_delegate,a_throw,a_rethrow,a_end_try
+      a_try,a_catch,a_catch_all,a_delegate,a_throw,a_rethrow,a_end_try,
+      // atomic memory accesses - load/store
+      a_i32_atomic_load8_u, a_i32_atomic_load16_u, a_i32_atomic_load,
+      a_i64_atomic_load8_u, a_i64_atomic_load16_u, a_i64_atomic_load32_u,
+      a_i64_atomic_load, a_i32_atomic_store8, a_i32_atomic_store16,
+      a_i32_atomic_store, a_i64_atomic_store8, a_i64_atomic_store16,
+      a_i64_atomic_store32, a_i64_atomic_store,
+      // atomic memory accesses - read-modify-write
+      a_i32_atomic_rmw8_add_u, a_i32_atomic_rmw16_add_u, a_i32_atomic_rmw_add,
+      a_i64_atomic_rmw8_add_u, a_i64_atomic_rmw16_add_u, a_i64_atomic_rmw32_add_u,
+      a_i64_atomic_rmw_add, a_i32_atomic_rmw8_sub_u, a_i32_atomic_rmw16_sub_u,
+      a_i32_atomic_rmw_sub, a_i64_atomic_rmw8_sub_u, a_i64_atomic_rmw16_sub_u,
+      a_i64_atomic_rmw32_sub_u, a_i64_atomic_rmw_sub, a_i32_atomic_rmw8_and_u,
+      a_i32_atomic_rmw16_and_u, a_i32_atomic_rmw_and, a_i64_atomic_rmw8_and_u,
+      a_i64_atomic_rmw16_and_u, a_i64_atomic_rmw32_and_u, a_i64_atomic_rmw_and,
+      a_i32_atomic_rmw8_or_u, a_i32_atomic_rmw16_or_u, a_i32_atomic_rmw_or,
+      a_i64_atomic_rmw8_or_u, a_i64_atomic_rmw16_or_u, a_i64_atomic_rmw32_or_u,
+      a_i64_atomic_rmw_or, a_i32_atomic_rmw8_xor_u, a_i32_atomic_rmw16_xor_u,
+      a_i32_atomic_rmw_xor, a_i64_atomic_rmw8_xor_u, a_i64_atomic_rmw16_xor_u,
+      a_i64_atomic_rmw32_xor_u, a_i64_atomic_rmw_xor, a_i32_atomic_rmw8_xchg_u,
+      a_i32_atomic_rmw16_xchg_u, a_i32_atomic_rmw_xchg, a_i64_atomic_rmw8_xchg_u,
+      a_i64_atomic_rmw16_xchg_u, a_i64_atomic_rmw32_xchg_u, a_i64_atomic_rmw_xchg,
+      // atomic memory accesses - compare exchange
+      a_i32_atomic_rmw8_cmpxchg_u, a_i32_atomic_rmw16_cmpxchg_u, a_i32_atomic_rmw_cmpxchg,
+      a_i64_atomic_rmw8_cmpxchg_u, a_i64_atomic_rmw16_cmpxchg_u, a_i64_atomic_rmw32_cmpxchg_u,
+      a_i64_atomic_rmw_cmpxchg,
+      // atomic memory accesses - wait and notify operators
+      a_memory_atomic_wait32, a_memory_atomic_wait64, a_memory_atomic_notify, a_atomic_fence
       );
 
-      TWasmBasicType = (wbt_i32, wbt_i64, wbt_f32, wbt_f64);
+      TWasmBasicType = (
+        { number types }
+        wbt_i32, wbt_i64, wbt_f32, wbt_f64,
+        { reference types }
+        wbt_funcref, wbt_externref,
+        { vector types }
+        wbt_v128
+      );
       TWasmResultType = array of TWasmBasicType;
 
       { TWasmFuncType }
@@ -415,7 +462,25 @@ uses
           a_i64_load8_s,
           a_i64_load8_u,
           a_i32_store8,
-          a_i64_store8:
+          a_i64_store8,
+          a_i32_atomic_load8_u,
+          a_i64_atomic_load8_u,
+          a_i32_atomic_store8,
+          a_i64_atomic_store8,
+          a_i32_atomic_rmw8_add_u,
+          a_i64_atomic_rmw8_add_u,
+          a_i32_atomic_rmw8_sub_u,
+          a_i64_atomic_rmw8_sub_u,
+          a_i32_atomic_rmw8_and_u,
+          a_i64_atomic_rmw8_and_u,
+          a_i32_atomic_rmw8_or_u,
+          a_i64_atomic_rmw8_or_u,
+          a_i32_atomic_rmw8_xor_u,
+          a_i64_atomic_rmw8_xor_u,
+          a_i32_atomic_rmw8_xchg_u,
+          a_i64_atomic_rmw8_xchg_u,
+          a_i32_atomic_rmw8_cmpxchg_u,
+          a_i64_atomic_rmw8_cmpxchg_u:
             result:=0;
 
           a_i32_load16_s,
@@ -423,7 +488,25 @@ uses
           a_i64_load16_s,
           a_i64_load16_u,
           a_i32_store16,
-          a_i64_store16:
+          a_i64_store16,
+          a_i32_atomic_load16_u,
+          a_i64_atomic_load16_u,
+          a_i32_atomic_store16,
+          a_i64_atomic_store16,
+          a_i32_atomic_rmw16_add_u,
+          a_i64_atomic_rmw16_add_u,
+          a_i32_atomic_rmw16_sub_u,
+          a_i64_atomic_rmw16_sub_u,
+          a_i32_atomic_rmw16_and_u,
+          a_i64_atomic_rmw16_and_u,
+          a_i32_atomic_rmw16_or_u,
+          a_i64_atomic_rmw16_or_u,
+          a_i32_atomic_rmw16_xor_u,
+          a_i64_atomic_rmw16_xor_u,
+          a_i32_atomic_rmw16_xchg_u,
+          a_i64_atomic_rmw16_xchg_u,
+          a_i32_atomic_rmw16_cmpxchg_u,
+          a_i64_atomic_rmw16_cmpxchg_u:
             result:=1;
 
           a_i32_load,
@@ -432,13 +515,43 @@ uses
           a_i64_load32_u,
           a_i32_store,
           a_f32_store,
-          a_i64_store32:
+          a_i64_store32,
+          a_memory_atomic_notify,
+          a_memory_atomic_wait32,
+          a_i32_atomic_load,
+          a_i64_atomic_load32_u,
+          a_i32_atomic_store,
+          a_i64_atomic_store32,
+          a_i32_atomic_rmw_add,
+          a_i64_atomic_rmw32_add_u,
+          a_i32_atomic_rmw_sub,
+          a_i64_atomic_rmw32_sub_u,
+          a_i32_atomic_rmw_and,
+          a_i64_atomic_rmw32_and_u,
+          a_i32_atomic_rmw_or,
+          a_i64_atomic_rmw32_or_u,
+          a_i32_atomic_rmw_xor,
+          a_i64_atomic_rmw32_xor_u,
+          a_i32_atomic_rmw_xchg,
+          a_i64_atomic_rmw32_xchg_u,
+          a_i32_atomic_rmw_cmpxchg,
+          a_i64_atomic_rmw32_cmpxchg_u:
             result:=2;
 
           a_i64_load,
           a_f64_load,
           a_i64_store,
-          a_f64_store:
+          a_f64_store,
+          a_memory_atomic_wait64,
+          a_i64_atomic_load,
+          a_i64_atomic_store,
+          a_i64_atomic_rmw_add,
+          a_i64_atomic_rmw_sub,
+          a_i64_atomic_rmw_and,
+          a_i64_atomic_rmw_or,
+          a_i64_atomic_rmw_xor,
+          a_i64_atomic_rmw_xchg,
+          a_i64_atomic_rmw_cmpxchg:
             result:=3;
           else
             internalerror(2021092614);
@@ -456,6 +569,12 @@ uses
             result:=$7D;
           wbt_f64:
             result:=$7C;
+          wbt_funcref:
+            result:=$70;
+          wbt_externref:
+            result:=$6F;
+          wbt_v128:
+            result:=$7B;
         end;
       end;
 

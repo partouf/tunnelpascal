@@ -201,11 +201,15 @@ const
     'ISOLikeProgramsPara',
     'ISOLikeMod',
     'ArrayOperators',
-    'ExternalClass',
-    'PrefixedAttributes',
-    'OmitRTTI',
     'MultiHelpers',
+    'Array2DynArrays',
+    'PrefixedAttributes',
+    'UnderscoreIsSepararor',
     'ImplicitFunctionSpecialization',
+    'FunctionReferences',
+    'AnonymousFunctions',
+    'ExternalClass',
+    'OmitRTTI',
     'MultilineStrings'
     ); // Dont forget to update ModeSwitchToInt !
 
@@ -261,7 +265,8 @@ const
     'RTLVersionCheckMain',
     'RTLVersionCheckSystem',
     'RTLVersionCheckUnit',
-    'ShortRefGlobals'
+    'ShortRefGlobals',
+    'ObfuscateLocalIdentifiers'
     );
 
   PCUDefaultTargetPlatform = PlatformBrowser;
@@ -493,7 +498,10 @@ const
     'RightShift',
     'Enumerator',
     'In',
-    'Initialize'
+    'Initialize',
+    'Finalize',
+    'AddRef',
+    'Copy'
     );
 
   PCUProcedureModifierNames: array[TProcedureModifier] of string = (
@@ -565,7 +573,8 @@ const
     'NewInst',
     'FreeInst',
     'VMT',
-    'ConstInh'
+    'ConstInh',
+    'UseFields'
     );
 
   PCUResolverWithExprScopeFlagNames: array[TPasWithExprScopeFlag] of string = (

@@ -224,10 +224,10 @@ unit cgx86;
       begin
 {$ifdef x86_64}
         { The stack pointer and base pointer will be aligned to 16-byte boundaries if the machine code is well-behaved }
-        if (ref.base = NR_RSP) or (ref.base = NR_RBP) then
+        if (ref.base = NR_STACK_POINTER_REG) or (ref.base = current_procinfo.framepointer) then
           begin
-            if (ref.index = NR_NO) and ((ref.offset mod 16) = 0) then
-              Result := 16
+            if (ref.index = NR_NO) and ((ref.offset mod target_info.stackalign) = 0) then
+              Result := target_info.stackalign
             else
               Result := ref.alignment;
           end
@@ -2548,8 +2548,10 @@ unit cgx86;
             exit;
           end;
 {$endif x86_64}
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_const_ref(A_CMP,TCgSize2OpSize[size],a,tmpref));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2559,8 +2561,10 @@ unit cgx86;
       begin
         check_register_size(size,reg1);
         check_register_size(size,reg2);
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_reg_reg(A_CMP,TCgSize2OpSize[size],reg1,reg2));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2571,8 +2575,10 @@ unit cgx86;
         tmpref:=ref;
         make_simple_ref(list,tmpref);
         check_register_size(size,reg);
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_ref_reg(A_CMP,TCgSize2OpSize[size],tmpref,reg));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2583,8 +2589,10 @@ unit cgx86;
         tmpref:=ref;
         make_simple_ref(list,tmpref);
         check_register_size(size,reg);
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_reg_ref(A_CMP,TCgSize2OpSize[size],reg,tmpref));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2831,7 +2839,7 @@ unit cgx86;
 {$endif i8086}
       if (cs_mmx in current_settings.localswitches) and
          not(pi_uses_fpu in current_procinfo.flags) and
-         ((len=8) or (len=16) or (len=24) or (len=32)) then
+         ({$ifdef i386}(len=8) or {$endif i386}(len=16) or (len=24) or (len=32)) then
         cm:=copy_mmx
       else
         if len>helpsize then
@@ -3376,6 +3384,7 @@ unit cgx86;
       begin
         regsize:=0;
         stackmisalignment:=0;
+        list.concat(tai_regalloc.alloc(NR_STACK_POINTER_REG,nil));
 {$ifdef i8086}
         { Win16 callback/exported proc prologue support.
           Since callbacks can be called from different modules, DS on entry may be
@@ -3500,7 +3509,6 @@ unit cgx86;
           begin
             { return address }
             inc(stackmisalignment,sizeof(pint));
-            list.concat(tai_regalloc.alloc(current_procinfo.framepointer,nil));
             if current_procinfo.framepointer=NR_STACK_POINTER_REG then
               begin
 {$ifdef i386}
@@ -3511,6 +3519,7 @@ unit cgx86;
               end
             else
               begin
+                list.concat(tai_regalloc.alloc(current_procinfo.framepointer,nil));
 {$ifdef i8086}
                 if ((ts_x86_far_procs_push_odd_bp in current_settings.targetswitches) or
                     ((po_exports in current_procinfo.procdef.procoptions) and

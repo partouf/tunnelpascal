@@ -196,6 +196,12 @@ begin
 {$include fcl-xml/fpmake.pp}
 end;
 
+procedure add_fcl_css(const ADirectory: string);
+begin
+  with Installer do
+{$include fcl-css/fpmake.pp}
+end;
+
 procedure add_fftw(const ADirectory: string);
 begin
   with Installer do
@@ -242,6 +248,12 @@ procedure add_gmp(const ADirectory: string);
 begin
   with Installer do
 {$include gmp/fpmake.pp}
+end;
+
+procedure add_libnettle(const ADirectory: string);
+begin
+  with Installer do
+{$include libnettle/fpmake.pp}
 end;
 
 procedure add_gnome1(const ADirectory: string);
