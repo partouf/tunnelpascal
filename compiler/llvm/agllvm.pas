@@ -333,6 +333,7 @@ implementation
      var
        hp: tai;
        para: pllvmcallpara;
+       typestr: TSymStr;
        i: longint;
        tmpinline: cardinal;
        metadatakind: tmetadatakind;
@@ -346,13 +347,32 @@ implementation
            if i<>0 then
              owner.writer.AsmWrite(', ');
            para:=pllvmcallpara(paras[i]);
-           owner.writer.AsmWrite(llvmencodetypename(para^.def));
+           typestr:=llvmencodetypename(para^.def);
+           owner.writer.AsmWrite(typestr);
            if para^.valueext<>lve_none then
              owner.writer.AsmWrite(llvmvalueextension2str[para^.valueext]);
            if para^.byval then
-             owner.writer.AsmWrite(' byval');
+             begin
+               owner.writer.AsmWrite(' byval');
+               if llvmflag_sret_ty in llvmversion_properties[current_settings.llvmversion] then
+                 begin
+                   if typestr[length(typestr)]<>'*' then
+                     internalerror(2022021301);
+                   delete(typestr,length(typestr),1);
+                   owner.writer.AsmWrite('('+typestr+')');
+                 end;
+             end;
            if para^.sret then
-             owner.writer.AsmWrite(' sret');
+             begin
+               owner.writer.AsmWrite(' sret');
+               if llvmflag_sret_ty in llvmversion_properties[current_settings.llvmversion] then
+                 begin
+                   if typestr[length(typestr)]<>'*' then
+                     internalerror(2022021302);
+                   delete(typestr,length(typestr),1);
+                   owner.writer.AsmWrite('('+typestr+')');
+                 end;
+             end;
            { For byval, this means "alignment on the stack" and of the passed source data.
              For other pointer parameters, this means "alignment of the passed source data" }
            if (para^.alignment<>std_param_align) or
