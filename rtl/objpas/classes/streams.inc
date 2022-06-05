@@ -1279,7 +1279,8 @@ begin
   // We set the position afterwards, because the size can also be larger.
   if not FileTruncate(FHandle,NewSize) then
     Raise EInOutError.Create(SStreamSetSize);
-  Position:=NewSize;
+  if Position>NewSize then
+    Position:=NewSize;
 end;
 
 
