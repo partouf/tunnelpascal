@@ -60,12 +60,6 @@ interface
 
       TDebugInfoLLVM = class(TDebugInfo)
        strict private
-       type
-         tmembercallbackinfo = record
-           structnode: tai_llvmspecialisedmetadatanode;
-           list: tasmlist;
-         end;
-         pmembercallbackinfo = ^tmembercallbackinfo;
        var
         { lookup table for def -> LLVMMeta info }
         fdefmeta: TLLVMMetaDefHashSet;
@@ -75,15 +69,21 @@ interface
         flocationmeta: THashSet;
         { lookup table for scope,file -> LLVMMeta info (DILexicalBlockFile, for include files) }
         flexicalblockfilemeta: THashSet;
-        { lookup table for tsym -> taillvmdecl }
-        fsymdecl: THashSet;
+        { lookup table for tstaticvarsym -> taillvmdecl }
+        fstaticvarsymdecl: THashSet;
+        { lookup table for local/paravarsym -> metadata }
+        flocalvarsymmeta: THashSet;
 
         fcunode: tai_llvmspecialisedmetadatanode;
         fenums: tai_llvmunnamedmetadatanode;
         fretainedtypes: tai_llvmunnamedmetadatanode;
         fglobals: tai_llvmunnamedmetadatanode;
         { reusable empty expression node }
-        femptyexpression: tai_llvmspecialisedmetadatanode;
+        femptyexpression,
+        { reusable deref node }
+        fderefexpression  : tai_llvmspecialisedmetadatanode;
+
+        fllvm_dbg_addr_pd: tprocdef;
 
         function absolute_llvm_path(const s:tcmdstr):tcmdstr;
       protected
@@ -94,15 +94,17 @@ interface
 
         function def_meta_impl(def: tdef) : tai_llvmspecialisedmetadatanode;
         function def_set_meta_impl(def: tdef; meta_impl: tai_llvmspecialisedmetadatanode): tai_llvmspecialisedmetadatanode;
-        function def_meta_class_struct(def: tobjectdef) : tai_llvmbasemetadatanode;
+        function def_meta_class_struct(def: tobjectdef) : tai_llvmspecialisedmetadatanode;
         function def_meta_node(def: tdef): tai_llvmspecialisedmetadatanode;
         function def_meta_ref(def: tdef): tai_simpletypedconst;
         function file_getmetanode(moduleindex: tfileposmoduleindex; fileindex: tfileposfileindex): tai_llvmspecialisedmetadatanode;
         function filepos_getmetanode(const filepos: tfileposinfo; const functionfileinfo: tfileposinfo; const functionscope: tai_llvmspecialisedmetadatanode; nolineinfo: boolean): tai_llvmspecialisedmetadatanode;
         function get_def_metatai(def:tdef): PLLVMMetaDefHashSetItem;
 
-        procedure sym_set_decl(sym: tsym; decl: tai);
-        function sym_get_decl(sym: tsym): taillvmdecl;
+        procedure staticvarsym_set_decl(sym: tsym; decl: taillvmdecl);
+        function staticvarsym_get_decl(sym: tsym): taillvmdecl;
+
+        function localvarsym_get_meta(sym: tsym; out is_new: boolean): tai_llvmspecialisedmetadatanode;
 
         procedure appenddef_array_internal(list: TAsmList; fordef: tdef; eledef: tdef; lowrange, highrange: asizeint);
         function getabstractprocdeftypes(list: TAsmList; def:tabstractprocdef): tai_llvmbasemetadatanode;
@@ -113,6 +115,8 @@ interface
         procedure appenddef_enum(list:TAsmList;def:tenumdef);override;
         procedure appenddef_array(list:TAsmList;def:tarraydef);override;
         procedure appenddef_record_named(list: TAsmList; fordef: tdef; def: trecorddef; const name: TSymStr);
+        procedure appenddef_struct_named(list: TAsmList; def: tabstractrecorddef; structdi: tai_llvmspecialisedmetadatanode; initialfieldlist: tai_llvmunnamedmetadatanode; const name: TSymStr);
+        procedure appenddef_struct_fields(list: TAsmlist; def: tabstractrecorddef; defdinode: tai_llvmspecialisedmetadatanode; initialfieldlist: tai_llvmunnamedmetadatanode; cappedsize: asizeuint);
         procedure appenddef_record(list:TAsmList;def:trecorddef);override;
         procedure appenddef_pointer(list:TAsmList;def:tpointerdef);override;
         procedure appenddef_formal(list:TAsmList;def:tformaldef); override;
@@ -151,12 +155,11 @@ interface
         function symname(sym: tsym; manglename: boolean): TSymStr; virtual;
         function visibilitydiflag(vis: tvisibility): TSymStr;
 
-        procedure enum_membersyms_callback(p:TObject;arg:pointer);
-
         procedure ensuremetainit;
         procedure resetfornewmodule;
 
         procedure collectglobalsyms;
+        procedure updatelocalvardbginfo(hp: taillvm; pd: tprocdef; functionscope: tai_llvmspecialisedmetadatanode);
       public
         constructor Create;override;
         destructor Destroy;override;
@@ -292,7 +295,7 @@ implementation
                 result^.HashSetItem.Data:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIDerivedType);
 
                 if is_implicit_pointer_object_type(def) then
-                  result^.struct_metadef:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIDerivedType)
+                  result^.struct_metadef:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType)
                 else
                   result^.struct_metadef:=nil;
                 result^.implmetadef:=nil;
@@ -310,25 +313,44 @@ implementation
           end;
       end;
 
-    procedure TDebugInfoLLVM.sym_set_decl(sym: tsym; decl: tai);
+    procedure TDebugInfoLLVM.staticvarsym_set_decl(sym: tsym; decl: taillvmdecl);
       var
         entry: PHashSetItem;
       begin
-        entry:=fsymdecl.FindOrAdd(@sym,sizeof(sym));
+        entry:=fstaticvarsymdecl.FindOrAdd(@sym,sizeof(sym));
         if assigned(entry^.Data) then
           internalerror(2022051701);
         entry^.Data:=decl;
       end;
 
-    function TDebugInfoLLVM.sym_get_decl(sym: tsym): taillvmdecl;
+    function TDebugInfoLLVM.staticvarsym_get_decl(sym: tsym): taillvmdecl;
       var
         entry: PHashSetItem;
       begin
         result:=nil;
-        entry:=fsymdecl.Find(@sym,sizeof(sym));
+        entry:=fstaticvarsymdecl.Find(@sym,sizeof(sym));
         if assigned(entry) then
           result:=taillvmdecl(entry^.Data);
       end;
+
+
+    function TDebugInfoLLVM.localvarsym_get_meta(sym: tsym; out is_new: boolean): tai_llvmspecialisedmetadatanode;
+      var
+        entry: PHashSetItem;
+      begin
+        entry:=fstaticvarsymdecl.FindOrAdd(@sym,sizeof(sym));
+        if not assigned(entry^.Data) then
+          begin
+            result:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DILocalVariable);
+            current_asmdata.AsmLists[al_dwarf_info].concat(result);
+            entry^.Data:=result;
+            is_new:=true;
+            exit;
+          end;
+        is_new:=false;
+        result:=tai_llvmspecialisedmetadatanode(entry^.Data);
+      end;
+
 
     procedure TDebugInfoLLVM.appenddef_array_internal(list: TAsmList; fordef: tdef; eledef: tdef; lowrange, highrange: asizeint);
       var
@@ -391,9 +413,9 @@ implementation
         result:=meta_impl;
       end;
 
-    function TDebugInfoLLVM.def_meta_class_struct(def: tobjectdef): tai_llvmbasemetadatanode;
+    function TDebugInfoLLVM.def_meta_class_struct(def: tobjectdef): tai_llvmspecialisedmetadatanode;
       begin
-        result:=tai_llvmbasemetadatanode(get_def_metatai(def)^.struct_metadef);
+        result:=tai_llvmspecialisedmetadatanode(get_def_metatai(def)^.struct_metadef);
       end;
 
     function TDebugInfoLLVM.def_meta_node(def: tdef): tai_llvmspecialisedmetadatanode;
@@ -417,13 +439,14 @@ implementation
         fretainedtypes:=nil;
         fglobals:=nil;
         femptyexpression:=nil;
+        fderefexpression:=nil;
         fcunode:=nil;
 
         ffilemeta:=thashset.Create(10000,true,false);
         flocationmeta:=thashset.Create(10000,true,false);
         flexicalblockfilemeta:=thashset.Create(100,true,false);
         fdefmeta:=TLLVMMetaDefHashSet.Create(10000,true,false);
-        fsymdecl:=thashset.create(10000,true,false);
+        fstaticvarsymdecl:=thashset.create(10000,true,false);
 
         defnumberlist:=TFPObjectList.create(false);
         deftowritelist:=TFPObjectList.create(false);
@@ -443,8 +466,10 @@ implementation
         flexicalblockfilemeta:=nil;
         fdefmeta.free;
         fdefmeta:=nil;
-        fsymdecl.free;
-        fsymdecl:=nil;
+        fstaticvarsymdecl.free;
+        fstaticvarsymdecl:=nil;
+        flocalvarsymmeta.free;
+        flocalvarsymmeta:=nil;
         defnumberlist.free;
         defnumberlist:=nil;
         deftowritelist.free;
@@ -455,30 +480,18 @@ implementation
       end;
 
 
-    procedure TDebugInfoLLVM.enum_membersyms_callback(p:TObject; arg: pointer);
-      begin
-(*
-        case tsym(p).typ of
-          fieldvarsym:
-            appendsym_fieldvar(pmembercallbackinfo(arg)^.list,pmembercallbackinfo(arg)^.structnode,tfieldvarsym(p));
-          propertysym:
-            appendsym_property(pmembercallbackinfo(arg)^.list,pmembercallbackinfo(arg)^.structnode,tpropertysym(p));
-          constsym:
-            appendsym_const_member(pmembercallbackinfo(arg)^.list,pmembercallbackinfo(arg)^.structnode,tconstsym(p),true);
-          else
-            ;
-        end;
-*)
-      end;
-
     procedure TDebugInfoLLVM.ensuremetainit;
       begin
+        if not assigned(fllvm_dbg_addr_pd) then
+          fllvm_dbg_addr_pd:=search_system_proc('llvm_dbg_addr');
         if not assigned(fenums) then
           begin
             fenums:=tai_llvmunnamedmetadatanode.create;
             fretainedtypes:=tai_llvmunnamedmetadatanode.create;
             fglobals:=tai_llvmunnamedmetadatanode.create;
             femptyexpression:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIExpression);
+            fderefexpression:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIExpression);
+            fderefexpression.addenum('','DW_OP_deref');
             fcunode:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompileUnit);
           end;
       end;
@@ -500,7 +513,7 @@ implementation
         flocationmeta.Clear;
         flexicalblockfilemeta.Clear;
         fdefmeta.free;
-        fsymdecl.Clear;
+        fstaticvarsymdecl.Clear;
         { one item per def, plus some extra space in case of nested types,
           externally used types etc (it will grow further if necessary) }
         i:=current_module.localsymtable.DefList.count*4;
@@ -515,6 +528,7 @@ implementation
         fretainedtypes:=nil;
         fglobals:=nil;
         femptyexpression:=nil;
+        fderefexpression:=nil;
       end;
 
     procedure TDebugInfoLLVM.collectglobalsyms;
@@ -531,11 +545,65 @@ implementation
               begin
                 if (hp.typ=ait_llvmdecl) and
                    assigned(taillvmdecl(hp).sym) then
-                     sym_set_decl(taillvmdecl(hp).sym,hp);
+                     staticvarsym_set_decl(taillvmdecl(hp).sym,taillvmdecl(hp));
                 hp:=tai(hp.next);
               end;
           end;
       end;
+
+
+    procedure TDebugInfoLLVM.updatelocalvardbginfo(hp: taillvm; pd: tprocdef; functionscope: tai_llvmspecialisedmetadatanode);
+      var
+        opindex, callparaindex: longint;
+        paras: tfplist;
+        sympara,
+        exprpara: pllvmcallpara;
+        sym: tabstractnormalvarsym;
+        dilocalvar: tai_llvmspecialisedmetadatanode;
+        isnewlocalvardi,
+        deref: boolean;
+      begin
+        { not really clean since hardcoding the structure of the call
+          instruction's procdef encoding, but quick }
+        if (hp.oper[taillvm.callpdopernr]^.def.typ<>pointerdef) or
+           (tpointerdef(hp.oper[taillvm.callpdopernr]^.def).pointeddef<>fllvm_dbg_addr_pd) then
+          exit;
+        deref:=false;
+
+        sympara:=hp.getcallpara(1);
+        exprpara:=hp.getcallpara(2);
+
+        if sympara^.val.typ<>top_local then
+          internalerror(2022052613);
+        sym:=tabstractnormalvarsym(sympara^.val.localsym);
+        dilocalvar:=localvarsym_get_meta(sym,isnewlocalvardi);
+        sympara^.loadtai(llvm_getmetadatareftypedconst(dilocalvar));
+        if isnewlocalvardi then
+          begin
+            dilocalvar.addstring('name',symname(sym,false));
+            if sym.typ=paravarsym then
+              begin
+                dilocalvar.addint64('arg',tparavarsym(sym).paranr);
+                if paramanager.push_addr_param(sym.varspez,sym.vardef,pd.proccalloption) then
+                  deref:=true;
+              end;
+            dilocalvar.addmetadatarefto('scope',functionscope);
+            try_add_file_metaref(dilocalvar,sym.fileinfo,false);
+            dilocalvar.addmetadatarefto('type',def_meta_node(sym.vardef));
+          end
+        else
+          begin
+            if (sym.typ=paravarsym) and
+               paramanager.push_addr_param(sym.varspez,sym.vardef,pd.proccalloption) then
+              deref:=true;
+          end;
+
+        if not deref then
+          exprpara^.loadtai(llvm_getmetadatareftypedconst(femptyexpression))
+        else
+          exprpara^.loadtai(llvm_getmetadatareftypedconst(fderefexpression));
+      end;
+
 
     function TDebugInfoLLVM.file_getmetanode(moduleindex: tfileposmoduleindex; fileindex: tfileposfileindex): tai_llvmspecialisedmetadatanode;
       var
@@ -977,21 +1045,253 @@ implementation
         dinode: tai_llvmspecialisedmetadatanode;
       begin
         dinode:=def_set_meta_impl(fordef,tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType));
+        list.concat(dinode);
         dinode.addint64('tag',ord(DW_TAG_structure_type));
+        appenddef_struct_named(list,def,dinode,tai_llvmunnamedmetadatanode.create,name);
+      end;
+
+
+    procedure TDebugInfoLLVM.appenddef_struct_named(list: TAsmList; def: tabstractrecorddef; structdi: tai_llvmspecialisedmetadatanode; initialfieldlist: tai_llvmunnamedmetadatanode; const name: TSymStr);
+      var
+        cappedsize: asizeuint;
+      begin
         if (name<>'') then
-          dinode.addstring('name',name);
-        if def.size<(qword(1) shl 61) then
-          dinode.addqword('size',def.size*8)
+          structdi.addstring('name',name);
+        if assigned(def.typesym) then
+          try_add_file_metaref(structdi,def.typesym.fileinfo,false);
+        if is_packed_record_or_object(def) then
+          cappedsize:=tabstractrecordsymtable(def.symtable).datasize
+        else if def.size<(qword(1) shl 61) then
+          cappedsize:=tabstractrecordsymtable(def.symtable).datasize*8
         else
           { LLVM internally "only" supports sizes up to 1 shl 61, because they
             store all sizes in bits in a qword; the rationale is that there
             is no hardware supporting a full 64 bit address space either }
-          dinode.addqword('size',qword(1) shl 61);
+          cappedsize:=qword(1) shl 61;
+        structdi.addqword('size',cappedsize);
 
-        list.concat(dinode);
-
-//        def.symtable.symList.ForEachCall(@enum_membersyms_callback,dinode);
+        appenddef_struct_fields(list,def,structdi,initialfieldlist,cappedsize);
         write_symtable_procdefs(current_asmdata.asmlists[al_dwarf_info],def.symtable);
+      end;
+
+
+    procedure TDebugInfoLLVM.appenddef_struct_fields(list: TAsmlist; def: tabstractrecorddef; defdinode: tai_llvmspecialisedmetadatanode; initialfieldlist: tai_llvmunnamedmetadatanode; cappedsize: asizeuint);
+
+      { returns whether we need to create a nested struct in the variant to hold
+        multiple successive fields, or whether the next field starts at the
+        same offset as the current one. I.e., it returns false for
+          case byte of
+            0: (b: byte);
+            1: (l: longint);
+          end
+
+        but true for
+
+          case byte of
+            0: (b1,b2: byte);
+          end
+
+        and
+
+          case byte of
+            0: (b1: byte;
+                case byte of 0:
+                  b2: byte;
+               )
+          end
+      }
+      function variantfieldstartsnewstruct(field: tfieldvarsym; recst: tabstractrecordsymtable; fieldidx: longint): boolean;
+        var
+          nextfield: tfieldvarsym;
+        begin
+          result:=false;
+          inc(fieldidx);
+          if fieldidx>=recst.symlist.count then
+            exit;
+          { can't have properties or procedures between to start fields of the
+            same variant }
+          if tsym(recst.symlist[fieldidx]).typ<>fieldvarsym then
+            exit;
+          nextfield:=tfieldvarsym(recst.symlist[fieldidx]);
+          if nextfield.fieldoffset=field.fieldoffset then
+            exit;
+          result:=true;
+        end;
+
+      type
+        tvariantinfo = record
+          startfield: tfieldvarsym;
+          uniondi: tai_llvmspecialisedmetadatanode;
+          variantfieldlist: tai_llvmunnamedmetadatanode;
+          curvariantstructfieldlist: tai_llvmunnamedmetadatanode;
+        end;
+        pvariantinfo = ^tvariantinfo;
+
+      function bitoffsetfromvariantstart(field: tfieldvarsym; variantinfolist: tfplist; totalbitsize: ASizeUInt): qword;
+        var
+          variantstartfield: tfieldvarsym;
+        begin
+          if not assigned(variantinfolist) then
+            begin
+              result:=field.bitoffset;
+              exit;
+            end;
+          result:=0;
+          if vo_is_first_field in field.varoptions then
+            exit;
+          variantstartfield:=pvariantinfo(variantinfolist[variantinfolist.count-1])^.startfield;
+          { variant fields always start on a byte boundary, so no need for
+            rounding/truncating }
+          result:=field.bitoffset-variantstartfield.bitoffset;
+        end;
+
+      var
+        variantinfolist: tfplist;
+        variantinfo: pvariantinfo;
+        recst: trecordsymtable;
+        scope,
+        fielddi,
+        uniondi,
+        structdi: tai_llvmspecialisedmetadatanode;
+        fieldlist: tai_llvmunnamedmetadatanode;
+        i, varindex: longint;
+        field: tfieldvarsym;
+        bitoffset: asizeuint;
+        bpackedrecst: boolean;
+      begin
+        recst:=trecordsymtable(def.symtable);
+        bpackedrecst:=recst.fieldalignment=bit_alignment;
+        scope:=defdinode;
+        variantinfolist:=nil;
+
+        fieldlist:=initialfieldlist;
+        list.concat(fieldlist);
+        defdinode.addmetadatarefto('elements',fieldlist);
+
+        for i:=0 to recst.symlist.count-1 do
+          begin
+            if (tsym(recst.symlist[i]).typ<>fieldvarsym) then
+              continue;
+
+            field:=tfieldvarsym(recst.symlist[i]);
+            if (sp_static in field.symoptions) or
+               (field.visibility=vis_hidden) then
+              exit;
+
+            { start of a new variant part? }
+            if vo_is_first_field in field.varoptions then
+              begin
+                if not assigned(variantinfolist) then
+                  begin
+                    variantinfolist:=tfplist.create;
+                  end;
+                varindex:=variantinfolist.count-1;
+                if (varindex=-1) or
+                   (pvariantinfo(variantinfolist[varindex])^.startfield.fieldoffset<field.fieldoffset) then
+                  begin
+                    { more deeply nested variant }
+                    uniondi:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType);
+                    list.concat(uniondi);
+                    fieldlist.addvalue(llvm_getmetadatareftypedconst(uniondi));
+
+                    uniondi.addenum('tag','DW_TAG_union_type');
+                    uniondi.addmetadatarefto('scope',scope);
+                    try_add_file_metaref(uniondi,field.fileinfo,false);
+                    { the size of this variant part is the total size of the
+                      record minus the start of this field; not 100% correct
+                      in case of multiple parallel nested variants, but not
+                      really important since it's all padding anyway }
+                    uniondi.addint64('size',cappedsize-min(field.bitoffset,cappedsize));
+                    fieldlist:=tai_llvmunnamedmetadatanode.create;
+                    list.concat(fieldlist);
+                    uniondi.addmetadatarefto('elements',fieldlist);
+
+                    scope:=uniondi;
+
+                    new(variantinfo);
+                    variantinfo^.startfield:=field;
+                    variantinfo^.uniondi:=uniondi;
+                    variantinfo^.variantfieldlist:=fieldlist;
+                    variantinfo^.curvariantstructfieldlist:=nil;
+
+                    variantinfolist.Add(variantinfo);
+                    inc(varindex);
+                  end
+                else
+                  begin
+                    {finalise more deeply nested variants }
+                    while (varindex>=0) and
+                          (pvariantinfo(variantinfolist[varindex])^.startfield.fieldoffset>field.fieldoffset) do
+                      begin
+                        dispose(pvariantinfo(variantinfolist[varindex]));
+                        dec(varindex);
+                      end;
+                    if (varindex<0) then
+                      internalerror(2022060610);
+                    variantinfo:=pvariantinfo(variantinfolist[varindex]);
+                    if variantinfo^.startfield.fieldoffset<>field.fieldoffset then
+                      internalerror(2022060611);
+
+                    { a variant part is always the last part -> end of previous
+                      struct, if any}
+                    variantinfo^.curvariantstructfieldlist:=nil;
+
+                    fieldlist:=variantinfo^.variantfieldlist;
+                    scope:=variantinfo^.uniondi;
+
+                    { variant at the same level as a previous one }
+                    variantinfolist.count:=varindex+1;
+                  end;
+
+                if not variantfieldstartsnewstruct(field,recst,i) then
+                  begin
+                    variantinfo^.curvariantstructfieldlist:=nil;
+                    fieldlist:=variantinfo^.variantfieldlist;
+                    scope:=variantinfo^.uniondi;
+                  end
+                else
+                  begin
+                    structdi:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType);
+                    list.concat(structdi);
+                    structdi.addenum('tag','DW_TAG_structure_type');
+                    structdi.addmetadatarefto('scope',variantinfo^.uniondi);
+                    structdi.addint64('size',cappedsize-min(field.bitoffset,cappedsize));
+                    variantinfo^.curvariantstructfieldlist:=tai_llvmunnamedmetadatanode.create;
+                    list.concat(variantinfo^.curvariantstructfieldlist);
+                    structdi.addmetadatarefto('elements',variantinfo^.curvariantstructfieldlist);
+                    fieldlist.addvalue(llvm_getmetadatareftypedconst(structdi));
+
+                    fieldlist:=variantinfo^.curvariantstructfieldlist;
+                    scope:=structdi;
+                  end;
+              end;
+
+            fielddi:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIDerivedType);
+            fielddi.addenum('tag','DW_TAG_member');
+            fielddi.addstring('name',symname(field,false));
+            fielddi.addmetadatarefto('scope',scope);
+            try_add_file_metaref(fielddi,field.fileinfo,false);
+            fielddi.addmetadatarefto('baseType',def_meta_node(field.vardef));
+            if bpackedrecst and
+               is_ordinal(field.vardef) then
+              fielddi.addqword('size',field.getpackedbitsize)
+            else
+              fielddi.addqword('size',min(asizeuint(field.getsize)*8,cappedsize));
+            bitoffset:=bitoffsetfromvariantstart(field,variantinfolist,cappedsize);
+            if bitoffset<>0 then
+              fielddi.addqword('offset',bitoffset);
+
+            fieldlist.addvalue(llvm_getmetadatareftypedconst(fielddi));
+            list.concat(fielddi);
+          end;
+        if assigned(variantinfolist) then
+          begin
+            for i:=0 to variantinfolist.count-1 do
+              begin
+                dispose(pvariantinfo(variantinfolist[i]));
+              end;
+          end;
+        variantinfolist.free;
       end;
 
 
@@ -1124,24 +1424,72 @@ implementation
 
     procedure TDebugInfoLLVM.appenddef_object(list: TAsmList; def: tobjectdef);
       var
-        dinode: tai_llvmspecialisedmetadatanode;
+        dinode,
+        structdi,
+        inheritancedi: tai_llvmspecialisedmetadatanode;
+        fields: tai_llvmunnamedmetadatanode;
       begin
+        inheritancedi:=nil;
+        fields:=tai_llvmunnamedmetadatanode.create;
+        if assigned(def.childof) then
+          begin
+            inheritancedi:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIDerivedType);
+            list.concat(inheritancedi);
+            inheritancedi.addenum('tag','DW_TAG_inheritance');
+            if is_implicit_pointer_object_type(def) then
+              inheritancedi.addmetadatarefto('baseType',def_meta_class_struct(def.childof))
+            else
+              inheritancedi.addmetadatarefto('baseType',def_meta_node(def.childof));
+            { Pascal only has public inheritance }
+            if def.objecttype<>odt_cppclass then
+              inheritancedi.addenum('flags','DIFlagPublic');
+            fields.addvalue(llvm_getmetadatareftypedconst(inheritancedi));
+          end;
         if is_implicit_pointer_object_type(def) then
           begin
             dinode:=def_set_meta_impl(def,tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIDerivedType));
-            dinode.addint64('tag',ord(DW_TAG_pointer_type));
-            dinode.addmetadatarefto('baseType',nil);
+            dinode.addenum('tag','DW_TAG_pointer_type');
+
+            structdi:=def_meta_class_struct(def);
+            list.concat(structdi);
+            structdi.addenum('tag','DW_TAG_class_type');
+            appenddef_struct_named(list,def,structdi,fields,def.objname^);
+
+            { implicit pointer }
+            dinode.addmetadatarefto('baseType',structdi);
           end
-        else
-          begin
-            dinode:=def_set_meta_impl(def,tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType));
-            dinode.addint64('tag',ord(DW_TAG_structure_type));
-            if assigned(def.typesym) then
-              dinode.addstring('name',symname(def.typesym, false));
-            dinode.addqword('size',def.size*8);
-          end;
-          list.concat(dinode);
-          write_symtable_procdefs(current_asmdata.asmlists[al_dwarf_info],def.symtable);
+        else case def.objecttype of
+          odt_cppclass,
+          odt_object:
+            begin
+              dinode:=def_set_meta_impl(def,tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType));
+              dinode.addenum('tag','DW_TAG_class_type');
+              appenddef_struct_named(list,def,dinode,fields,def.objname^);
+            end;
+          odt_objcclass:
+            begin
+              { Objective-C class: same as regular class, except for
+                  a) Apple-specific tag that identifies it as an Objective-C class
+                  b) use extname^ instead of objname
+              }
+              dinode:=def_set_meta_impl(def,tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DICompositeType));
+              dinode.addenum('tag','DW_TAG_class_type');
+              dinode.addenum('runtimeLang','DW_LANG_ObjC');
+              appenddef_struct_named(list,def,dinode,fields,def.objextname^);
+            end;
+          odt_objcprotocol:
+            begin
+              dinode:=def_set_meta_impl(def,tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DIDerivedType));
+              dinode.addint64('tag',ord(DW_TAG_pointer_type));
+              dinode.addmetadatarefto('baseType',nil);
+            end;
+          else
+            internalerror(2022060710);
+        end;
+        list.concat(dinode);
+        if assigned(inheritancedi) then
+          inheritancedi.addmetadatarefto('scope',dinode);
+        write_symtable_procdefs(current_asmdata.asmlists[al_dwarf_info],def.symtable);
       end;
 
 
@@ -1832,7 +2180,7 @@ implementation
         dispflags: tsymstr;
         islocal: boolean;
       begin
-        decl:=sym_get_decl(sym);
+        decl:=staticvarsym_get_decl(sym);
         if not assigned(decl) then
           begin
             list.concat(tai_comment.create(strpnew('no declaration found for '+sym.mangledname)));
@@ -2340,6 +2688,8 @@ implementation
         fglobals:=nil;
         current_asmdata.AsmLists[al_dwarf_info].Concat(femptyexpression);
         femptyexpression:=nil;
+        current_asmdata.AsmLists[al_dwarf_info].Concat(fderefexpression);
+        fderefexpression:=nil;
 
         if target_info.system in systems_darwin then
           fcunode.addenum('nameTableKind','GNU');
@@ -2476,6 +2826,7 @@ implementation
         hp: tai;
         functionscope,
         positionmeta: tai_llvmspecialisedmetadatanode;
+        pd: tprocdef;
         procdeffileinfo: tfileposinfo;
         nolineinfolevel : longint;
         firstline: boolean;
@@ -2490,12 +2841,16 @@ implementation
            end;
         if not assigned(hp) then
           exit;
-        procdeffileinfo:=tprocdef(taillvmdecl(hp).def).fileinfo;
+        pd:=tprocdef(taillvmdecl(hp).def);
+        procdeffileinfo:=pd.fileinfo;
         { might trigger for certain kinds of internally generated code }
         if procdeffileinfo.fileindex=0 then
           exit;
 
-        functionscope:=def_meta_node(taillvmdecl(hp).def);
+        flocalvarsymmeta.free;
+        flocalvarsymmeta:=THashSet.Create((pd.localst.SymList.count+pd.parast.SymList.count)*4+1,true,false);
+
+        functionscope:=def_meta_node(pd);
 
         nolineinfolevel:=0;
         hp:=tai(hp.next);
@@ -2542,6 +2897,9 @@ implementation
                   end;
                 if assigned(positionmeta) then
                   taillvm(hp).addinsmetadata(tai_llvmmetadatareferenceoperand.createreferenceto('dbg',positionmeta));
+                if (cs_debuginfo in current_settings.moduleswitches) and
+                   (taillvm(hp).llvmopcode=la_call) then
+                  updatelocalvardbginfo(taillvm(hp),pd,functionscope);
               end;
             hp:=tai(hp.next);
           end;
