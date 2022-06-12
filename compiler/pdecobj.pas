@@ -1313,7 +1313,7 @@ implementation
                           begin
                             rtti_attrs_def := nil;
                             if (idtoken=_GENERIC) and
-                                not (m_delphi in current_settings.modeswitches) and
+                                (m_generic_keywords in current_settings.modeswitches) and
                                 (
                                   not fields_allowed or
                                   is_objectpascal_helper(current_structdef)

@@ -242,7 +242,7 @@ implementation
          repeat
            orgname:=orgpattern;
            filepos:=current_tokenpos;
-           isgeneric:=not (m_delphi in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC);
+           isgeneric:=(m_generic_keywords in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC);
            consume(_ID);
            case token of
 
@@ -741,9 +741,9 @@ implementation
              while token=_LECKKLAMMER do
                parse_rttiattributes(rtti_attrs_def);
 
-           { fpc generic declaration? }
+           { generic keyword declaration? }
            if first then
-             had_generic:=not(m_delphi in current_settings.modeswitches) and try_to_consume(_GENERIC);
+             had_generic:=(m_generic_keywords in current_settings.modeswitches) and try_to_consume(_GENERIC);
            isgeneric:=had_generic;
 
            typename:=pattern;
@@ -751,7 +751,7 @@ implementation
            consume(_ID);
 
            { delphi generic declaration? }
-           if (m_delphi in current_settings.modeswitches) then
+           if not(m_generic_keywords in current_settings.modeswitches) then
              isgeneric:=token=_LSHARPBRACKET;
 
            { Generic type declaration? }
@@ -1192,8 +1192,7 @@ implementation
                generictypelist.free;
              end;
 
-           if not (m_delphi in current_settings.modeswitches) and
-               (token=_ID) and (idtoken=_GENERIC) then
+           if (m_generic_keywords in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC) then
              begin
                had_generic:=true;
                consume(_ID);
@@ -1306,7 +1305,7 @@ implementation
          repeat
            orgname:=orgpattern;
            filepos:=current_tokenpos;
-           isgeneric:=not (m_delphi in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC);
+           isgeneric:=(m_generic_keywords in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC);
            consume(_ID);
            case token of
              _EQ:

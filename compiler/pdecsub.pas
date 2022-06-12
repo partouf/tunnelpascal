@@ -653,11 +653,11 @@ implementation
                 spnongen:=sp;
                 orgspnongen:=orgsp;
                 if firstpart and
-                    not (m_delphi in current_settings.modeswitches) and
+                    (m_generic_keywords in current_settings.modeswitches) and
                     (idtoken=_SPECIALIZE) then
                   hadspecialize:=true;
                 consume(_ID);
-                if ((ppf_generic in flags) or (m_delphi in current_settings.modeswitches)) and
+                if ((ppf_generic in flags) or not(m_generic_keywords in current_settings.modeswitches)) and
                     (token in [_LT,_LSHARPBRACKET]) then
                   begin
                     consume(token);
