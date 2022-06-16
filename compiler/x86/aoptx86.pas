@@ -157,6 +157,7 @@ unit aoptx86;
 
         function DoArithCombineOpt(var p : tai) : Boolean;
         function DoAddRefOpt(var p, hp1: tai; Reg: TRegister; Value: TCGInt): Boolean;
+        function DoReverseAddRefOpt(var p: tai; Value: TCGInt): Boolean;
         function DoMovCmpMemOpt(var p : tai; const hp1: tai) : Boolean;
         function DoSETccLblRETOpt(var p: tai; const hp_label: tai_label) : Boolean;
 
@@ -6446,6 +6447,73 @@ unit aoptx86;
                 end;
               Exit;
             end;
+      end;
+
+
+    function TX86AsmOptimizer.DoReverseAddRefOpt(var p: tai; Value: TCGInt): Boolean;
+      var
+        CurrentRef: PReference;
+        OtherRegister: TRegister;
+        X: Integer;
+        hp1, hp2: tai;
+      begin
+        { Assume that p has been checked and confirmed to be of the form
+          "ADD/SUB const,%reg" }
+        Result := False;
+
+        if GetLastInstruction(p, hp1) and (hp1.typ = ait_instruction) and
+          { Make sure this instruction doesn't also modify the register used in
+            the ADD/SUB instruction }
+          not RegModifiedByInstruction(taicpu(p).oper[1]^.reg, hp1) then
+          begin
+            { Find the reference }
+            for X := 0 to taicpu(Hp1).ops - 1 do
+              if (taicpu(hp1).oper[X]^.typ = top_ref) then
+                begin
+                  { Locally store the pointer to the reference }
+                  CurrentRef := taicpu(hp1).oper[X]^.ref;
+
+                  if
+                    { Only references of the form x(%reg1,%reg2,scale) can be
+                      optimised here }
+                    (CurrentRef^.refaddr <> addr_no) or
+                    not RegInRef(taicpu(p).oper[1]^.reg, CurrentRef^) then
+                    Exit;
+
+                  { Account for the scale factor on the value }
+                  if SuperRegistersEqual(taicpu(p).oper[1]^.reg, CurrentRef^.index) then
+                    begin
+                      OtherRegister := CurrentRef^.base;
+                      if SuperRegistersEqual(taicpu(p).oper[1]^.reg, CurrentRef^.base) then
+                        Inc(Value, Value * max(CurrentRef^.scalefactor, 1))
+                      else
+                        Value := Value * max(CurrentRef^.scalefactor, 1);
+                    end
+                  else
+                    OtherRegister := CurrentRef^.index;
+
+                  if (OtherRegister <> NR_NO) and
+                    { If we can't set the offset to zero, this is wasted effort }
+                    (CurrentRef^.offset = Value)
+                    and GetLastInstruction(hp1, hp2) and
+                    { Make sure there is a pipeline stall between hp2 and hp1,
+                      otherwise a saving won't be made }
+                    RegModifiedByInstruction(OtherRegister, hp2) then
+                    begin
+                      taicpu(hp1).oper[X]^.ref^.offset := 0;
+                      AsmL.Remove(hp1);
+                      AsmL.InsertAfter(hp1, p);
+
+                      { In case OtherRegister got deallocated right after the reference }
+                      AllocRegBetween(OtherRegister, hp2, hp1, UsedRegs);
+
+                      DebugMsg(SPeepholeOptimization + 'Rearranged MOV; (ref); ADD/SUB to MOV; ADD/SUB; (ref) to remove offset and minimise cache pollution', hp2);
+
+                      { Keep p as the current instruction }
+                      Result := True;
+                    end;
+                end;
+          end;
       end;
 
 
@@ -15495,131 +15563,145 @@ unit aoptx86;
       begin
         Result := False;
 
-        { Change:
-            add/sub 128,(dest)
-
-          To:
-            sub/add -128,(dest)
-
-          This generaally takes fewer bytes to encode because -128 can be stored
-          in a signed byte, whereas +128 cannot.
-        }
-        if (taicpu(p).opsize <> S_B) and MatchOperand(taicpu(p).oper[0]^, 128) then
+        if taicpu(p).oper[0]^.typ = top_const then
           begin
-            if taicpu(p).opcode = A_ADD then
-              Opposite := A_SUB
-            else
-              Opposite := A_ADD;
-
-            { Be careful if the flags are in use, because the CF flag inverts
-              when changing from ADD to SUB and vice versa }
-            if RegInUsedRegs(NR_DEFAULTFLAGS, UsedRegs) and
-              GetNextInstruction(p, hp1) then
+            { Sometimes, DoAddRefOpt makes an optimisation that doesn't
+              improve code speed and only increases cache pollution.  If these
+              aren't cleared by other optimisations, rectify it here }
+            if taicpu(p).oper[1]^.typ = top_reg then
               begin
-                TransferUsedRegs(TmpUsedRegs);
-                TmpUsedRegs[R_SPECIALREGISTER].Update(tai(p.Next), True);
-
-                hp2 := hp1;
-
-                { Scan ahead to check if everything's safe }
-                while Assigned(hp1) and RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) do
-                  begin
-                    if (hp1.typ <> ait_instruction) then
-                      { Probably unsafe since the flags are still in use }
-                      Exit;
-
-                    if MatchInstruction(hp1, A_CALL, A_JMP, A_RET, []) then
-                      { Stop searching at an unconditional jump }
-                      Break;
-
-                    if not
-                      (
-                        MatchInstruction(hp1, A_ADC, A_SBB, []) and
-                        (taicpu(hp1).oper[0]^.typ = top_const) { We need to be able to invert a constant }
-                      ) and
-                      (taicpu(hp1).condition = C_None) and RegInInstruction(NR_DEFAULTFLAGS, hp1) then
-                      { Instruction depends on FLAGS (and is not ADC or SBB); break out }
-                      Exit;
-
-                    UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
-                    TmpUsedRegs[R_SPECIALREGISTER].Update(tai(hp1.Next), True);
-
-                    { Move to the next instruction }
-                    GetNextInstruction(hp1, hp1);
-                  end;
-
-                while Assigned(hp2) and (hp2 <> hp1) do
-                  begin
-                    NewCond := C_None;
-
-                    case taicpu(hp2).condition of
-                      C_A, C_NBE:
-                        NewCond := C_BE;
-                      C_B, C_C, C_NAE:
-                        NewCond := C_AE;
-                      C_AE, C_NB, C_NC:
-                        NewCond := C_B;
-                      C_BE, C_NA:
-                        NewCond := C_A;
-                      else
-                        { No change needed };
-                    end;
-
-                    if NewCond <> C_None then
-                      begin
-                        DebugMsg(SPeepholeOptimization + 'Condition changed from ' + cond2str[taicpu(hp2).condition] + ' to ' + cond2str[NewCond] +
-                          ' to accommodate ' + debug_op2str(taicpu(p).opcode) + ' -> ' + debug_op2str(opposite) + ' above', hp2);
-
-                        taicpu(hp2).condition := NewCond;
-                      end
-                    else
-                      if MatchInstruction(hp2, A_ADC, A_SBB, []) then
-                        begin
-                          { Because of the flipping of the carry bit, to ensure
-                            the operation remains equivalent, ADC becomes SBB
-                            and vice versa, and the constant is not-inverted.
-
-                            If multiple ADCs or SBBs appear in a row, each one
-                            changed causes the carry bit to invert, so they all
-                            need to be flipped }
-                          if taicpu(hp2).opcode = A_ADC then
-                            SecondOpposite := A_SBB
-                          else
-                            SecondOpposite := A_ADC;
-
-                          if taicpu(hp2).oper[0]^.typ <> top_const then
-                            { Should have broken out of this optimisation already }
-                            InternalError(2021112901);
-
-                          DebugMsg(SPeepholeOptimization + debug_op2str(taicpu(hp2).opcode) + debug_opsize2str(taicpu(hp2).opsize) + ' $' + debug_tostr(taicpu(hp2).oper[0]^.val) + ',' + debug_operstr(taicpu(hp2).oper[1]^) + ' -> ' +
-                            debug_op2str(SecondOpposite) + debug_opsize2str(taicpu(hp2).opsize) + ' $' + debug_tostr(not taicpu(hp2).oper[0]^.val) + ',' + debug_operstr(taicpu(hp2).oper[1]^) + ' to accommodate inverted carry bit', hp2);
-
-                          { Bit-invert the constant (effectively equivalent to "-1 - val") }
-                          taicpu(hp2).opcode := SecondOpposite;
-                          taicpu(hp2).oper[0]^.val := not taicpu(hp2).oper[0]^.val;
-                        end;
-
-                    { Move to the next instruction }
-                    GetNextInstruction(hp2, hp2);
-                  end;
-
-                if (hp2 <> hp1) then
-                  InternalError(2021111501);
+                if taicpu(p).opcode = A_ADD then
+                  Result := DoReverseAddRefOpt(p, taicpu(p).oper[0]^.val)
+                else
+                  Result := DoReverseAddRefOpt(p, -taicpu(p).oper[0]^.val);
               end;
 
-            DebugMsg(SPeepholeOptimization + debug_op2str(taicpu(p).opcode) + debug_opsize2str(taicpu(p).opsize) + ' $128,' + debug_operstr(taicpu(p).oper[1]^) + ' changed to ' +
-              debug_op2str(opposite) + debug_opsize2str(taicpu(p).opsize) + ' $-128,' + debug_operstr(taicpu(p).oper[1]^) + ' to reduce instruction size', p);
+            { Change:
+                add/sub 128,(dest)
 
-            taicpu(p).opcode := Opposite;
-            taicpu(p).oper[0]^.val := -128;
+              To:
+                sub/add -128,(dest)
 
-            { No further optimisations can be made on this instruction, so move
-              onto the next one to save time }
-            p := tai(p.Next);
-            UpdateUsedRegs(p);
+              This generaally takes fewer bytes to encode because -128 can be stored
+              in a signed byte, whereas +128 cannot.
+            }
+            if (taicpu(p).opsize <> S_B) and (taicpu(p).oper[0]^.val = 128) then
+              begin
+                if taicpu(p).opcode = A_ADD then
+                  Opposite := A_SUB
+                else
+                  Opposite := A_ADD;
 
-            Result := True;
-            Exit;
+                { Be careful if the flags are in use, because the CF flag inverts
+                  when changing from ADD to SUB and vice versa }
+                if RegInUsedRegs(NR_DEFAULTFLAGS, UsedRegs) and
+                  GetNextInstruction(p, hp1) then
+                  begin
+                    TransferUsedRegs(TmpUsedRegs);
+                    TmpUsedRegs[R_SPECIALREGISTER].Update(tai(p.Next), True);
+
+                    hp2 := hp1;
+
+                    { Scan ahead to check if everything's safe }
+                    while Assigned(hp1) and RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) do
+                      begin
+                        if (hp1.typ <> ait_instruction) then
+                          { Probably unsafe since the flags are still in use }
+                          Exit;
+
+                        if MatchInstruction(hp1, A_CALL, A_JMP, A_RET, []) then
+                          { Stop searching at an unconditional jump }
+                          Break;
+
+                        if not
+                          (
+                            MatchInstruction(hp1, A_ADC, A_SBB, []) and
+                            (taicpu(hp1).oper[0]^.typ = top_const) { We need to be able to invert a constant }
+                          ) and
+                          (taicpu(hp1).condition = C_None) and RegInInstruction(NR_DEFAULTFLAGS, hp1) then
+                          { Instruction depends on FLAGS (and is not ADC or SBB); break out }
+                          Exit;
+
+                        UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                        TmpUsedRegs[R_SPECIALREGISTER].Update(tai(hp1.Next), True);
+
+                        { Move to the next instruction }
+                        GetNextInstruction(hp1, hp1);
+                      end;
+
+                    while Assigned(hp2) and (hp2 <> hp1) do
+                      begin
+                        NewCond := C_None;
+
+                        case taicpu(hp2).condition of
+                          C_A, C_NBE:
+                            NewCond := C_BE;
+                          C_B, C_C, C_NAE:
+                            NewCond := C_AE;
+                          C_AE, C_NB, C_NC:
+                            NewCond := C_B;
+                          C_BE, C_NA:
+                            NewCond := C_A;
+                          else
+                            { No change needed };
+                        end;
+
+                        if NewCond <> C_None then
+                          begin
+                            DebugMsg(SPeepholeOptimization + 'Condition changed from ' + cond2str[taicpu(hp2).condition] + ' to ' + cond2str[NewCond] +
+                              ' to accommodate ' + debug_op2str(taicpu(p).opcode) + ' -> ' + debug_op2str(opposite) + ' above', hp2);
+
+                            taicpu(hp2).condition := NewCond;
+                          end
+                        else
+                          if MatchInstruction(hp2, A_ADC, A_SBB, []) then
+                            begin
+                              { Because of the flipping of the carry bit, to ensure
+                                the operation remains equivalent, ADC becomes SBB
+                                and vice versa, and the constant is not-inverted.
+
+                                If multiple ADCs or SBBs appear in a row, each one
+                                changed causes the carry bit to invert, so they all
+                                need to be flipped }
+                              if taicpu(hp2).opcode = A_ADC then
+                                SecondOpposite := A_SBB
+                              else
+                                SecondOpposite := A_ADC;
+
+                              if taicpu(hp2).oper[0]^.typ <> top_const then
+                                { Should have broken out of this optimisation already }
+                                InternalError(2021112901);
+
+                              DebugMsg(SPeepholeOptimization + debug_op2str(taicpu(hp2).opcode) + debug_opsize2str(taicpu(hp2).opsize) + ' $' + debug_tostr(taicpu(hp2).oper[0]^.val) + ',' + debug_operstr(taicpu(hp2).oper[1]^) + ' -> ' +
+                                debug_op2str(SecondOpposite) + debug_opsize2str(taicpu(hp2).opsize) + ' $' + debug_tostr(not taicpu(hp2).oper[0]^.val) + ',' + debug_operstr(taicpu(hp2).oper[1]^) + ' to accommodate inverted carry bit', hp2);
+
+                              { Bit-invert the constant (effectively equivalent to "-1 - val") }
+                              taicpu(hp2).opcode := SecondOpposite;
+                              taicpu(hp2).oper[0]^.val := not taicpu(hp2).oper[0]^.val;
+                            end;
+
+                        { Move to the next instruction }
+                        GetNextInstruction(hp2, hp2);
+                      end;
+
+                    if (hp2 <> hp1) then
+                      InternalError(2021111501);
+                  end;
+
+                DebugMsg(SPeepholeOptimization + debug_op2str(taicpu(p).opcode) + debug_opsize2str(taicpu(p).opsize) + ' $128,' + debug_operstr(taicpu(p).oper[1]^) + ' changed to ' +
+                  debug_op2str(opposite) + debug_opsize2str(taicpu(p).opsize) + ' $-128,' + debug_operstr(taicpu(p).oper[1]^) + ' to reduce instruction size', p);
+
+                taicpu(p).opcode := Opposite;
+                taicpu(p).oper[0]^.val := -128;
+
+                { No further optimisations can be made on this instruction, so move
+                  onto the next one to save time }
+                p := tai(p.Next);
+                UpdateUsedRegs(p);
+
+                Result := True;
+                Exit;
+              end;
           end;
 
         { Detect:
