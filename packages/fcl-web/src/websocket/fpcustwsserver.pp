@@ -590,7 +590,7 @@ begin
   aContinue:=True;
 end;
 
-procedure TCustomWSServer.RemoveConnection(AConnection: TWSServerConnection;aDoDisconnect: Boolean);
+procedure TCustomWSServer.RemoveConnection(AConnection: TWSServerConnection; aDoDisconnect: Boolean);
 begin
   if aDoDisconnect then
     try
