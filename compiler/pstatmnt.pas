@@ -1507,7 +1507,7 @@ implementation
                include them as well
              }
              if not(p.nodetype in [nothingn,errorn,calln,ifn,assignn,breakn,inlinen,
-                                   continuen,labeln,blockn,exitn,goton]) or
+                                   continuen,labeln,blockn,exitn,goton,loadn]) or
                 ((p.nodetype=inlinen) and
                  not is_void(p.resultdef)) or
                 ((p.nodetype=calln) and

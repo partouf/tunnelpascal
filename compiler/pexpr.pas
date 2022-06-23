@@ -2854,7 +2854,7 @@ implementation
                   do_proc_call(srsym,srsymtable,tabstractrecorddef(p1.resultdef),false,again,p1,[],nil);
                 end
               else if assigned(p1.resultdef) and
-                 (p1.resultdef.typ=procvardef) then
+                 ((p1.resultdef.typ=procvardef) or (p1.resultdef.typ=undefineddef) or (p1.resultdef.typ=procdef)) then
                 begin
                   { Typenode for typecasting or expecting a procvar }
                   if (p1.nodetype=typen) or
@@ -2882,7 +2882,9 @@ implementation
                         begin
                           p2:=parse_paras(false,false,_RKLAMMER);
                           consume(_RKLAMMER);
-                          p1:=ccallnode.create_procvar(p2,p1);
+                          { change to a call node if the type is not undefined }
+                          if p1.resultdef.typ<>undefineddef then
+                            p1:=ccallnode.create_procvar(p2,p1);
                           { proc():= is never possible }
                           if token=_ASSIGNMENT then
                             begin
