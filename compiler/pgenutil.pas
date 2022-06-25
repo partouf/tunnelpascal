@@ -761,7 +761,7 @@ uses
         var
           newtype: tsym;
           pd: tprocvardef;
-          para:tparavarsym;
+          para: tparavarsym;
           i: integer;
         begin
           newtype:=nil;
