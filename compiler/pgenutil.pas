@@ -739,12 +739,18 @@ uses
       function create_unnamed_type_alias(def:tdef;owner:tdef=nil): ttypesym;
         var
           name: tsymstr;
+          i: integer;
         begin
           if owner=nil then
             owner:=def;
 
           { generate a unique type name } 
           name:=def.fulltypename+'$'+typName[def.typ]+'$'+def.unique_id_str;
+
+          { remove illegal characters not allowed by the assembler }
+          for i:= 0 to high(name) do
+            if name[i] in [' ','.',';'] then
+              name[i]:='_';
 
           result:=ctypesym.create(name,owner);
           include(result.symoptions,sp_generic_unnamed_type);
