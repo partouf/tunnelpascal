@@ -2854,7 +2854,7 @@ implementation
                   do_proc_call(srsym,srsymtable,tabstractrecorddef(p1.resultdef),false,again,p1,[],nil);
                 end
               else if assigned(p1.resultdef) and
-                 ((p1.resultdef.typ=procvardef) or (p1.resultdef.typ=undefineddef) or (p1.resultdef.typ=procdef)) then
+                 ((p1.resultdef.typ=procvardef) or (p1.resultdef.typ=undefineddef)) then
                 begin
                   { Typenode for typecasting or expecting a procvar }
                   if (p1.nodetype=typen) or
