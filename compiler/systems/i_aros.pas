@@ -103,7 +103,7 @@ unit i_aros;
             flags        : [tf_files_case_aware, tf_smartlink_sections, tf_has_winlike_resources,tf_supports_hidden_symbols];
             cpu          : cpu_x86_64;
             unit_env     : 'AROSUNITS';
-            extradefines : 'HASAMIGA;AROS_BINCOMPAT;AROS_ABIv1';
+            extradefines : 'HASAMIGA;AROS_BINCOMPAT;AROS_ABIv11';
             exeext       : '';
             defext       : '.def';
             scriptext    : '.sh';
