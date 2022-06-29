@@ -60,7 +60,7 @@ function ExamineFH(Fh: BPTR; Fib: PFileInfoBlock): LongBool; syscall AOS_DOSBase
 function NameFromFH(Fh: BPTR; Buffer: PChar; Length: LongInt): LongBool; syscall AOS_DOSBase 68;
 
 
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 function DosError1(): BPTR;
 var
   P: PProcess;
