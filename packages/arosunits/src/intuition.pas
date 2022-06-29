@@ -3478,7 +3478,7 @@ function GetMonitorList(Tags: PTagItem): PPObject_; syscall IntuitionBase 163;
 procedure FreeMonitorList(Obj: PPObject_); syscall IntuitionBase 164;
 {$endif}
 
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 procedure ChangeDecoration(ID: LongWord; Decor: PNewDecorator); syscall IntuitionBase 152;
 function StartScreenNotifyTagList(Tags: PTagItem): IPTR; syscall IntuitionBase 154;
 function EndScreenNotify(Notify: IPTR): LongBool; syscall IntuitionBase 155;

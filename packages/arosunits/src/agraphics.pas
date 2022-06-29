@@ -2236,7 +2236,7 @@ procedure BltRastPortBitMap(SrcRastPort: PRastPort; xSrc, ySrc: LongInt; DestBit
 procedure ShowImminentReset; syscall GfxBase 197;
 {$endif}
 
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 function AddDisplayDriverA(GfxHidd: APTR; Tags: PTagItem): LongInt; syscall GfxBase 107;
 procedure SetDisplayDriverCallback(CallBack: TDriverNotifyFunc; UserData: APTR); syscall GfxBase 108;
 function SetRegion(Src: PRegion; Dest: PRegion): LongBool; syscall GfxBase 181;
@@ -2462,7 +2462,7 @@ procedure CEND(c: PUCopList); inline;
 begin
   CWAIT(c, 10000, 255);
 end;
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 function CreateRastPort: PRastPort;
 var
   RP: PRastPort;

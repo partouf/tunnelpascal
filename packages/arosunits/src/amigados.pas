@@ -2375,7 +2375,7 @@ function SelectError(Fh: BPTR): BPTR; syscall AOS_DOSBase 144;
 function Pipe(const Name: STRPTR; var Reader: BPTR; var Writer: BPTR): LongInt; syscall AOS_DOSBase 160;
 {$endif}
 
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 function DosError(): BPTR;
 {$endif}
 
@@ -2500,7 +2500,7 @@ begin
   UnReadChar := UnGetC(DosInput(),c);
 end;
 
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 function DosError(): BPTR;
 var
   P: PProcess;

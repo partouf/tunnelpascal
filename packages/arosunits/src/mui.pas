@@ -4259,7 +4259,7 @@ procedure MUI_RemoveClipRegion(Mri: PMUI_RenderInfo; Handle: Pointer); syscall M
 function MUI_BeginRefresh(Mri: PMUI_RenderInfo; Flags: LongWord): LongBool; syscall MUIMasterBase 28;
 procedure MUI_EndRefresh(Mri: PMUI_RenderInfo; Flags: LongWord); syscall MUIMasterBase 29;
 {$endif}
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 function MUI_ObtainPen(Mri: PMUI_RenderInfo; spec : pMUI_PenSpec; flags : LongWord) : LongInt; syscall MUIMasterBase 26;
 procedure MUI_ReleasePen(Mri: PMUI_RenderInfo; Pen: LongInt); syscall MUIMasterBase 27;
 function MUI_AddClipping(Mri: PMUI_RenderInfo; Left: SmallInt; Top: SmallInt; Width: SmallInt; Height: SmallInt): APTR; syscall MUIMasterBase 28;

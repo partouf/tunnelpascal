@@ -23,6 +23,8 @@ defines:
   AROS_NEED_LONG_ALIGN    = ????
   AROS_FLAVOUR_BINCOMPAT  = AROS_BINCOMPAT (Bincompat mode)
   AROS_MORPHOS_COMPATIBLE = ????
+  AROSPLATFORM_SMP        = AROS platform was build with SMP support (AROS_ABIv1: i386/x86_64 )
+  AROSEXEC_SMP            = AROS exec kernel has SMP enabled (AROS_ABIv1: x86_64)
 }
 
 
@@ -86,9 +88,7 @@ const
   LFalse: LongInt = 0;
 
 // spinlock
-{$ifndef AROS_ABIv11}
-{$ifdef AROS_ABIv1}
-{$ifdef AROSPLATFORM_SMP}
+{$if defined(AROS_ABIv1) and defined(AROSPLATFORM_SMP)}
 type
   TSpinLock =
   record
@@ -107,8 +107,6 @@ type
     2: (_skip: packed array[0..7] of byte; s_Owner: Pointer);  // skip block and lock because that occupies most space
     3: (pad_align: packed array[0..128-1] of byte);            // ensure 128 byte record size
   end;
-{$endif}
-{$endif}
 {$endif}
 
 type
@@ -642,20 +640,14 @@ type
     mp_SigBit: Byte;     { signal bit number    }
     mp_SigTask: Pointer;   { task to be signalled (TaskPtr) }
     mp_MsgList: TList;     { message linked list  }
-{$ifndef AROS_ABIv11}
-{$ifdef AROS_ABIv1}
-{$ifdef AROSPLATFORM_SMP}
+{$if defined(AROS_ABIv1) and defined(AROSPLATFORM_SMP)}
 {$ifdef AROSEXEC_SMP}
     mp_SpinLock: TSpinLock;
 {$else}
     mp_Pad: TSpinlock;
 {$endif}
-{$endif}
-{$endif}
-{$else}
-{$ifndef CPUM68K}
+{$elseif defined(AROS_ABIv11) and not defined(CPUM68K)}
     mp_Private: array[0..1] of IPTR; // Private extension field
-{$endif}
 {$endif}
   end;
 
@@ -806,9 +798,9 @@ type
     et_Result1: ULONG;     // First result
     et_Result2: APTR;      // Result data pointer (AllocVec)
     et_TaskMsgPort: TMsgPort;
-{$IFDEF AROS_ABIv0}
+{$ifdef AROS_ABIv0}
     et_Compatibility: array[0..3] of APTR;   // Reserve this space for compiled software to access iet_startup and iet_acpd
-{$ENDIF}
+{$endif}
     et_MemPool: Pointer;              // Task's private memory pool
 {$ifdef aros}
     et_Reserved: array[0..0] of IPTR; // MorphOS Private
@@ -819,7 +811,7 @@ type
     et_RegFrame: Pointer;
     // Internal fields follow
   end;
-{$endif}
+{$endif AROS_MORPHOS_COMPATIBLE}
 
 const
 // Return codes from new child functions
@@ -880,15 +872,11 @@ type
   TSemaphoreRequest = record
     sr_Link: TMinNode;
     sr_Waiter: PTask;
-{$ifndef AROS_ABIv11}
-{$ifdef AROS_ABIv1}
-{$ifdef AROSPLATFORM_SMP}
+{$if defined(AROS_ABIv1) and defined(AROSPLATFORM_SMP)}
 {$ifdef AROSEXEC_SMP}
     sr_SpinLock: TSpinLock;
 {$else}
     sr_pad: TSpinLock;
-{$endif}
-{$endif}
 {$endif}
 {$endif}
   end;
@@ -1050,17 +1038,18 @@ const
 type
   PArosSupportBase = ^TArosSupportBase;
   TArosSupportBase = record
-{$IFDEF AROS_ABIv0}
+{$ifdef AROS_ABIv0}
     StdOut: Pointer;
-{$ELSE}
+{$endif}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
     _pad: IPTR;
-{$ENDIF}
+{$endif}
     kPrintfPtr: Pointer;
     rkPrintfPtr: Pointer;
     vkPrintfPtr: Pointer;
-{$IFDEF AROS_ABIv0}
+{$ifdef AROS_ABIv0}
     DebugConfig: Pointer;
-{$ENDIF}
+{$endif}
   end;
 
   PExecBase = ^TExecBase;
@@ -1433,7 +1422,7 @@ procedure FreeVecPooled(Pool: APTR; Memory: APTR); syscall AOS_ExecBase 150;
 function NewAllocEntry(Entry: PMemList; var Return_Entry: PMemList; var Return_Flags: ULONG): LongBool; syscall AOS_ExecBase 151;
 {$endif}
 
-{$ifdef AROS_ABIv1}
+{$if defined(AROS_ABIv1) or defined(AROS_ABIv11)}
 procedure NewMinList(Ml: PMinList); syscall AOS_ExecBase 138;
 function AVL_AddNode(Root: PPAVLNode; Node: PAVLNode; Func: PAVLNODECOMP): PAVLNode; syscall AOS_ExecBase 142;
 function AVL_RemNodeByAddress(Root: PPAVLNode; Node: PAVLNode): PAVLNode; syscall AOS_ExecBase 143;
