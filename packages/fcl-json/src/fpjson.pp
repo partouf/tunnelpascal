@@ -2099,7 +2099,8 @@ end;
 
 function TJSONFloatNumber.GetAsString: TJSONStringType;
 begin
-  Str(FValue,Result);
+  //Str(FValue,Result);
+  Result:=FloatToStr(FValue);
   // Str produces a ' ' in front where the - can go.
   if (Result<>'') and (Result[1]=' ') then
     Delete(Result,1,1);
