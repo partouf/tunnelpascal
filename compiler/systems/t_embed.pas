@@ -1725,7 +1725,12 @@ begin
   DynLinkStr:='';
   FixedExeFileName:=maybequoted(ScriptFixFileName(ChangeFileExt(current_module.exefilename,'.elf')));
 
-  GCSectionsStr:='--gc-sections';
+  if (cs_link_smart in current_settings.globalswitches) and
+    create_smartlink_sections then
+    GCSectionsStr:='--gc-sections'
+  else
+    GCSectionsStr:='';
+
   //if not(cs_link_extern in current_settings.globalswitches) then
   if not(cs_link_nolink in current_settings.globalswitches) then
    Message1(exec_i_linking,current_module.exefilename);
