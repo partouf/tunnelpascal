@@ -1724,7 +1724,9 @@ begin
   DynLinkStr:='';
   FixedExeFileName:=maybequoted(ScriptFixFileName(ChangeFileExt(current_module.exefilename,'.elf')));
 
-  GCSectionsStr:='--gc-sections';
+  // do not GC sections on an embedded binary, otherwise you lose
+  // symbols like __fpc_initialheap and __heapsize
+  GCSectionsStr:='';
   //if not(cs_link_extern in current_settings.globalswitches) then
   if not(cs_link_nolink in current_settings.globalswitches) then
    Message1(exec_i_linking,current_module.exefilename);
