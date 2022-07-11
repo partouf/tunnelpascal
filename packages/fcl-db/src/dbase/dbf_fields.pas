@@ -467,17 +467,7 @@ begin
   case FFieldType of
     ftAutoInc  :
       if DbfVersion=xVisualFoxPro then
-      begin
-        FNativeFieldType  := 'I';
-        // set some default autoinc start value and step
-        // without it field will be considered a simple integer field
-        // (not sure if this is the right place for that)
-        if (FAutoInc = 0) and (FAllocSize = 0) then
-        begin
-          FAutoInc := 1;
-          FAutoIncStep := 1;
-        end;
-      end
+        FNativeFieldType  := 'I'
       else
         FNativeFieldType  := '+'; //Apparently xbaseV/7+ only; not (Visual) Foxpro
     ftDateTime :

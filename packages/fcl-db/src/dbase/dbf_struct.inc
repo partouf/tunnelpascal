@@ -22,7 +22,6 @@ const
   FieldPropType_Default     = $04;
   FieldPropType_Constraint  = $06;
 
-  FieldDescIII_AutoIncOffset = 19;
   FieldDescVII_AutoIncOffset = 42;
 
 //====================================================================
