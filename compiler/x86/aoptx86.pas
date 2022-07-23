@@ -3907,6 +3907,22 @@ unit aoptx86;
                         UpdateUsedRegs(TmpUsedRegs, tai(hp3.Next));
                         if MatchInstruction(hp3, A_Jcc, A_SETcc, A_CMOVcc, []) then
                           begin
+                            if (taicpu(hp3).opcode = A_Jcc) then
+                              begin
+                                { Check for jump shortcuts first.  Not only will they
+                                  be missed if the condition is destroyed, but the
+                                  jump optimisations may invert the condition, or remove
+                                  it completely, so doing these optimisations after the
+                                  condition has already been read may cause incorrect
+                                  code to be generated. }
+                                DoJumpOptimizations(hp3, TempBool);
+                                if taicpu(hp3).condition = C_None then
+                                  begin
+                                    DoOptimisation := False;
+                                    hp3 := hp2;
+                                    Continue;
+                                  end;
+                              end;
 
                             if condition_in(C_E, taicpu(hp3).condition) or (taicpu(hp3).condition in [C_NC, C_NS, C_NO]) then
                               begin
@@ -3915,8 +3931,6 @@ unit aoptx86;
                                   A_Jcc:
                                     begin
                                       DebugMsg(SPeepholeOptimization + 'Condition is always true (jump made unconditional)', hp3);
-                                      { Check for jump shortcuts before we destroy the condition }
-                                      DoJumpOptimizations(hp3, TempBool);
                                       MakeUnconditional(taicpu(hp3));
                                       Result := True;
                                     end;
