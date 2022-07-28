@@ -2967,12 +2967,13 @@ unit aoptx86;
                 ??? %reg1,r/m
             }
             if taicpu(p).oper[0]^.typ = top_reg then
+              while True do
               begin
                 if RegReadByInstruction(p_TargetReg, hp1) and
                   DeepMOVOpt(taicpu(p), taicpu(hp1)) then
                   begin
                     { A change has occurred, just not in p }
-                    Result := True;
+                    Include(OptsToCheck, aoc_ForceNewIteration);
 
                     TransferUsedRegs(TmpUsedRegs);
                     UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
@@ -2999,8 +3000,6 @@ unit aoptx86;
                       { Just being a register is enough to confirm it's a null operation }
                       (taicpu(hp1).oper[0]^.typ = top_reg) then
                       begin
-
-                        Result := True;
 
                         { Speed-up to reduce a pipeline stall... if we had something like...
 
@@ -3056,10 +3055,14 @@ unit aoptx86;
                               Exit;
 
                             hp1 := hp2;
+                            { Go through DeepMOVOpt again (jump to "while True do") }
+                            Continue;
                           end;
                       end;
 
                   end;
+
+                Break;
               end;
           end;
 
