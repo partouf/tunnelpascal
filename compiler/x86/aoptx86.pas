@@ -1562,7 +1562,7 @@ unit aoptx86;
     function TX86AsmOptimizer.PrePeepholeOptIMUL(var p : tai) : boolean;
       var
         opsize : topsize;
-        hp1 : tai;
+        hp1, hp2 : tai;
         tmpref : treference;
         ShiftValue : Cardinal;
         BaseValue : TCGInt;
@@ -1584,10 +1584,11 @@ unit aoptx86;
              { change "imul $1, reg1, reg2" to "mov reg1, reg2" }
               begin
                 hp1 := taicpu.Op_Reg_Reg(A_MOV, opsize, taicpu(p).oper[1]^.reg,taicpu(p).oper[2]^.reg);
-                InsertLLItem(p.previous, p.next, hp1);
+                taicpu(hp1).fileinfo := taicpu(p).fileinfo;
+                asml.InsertAfter(hp1, p);
                 DebugMsg(SPeepholeOptimization + 'Imul2Mov done',p);
-                p.free;
-                p := hp1;
+                RemoveCurrentP(p, hp1);
+                Result := True;
               end
           else if ((taicpu(p).ops <= 2) or
               (taicpu(p).oper[2]^.typ = Top_Reg)) and
@@ -1630,8 +1631,13 @@ unit aoptx86;
                   taicpu(hp1).fileinfo:=taicpu(p).fileinfo;
                   RemoveCurrentP(p, hp1);
                   if ShiftValue>0 then
-                    AsmL.InsertAfter(taicpu.op_const_reg(A_SHL, opsize, ShiftValue, taicpu(hp1).oper[1]^.reg),hp1);
-              end;
+                    begin
+                      hp2 := taicpu.op_const_reg(A_SHL, opsize, ShiftValue, taicpu(hp1).oper[1]^.reg);
+                      AsmL.InsertAfter(hp2,hp1);
+                      taicpu(hp2).fileinfo:=taicpu(hp1).fileinfo;
+                    end;
+                  Result := True;
+                end;
             end;
       end;
 
@@ -5155,12 +5161,9 @@ unit aoptx86;
               begin
                 if (taicpu(p).oper[0]^.ref^.base <> taicpu(p).oper[1]^.reg) then
                   begin
-                    hp1:=taicpu.op_reg_reg(A_MOV,taicpu(p).opsize,taicpu(p).oper[0]^.ref^.base,
-                      taicpu(p).oper[1]^.reg);
-                    InsertLLItem(p.previous,p.next, hp1);
-                    DebugMsg(SPeepholeOptimization + 'Lea2Mov done',hp1);
-                    p.free;
-                    p:=hp1;
+                    taicpu(p).opcode := A_MOV;
+                    taicpu(p).loadreg(0, taicpu(p).oper[0]^.ref^.base);
+                    DebugMsg(SPeepholeOptimization + 'Lea2Mov done',p);
                   end
                 else
                   begin
@@ -5834,12 +5837,14 @@ unit aoptx86;
                 hp4:=taicpu.op_reg(A_SETcc, S_B, ThisReg);
 
                 hp2:=taicpu.op_const_reg(A_MOV, taicpu(hp2).opsize, 0, taicpu(hp2).oper[1]^.reg);
+                taicpu(hp2).fileinfo:=taicpu(p).fileinfo;
 
                 { Inserting it right before p will guarantee that the flags are also tracked }
                 Asml.InsertBefore(hp2, p);
               end;
 
-            taicpu(hp4).condition:=taicpu(p).condition;
+            taicpu(hp4).fileinfo := taicpu(hp2).fileinfo;
+            taicpu(hp4).condition := taicpu(p).condition;
             asml.InsertBefore(hp4, hp2);
 
             JumpLoc.decrefs;
@@ -6164,16 +6169,16 @@ unit aoptx86;
                 if not(TmpBool2) and
                     (taicpu(p).oper[0]^.val=1) then
                   begin
-                    hp1:=taicpu.Op_reg_reg(A_ADD,taicpu(p).opsize,
-                      taicpu(p).oper[1]^.reg, taicpu(p).oper[1]^.reg)
+                    taicpu(p).opcode := A_ADD;
+                    taicpu(p).loadreg(0, taicpu(p).oper[1]^.reg);
                   end
                 else
-                  hp1:=taicpu.op_ref_reg(A_LEA, taicpu(p).opsize, TmpRef,
-                              taicpu(p).oper[1]^.reg);
+                  begin
+                    taicpu(p).opcode := A_LEA;
+                    taicpu(p).loadref(0, TmpRef);
+                  end;
                 DebugMsg(SPeepholeOptimization + 'ShlAddLeaSubIncDec2Lea',p);
-                InsertLLItem(p.previous, p.next, hp1);
-                p.free;
-                p := hp1;
+                Result := True;
               end;
           end
 {$ifndef x86_64}
@@ -6184,11 +6189,9 @@ unit aoptx86;
               (unlike shl, which is only Tairable in the U pipe) }
             if taicpu(p).oper[0]^.val=1 then
                 begin
-                  hp1 := taicpu.Op_reg_reg(A_ADD,taicpu(p).opsize,
-                            taicpu(p).oper[1]^.reg, taicpu(p).oper[1]^.reg);
-                  InsertLLItem(p.previous, p.next, hp1);
-                  p.free;
-                  p := hp1;
+                  taicpu(p).opcode := A_ADD;
+                  taicpu(p).loadreg(0, taicpu(p).oper[1]^.reg);
+                  Result := True;
                 end
            { changes "shl $2, %reg" to "lea (,%reg,4), %reg"
              "shl $3, %reg" to "lea (,%reg,8), %reg }
@@ -6198,10 +6201,9 @@ unit aoptx86;
                reference_reset(tmpref,2,[]);
                TmpRef.index := taicpu(p).oper[1]^.reg;
                TmpRef.scalefactor := 1 shl taicpu(p).oper[0]^.val;
-               hp1 := taicpu.Op_ref_reg(A_LEA,S_L,TmpRef, taicpu(p).oper[1]^.reg);
-               InsertLLItem(p.previous, p.next, hp1);
-               p.free;
-               p := hp1;
+               taicpu(p).opcode := A_LEA;
+               taicpu(p).loadref(0, TmpRef);
+               Result := True;
              end;
           end
 {$endif x86_64}
@@ -6879,6 +6881,7 @@ unit aoptx86;
                      { Prefer adding before the next instruction so the FLAGS
                        register is deallocated first  }
                      hp2 := taicpu.op_reg_reg(A_OR, S_B, NewReg, taicpu(p_dist).oper[0]^.reg);
+                     taicpu(hp2).fileinfo := taicpu(p_dist).fileinfo;
 
                      AsmL.InsertBefore(
                        hp2,
@@ -8216,6 +8219,7 @@ unit aoptx86;
                             { Shouldn't fail here }
                             InternalError(2021040701);
 
+                          taicpu(NewInstr).fileinfo := taicpu(hp2).fileinfo;
                           AsmL.InsertAfter(NewInstr, hp2);
                           { Add new alignment field }
       (*                    AsmL.InsertAfter(
@@ -13171,6 +13175,7 @@ unit aoptx86;
            (taicpu(hp1).oper[0]^.ref^.refaddr=addr_full) then
           begin
             hp2 := taicpu.Op_sym(A_PUSH,S_L,taicpu(hp1).oper[0]^.ref^.symbol);
+            taicpu(hp2).fileinfo := taicpu(p).fileinfo;
             InsertLLItem(p.previous, p, hp2);
             taicpu(p).opcode := A_JMP;
             taicpu(p).is_jmp := true;
