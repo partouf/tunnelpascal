@@ -3055,13 +3055,47 @@ unit aoptx86;
                   else
                     ;
                 end;
-                if ((taicpu(p).oper[0]^.typ=top_reg) or
-                  ((taicpu(p).oper[0]^.typ=top_ref) and (taicpu(p).oper[0]^.ref^.refaddr<>addr_full))) and
+                if (
+                    (taicpu(p).oper[0]^.typ=top_reg) or
+                    (
+                      (taicpu(p).oper[0]^.typ=top_ref) and
+                      (taicpu(p).oper[0]^.ref^.refaddr<>addr_full)
+                    )
+                  ) and
                   GetNextInstruction(hp1,hp2) and
-                  MatchInstruction(hp2,A_TEST,[taicpu(p).opsize]) and
-                  MatchOperand(taicpu(hp1).oper[1]^,taicpu(hp2).oper[1]^) and
-                  (MatchOperand(taicpu(hp2).oper[0]^,taicpu(hp2).oper[1]^) or
-                   MatchOperand(taicpu(hp2).oper[0]^,-1)) and
+                  MatchInstruction(hp2,A_TEST,[]) and
+                  (
+                    MatchOperand(taicpu(hp1).oper[1]^,taicpu(hp2).oper[1]^) or
+                    (
+                      { If the register being tested is smaller than the one
+                        that received a bitwise AND, permit it if the constant
+                        fits into the smaller size  }
+                      (taicpu(hp1).oper[1]^.typ = top_reg) and (taicpu(hp2).oper[1]^.typ = top_reg) and
+                      SuperRegistersEqual(taicpu(hp1).oper[1]^.reg,taicpu(hp2).oper[1]^.reg) and
+                      (taicpu(hp1).oper[0]^.typ = top_const) and (taicpu(hp1).oper[0]^.val >= 0) and
+                      (GetSubReg(taicpu(hp2).oper[1]^.reg) < GetSubReg(taicpu(hp1).oper[1]^.reg)) and
+                      (
+                        (
+                          (GetSubReg(taicpu(hp2).oper[1]^.reg) = R_SUBL) and
+                          (taicpu(hp1).oper[0]^.val <= $FF)
+                        ) or
+                        (
+                          (GetSubReg(taicpu(hp2).oper[1]^.reg) = R_SUBW) and
+                          (taicpu(hp1).oper[0]^.val <= $FFFF)
+{$ifdef x86_64}
+                        ) or
+                        (
+                          (GetSubReg(taicpu(hp2).oper[1]^.reg) = R_SUBD) and
+                          (taicpu(hp1).oper[0]^.val <= $FFFFFFFF)
+{$endif x86_64}
+                        )
+                      )
+                    )
+                  ) and
+                  (
+                    MatchOperand(taicpu(hp2).oper[0]^,taicpu(hp2).oper[1]^) or
+                    MatchOperand(taicpu(hp2).oper[0]^,-1)
+                  ) and
                   GetNextInstruction(hp2,hp3) and
                   MatchInstruction(hp3,A_Jcc,A_Setcc,[]) and
                   (taicpu(hp3).condition in [C_E,C_NE]) then
@@ -3074,6 +3108,59 @@ unit aoptx86;
                         DebugMsg(SPeepholeOptimization + 'MovAndTest2Test done',p);
                         taicpu(hp1).loadoper(1,taicpu(p).oper[0]^);
                         taicpu(hp1).opcode:=A_TEST;
+
+                        { Shrink the TEST instruction down to the smallest possible size }
+                        case taicpu(hp1).oper[0]^.val of
+                          0..255:
+                            if (taicpu(hp1).opsize <> S_B)
+{$ifndef x86_64}
+                              and (
+                                (taicpu(hp1).oper[1]^.typ <> top_reg) or
+                                { Cannot encode byte-sized ESI, EDI, EBP or ESP under i386 }
+                                (GetSupReg(taicpu(hp1).oper[1]^.reg) in [RS_EAX, RS_EBX, RS_ECX, RS_EDX])
+                              )
+{$endif x86_64}
+                              then
+                              begin
+                                if taicpu(hp1).opsize <> taicpu(hp2).opsize then
+                                  { Only print debug message if the TEST instruction
+                                    is a different size before and after }
+                                  DebugMsg(SPeepholeOptimization + 'test' + debug_opsize2str(taicpu(hp1).opsize) + ' -> testb to reduce instruction size (Test2Test 1a)' , p);
+
+                                taicpu(hp1).opsize := S_B;
+                                if (taicpu(hp1).oper[1]^.typ = top_reg) then
+                                  setsubreg(taicpu(hp1).oper[1]^.reg, R_SUBL);
+                              end;
+                          256..65535:
+                            if (taicpu(hp1).opsize <> S_W) then
+                              begin
+                                if taicpu(hp1).opsize <> taicpu(hp2).opsize then
+                                  { Only print debug message if the TEST instruction
+                                    is a different size before and after }
+                                  DebugMsg(SPeepholeOptimization + 'test' + debug_opsize2str(taicpu(hp1).opsize) + ' -> testw to reduce instruction size (Test2Test 1b)' , p);
+
+                                taicpu(hp1).opsize := S_W;
+                                if (taicpu(hp1).oper[1]^.typ = top_reg) then
+                                  setsubreg(taicpu(hp1).oper[1]^.reg, R_SUBW);
+                              end;
+{$ifdef x86_64}
+                          65536..$7FFFFFFF:
+                            if (taicpu(hp1).opsize <> S_L) then
+                              begin
+                                if taicpu(hp1).opsize <> taicpu(hp2).opsize then
+                                  { Only print debug message if the TEST instruction
+                                    is a different size before and after }
+                                  DebugMsg(SPeepholeOptimization + 'test' + debug_opsize2str(taicpu(hp1).opsize) + ' -> testl to reduce instruction size (Test2Test 1c)' , p);
+
+                                taicpu(hp1).opsize := S_L;
+                                if (taicpu(hp1).oper[1]^.typ = top_reg) then
+                                  setsubreg(taicpu(hp1).oper[1]^.reg, R_SUBD);
+                              end;
+{$endif x86_64}
+                          else
+                            ;
+                        end;
+
                         RemoveInstruction(hp2);
                         RemoveCurrentP(p, hp1);
                         Result:=true;
