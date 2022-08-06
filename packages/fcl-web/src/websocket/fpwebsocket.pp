@@ -406,7 +406,6 @@ type
     function GetTransport : IWSTransport ; override;
   public
     Constructor Create(aOwner: TComponent; aTransport : TWSClientTransport; aOptions : TWSOptions); reintroduce; overload;
-    Destructor Destroy; override;
     //
     function GetHandshakeCompleted: Boolean; override;
     // Owned by connection
@@ -580,7 +579,6 @@ end;
 destructor TWSTransport.Destroy;
 begin
   FreeAndNil(FHelper);
-  FreeAndNil(FStream);
   inherited Destroy;
 end;
 
@@ -1645,12 +1643,6 @@ constructor TWSClientConnection.Create(aOwner: TComponent; aTransport: TWSClient
 begin
   Inherited Create(aOwner,aOptions);
   FTransport:=aTransport;
-end;
-
-destructor TWSClientConnection.Destroy;
-begin
-  FreeAndNil(FTransport);
-  inherited;
 end;
 
 function TWSClientConnection.GetHandshakeCompleted: Boolean;
