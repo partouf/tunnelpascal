@@ -4307,16 +4307,22 @@ unit aoptx86;
                                   if (taicpu(hp2).oper[1]^.typ = top_ref) then
                                     ReplaceRegisterInRef(taicpu(hp2).oper[1]^.ref^, p_TargetReg, p_SourceReg);
 
-                                  { Don't remove the first instruction if the temporary register is in use }
-                                  if not TempRegUsed and
-                                    { ReplaceRegisterInRef won't actually replace the register if it's a different size }
-                                    not RegInOp(p_TargetReg, taicpu(hp2).oper[1]^) then
+                                  { ReplaceRegisterInRef won't actually replace the register if it's a different size }
+                                  if not RegInOp(p_TargetReg, taicpu(hp2).oper[1]^) then
                                     begin
-                                      DebugMsg(SPeepholeOptimization + 'MovMov2Mov 6 done',p);
-                                      RemoveCurrentP(p, hp1);
-                                      Result:=true;
-                                      JumpTracking.Free;
-                                      Exit;
+
+                                      { Don't remove the first instruction if the temporary register is in use }
+                                      if not TempRegUsed then
+                                        begin
+                                          DebugMsg(SPeepholeOptimization + 'MovMov2Mov 6 done',p);
+                                          RemoveCurrentP(p, hp1);
+                                          Result:=true;
+                                          JumpTracking.Free;
+                                          Exit;
+                                        end;
+
+                                      hp3 := hp2;
+                                      Continue;
                                     end;
 
                                   { No need to set Result to True here. If there's another instruction later
