@@ -1380,7 +1380,7 @@ implementation
                if (token = _ID) then
                  begin
                    isgeneric:=(vd_check_generic in options) and
-                                not (m_delphi in current_settings.modeswitches) and
+                                (m_generic_keywords in current_settings.modeswitches) and
                                 (idtoken=_GENERIC);
                    case symtablestack.top.symtabletype of
                      localsymtable :

@@ -64,7 +64,7 @@ interface
        objfpcmodeswitches =
          [m_objfpc,m_fpc,m_class,m_objpas,m_result,m_string_pchar,m_nested_comment,
           m_repeat_forward,m_cvar_support,m_initfinal,m_out,m_default_para,m_hintdirective,
-          m_property,m_default_inline,m_except];
+          m_property,m_default_inline,m_except,m_generic_keywords];
        tpmodeswitches =
          [m_tp7,m_tp_procvar,m_duplicate_names];
 {$ifdef gpc_mode}

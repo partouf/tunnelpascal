@@ -365,7 +365,7 @@ implementation
          if checkcurrentrecdef and
             try_parse_structdef_nested_type(def,current_structdef,isforwarddef) then
            exit;
-         if not allowunitsym and not (m_delphi in current_settings.modeswitches) and (idtoken=_SPECIALIZE) then
+         if not allowunitsym and (m_generic_keywords in current_settings.modeswitches) and (idtoken=_SPECIALIZE) then
            begin
              consume(_ID);
              is_specialize:=true;
@@ -511,7 +511,7 @@ implementation
 
                _ID:
                  begin
-                   if not (m_delphi in current_settings.modeswitches) and try_to_consume(_SPECIALIZE) then
+                   if (m_generic_keywords in current_settings.modeswitches) and try_to_consume(_SPECIALIZE) then
                      begin
                        if ([stoAllowSpecialization,stoAllowTypeDef] * options = []) then
                          begin
@@ -547,7 +547,7 @@ implementation
             end;
         until not again;
         if ([stoAllowSpecialization,stoAllowTypeDef] * options <> []) and
-           (m_delphi in current_settings.modeswitches) then
+           not(m_generic_keywords in current_settings.modeswitches) then
           dospecialize:=token in [_LSHARPBRACKET,_LT];
         if dospecialize and
             (def.typ=forwarddef) then
@@ -850,7 +850,7 @@ implementation
                         if member_blocktype=bt_general then
                           begin
                             if (idtoken=_GENERIC) and
-                                not (m_delphi in current_settings.modeswitches) and
+                                (m_generic_keywords in current_settings.modeswitches) and
                                 not fields_allowed then
                               begin
                                 if hadgeneric then
@@ -1180,8 +1180,8 @@ implementation
                if (pt1.nodetype=typen) then
                  begin
                    def:=ttypenode(pt1).resultdef;
-                   { Delphi mode specialization? }
-                   if (m_delphi in current_settings.modeswitches) then
+                   { non-generic keywords specialization? }
+                   if not(m_generic_keywords in current_settings.modeswitches) then
                      dospecialize:=token=_LSHARPBRACKET
                    else
                      begin

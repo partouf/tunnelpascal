@@ -3212,7 +3212,7 @@ implementation
                     _GENERIC:
                       begin
                         handle_unexpected_had_generic;
-                        if not (m_delphi in current_settings.modeswitches) then
+                        if m_generic_keywords in current_settings.modeswitches then
                           begin
                             consume(_ID);
                             hadgeneric:=true;
@@ -3320,7 +3320,7 @@ implementation
                    _GENERIC:
                      begin
                        handle_unexpected_had_generic;
-                       if not (m_delphi in current_settings.modeswitches) then
+                       if m_generic_keywords in current_settings.modeswitches then
                          begin
                            hadgeneric:=true;
                            consume(_ID);
