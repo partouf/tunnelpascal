@@ -2588,19 +2588,21 @@ unit aoptx86;
     class function TX86AsmOptimizer.ReplaceRegisterInRef(var ref: TReference; const AOldReg, ANewReg: TRegister): Boolean;
       begin
         Result := False;
-        { For safety reasons, only check for exact register matches }
 
         { Check base register }
-        if (ref.base = AOldReg) then
+        if SuperRegistersEqual(ref.base, AOldReg) and
+          (getsubreg(ref.base) <= getsubreg(AOldReg)) then
           begin
-            ref.base := ANewReg;
+            setsupreg(ref.base, getsupreg(ANewReg));
             Result := True;
           end;
 
         { Check index register }
-        if (ref.index = AOldReg) and (getsupreg(ANewReg)<>RS_ESP) then
+        if (getsupreg(ANewReg) <> RS_ESP) and
+          SuperRegistersEqual(ref.index, AOldReg) and
+          (getsubreg(ref.index) <= getsubreg(AOldReg)) then
           begin
-            ref.index := ANewReg;
+            setsupreg(ref.index, getsupreg(ANewReg));
             Result := True;
           end;
       end;
