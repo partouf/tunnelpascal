@@ -2919,6 +2919,8 @@ unit aoptx86;
                           ExcludeRegFromUsedRegs(p_TargetReg, TmpUsedRegs);
                           AllocRegBetween(p_TargetReg, hp2, p, TmpUsedRegs);
                         end;
+
+                      UpdateUsedRegs(tai(p.Next));
                       RemoveCurrentp(p, hp1);
 
                       { If the Func was another MOV instruction, we might get
@@ -10172,8 +10174,9 @@ unit aoptx86;
             taicpu(hp1).oper[0]^.reg := taicpu(p).oper[0]^.reg;
             DebugMsg(SPeepholeOptimization + 'mov %reg1,%reg2; movzx/sx %reg2,%reg3 -> mov %reg1,%reg2;movzx/sx %reg1,%reg3',p);
 
-            { Don't remove the MOV command without first checking that reg2 isn't used afterwards,
-              or unless supreg(reg3) = supreg(reg2)). [Kit] }
+            if not Result then
+              { Don't forget the backward optimisation }
+              FuncMov2Func(p, hp1);
 
             TransferUsedRegs(TmpUsedRegs);
             UpdateUsedRegs(TmpUsedRegs, tai(p.next));
@@ -10475,6 +10478,7 @@ unit aoptx86;
                     RemoveInstruction(hp2);
 
                     Include(OptsToCheck, aoc_ForceNewIteration);
+                    Exit;
 (*
 {$ifdef x86_64}
                   end
@@ -10524,8 +10528,51 @@ unit aoptx86;
                     RemoveInstruction(hp2);
 
                     Include(OptsToCheck, aoc_ForceNewIteration);
+                    Exit;
 {$endif x86_64}
 *)
+                  end;
+              end
+            else if (taicpu(p).oper[0]^.typ = top_reg) and
+              (taicpu(p).oper[1]^.typ = top_reg) and
+              IsXCHGAcceptable and
+              { XCHG doesn't support 8-byte registers }
+              (taicpu(p).opsize <> S_B) and
+              MatchInstruction(hp1, A_MOV, []) and
+              MatchOpType(taicpu(hp1),top_reg,top_reg) and
+              (taicpu(hp1).oper[1]^.reg = taicpu(p).oper[0]^.reg) and
+              not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) and
+              GetNextInstruction(hp1, hp2) and
+              MatchInstruction(hp2, A_MOV, []) and
+              { Don't need to call MatchOpType for hp2 because the operand matches below cover for it }
+              MatchOperand(taicpu(hp2).oper[0]^, taicpu(p).oper[1]^.reg) and
+              MatchOperand(taicpu(hp2).oper[1]^, taicpu(hp1).oper[0]^.reg) then
+              begin
+                { mov %reg1,%reg2
+                  mov %reg3,%reg1        ->  xchg %reg3,%reg1
+                  mov %reg2,%reg3
+                  (%reg2 not used afterwards)
+
+                  Note that xchg takes 3 cycles to execute, and generally mov's take
+                  only one cycle apiece, but the first two mov's can be executed in
+                  parallel, only taking 2 cycles overall.  Older processors should
+                  therefore only optimise for size. [Kit]
+                }
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+
+                if not RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp2, TmpUsedRegs) then
+                  begin
+                    DebugMsg(SPeepholeOptimization + 'MovMovMov2XChg', p);
+                    AllocRegBetween(taicpu(hp2).oper[1]^.reg, p, hp1, UsedRegs);
+                    taicpu(hp1).opcode := A_XCHG;
+
+                    RemoveCurrentP(p, hp1);
+                    RemoveInstruction(hp2);
+
+                    Result := True;
+                    Exit;
                   end;
               end;
 {$ifdef x86_64}
@@ -10638,6 +10685,94 @@ unit aoptx86;
           begin
             Result := True;
             Exit;
+          end;
+
+        if { Everything from this point on requires the destination to be a register }
+          (taicpu(p).oper[1]^.typ <> top_reg) or
+          (
+            { GetNextInstructionUsingReg only gets the next instruction on -O2
+              and below, so don't bother calling  GetNextInstructionUsingReg in
+              this case, since it will just return what hp1 is already set to. }
+            (cs_opt_level3 in current_settings.optimizerswitches) and
+            not GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[1]^.reg)
+          ) then
+          Exit;
+
+        if (taicpu(p).oper[0]^.typ = top_reg) and
+          (taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
+          MatchInstruction(hp1,A_ADD,A_SUB,[taicpu(p).opsize]) and
+          (taicpu(hp1).oper[1]^.typ = top_reg) and
+          (taicpu(hp1).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
+          not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) then
+          begin
+            { Change:
+                movl/q %reg1,%reg2      movl/q %reg1,%reg2
+                addl/q $x,%reg2         subl/q $x,%reg2
+              To:
+                leal/q x(%reg1),%reg2   leal/q -x(%reg1),%reg2
+            }
+            if (taicpu(hp1).oper[0]^.typ = top_const) and
+              { be lazy, checking separately for sub would be slightly better }
+              (abs(taicpu(hp1).oper[0]^.val)<=$7fffffff) then
+              begin
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                if TryMovArith2Lea(hp1) then
+                  begin
+                    Result := True;
+                    Exit;
+                  end
+              end
+            else if not RegInOp(taicpu(p).oper[1]^.reg, taicpu(hp1).oper[0]^) and
+              { Same as above, but also adds or subtracts to %reg2 in between.
+                It's still valid as long as the flags aren't in use }
+              GetNextInstruction(hp1, hp2) and
+              MatchInstruction(hp2,A_ADD,A_SUB,[taicpu(p).opsize]) and
+              MatchOpType(taicpu(hp2), top_const, top_reg) and
+              (taicpu(hp2).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
+              { be lazy, checking separately for sub would be slightly better }
+              (abs(taicpu(hp2).oper[0]^.val)<=$7fffffff) then
+              begin
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+                if TryMovArith2Lea(hp2) then
+                  begin
+                    Result := True;
+                    Exit;
+                  end;
+              end;
+          end
+        else if (taicpu(p).oper[0]^.typ = top_reg) and
+{$ifdef x86_64}
+          MatchInstruction(hp1,A_MOVZX,A_MOVSX,A_MOVSXD,[]) and
+{$else x86_64}
+          MatchInstruction(hp1,A_MOVZX,A_MOVSX,[]) and
+{$endif x86_64}
+          MatchOpType(taicpu(hp1),top_reg,top_reg) and
+          (taicpu(hp1).oper[0]^.reg = taicpu(p).oper[1]^.reg) and
+          not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) then
+          { mov reg1, reg2                mov reg1, reg2
+            movzx/sx reg2, reg3      to   movzx/sx reg1, reg3}
+          begin
+            taicpu(hp1).oper[0]^.reg := taicpu(p).oper[0]^.reg;
+            DebugMsg(SPeepholeOptimization + 'mov %reg1,%reg2; movzx/sx %reg2,%reg3 -> mov %reg1,%reg2;movzx/sx %reg1,%reg3',p);
+
+            { Don't remove the MOV command without first checking that reg2 isn't used afterwards,
+              or unless supreg(reg3) = supreg(reg2)). [Kit] }
+
+            TransferUsedRegs(TmpUsedRegs);
+            UpdateUsedRegs(TmpUsedRegs, tai(p.next));
+
+            if (getsupreg(taicpu(p).oper[1]^.reg) = getsupreg(taicpu(hp1).oper[1]^.reg)) or
+              not RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp1, TmpUsedRegs)
+            then
+              begin
+                RemoveCurrentP(p, hp1);
+                Result:=true;
+              end;
+
+            exit;
           end;
       end;
 
