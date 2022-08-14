@@ -6960,13 +6960,17 @@ unit aoptx86;
                 Assigned(hp1) or
                 GetNextInstructionUsingReg(p,hp1, ActiveReg)
               ) and
-              MatchInstruction(hp1,A_SUB,[taicpu(p).opsize]) and
+              MatchInstruction(hp1,A_ADD,A_SUB,[taicpu(p).opsize]) and
               (taicpu(hp1).oper[1]^.reg = ActiveReg) then
               begin
                 if taicpu(hp1).oper[0]^.typ = top_const then
                   begin
-                    { Merge add const1,%reg; add const2,%reg to add const1+const2,%reg }
-                    ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val;
+                    { Merge sub const1,%reg; add/sub const2,%reg to sub const1+/-const2,%reg }
+                    if taicpu(hp1).opcode = A_SUB then
+                      ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val
+                    else
+                      ThisConst := taicpu(p).oper[0]^.val - taicpu(hp1).oper[0]^.val;
+
                     Result := True;
 
                     { Handle any overflows }
@@ -7000,7 +7004,7 @@ unit aoptx86;
                           ) then
                           begin
                             DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> ADD',p);
-                            taicpu(p).opcode := A_SUB;
+                            taicpu(p).opcode := A_ADD;
                             taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
                           end
                         else
