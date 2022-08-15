@@ -10711,37 +10711,48 @@ unit aoptx86;
               To:
                 leal/q x(%reg1),%reg2   leal/q -x(%reg1),%reg2
             }
-            if (taicpu(hp1).oper[0]^.typ = top_const) and
-              { be lazy, checking separately for sub would be slightly better }
-              (abs(taicpu(hp1).oper[0]^.val)<=$7fffffff) then
-              begin
-                TransferUsedRegs(TmpUsedRegs);
-                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
-                if TryMovArith2Lea(hp1) then
-                  begin
-                    Result := True;
-                    Exit;
-                  end
-              end
-            else if not RegInOp(taicpu(p).oper[1]^.reg, taicpu(hp1).oper[0]^) and
-              { Same as above, but also adds or subtracts to %reg2 in between.
-                It's still valid as long as the flags aren't in use }
-              GetNextInstruction(hp1, hp2) and
-              MatchInstruction(hp2,A_ADD,A_SUB,[taicpu(p).opsize]) and
-              MatchOpType(taicpu(hp2), top_const, top_reg) and
-              (taicpu(hp2).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
-              { be lazy, checking separately for sub would be slightly better }
-              (abs(taicpu(hp2).oper[0]^.val)<=$7fffffff) then
-              begin
-                TransferUsedRegs(TmpUsedRegs);
-                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
-                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
-                if TryMovArith2Lea(hp2) then
-                  begin
-                    Result := True;
-                    Exit;
-                  end;
-              end;
+            TransferUsedRegs(TmpUsedRegs);
+
+            hp3 := p;
+            repeat
+              UpdateUsedRegs(TmpUsedRegs, tai(hp3.Next));
+            until not GetNextInstruction(hp3, hp3) or (hp3 = hp1);
+
+            repeat
+              if (taicpu(hp1).oper[0]^.typ = top_const) and
+                { be lazy, checking separately for sub would be slightly better }
+                (abs(taicpu(hp1).oper[0]^.val)<=$7fffffff) then
+                begin
+                  if TryMovArith2Lea(hp1) then
+                    begin
+                      Result := True;
+                      Exit;
+                    end
+                end
+              else if not RegInOp(taicpu(p).oper[1]^.reg, taicpu(hp1).oper[0]^) and
+                { See if there's another add or sub afterwards that can be merged }
+                GetNextInstructionUsingReg(hp1, hp2, taicpu(p).oper[1]^.reg) and
+                MatchInstruction(hp2,A_ADD,A_SUB,[taicpu(p).opsize]) and
+                (taicpu(hp2).oper[1]^.typ = top_reg) and
+                (taicpu(hp2).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
+                not RegModifiedBetween(taicpu(p).oper[0]^.reg, hp1, hp2) then
+                begin
+                  { we have a potential candidate, so update TmpUsedRegs and
+                    check the optimisation again - repeat as many times as
+                    necessary until we find something that is invalid }
+
+                  hp3 := hp1;
+                  repeat
+                    UpdateUsedRegs(TmpUsedRegs, tai(hp3.Next));
+                  until not GetNextInstruction(hp3, hp3) or (hp3 = hp2);
+
+                  hp1 := hp2;
+
+                  Continue;
+                end;
+
+              Break;
+            until False;
           end
         else if (taicpu(p).oper[0]^.typ = top_reg) and
 {$ifdef x86_64}
