@@ -5920,6 +5920,14 @@ unit aoptx86;
                             taicpu(p).opcode := A_SUB;
                             taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
                           end
+                        else if (taicpu(p).oper[0]^.val = 0) and
+                          not RegInUsedRegs(NR_DEFAULTFLAGS, UsedRegs) then
+                          begin
+                            DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB = 0 -> NOP',p);
+                            RemoveInstruction(hp1);
+                            RemoveCurrentP(p);
+                            Exit;
+                          end
                         else
                           DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB -> ADD',p);
                         RemoveInstruction(hp1);
@@ -7006,6 +7014,14 @@ unit aoptx86;
                             DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> ADD',p);
                             taicpu(p).opcode := A_ADD;
                             taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
+                          end
+                        else if (taicpu(p).oper[0]^.val = 0) and
+                          not RegInUsedRegs(NR_DEFAULTFLAGS, UsedRegs) then
+                          begin
+                            DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB = 0 -> NOP',p);
+                            RemoveInstruction(hp1);
+                            RemoveCurrentP(p);
+                            Exit;
                           end
                         else
                           DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> SUB',p);
