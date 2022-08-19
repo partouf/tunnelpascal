@@ -2990,7 +2990,7 @@ unit aoptx86;
         end;
 
       var
-        GetNextInstruction_p, TempRegUsed, CrossJump: Boolean;
+        GetNextInstruction_p, TempRegUsed, CrossJump, TargetRegUsed: Boolean;
         PreMessage, RegName1, RegName2, InputVal, MaskNum: string;
         NewSize: topsize; NewOffset: asizeint;
         p_SourceReg, p_TargetReg, NewMMReg: TRegister;
@@ -3649,7 +3649,22 @@ unit aoptx86;
           end;
 
         { Next instruction is also a MOV ? }
-        if MatchInstruction(hp1,A_MOV,[taicpu(p).opsize]) then
+        if MatchInstruction(hp1,A_MOV,[]) and
+          (
+            (taicpu(p).opsize = taicpu(hp1).opsize)
+{$ifdef x86_64}
+            { Permissible exception under x86_64 since the upper half is zero }
+            or
+            (
+              (taicpu(p).opsize = S_L) and
+              (taicpu(hp1).opsize = S_Q) and
+              (taicpu(p).oper[0]^.typ = top_const) and
+              { Make sure problems don't occur with sign extension }
+              (taicpu(p).oper[0]^.val >= 0) and
+              (taicpu(p).oper[0]^.val <= High(LongInt))
+            )
+{$endif x86_64}
+          ) then
           begin
             if MatchOpType(taicpu(p), top_const, top_ref) and
               MatchOpType(taicpu(hp1), top_const, top_ref) and
@@ -3706,7 +3721,27 @@ unit aoptx86;
               end;
 
             if (taicpu(p).oper[1]^.typ = top_reg) and
-              MatchOperand(taicpu(p).oper[1]^,taicpu(hp1).oper[0]^) then
+              (
+                (
+                  (taicpu(hp1).oper[0]^.typ = top_reg) and
+                  SuperRegistersEqual(taicpu(hp1).oper[0]^.reg, p_TargetReg) and
+                  (
+                    (taicpu(hp1).oper[0]^.reg = p_TargetReg)
+{$ifdef x86_64}
+                    { Permissible exception under x86_64 since the upper half is zero }
+                    or
+                    (
+                      (taicpu(p).opsize = S_L) and
+                      (taicpu(hp1).opsize = S_Q) and
+                      (taicpu(p).oper[0]^.typ = top_const) and
+                      { Make sure problems don't occur with sign extension }
+                      (taicpu(p).oper[0]^.val >= 0) and
+                      (taicpu(p).oper[0]^.val <= High(LongInt))
+                    )
+{$endif x86_64}
+                  )
+                )
+              ) then
               begin
                 { Remember that p_TargetReg contains taicpu(p).oper[1]^.reg }
                 TransferUsedRegs(TmpUsedRegs);
@@ -3741,6 +3776,10 @@ unit aoptx86;
                               if taicpu(hp1).oper[1]^.typ=top_reg then
                                 AllocRegBetween(taicpu(hp1).oper[1]^.reg,p,hp1,usedregs);
                               taicpu(p).loadOper(1,taicpu(hp1).oper[1]^);
+{$ifdef x86_64}
+                              { Just in case hp1 is S_Q and p is S_L }
+                              taicpu(p).opsize := taicpu(hp1).opsize;
+{$endif x86_64}
                               DebugMsg(SPeepholeOptimization + 'MovMov2Mov 5 done',p);
                               RemoveInstruction(hp1);
                               Result:=true;
@@ -3941,6 +3980,7 @@ unit aoptx86;
                       begin
                         DebugMsg(SPeepholeOptimization + debug_operstr(taicpu(hp1).oper[0]^) + ' = $' + debug_tostr(taicpu(p).oper[0]^.val) + '; changed to minimise pipeline stall (MovMov2Mov 6b)',hp1);
                         taicpu(hp1).loadconst(0, taicpu(p).oper[0]^.val);
+                        Include(OptsToCheck, aoc_ForceNewIteration);
                       end;
               end;
             if (taicpu(hp1).oper[0]^.typ = taicpu(p).oper[1]^.typ) and
@@ -4273,6 +4313,9 @@ unit aoptx86;
             else
               JumpTracking := nil;
 
+            { TargetRegUsed becomes True if the target register couldn't be replaced }
+            TargetRegUsed := False;
+
             while GetNextInstructionUsingRegCond(hp3,hp2,p_TargetReg,JumpTracking,CrossJump) and
               { GetNextInstructionUsingRegCond only searches one instruction ahead unless -O3 is specified }
               (hp2.typ=ait_instruction) do
@@ -4296,11 +4339,33 @@ unit aoptx86;
                         Break;
                       end;
                   A_MOV:
-                    if MatchOperand(taicpu(hp2).oper[0]^,p_TargetReg) and
-                      ((taicpu(p).oper[0]^.typ=top_const) or
-                       ((taicpu(p).oper[0]^.typ=top_reg) and
-                        not(RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp2))
-                       )
+                    if (
+                        (
+                          (taicpu(hp2).oper[0]^.typ = top_reg) and
+                          SuperRegistersEqual(taicpu(hp2).oper[0]^.reg, p_TargetReg) and
+                          (
+                            (taicpu(hp2).oper[0]^.reg = p_TargetReg)
+{$ifdef x86_64}
+                            { Permissible exception under x86_64 since the upper half is zero }
+                            or
+                            (
+                              (taicpu(p).opsize = S_L) and
+                              (taicpu(hp2).opsize = S_Q) and
+                              (taicpu(p).oper[0]^.typ = top_const) and
+                              { Make sure problems don't occur with sign extension }
+                              (taicpu(p).oper[0]^.val >= 0) and
+                              (taicpu(p).oper[0]^.val <= High(LongInt))
+                            )
+{$endif x86_64}
+                          )
+                        )
+                      ) and
+                      (
+                        (taicpu(p).oper[0]^.typ = top_const) or
+                        (
+                          (taicpu(p).oper[0]^.typ = top_reg) and
+                          not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp2)
+                        )
                       ) then
                       begin
                         { we have
@@ -4315,6 +4380,7 @@ unit aoptx86;
 
                         TempRegUsed :=
                           CrossJump { Assume the register is in use if it crossed a conditional jump } or
+                          TargetRegUsed or
                           RegReadByInstruction(p_TargetReg, hp3) or
                           RegUsedAfterInstruction(p_TargetReg, hp2, TmpUsedRegs);
 
@@ -4429,18 +4495,20 @@ unit aoptx86;
                               Internalerror(2019103001);
                           end;
                       end
-                    else if MatchOperand(taicpu(hp2).oper[1]^, p_TargetReg) then
-                      begin
-                        if not CrossJump and
-                          not RegUsedBetween(p_TargetReg, p, hp2) and
-                          not RegReadByInstruction(p_TargetReg, hp2) then
-                          begin
-                            { Register is not used before it is overwritten }
-                            DebugMsg(SPeepholeOptimization + 'Mov2Nop 3a done',p);
-                            RemoveCurrentp(p, hp1);
-                            Result := True;
-                            Exit;
-                          end;
+                    else
+                      if MatchOperand(taicpu(hp2).oper[1]^, p_TargetReg) then
+                        begin
+                          if not TargetRegUsed and
+                            not CrossJump and
+                            not RegUsedBetween(p_TargetReg, p, hp2) and
+                            not RegReadByInstruction(p_TargetReg, hp2) then
+                            begin
+                              { Register is not used before it is overwritten }
+                              DebugMsg(SPeepholeOptimization + 'Mov2Nop 3a done',p);
+                              RemoveCurrentp(p, hp1);
+                              Result := True;
+                              Exit;
+                            end;
 
                         if (taicpu(p).oper[0]^.typ = top_const) and
                           (taicpu(hp2).oper[0]^.typ = top_const) then
@@ -4560,6 +4628,13 @@ unit aoptx86;
                         JumpTracking.Free;
                         Exit;
                       end;
+                  A_Jcc:
+                    begin
+                      { Handle unconditional jumps separately so TargetRegUsed
+                        doesn't get set unnecessarily }
+                      hp3 := hp2;
+                      Continue;
+                    end;
                   else
                     { Move down to the if-block below };
                 end;
@@ -4568,34 +4643,43 @@ unit aoptx86;
                 if taicpu(p).oper[0]^.typ = top_reg then
                   begin
                     p_SourceReg := taicpu(p).oper[0]^.reg;
-                    if
+                    { Don't call DeepMOVOpt if the target register has been
+                      read by a previous instruction, as it becomes wasted
+                      effort }
+                    if not TargetRegUsed and
                       not RegModifiedByInstruction(p_SourceReg, hp3) and
-                      not RegModifiedBetween(p_SourceReg, hp3, hp2) and
-                      DeepMOVOpt(taicpu(p), taicpu(hp2)) then
+                      not RegModifiedBetween(p_SourceReg, hp3, hp2) then
                       begin
-                        Result := True;
-
-                        { Just in case something didn't get modified (e.g. an
-                          implicit register).  Also, if it does read from this
-                          register, then there's no longer an advantage to
-                          changing the register on subsequent instructions.}
-                        if not RegReadByInstruction(p_TargetReg, hp2) then
+                        if DeepMOVOpt(taicpu(p), taicpu(hp2)) then
                           begin
-                            { If a conditional jump was crossed, do not delete
-                              the original MOV no matter what }
-                            if not CrossJump and
-                              { RegEndOfLife returns True if the register is
-                                deallocated before the next instruction or has
-                                been loaded with a new value }
-                              RegEndOfLife(p_TargetReg, taicpu(hp2)) then
+                            Result := True;
+
+                            { Just in case something didn't get modified (e.g. an
+                              implicit register).  Also, if it does read from this
+                              register, then there's no longer an advantage to
+                              changing the register on subsequent instructions.}
+                            if not RegReadByInstruction(p_TargetReg, hp2) then
                               begin
-                                { We can remove the original MOV }
-                                DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
-                                RemoveCurrentp(p, hp1);
-                                JumpTracking.Free;
-                                Result := True;
-                                Exit;
-                              end;
+                                if not TargetRegUsed and
+                                  { If a conditional jump was crossed, do not delete
+                                    the original MOV no matter what }
+                                  not CrossJump and
+                                  { RegEndOfLife returns True if the register is
+                                    deallocated before the next instruction or has
+                                    been loaded with a new value }
+                                  RegEndOfLife(p_TargetReg, taicpu(hp2)) then
+                                  begin
+                                    { We can remove the original MOV }
+                                    DebugMsg(SPeepholeOptimization + 'Mov2Nop 3b done',p);
+                                    RemoveCurrentp(p, hp1);
+                                    JumpTracking.Free;
+                                    Result := True;
+                                    Exit;
+                                  end;
+                              end
+                            else
+                              { Instruction reads the register }
+                              TargetRegUsed := True;
 
                             if not RegModifiedByInstruction(p_TargetReg, hp2) then
                               begin
@@ -4603,8 +4687,30 @@ unit aoptx86;
                                 hp3 := hp2;
                                 Continue;
                               end;
+                          end
+                        else
+                          { If DeepMOVOpt failed, then it's probably an implicit
+                            register that can't be changed - either way, the
+                            target register is in use (TargetRegUsed gets set
+                            below). }
+                          begin
+                            if RegModifiedByInstruction(p_TargetReg, hp2) then
+                              Break;
+
+                            TargetRegUsed := True;
                           end;
                       end;
+                  end;
+
+                if RegReadByInstruction(p_TargetReg, hp2) and
+                  not RegModifiedByInstruction(p_TargetReg, hp2) then
+                  begin
+                    { Instruction reads the register }
+                    TargetRegUsed := True;
+
+                    { See if there's more we can optimise }
+                    hp3 := hp2;
+                    Continue;
                   end;
 
                 { Break out of the while loop under normal circumstances }
