@@ -3020,6 +3020,54 @@ unit aoptx86;
 
         { Prevent compiler warnings }
         p_TargetReg := NR_NO;
+        hp2 := nil; { Compiler doesn't seem to recognise that it is set through SetAndTest below }
+
+        { Look for:
+            mov x,r/m
+            jmp .Lbl
+            ...
+          .Lbl:
+            ... (as long as %reg1 and %reg2 aren't changed)
+            mov y,r/m (as long as y doesn't depend on r/m if it's a register)
+
+          Remove first mov
+        }
+        if IsJumpToLabelUncond(taicpu(hp1)) and
+          { Get the label tai }
+          SetAndTest(GetLabelWithSym(TAsmLabel(JumpTargetOp(taicpu(hp1))^.ref^.symbol)), hp2) and
+          (
+            (
+              (taicpu(p).oper[1]^.typ <> top_reg) and
+              GetNextInstruction(hp2, hp3)
+            ) or
+            { With a register, see if we can search further ahead }
+            GetNextInstructionUsingReg(hp2, hp3, taicpu(p).oper[1]^.reg)
+          ) and
+          (hp3.typ = ait_instruction) and
+          (
+            (
+              (taicpu(p).oper[1]^.typ = top_reg) and
+              RegLoadedWithNewValue(taicpu(p).oper[1]^.reg, hp3)
+            ) or
+            (
+              { MOV writing to registers is handled above via RegLoadedWithNewValue }
+              (taicpu(p).oper[1]^.typ = top_ref) and
+              (taicpu(hp3).opcode = A_MOV) and
+              (taicpu(hp3).opsize >= taicpu(p).opsize) and
+              (taicpu(hp3).oper[1]^.typ = top_ref) and
+              RefsEqual(taicpu(hp3).oper[1]^.ref^, taicpu(p).oper[1]^.ref^)
+            )
+          ) then
+          begin
+            DebugMsg(SPeepholeOptimization + 'Removed "' +
+              debug_op2str(taicpu(p).opcode) + debug_opsize2str(taicpu(p).opsize) + ' ' + debug_operstr(taicpu(p).oper[0]^) + ',' + debug_operstr(taicpu(p).oper[1]^) +
+              '" as the destination is overwritten after the jump (MovJmp2Jmp)', p);
+            RemoveCurrentp(p, hp1);
+
+            { UsedRegs got updated by RemoveCurrentp }
+            Result := True;
+            Exit;
+          end;
 
         if taicpu(p).oper[1]^.typ = top_reg then
           begin
