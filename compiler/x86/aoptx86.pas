@@ -4448,6 +4448,7 @@ unit aoptx86;
                             if taicpu(p).oper[0]^.val = taicpu(hp2).oper[0]^.val then
                               begin
                                 { Same value - register hasn't changed }
+                                AllocRegBetween(p_TargetReg, p, hp2, UsedRegs);
                                 DebugMsg(SPeepholeOptimization + 'Mov2Nop 2 done', hp2);
                                 RemoveInstruction(hp2);
 
