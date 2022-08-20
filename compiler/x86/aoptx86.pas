@@ -1172,7 +1172,11 @@ unit aoptx86;
             begin
               if taicpu(p1).ops = 1 then
                 begin
-                  Result := (getsupreg(Reg) in [RS_EAX, RS_EDX]);
+                  { Check implicit registers }
+                  if taicpu(p1).opsize = S_B then
+                    Result := (getsupreg(reg) = RS_EAX)
+                  else
+                    Result := (getsupreg(reg) in [RS_EAX, RS_EDX]);
                 end
               else
                 Result := (taicpu(p1).oper[taicpu(p1).ops-1]^.typ=top_reg) and RegInOp(reg,taicpu(p1).oper[taicpu(p1).ops-1]^);
