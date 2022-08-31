@@ -4732,6 +4732,33 @@ unit aoptx86;
                         JumpTracking.Free;
                         Exit;
                       end;
+                    A_AND:
+                      begin
+                        {
+                          Search for:
+                            mov %reg1,%reg2
+                            ...
+                            and %reg1,%reg2
+
+                          Remove the "and" instruction if %reg1 isn't modified
+                          in between.
+                        }
+                        if (taicpu(p).oper[0]^.typ = top_reg) and
+                          MatchOpType(taicpu(hp2), top_reg, top_reg) and
+                          (taicpu(hp2).oper[0]^.reg = taicpu(p).oper[0]^.reg) and
+                          (taicpu(hp2).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
+                          not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp2) then
+                          begin
+                            AllocRegBetween(taicpu(hp2).oper[1]^.reg, p, hp2, UsedRegs);
+
+                            GetLastInstruction(hp2, hp3);
+
+                            DebugMsg(SPeepholeOptimization + debug_regname(p_TargetReg) + ' = ' + debug_regname(taicpu(p).oper[0]^.reg) + '; removed unnecessary instruction (MovAnd2Mov 6}', hp2);
+                            RemoveInstruction(hp2);
+
+                            Continue;
+                          end;
+                      end
                   else
                     { Move down to the if-block below };
                 end;
