@@ -793,7 +793,7 @@ implementation
                  }
                  paramanager.freecgpara(current_asmdata.CurrAsmList,ppn.tempcgpara);
                  tmpparaloc:=ppn.tempcgpara.location;
-                 sizeleft:=ppn.tempcgpara.intsize;
+                 sizeleft:=ppn.parasym.paraloc[callerside].intsize;
                  calleralignment:=ppn.parasym.paraloc[callerside].alignment;
                  tmpalignment:=ppn.tempcgpara.alignment;
                  if (tmpalignment=0) or
@@ -840,7 +840,8 @@ implementation
                        LOC_REFERENCE:
                          begin
                            if not(skipiffinalloc and
-                                  paramanager.is_stack_paraloc(callerparaloc)) then
+                                  paramanager.is_stack_paraloc(callerparaloc))
+                              or (tmpparaloc^.temppos.val<>ctempposinvalid.val) then
                              begin
                                { Can't have a data copied to the stack, every location
                                  must contain a valid size field }
@@ -849,7 +850,7 @@ implementation
                                  ((tmpparaloc^.loc<>LOC_REFERENCE) or
                                   assigned(tmpparaloc^.next)) then
                                 internalerror(200501281);
-                                reference_reset_base(href,callerparaloc^.reference.index,callerparaloc^.reference.offset,ctempposinvalid,calleralignment,[]);
+                              reference_reset_base(href,callerparaloc^.reference.index,callerparaloc^.reference.offset,ctempposinvalid,calleralignment,[]);
                               { copy parameters in case they were moved to a temp. location because we've a fixed stack }
                               case tmpparaloc^.loc of
                               LOC_REFERENCE:
@@ -857,10 +858,23 @@ implementation
                                     reference_reset_base(htempref,tmpparaloc^.reference.index,tmpparaloc^.reference.offset,ctempposinvalid,tmpalignment,[]);
                                     { use concatcopy, because it can also be a float which fails when
                                       load_ref_ref is used }
-                                    if (ppn.tempcgpara.size <> OS_NO) then
+                                    current_asmdata.CurrAsmList.concat(tai_comment.Create(strpnew('Parameter '+ppn.parasym.realname
+                                      +' moved to stack at offset '+tostr(tmpparaloc^.reference.offset)+', size='+tostr(sizeleft))));
+                                    if tg.isstartoftemp(htempref) then
+                                      begin
+                                        sizeleft:=tg.sizeoftemp(current_asmdata.CurrAsmList,htempref);
+                                        cg.g_concatcopy(current_asmdata.CurrAsmList,htempref,href,sizeleft);
+                                      end
+                                    else if (tmpparaloc^.size <> OS_NO) then
                                       cg.g_concatcopy(current_asmdata.CurrAsmList,htempref,href,tcgsize2size[tmpparaloc^.size])
                                     else
-                                      cg.g_concatcopy(current_asmdata.CurrAsmList,htempref,href,sizeleft)
+                                      cg.g_concatcopy(current_asmdata.CurrAsmList,htempref,href,sizeleft);
+                                    if (tmpparaloc^.temppos.val<>ctempposinvalid.val) then
+                                       begin
+                                         htempref.temppos:=tmpparaloc^.temppos;
+                                         tg.ungetiftemp(current_asmdata.CurrAsmList,htempref);
+                                         tmpparaloc^.temppos:=ctempposinvalid;
+                                       end;
                                   end;
                                 LOC_REGISTER:
                                   cg.a_load_reg_ref(current_asmdata.CurrAsmList,tmpparaloc^.size,tmpparaloc^.size,tmpparaloc^.register,href);
