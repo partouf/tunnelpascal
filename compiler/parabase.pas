@@ -43,6 +43,7 @@ unit parabase;
          Next : PCGParaLocation;
          Def  : tdef;
          Size : TCGSize; { size of this location }
+         temppos : treftemppos;
          Loc  : TCGLoc;
 {$ifdef llvm}
          { The following fields are used to determine the name and handling of
@@ -221,6 +222,7 @@ implementation
             hlocation:=result.add_location;
             hlocation^:=srcloc^;
             hlocation^.next:=nil;
+	    hlocation^.temppos:=ctempposinvalid;
             srcloc:=srcloc^.next;
           end;
         result.alignment:=alignment;
