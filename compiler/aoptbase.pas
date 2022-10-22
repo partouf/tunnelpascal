@@ -62,6 +62,9 @@ unit aoptbase;
         { to the optimizer in p1. If there is none, it returns false and     }
         { sets p1 to nil                                                     }
         class function GetNextInstruction(Current: tai; out Next: tai): Boolean; static;
+
+        class function GetNextInstructionOrRegAlloc(Current: tai; out Next: tai): Boolean; static;
+
         { gets the previous tai object after current that contains info   }
         { relevant to the optimizer in last. If there is none, it returns }
         { false and sets last to nil                                      }
@@ -233,6 +236,57 @@ unit aoptbase;
           GetNextInstruction := False;
         End;
   End;
+
+
+  class function TAOptBase.GetNextInstructionOrRegAlloc(Current: tai; out Next: tai): Boolean;
+    begin
+      repeat
+        Current := tai(Current.Next);
+        while Assigned(Current) and
+              ((Current.typ In SkipInstr - [ait_regalloc]) or
+{$ifdef cpudelayslot}
+               ((Current.typ=ait_instruction) and
+                (taicpu(Current).opcode=A_NOP)
+               ) or
+{$endif cpudelayslot}
+               ((Current.typ = ait_label) And
+                labelCanBeSkipped(Tai_Label(Current)))) Do
+          begin
+            { this won't help the current loop, but it helps when returning from GetNextInstructionOrRegAlloc
+              as the next entry is probably already in the cache }
+            prefetch(pointer(Current.Next)^);
+            Current := Tai(Current.Next);
+          end;
+        if Assigned(Current) and
+           (Current.typ = ait_Marker) and
+           (Tai_Marker(Current).Kind = mark_NoPropInfoStart) then
+          begin
+            while Assigned(Current) and
+                  ((Current.typ <> ait_Marker) or
+                   (Tai_Marker(Current).Kind <> mark_NoPropInfoEnd)) do
+              begin
+                { this won't help the current loop, but it helps when returning from GetNextInstructionOrRegAlloc
+                  as the next entry is probably already in the cache }
+                prefetch(pointer(Current.Next)^);
+                Current := Tai(Current.Next);
+              end;
+          End;
+      until not(Assigned(Current)) or
+            (Current.typ <> ait_Marker) or
+            (Tai_Marker(Current).Kind <> mark_NoPropInfoEnd);
+      Next := Current;
+      if Assigned(Current) and
+         not((Current.typ In SkipInstr - [ait_regalloc]) or
+             ((Current.typ = ait_label) and
+              labelCanBeSkipped(Tai_Label(Current))))
+        then GetNextInstructionOrRegAlloc := True
+        else
+          begin
+            Next := nil;
+            GetNextInstructionOrRegAlloc := False;
+          end;
+    end;
+
 
   class function TAOptBase.GetLastInstruction(Current: tai; out Last: tai): Boolean;
   Begin
