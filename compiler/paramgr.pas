@@ -557,6 +557,9 @@ implementation
                         tg.gettemp(list,len,cgpara.alignment,tt_persistent,href);
                       newparaloc^.reference.index:=href.base;
                       newparaloc^.reference.offset:=href.offset;
+                      { Explicitly remember that we will need to move
+                        this back to the 'normal' stack position later }
+                      newparaloc^.temppos:=href.temppos;
                     end;
                 end;
               else
@@ -570,6 +573,7 @@ implementation
     procedure tparamanager.duplicatecgparaloc(const orgparaloc: pcgparalocation; intonewparaloc: pcgparalocation);
       begin
         move(orgparaloc^,intonewparaloc^,sizeof(intonewparaloc^));
+        intonewparaloc^.temppos:=ctempposinvalid;
         intonewparaloc^.next:=nil;
       end;
 
