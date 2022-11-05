@@ -120,12 +120,12 @@ type
   Protected
     Procedure DoOnClose; virtual;
     Procedure DoNextAttempt(Operation: TSocketOperationType; var AAbort: Boolean); virtual;
-    Function IsTimedOutError(AErr: cint): Boolean;
   Public
     Constructor Create (AHandle : Longint; AHandler : TSocketHandler = Nil);virtual;
     destructor Destroy; override;
     Class Function Select(Var aRead,aWrite,aExceptions : TSocketStreamArray; aTimeOut: Integer): Boolean; virtual;
     Procedure Close;
+    Function IsTimedOutError(AErr: cint): Boolean;
     function Seek(Offset: Longint; Origin: Word): Longint; override;
     function Select(aCheck : TSocketStates; TimeOut : Integer): TSocketStates;
     Function CanRead(TimeOut : Integer): Boolean;

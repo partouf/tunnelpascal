@@ -125,6 +125,8 @@ Type
     procedure SetIdleTimeout(const AValue: Integer);
     Procedure ExtractHostPort(AURI: TURI; Out AHost: String; Out APort: Word);
     Procedure CheckConnectionCloseHeader;
+    Function CreateReadError: Exception;
+    Function CreateWriteError: Exception;
   protected
     // Called with TSSLSocketHandler as sender
     procedure DoVerifyCertificate(Sender: TObject; var Allow: Boolean); virtual;
@@ -437,6 +439,7 @@ resourcestring
   SErrInvalidProtocol = 'Invalid protocol : "%s"';
   SErrReadingSocket = 'Error reading data from socket';
   SErrWritingSocket = 'Error writing data to socket';
+  SErrTimedOut = 'Operation timed out';
   SErrInvalidProtocolVersion = 'Invalid protocol version in response: "%s"';
   SErrInvalidStatusCode = 'Invalid response status code: %s';
   SErrUnexpectedResponse = 'Unexpected response status code: %d';
@@ -583,7 +586,7 @@ end;
 
 function TFPCustomHTTPClient.IsConnected: Boolean;
 begin
-  Result := Assigned(FSocket);
+  Result := Assigned(FSocket) and not FSocket.Closed;
 end;
 
 function TFPCustomHTTPClient.NoContentAllowed(ACode: Integer): Boolean;
@@ -832,9 +835,9 @@ begin
     FRequestContentLength:=0;
   FRequestDataWritten:=0;
   if not Terminated and not WriteString(S) then
-    raise EHTTPClientSocketWrite.Create(SErrWritingSocket);
+    raise CreateWriteError;
   if not Terminated and Assigned(FRequestBody) and not WriteRequestBody then
-    raise EHTTPClientSocketWrite.Create(SErrWritingSocket);
+    raise CreateWriteError;
 end;
 
 function TFPCustomHTTPClient.ReadString(out S: String): Boolean;
@@ -852,7 +855,7 @@ function TFPCustomHTTPClient.ReadString(out S: String): Boolean;
     If (r=0) or Terminated Then
       Exit(False);
     If (r<0) then
-      Raise EHTTPClientSocketRead.Create(SErrReadingSocket);
+      Raise CreateReadError;
     if (r<ReadBuflen) then
       SetLength(FBuffer,r);
     FDataRead:=FDataRead+R;
@@ -1198,7 +1201,7 @@ Function TFPCustomHTTPClient.ReadResponse(Stream: TStream;
       Exit(0);
     Result:=ReadFromSocket(FBuffer[1],LB);
     If Result<0 then
-      Raise EHTTPClientSocketRead.Create(SErrReadingSocket);
+      Raise CreateReadError;
     if (Result>0) then
       begin
       FDataRead:=FDataRead+Result;
@@ -1232,7 +1235,7 @@ Function TFPCustomHTTPClient.ReadResponse(Stream: TStream;
       SetLength(FBuffer,ReadBuflen);
       Cnt:=ReadFromSocket(FBuffer[1],length(FBuffer));
       If Cnt<0 then
-        Raise EHTTPClientSocketRead.Create(SErrReadingSocket);
+        Raise CreateReadError;
       SetLength(FBuffer,Cnt);
       BufPos:=1;
       Result:=Cnt>0;
@@ -1436,13 +1439,13 @@ Procedure TFPCustomHTTPClient.DoKeepConnectionRequest(const AURI: TURI;
   const AAllowedResponseCodes: array of Integer;
   AHeadersOnly, AIsHttps: Boolean);
 Var
-  SkipReconnect: Boolean;
+  TryReconnect: Boolean;
   CHost: string;
   CPort: Word;
   ACount: Integer;
 begin
   ExtractHostPort(AURI, CHost, CPort);
-  SkipReconnect := False;
+  TryReconnect := False;
   ACount := 0;
   Repeat
     If Not IsConnected Then
@@ -1454,24 +1457,24 @@ begin
         SendRequest(AMethod,AURI);
         if Terminated then
           break;
-        SkipReconnect := ReadResponse(AStream,AAllowedResponseCodes,AHeadersOnly);
+        TryReconnect := not ReadResponse(AStream,AAllowedResponseCodes,AHeadersOnly);
       except
-        on E: EHTTPClientSocket do
+        on E: TObject do
         begin
-          if ((FKeepConnectionReconnectLimit>=0) and (aCount>=KeepConnectionReconnectLimit)) then
-            raise // reconnect limit is reached -> reraise
-          else
-            begin
-            // failed socket operations raise exceptions - e.g. if ReadString() fails
-            // this can be due to a closed keep-alive connection by the server
-            // -> try to reconnect
-            SkipReconnect:=False;
-            end;
+          TryReconnect := (E is EHTTPClientSocket) and not(
+                ((FKeepConnectionReconnectLimit>=0) and (aCount>=KeepConnectionReconnectLimit)) // reconnect limit reached
+             or (Socket.IsTimedOutError(Socket.LastError))); // do not reconnect on TimedOut error
+
+          // force disconnect from server because the socket is in invalid state and must not be reused
+          DisconnectFromServer;
+
+          if not TryReconnect then
+            raise;
         end;
       end;
       if (FKeepConnectionReconnectLimit>=0) and (ACount>=KeepConnectionReconnectLimit) then
         break; // reconnect limit is reached -> exit
-      If Not SkipReconnect and Not Terminated Then
+      If TryReconnect and Not Terminated Then
         ReconnectToServer(CHost,CPort,AIsHttps);
       Inc(ACount);
     Finally
@@ -1479,7 +1482,7 @@ begin
       If HasConnectionClose or Terminated Then
         DisconnectFromServer;
     End;
-  Until SkipReconnect or Terminated;
+  Until not TryReconnect or Terminated;
 end;
 
 Procedure TFPCustomHTTPClient.DoMethod(Const AMethod, AURL: String;
@@ -1895,6 +1898,22 @@ end;
 procedure TFPCustomHTTPClient.Put(const URL: string; Response: TStrings);
 begin
   Response.Text:=Put(URL);
+end;
+
+function TFPCustomHTTPClient.CreateReadError: Exception;
+begin
+  if FSocket.IsTimedOutError(FSocket.LastError) then
+    Result := EHTTPClientSocketRead.Create(SErrTimedOut)
+  else
+    Result := EHTTPClientSocketRead.Create(SErrReadingSocket);
+end;
+
+function TFPCustomHTTPClient.CreateWriteError: Exception;
+begin
+  if FSocket.IsTimedOutError(FSocket.LastError) then
+    Result := EHTTPClientSocketWrite.Create(SErrTimedOut)
+  else
+    Result := EHTTPClientSocketWrite.Create(SErrWritingSocket);
 end;
 
 procedure TFPCustomHTTPClient.Put(const URL: string; const LocalFileName: String
