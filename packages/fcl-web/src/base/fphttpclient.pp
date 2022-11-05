@@ -130,7 +130,7 @@ Type
     procedure DoVerifyCertificate(Sender: TObject; var Allow: Boolean); virtual;
     Function NoContentAllowed(ACode : Integer) : Boolean;
     // called when waiting for the server to respond. Set AAbort to true to abort the operation
-    Procedure DoIdle(Sender: TSocketStream; AOperation: TSocketOperationType; var AAbort: Boolean);
+    Procedure DoIdle(Sender: TSocketStream; AOperation: TSocketOperationType; var AAbort: Boolean); virtual;
     // Peform a request, close connection.
     Procedure DoNormalRequest(const AURI: TURI; const AMethod: string;
       AStream: TStream; const AAllowedResponseCodes: array of Integer;
