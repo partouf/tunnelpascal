@@ -575,7 +575,10 @@ begin
   if AValue=FIOTimeout then exit;
   FIOTimeout:=AValue;
   if Assigned(FSocket) then
+  begin
     FSocket.IOTimeout:=GetTimeoutForSocket(FIOTimeout);
+    FSocket.IOAttempts:=GetAttemptsForSocket(FIOTimeout);
+  end;
 end;
 
 procedure TFPCustomHTTPClient.SetConnectTimeout(AValue: Integer);
