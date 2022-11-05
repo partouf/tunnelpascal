@@ -799,15 +799,13 @@ begin
     Attempts:=1;
   repeat
     Result:=FHandler.Recv(Buffer,Count);
-    if (Result=-1) and (Attempts<>1) then
+    if Result=-1 then
       begin
       Err:=FHandler.LastError;
-      if IsTimedOutError(Err) then
-        begin
+      if IsTimedOutError(Err) and (Attempts<>1) then
         DoNextAttempt(sotRead, AAbort);
-        if Attempts>0 then
-          Dec(Attempts);
-        end;
+      if Attempts>0 then
+        Dec(Attempts);
       end;
   until not(IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
 
@@ -830,15 +828,13 @@ begin
     Attempts:=1;
   repeat
     Result:=FHandler.Send(Buffer,Count);
-    if (Result=-1) and (Attempts<>1) then
+    if Result=-1 then
       begin
       Err:=FHandler.LastError;
-      if IsTimedOutError(Err) then
-        begin
+      if IsTimedOutError(Err) and (Attempts<>1) then
         DoNextAttempt(sotWrite, AAbort);
-        if Attempts>0 then
-          Dec(Attempts);
-        end;
+      if Attempts>0 then
+        Dec(Attempts);
       end;
   until not(IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
 end;
