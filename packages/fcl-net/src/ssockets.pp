@@ -11,6 +11,7 @@
 
  **********************************************************************}
 {$MODE objfpc}{$H+}
+{$ModeSwitch nestedprocvars}
 
 unit ssockets;
 
@@ -92,6 +93,7 @@ type
   TSocketStreamArray = Array of TSocketStream;
   TSocketOperationType = (sotConnect, sotRead, sotWrite);
   TSocketNextAttemptEvent = procedure(Sender: TSocketStream; Operation: TSocketOperationType; var AAbort: Boolean) of object;
+  TSocketOperationEvent = function():longint is nested;
 
   TSocketStream = class(THandleStream)
   Private
@@ -119,6 +121,8 @@ type
     procedure SetIOTimeout(AValue: Integer);
   Protected
     Procedure DoOnClose; virtual;
+  Public
+    Function LoopAttempts(Attempts: Integer; OperationType: TSocketOperationType; Operation: TSocketOperationEvent): longint;
     Procedure DoNextAttempt(Operation: TSocketOperationType; var AAbort: Boolean); virtual;
   Public
     Constructor Create (AHandle : Longint; AHandler : TSocketHandler = Nil);virtual;
@@ -787,57 +791,24 @@ begin
 end;
 
 function TSocketStream.Read(var Buffer; Count: Longint): longint;
-var
-  Err: cint;
-  AAbort: Boolean;
-  Attempts: Integer;
-begin
-  Err:=0;
-  AAbort:=False;
-  Result:=-1;
-  Attempts:=IOAttempts;
-  if Attempts=0 then // sanity check
-    Attempts:=1;
-  repeat
+  function Op: longint;
+  begin
     Result:=FHandler.Recv(Buffer,Count);
-    if Result=-1 then
-      begin
-      Err:=FHandler.LastError;
-      if IsTimedOutError(Err) and (Attempts<>1) then
-        DoNextAttempt(sotRead, AAbort);
-      if Attempts>0 then
-        Dec(Attempts);
-      end;
-  until not(IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
-
+  end;
+begin
+  Result := LoopAttempts(IOAttempts, sotRead, @Op);
   if (Result=0) then
     FPeerClosed:=True;
 end;
 
 function TSocketStream.Write(const Buffer; Count: Longint): Longint;
 
-var
-  Err: cint;
-  AAbort: Boolean;
-  Attempts: Integer;
-begin
-  Err:=0;
-  AAbort:=False;
-  Result:=-1;
-  Attempts:=IOAttempts;
-  if Attempts=0 then // sanity check
-    Attempts:=1;
-  repeat
+  function Op: longint;
+  begin
     Result:=FHandler.Send(Buffer,Count);
-    if Result=-1 then
-      begin
-      Err:=FHandler.LastError;
-      if IsTimedOutError(Err) and (Attempts<>1) then
-        DoNextAttempt(sotWrite, AAbort);
-      if Attempts>0 then
-        Dec(Attempts);
-      end;
-  until not(IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
+  end;
+begin
+  Result := LoopAttempts(IOAttempts, sotRead, @Op);
 end;
 
 function TSocketStream.GetLocalAddress: sockets.TSockAddr;
@@ -895,6 +866,29 @@ procedure TSocketStream.DoOnClose;
 begin
   If Assigned(FOnClose) then
     FOnClose(Self);
+end;
+
+function TSocketStream.LoopAttempts(Attempts: Integer; OperationType: TSocketOperationType;
+  Operation: TSocketOperationEvent): longint;
+var
+  Err: cint;
+  AAbort: Boolean;
+begin
+  Err:=0;
+  AAbort:=False;
+  if Attempts=0 then // sanity check
+    Attempts:=1;
+  repeat
+    Result:=Operation();
+    if Result<0 then
+      begin
+      Err:=socketerror;
+      if IsTimedOutError(Err) and (Attempts<>1) then
+        DoNextAttempt(OperationType, AAbort);
+      if Attempts>0 then
+        Dec(Attempts);
+      end;
+  until not(IsTimedOutError(Err) and not AAbort and (Result<0) and (Attempts<>0));
 end;
 
 procedure TSocketStream.DoNextAttempt(Operation: TSocketOperationType; var AAbort: Boolean);
