@@ -120,6 +120,7 @@ type
   Protected
     Procedure DoOnClose; virtual;
     Procedure DoNextAttempt(Operation: TSocketOperationType; var AAbort: Boolean); virtual;
+    Function IsTimedOutError(AErr: cint): Boolean;
   Public
     Constructor Create (AHandle : Longint; AHandler : TSocketHandler = Nil);virtual;
     destructor Destroy; override;
@@ -359,12 +360,6 @@ Const
   SocketWouldBlock = -2;
   SocketBlockingMode = 0;
   SocketNonBlockingMode = 1;
-
- {$IFDEF UNIX}
-    ErrTimedOut = ESysETimedOut;
- {$ELSE}
-    ErrTimedOut = WSAETIMEDOUT;
- {$ENDIF}
 
 { ---------------------------------------------------------------------
   ESocketError
@@ -796,26 +791,26 @@ var
   AAbort: Boolean;
   Attempts: Integer;
 begin
-  Err:=ErrTimedOut;
+  Err:=0;
   AAbort:=False;
   Result:=-1;
   Attempts:=IOAttempts;
   if Attempts=0 then // sanity check
     Attempts:=1;
-  while (Err=ErrTimedOut) and not AAbort and (Result=-1) and (Attempts<>0) do
-    begin
+  repeat
     Result:=FHandler.Recv(Buffer,Count);
     if (Result=-1) and (Attempts<>1) then
       begin
       Err:=FHandler.LastError;
-      if Err=ErrTimedOut then
+      if IsTimedOutError(Err) then
         begin
         DoNextAttempt(sotRead, AAbort);
         if Attempts>0 then
           Dec(Attempts);
         end;
       end;
-    end;
+  until not(IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
+
   if (Result=0) then
     FPeerClosed:=True;
 end;
@@ -827,19 +822,18 @@ var
   AAbort: Boolean;
   Attempts: Integer;
 begin
-  Err:=ErrTimedOut;
+  Err:=0;
   AAbort:=False;
   Result:=-1;
   Attempts:=IOAttempts;
   if Attempts=0 then // sanity check
     Attempts:=1;
-  while (Err=ErrTimedOut) and not AAbort and (Result=-1) and (Attempts<>0) do
-    begin
+  repeat
     Result:=FHandler.Send(Buffer,Count);
     if (Result=-1) and (Attempts<>1) then
       begin
       Err:=FHandler.LastError;
-      if Err=ErrTimedOut then
+      if IsTimedOutError(Err) then
         begin
         DoNextAttempt(sotWrite, AAbort);
         if Attempts>0 then
@@ -847,6 +841,7 @@ begin
         end;
       end;
     end;
+  until (IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
 end;
 
 function TSocketStream.GetLocalAddress: sockets.TSockAddr;
@@ -910,6 +905,25 @@ procedure TSocketStream.DoNextAttempt(Operation: TSocketOperationType; var AAbor
 begin
   If Assigned(FOnNextAttempt) then
     FOnNextAttempt(Self, Operation, AAbort);
+end;
+
+Function TSocketStream.IsTimedOutError(AErr: cint): Boolean;
+{$if defined(windows) or defined(unix)}
+const
+ {$IFDEF UNIX}
+    ErrTimedOut = ESysETimedOut;
+    ErrTimedOut_Again = ESysEAGAIN; // UNIX may send EAGAIN instead of ETimedOut
+ {$ELSE}
+    ErrTimedOut = WSAETIMEDOUT;
+    ErrTimedOut_Again = WSAETIMEDOUT;
+ {$ENDIF}
+{$ENDIF}
+begin
+{$if defined(windows) or defined(unix)}
+  Result:=(AErr=ErrTimedOut) or (AErr=ErrTimedOut_Again);
+{$ELSE}
+  Result:=False;
+{$ENDIF}
 end;
 
 { ---------------------------------------------------------------------
