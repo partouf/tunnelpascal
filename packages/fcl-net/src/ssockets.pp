@@ -840,7 +840,6 @@ begin
           Dec(Attempts);
         end;
       end;
-    end;
   until (IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
 end;
 
