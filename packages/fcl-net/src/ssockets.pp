@@ -840,7 +840,7 @@ begin
           Dec(Attempts);
         end;
       end;
-  until (IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
+  until not(IsTimedOutError(Err) and not AAbort and (Result=-1) and (Attempts<>0));
 end;
 
 function TSocketStream.GetLocalAddress: sockets.TSockAddr;
