@@ -15,7 +15,7 @@ unit FPHTTPClientAsyncPool;
 interface
 
 uses
-  Classes, SysUtils, fphttpclient, httpprotocol, URIParser, syncobjs, DateUtils, FPHTTPClientPool;
+  Classes, SysUtils, fphttpclient, httpprotocol, URIParser, syncobjs, ssockets, DateUtils, FPHTTPClientPool;
 
 type
   TFPHTTPClientPoolMethodResult = (mrSuccess, mrAbortedByClient, mrAbortedWithException);
@@ -186,6 +186,7 @@ type
     procedure ExecOnProgress(const aDirection: TFPHTTPClientPoolProgressDirection;
       const aCurrentPos, aContentLength: Integer; var ioStop: Boolean);
     procedure ExecOnFinish;
+    procedure OnIdle(Sender: TObject; AOperation: TSocketOperationType; var AAbort: Boolean);
   protected
     // access only through LockProperties
     procedure OwnerDestroyed; override;
@@ -992,6 +993,12 @@ begin
   OnDataReceivedSend(Sender, pdDataSent, aContentLength, aCurrentPos);
 end;
 
+procedure TFPHTTPClientAsyncPoolRequestThread.OnIdle(Sender: TObject; AOperation: TSocketOperationType;
+  var AAbort: Boolean);
+begin
+  AAbort:=AAbort or Terminated;
+end;
+
 procedure TFPHTTPClientAsyncPoolRequestThread.OwnerDestroyed;
 begin
   inherited;
@@ -1065,6 +1072,7 @@ begin
 
       fClient.OnDataReceived := @OnDataReceived;
       fClient.OnDataSent := @OnDataSent;
+      fClient.OnIdle := @OnIdle;
 
       if Terminated then
       begin

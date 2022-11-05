@@ -90,6 +90,8 @@ type
 
   { TSocketStream }
   TSocketStreamArray = Array of TSocketStream;
+  TSocketOperationType = (sotConnect, sotRead, sotWrite);
+  TSocketNextAttemptEvent = procedure(Sender: TSocketStream; Operation: TSocketOperationType; var AAbort: Boolean) of object;
 
   TSocketStream = class(THandleStream)
   Private
@@ -102,16 +104,22 @@ type
     FWriteFlags: Integer;
     FHandler : TSocketHandler;
     FIOTimeout : Integer;
+    FIOAttempts : Integer;
     FConnectTimeout : Integer;
+    FConnectAttempts : Integer;
+    FOnNextAttempt: TSocketNextAttemptEvent;
     function GetLastError: Integer;
     Procedure GetSockOptions;
+    procedure SetConnectAttempts(const AValue: Integer);
     procedure SetConnectTimeout(AValue: Integer);
+    procedure SetIOAttempts(const AValue: Integer);
     Procedure SetSocketOptions(Value : TSocketOptions);
     function GetLocalAddress: sockets.TSockAddr;
     function GetRemoteAddress: sockets.TSockAddr;
     procedure SetIOTimeout(AValue: Integer);
   Protected
     Procedure DoOnClose; virtual;
+    Procedure DoNextAttempt(Operation: TSocketOperationType; var AAbort: Boolean); virtual;
   Public
     Constructor Create (AHandle : Longint; AHandler : TSocketHandler = Nil);virtual;
     destructor Destroy; override;
@@ -129,9 +137,18 @@ type
     Property LastError : Integer Read GetLastError;
     Property ReadFlags : Integer Read FReadFlags Write FReadFlags;
     Property WriteFlags : Integer Read FWriteFlags Write FWriteFlags;
+    // timeout in ms for read/write
     Property IOTimeout : Integer read FIOTimeout Write SetIOTimeout;
+    // number of attempts to read/write (only after timeout). Set -1 for infinite.
+    Property IOAttempts : Integer read FIOAttempts Write SetIOAttempts default 1;
+    // timeout in ms for connect
     Property ConnectTimeout : Integer read FConnectTimeout Write SetConnectTimeout;
+    // number of attempts to reconnect (only after timeout). Set -1 for infinite.
+    Property ConnectAttempts : Integer read FConnectAttempts Write SetConnectAttempts default 1;
     Property OnClose : TNotifyEvent Read FOnClose Write FOnClose;
+    // called after a timeout was reached and a new attempt is going to be started.
+    //  set AAbort to True to break the cycle
+    Property OnNextAttempt : TSocketNextAttemptEvent Read FOnNextAttempt Write FOnNextAttempt;
     Property Handler : TSocketHandler Read FHandler;
     // We called close
     Property Closed : Boolean read FClosed;
@@ -301,7 +318,7 @@ type
     FPort : Word;
   Protected
 {$IFDEF HAVENONBLOCKING}
-    function SetSocketBlockingMode(ASocket: cint; ABlockMode: TBlockingMode; AFDSPtr: Pointer): boolean; virtual;
+    function SetSocketBlockingMode(ASocket: cint; ABlockMode: TBlockingMode): boolean; virtual;
     function CheckSocketConnectTimeout(ASocket: cint; AFDSPtr: Pointer; ATimeVPtr: Pointer): TCheckTimeoutResult; virtual;
 {$ENDIF}
   Public
@@ -343,6 +360,11 @@ Const
   SocketBlockingMode = 0;
   SocketNonBlockingMode = 1;
 
+ {$IFDEF UNIX}
+    ErrTimedOut = ESysETimedOut;
+ {$ELSE}
+    ErrTimedOut = WSAETIMEDOUT;
+ {$ENDIF}
 
 { ---------------------------------------------------------------------
   ESocketError
@@ -588,6 +610,8 @@ begin
   If (FHandler=Nil) then
     FHandler:=TSocketHandler.Create;
   FHandler.SetSocket(Self);
+  FIOAttempts:=1;
+  FConnectAttempts:=1;
 end;
 
 destructor TSocketStream.Destroy;
@@ -727,6 +751,12 @@ begin
   FConnectTimeout := AValue;
 end;
 
+procedure TSocketStream.SetIOAttempts(const AValue: Integer);
+begin
+  if (FIOAttempts = AValue) or (AValue=0) then Exit;
+  FIOAttempts := AValue;
+end;
+
 function TSocketStream.GetLastError: Integer;
 begin
   Result:=FHandler.LastError;
@@ -749,23 +779,74 @@ begin
   Result:=FHandler.Select(aCheck,TimeOut);
 end;
 
+procedure TSocketStream.SetConnectAttempts(const AValue: Integer);
+begin
+  if (FConnectAttempts = AValue) or (AValue=0) then Exit;
+  FConnectAttempts := AValue;
+end;
+
 function TSocketStream.CanRead(TimeOut: Integer): Boolean;
 begin
   Result:=FHandler.CanRead(TimeOut);
 end;
 
 function TSocketStream.Read(var Buffer; Count: Longint): longint;
-
+var
+  Err: cint;
+  AAbort: Boolean;
+  Attempts: Integer;
 begin
-  Result:=FHandler.Recv(Buffer,Count);
+  Err:=ErrTimedOut;
+  AAbort:=False;
+  Result:=-1;
+  Attempts:=IOAttempts;
+  if Attempts=0 then // sanity check
+    Attempts:=1;
+  while (Err=ErrTimedOut) and not AAbort and (Result=-1) and (Attempts<>0) do
+    begin
+    Result:=FHandler.Recv(Buffer,Count);
+    if (Result=-1) and (Attempts<>1) then
+      begin
+      Err:=FHandler.LastError;
+      if Err=ErrTimedOut then
+        begin
+        DoNextAttempt(sotRead, AAbort);
+        if Attempts>0 then
+          Dec(Attempts);
+        end;
+      end;
+    end;
   if (Result=0) then
     FPeerClosed:=True;
 end;
 
 function TSocketStream.Write(const Buffer; Count: Longint): Longint;
 
+var
+  Err: cint;
+  AAbort: Boolean;
+  Attempts: Integer;
 begin
-  Result:=FHandler.Send(Buffer,Count);
+  Err:=ErrTimedOut;
+  AAbort:=False;
+  Result:=-1;
+  Attempts:=IOAttempts;
+  if Attempts=0 then // sanity check
+    Attempts:=1;
+  while (Err=ErrTimedOut) and not AAbort and (Result=-1) and (Attempts<>0) do
+    begin
+    Result:=FHandler.Send(Buffer,Count);
+    if (Result=-1) and (Attempts<>1) then
+      begin
+      Err:=FHandler.LastError;
+      if Err=ErrTimedOut then
+        begin
+        DoNextAttempt(sotWrite, AAbort);
+        if Attempts>0 then
+          Dec(Attempts);
+        end;
+      end;
+    end;
 end;
 
 function TSocketStream.GetLocalAddress: sockets.TSockAddr;
@@ -823,6 +904,12 @@ procedure TSocketStream.DoOnClose;
 begin
   If Assigned(FOnClose) then
     FOnClose(Self);
+end;
+
+procedure TSocketStream.DoNextAttempt(Operation: TSocketOperationType; var AAbort: Boolean);
+begin
+  If Assigned(FOnNextAttempt) then
+    FOnNextAttempt(Self, Operation, AAbort);
 end;
 
 { ---------------------------------------------------------------------
@@ -1412,34 +1499,18 @@ begin
 end;
 
 {$IFDEF HAVENONBLOCKING}
-function TInetSocket.SetSocketBlockingMode(ASocket: cint; ABlockMode: TBlockingMode; AFDSPtr: Pointer): Boolean;
+function TInetSocket.SetSocketBlockingMode(ASocket: cint; ABlockMode: TBlockingMode): Boolean;
 
 Const
     BlockingModes : Array[TBlockingMode] of DWord =
                   (SocketBlockingMode, SocketNonBlockingMode);
 
 
-var
-  locFDS: PFDSet;
 {$ifdef unix}
+var
   flags: Integer;
 {$endif}
 begin
-  locFDS := PFDSet(AFDSPtr);
-  if (AblockMode = bmNonBlocking) then
-    begin
-{$ifdef unix}
-    locFDS^ := Default(TFDSet);
-    fpFD_Zero(locFDS^);
-    fpFD_Set(ASocket, locFDS^);
-{$else}
-{$ifdef windows}
-    locFDS^ := Default(TFDSet);
-    FD_Zero(locFDS^);
-    FD_Set(ASocket, locFDS^);
-{$endif}
-{$endif}
-    end;
 {$ifdef unix}
   flags := FpFcntl(ASocket, F_GetFl, 0);
   if (AblockMode = bmNonBlocking) then
@@ -1462,10 +1533,21 @@ var
   locFDS: PFDSet;
 
 begin
-  locTimeVal := PTimeVal(ATimeVPtr);
   locFDS := PFDSet(AFDSPtr);
+{$if defined(unix)}
+  locFDS^ := Default(TFDSet);
+  fpFD_Zero(locFDS^);
+  fpFD_Set(ASocket, locFDS^);
+{$elseif defined(windows)}
+  locFDS^ := Default(TFDSet);
+  FD_Zero(locFDS^);
+  FD_Set(ASocket, locFDS^);
+{$endif}
+
+  locTimeVal := PTimeVal(ATimeVPtr);
   locTimeVal^.tv_usec := (FConnectTimeout mod 1000) * 1000;
   locTimeVal^.tv_sec := FConnectTimeout div 1000;
+
   Res:=-1;
   {$ifdef unix}
     Res:=fpSelect(ASocket + 1, nil, locFDS, nil, locTimeVal); // 0 -> TimeOut
@@ -1501,9 +1583,11 @@ procedure TInetSocket.Connect;
 {$IFDEF HAVENONBLOCKING}
 Const
  {$IFDEF UNIX}
-    ErrWouldBlock = ESysEInprogress;
+    ErrWouldBlock = ESysEWOULDBLOCK;
+    ErrInprogress = ESysEInprogress;
  {$ELSE}
     ErrWouldBlock = WSAEWOULDBLOCK;
+    ErrInprogress = WSAEWOULDBLOCK;
  {$ENDIF}
 {$ENDIF}
 
@@ -1517,6 +1601,8 @@ Var
 {$IFDEF HAVENONBLOCKING}
   FDS: TFDSet;
   TimeV: TTimeVal;
+  Attempts: Integer;
+  AAbort: Boolean;
 {$endif}
 begin
   A := StrToHostAddr(FHost);
@@ -1534,7 +1620,7 @@ begin
   addr.sin_addr.s_addr := HostToNet(a.s_addr);
 {$IFDEF HAVENONBLOCKING}
   if ConnectTimeOut>0 then
-    SetSocketBlockingMode(Handle, bmNonBlocking, @FDS) ;
+    SetSocketBlockingMode(Handle, bmNonBlocking) ;
 {$ENDIF}
   IsError:=True;
   TimeOutResult:=ctrError;
@@ -1550,12 +1636,26 @@ begin
 {$IFDEF HAVENONBLOCKING}
   if (ConnectTimeOut>0) then
     begin
-    if IsError and (Err=ErrWouldBlock) then
+    Attempts:=ConnectAttempts;
+    if Attempts=0 then // sanity check
+      Attempts:=1;
+    AAbort:=False;
+    while not AAbort and IsError and ((Err=ErrWouldBlock) or (Err=ErrInprogress)) and (Attempts<>0) do
       begin
       TimeOutResult:=CheckSocketConnectTimeout(Handle, @FDS, @TimeV);
       IsError:=(TimeOutResult<>ctrOK);
+      if TimeOutResult=ctrTimeout then
+        begin
+        Err:=ErrWouldBlock;
+        if Attempts<>1 then
+          DoNextAttempt(sotConnect, AAbort);
+        if Attempts>0 then
+          Dec(Attempts);
+        end
+      else
+        Err:=-1;//break the cycle
       end;
-    SetSocketBlockingMode(Handle, bmBlocking, @FDS);
+    SetSocketBlockingMode(Handle, bmBlocking);
     end;
 {$ENDIF}
   If Not IsError then

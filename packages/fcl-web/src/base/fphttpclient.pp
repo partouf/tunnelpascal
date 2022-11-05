@@ -26,6 +26,10 @@ Const
   ReadBufLen = 4096;
   // Default for MaxRedirects Request redirection is aborted after this number of redirects.
   DefMaxRedirects = 16;
+  // Default Timeout values
+  DefaultIOTimeout = 0; // Infinite timeout on most platforms
+  DefaultIdleTimeout = 100;
+  DefaultConnectTimeout = 3000;
 
 Type
   TRedirectEvent = Procedure (Sender : TObject; Const ASrc : String; Var ADest: String) of object;
@@ -38,6 +42,7 @@ Type
   TGetSocketHandlerEvent = Procedure (Sender : TObject; Const UseSSL : Boolean; Out AHandler : TSocketHandler) of object;
   TSocketHandlerCreatedEvent = Procedure (Sender : TObject; AHandler : TSocketHandler) of object;
   THTTPVerifyCertificateEvent = Procedure (Sender : TObject; AHandler : TSSLSocketHandler; var aAllow : Boolean) of object;
+  THTTPIdleEvent = Procedure (Sender : TObject; AOperation: TSocketOperationType; var AAbort: Boolean) of object;
 
   TFPCustomHTTPClient = Class;
 
@@ -67,6 +72,8 @@ Type
   private
     FDataRead : Int64;
     FContentLength : Int64;
+    FIdleTimeout : Integer;
+    FOnIdle: THTTPIdleEvent;
     FRequestDataWritten : Int64;
     FRequestContentLength : Int64;
     FAllowRedirect: Boolean;
@@ -104,6 +111,8 @@ Type
     function CheckContentLength: Int64;
     function CheckTransferEncoding: string;
     function GetCookies: TStrings;
+    function GetTimeoutForSocket(ATimeout: Integer): Integer;
+    function GetAttemptsForSocket(ATimeout: Integer): Integer;
     function GetProxy: TProxyData;
     Procedure ResetResponse;
     procedure SetConnectTimeout(AValue: Integer);
@@ -113,12 +122,15 @@ Type
     procedure SetProxy(AValue: TProxyData);
     Procedure SetRequestHeaders(const AValue: TStrings);
     procedure SetIOTimeout(AValue: Integer);
+    procedure SetIdleTimeout(const AValue: Integer);
     Procedure ExtractHostPort(AURI: TURI; Out AHost: String; Out APort: Word);
     Procedure CheckConnectionCloseHeader;
   protected
     // Called with TSSLSocketHandler as sender
     procedure DoVerifyCertificate(Sender: TObject; var Allow: Boolean); virtual;
     Function NoContentAllowed(ACode : Integer) : Boolean;
+    // called when waiting for the server to respond. Set AAbort to true to abort the operation
+    Procedure DoIdle(Sender: TSocketStream; AOperation: TSocketOperationType; var AAbort: Boolean);
     // Peform a request, close connection.
     Procedure DoNormalRequest(const AURI: TURI; const AMethod: string;
       AStream: TStream; const AAllowedResponseCodes: array of Integer;
@@ -305,8 +317,11 @@ Type
     // Socket
     Property Socket : TSocketStream read FSocket;
     // Timeouts
-    Property IOTimeout : Integer read FIOTimeout write SetIOTimeout;
-    Property ConnectTimeout : Integer read FConnectTimeout write SetConnectTimeout;
+    Property IOTimeout : Integer read FIOTimeout write SetIOTimeout default DefaultIOTimeout;
+    Property ConnectTimeout : Integer read FConnectTimeout write SetConnectTimeout default DefaultConnectTimeout;
+    // Call the OnIdle event when the client is waiting for an answer from the server (during connecting/reading/writing/...)
+    //   using it the client stays responsive during waiting for the server
+    Property IdleTimeout : Integer read FIdleTimeout write SetIdleTimeout default DefaultIdleTimeout;
     // Before request properties.
     // Additional headers for request. Host; and Authentication are automatically added.
     Property RequestHeaders : TStrings Read FRequestHeaders Write SetRequestHeaders;
@@ -367,6 +382,8 @@ Type
     Property AfterSocketHandlerCreate : TSocketHandlerCreatedEvent Read FAfterSocketHandlerCreated Write FAfterSocketHandlerCreated;
     // Called when a SSL certificate must be verified.
     Property OnVerifySSLCertificate : THTTPVerifyCertificateEvent Read FOnVerifyCertificate Write FOnVerifyCertificate;
+    // Called when the client is waiting for the server's response (all different operations)
+    Property OnIdle: THTTPIdleEvent Read FOnIdle Write FOnIdle;
   end;
 
 
@@ -374,6 +391,7 @@ Type
   Published
     Property KeepConnection;
     Property Connected;
+    Property IdleTimeout;
     Property IOTimeout;
     Property ConnectTimeout;
     Property RequestHeaders;
@@ -389,6 +407,7 @@ Type
     Property OnRedirect;
     Property UserName;
     Property Password;
+    Property OnIdle;
     Property OnPassword;
     Property OnDataReceived;
     Property OnDataSent;
@@ -553,7 +572,7 @@ begin
   if AValue=FIOTimeout then exit;
   FIOTimeout:=AValue;
   if Assigned(FSocket) then
-    FSocket.IOTimeout:=AValue;
+    FSocket.IOTimeout:=GetTimeoutForSocket(FIOTimeout);
 end;
 
 procedure TFPCustomHTTPClient.SetConnectTimeout(AValue: Integer);
@@ -592,6 +611,13 @@ procedure TFPCustomHTTPClient.DoDataWrite;
 begin
   If Assigned(FOnDataSent) Then
     FOnDataSent(Self,FRequestContentLength,FRequestDataWritten);
+end;
+
+procedure TFPCustomHTTPClient.DoIdle(Sender: TSocketStream; AOperation: TSocketOperationType; var AAbort: Boolean);
+begin
+  AAbort:=AAbort or Terminated;
+  if Assigned(FOnIdle) then
+    FOnIdle(Self, AOperation, AAbort);
 end;
 
 function TFPCustomHTTPClient.IndexOfHeader(const AHeader: String): Integer;
@@ -691,16 +717,15 @@ begin
   FSocket:=TInetSocket.Create(AHost,APort,G);
   {$endif}  
   try
-    if FIOTimeout<>0 then
-      FSocket.IOTimeout:=FIOTimeout;
-    if FConnectTimeout<>0 then
-      FSocket.ConnectTimeout:=FConnectTimeout;
-    {$ifdef Unix}
-    if not IsUnixSocketConnection then
-      (FSocket as TInetSocket).Connect;
-    {$else}
-      (FSocket as TInetSocket).Connect;
-    {$endif}
+    FSocket.IOTimeout:=GetTimeoutForSocket(FIOTimeout);
+    FSocket.IOAttempts:=GetAttemptsForSocket(FIOTimeout);
+    FSocket.OnNextAttempt:=@DoIdle;
+    if FSocket is TInetSocket then
+      begin
+      FSocket.ConnectTimeout:=GetTimeoutForSocket(FConnectTimeout);
+      FSocket.ConnectAttempts:=GetAttemptsForSocket(FConnectTimeout);
+      TInetSocket(FSocket).Connect;
+      end;
   except
     FreeAndNil(FSocket);
     Raise;
@@ -1138,6 +1163,14 @@ begin
     KeepConnection:=False;
 end;
 
+procedure TFPCustomHTTPClient.SetIdleTimeout(const AValue: Integer);
+begin
+  if FIdleTimeout = AValue then Exit;
+  FIdleTimeout := AValue;
+  if Assigned(FSocket) then
+    FSocket.IOTimeout:=GetTimeoutForSocket(FIOTimeout);
+end;
+
 procedure TFPCustomHTTPClient.SetKeepConnection(AValue: Boolean);
 begin
   if FKeepConnection=AValue then Exit;
@@ -1474,9 +1507,9 @@ end;
 constructor TFPCustomHTTPClient.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
-  // Infinite timeout on most platforms
-  FIOTimeout:=0;
-  FConnectTimeout:=3000;
+  FIOTimeout:=DefaultIOTimeout;
+  FConnectTimeout:=DefaultConnectTimeout;
+  FIdleTimeout:=DefaultIdleTimeout;
   FKeepConnectionReconnectLimit:=1;
   FRequestHeaders:=TStringList.Create;
   FRequestHeaders.NameValueSeparator:=':';
@@ -1551,6 +1584,28 @@ end;
 procedure TFPCustomHTTPClient.Terminate;
 begin
   FTerminated:=True;
+end;
+
+function TFPCustomHTTPClient.GetTimeoutForSocket(ATimeout: Integer): Integer;
+begin
+  // use IdleTimeout if it is shorter or ATimeOut is infinite
+  if (IdleTimeout>0) and ((IdleTimeout<ATimeOut) or (ATimeOut=0)) then
+    Result := IdleTimeout
+  else
+    Result := ATimeout;
+end;
+
+function TFPCustomHTTPClient.GetAttemptsForSocket(ATimeout: Integer): Integer;
+begin
+  Result := 1;
+  if IdleTimeout>0 then
+  begin
+    if ATimeout>IdleTimeout then
+      Result := ATimeout div IdleTimeout
+    else
+    if ATimeout=0 then // infinitely
+      Result := -1;
+  end;
 end;
 
 procedure TFPCustomHTTPClient.ResetResponse;
