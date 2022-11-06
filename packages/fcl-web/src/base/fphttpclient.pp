@@ -28,7 +28,7 @@ Const
   DefMaxRedirects = 16;
   // Default Timeout values
   DefaultIOTimeout = 0; // Infinite timeout on most platforms
-  DefaultIdleTimeout = 100;
+  DefaultIdleTimeout = 0; // Do not use IdleTimeout/OnIdle by default
   DefaultConnectTimeout = 3000;
 
 Type
