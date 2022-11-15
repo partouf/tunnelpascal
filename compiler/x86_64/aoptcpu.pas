@@ -288,6 +288,8 @@ uses
                 A_ADD,
                 A_SUB:
                   Result:=PostPeepholeOptADDSUB(p);
+                A_RET:
+                  Result:=PostPeepholeOptRET(p);
                 A_VPXOR:
                   Result:=PostPeepholeOptVPXOR(p);
                 else
