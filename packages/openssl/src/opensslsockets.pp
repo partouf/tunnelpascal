@@ -1,6 +1,7 @@
 unit opensslsockets;
 
 {$mode objfpc}{$H+}
+{$ModeSwitch nestedprocvars}
 
 interface
 
@@ -78,6 +79,13 @@ begin
 end;
 
 function TOpenSSLSocketHandler.Connect: Boolean;
+  function Op: LongInt;
+  begin
+    if CheckSSL(FSSL.Connect) then
+      Result:=1
+    else
+      Result:=-1;
+  end;
 begin
   Result:=Inherited Connect;
   Result := Result and InitContext(False);
@@ -88,7 +96,8 @@ begin
      begin
      if SendHostAsSNI  and (Socket is TInetSocket) then
        FSSL.Ctrl(SSL_CTRL_SET_TLSEXT_HOSTNAME,TLSEXT_NAMETYPE_host_name,PAnsiChar(AnsiString((Socket as TInetSocket).Host)));
-     Result:=CheckSSL(FSSL.Connect);
+     Result:=Socket.LoopAttempts(Socket.IOAttempts, sotConnect, @Op)>0; // the SSL connect uses the IOTimeout
+
      //if Result and VerifyPeerCert then
      //  Result:=(FSSL.VerifyResult<>0) or (not DoVerifyCert);
      if Result then
@@ -298,6 +307,7 @@ function TOpenSSLSocketHandler.Send(Const Buffer; Count: Integer): Integer;
 var
   e: integer;
 begin
+  FLastError:=0;
   FSSLLastError := 0;
   FSSLLastErrorString:='';
   repeat
@@ -307,7 +317,11 @@ begin
   if (E=SSL_ERROR_ZERO_RETURN) then
     Result:=0
   else if (e<>0) then
+    begin
     FSSLLastError:=e;
+    if e=SSL_ERROR_SYSCALL then
+      FLastError:=socketerror;
+    end;
 end;
 
 function TOpenSSLSocketHandler.Recv(Const Buffer; Count: Integer): Integer;
@@ -315,6 +329,7 @@ function TOpenSSLSocketHandler.Recv(Const Buffer; Count: Integer): Integer;
 var
   e: integer;
 begin
+  FLastError:=0;
   FSSLLastError:=0;
   FSSLLastErrorString:= '';
   repeat
@@ -326,7 +341,11 @@ begin
   if (E=SSL_ERROR_ZERO_RETURN) then
     Result:=0
   else if (e<>0) then
+    begin
     FSSLLastError:=e;
+    if e=SSL_ERROR_SYSCALL then
+      FLastError:=socketerror;
+    end;
 end;
 
 function TOpenSSLSocketHandler.BytesAvailable: Integer;
