@@ -1649,7 +1649,8 @@ parser_w_ignoring_published_property=03365_W_This property will not be published
 %
 # Type Checking
 #
-# 04131 is the last used one
+# 04132 is the last used one
+# type_w_dangerous_type_conversion=04132
 #
 % \section{Type checking errors}
 % This section lists all errors that can occur when type checking is
@@ -1874,6 +1875,8 @@ type_e_operator_not_supported_for_types=04053_E_Operation "$1" not supported for
 type_e_illegal_type_conversion=04054_E_Illegal type conversion: "$1" to "$2"
 % When doing a type-cast, you must take care that the sizes of the variable and
 % the destination type are the same.
+type_w_dangerous_type_conversion=04132_W_Type conversion between unrelated/incompatible types: "$1" to "$2"
+% The typecast is allowed for compatibility but types are unrelated or not compatible
 type_h_pointer_to_longint_conv_not_portable=04055_H_Conversion between ordinals and pointers is not portable
 % If you typecast a pointer to a longint (or vice-versa), this code will not compile
 % on a machine using 64 bits addressing.
