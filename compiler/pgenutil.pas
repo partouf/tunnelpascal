@@ -738,12 +738,40 @@ uses
           context.genname:=genericdef.procsym.realname;
         end;
 
+      { creates an unnamed type alias sym for the supplied type def }
+      function create_unnamed_type_alias(def:tdef;owner:tdef=nil): ttypesym;
+        var
+          name: tsymstr;
+          i: integer;
+        begin
+          if owner=nil then
+            owner:=def;
+
+          { generate a unique type name } 
+          name:=def.fulltypename+'$'+typName[def.typ]+'$'+def.unique_id_str;
+
+          { remove illegal characters not allowed by the assembler }
+          for i:= 0 to high(name) do
+            if name[i] in [' ','.',';'] then
+              name[i]:='_';
+
+          result:=ctypesym.create(name,owner);
+          include(result.symoptions,sp_generic_unnamed_type);
+          result.visibility:=symtablestack.top.currentvisibility;
+          result.owner:=def.owner;
+          { ensure that there's no warning }
+          result.refs:=1;
+        end;
+
       { specialization context parameter lists require a typesym so we need
         to generate a placeholder for unnamed constant types like
         short strings, open arrays, function pointers etc... }
       function create_unnamed_typesym(def:tdef):tsym;
         var
           newtype: tsym;
+          pd: tprocvardef;
+          para: tparavarsym;
+          i: integer;
         begin
           newtype:=nil;
           if is_conststring_array(def) then
@@ -761,14 +789,46 @@ uses
             end
           else if def.typ=stringdef then
             newtype:=tstringdef(def).get_default_string_type.typesym
-          else
+          { unnamed procdefs were passed as anonymous functions and must be 
+            converted to procvardef's for specialization }
+          else if def.typ=procdef then
             begin
-              newtype:=ctypesym.create(def.fullownerhierarchyname(false)+typName[def.typ]+'$'+def.unique_id_str,def);
-              include(newtype.symoptions,sp_generic_unnamed_type);
-              newtype.owner:=def.owner;
-              { ensure that there's no warning }
-              newtype.refs:=1;
-            end;
+              { create procvardef from procdef }
+              pd:=cprocvardef.create(normal_function_level,false);
+              pd.owner:=def.owner;
+
+              pd.proccalloption:=tprocdef(def).proccalloption;
+              pd.procoptions:=tprocdef(def).procoptions;
+              pd.proctypeoption:=tprocdef(def).proctypeoption;
+              pd.returndef:=tprocdef(def).returndef;
+
+              { is the anonymous procedure inside a method? }
+              if assigned(current_structdef) and (current_structdef.typ=objectdef) and
+                (tobjectdef(current_structdef).objecttype=odt_class) then
+                include(pd.procoptions,po_methodpointer);
+
+              { create typesym for procvardef }
+              newtype:=create_unnamed_type_alias(def,pd);
+
+              { insert non-hidden parameters from anonumous procdef }
+              for i:=0 to tprocdef(def).parast.symlist.count-1 do
+                begin
+                  para:=tparavarsym(tprocdef(def).parast.symlist[i]);
+                  if not(vo_is_hidden_para in para.varoptions) then
+                    pd.parast.insertsym(para);
+                end;
+
+              { handle nested procdefs }
+              if is_nested_pd(tprocdef(def)) then
+                begin
+                  pd.parast.symtablelevel:=normal_function_level+1;
+                  pd.check_mark_as_nested;
+                end;
+
+              handle_calling_convention(pd,hcc_default_actions_intf);
+            end
+          else
+            newtype:=create_unnamed_type_alias(def);
           if not assigned(newtype) then
             internalerror(2021020904);
           result:=newtype;
