@@ -721,7 +721,11 @@ implementation
                  else
                    Message(sym_e_ill_type_decl_set);
                end;
-             // TODO: helpers support undefined set types but how do we pass that down here...
+             undefineddef :
+               begin
+                 { make a dummy set for generic set helpers }
+                 def:=csetdef.create(tt2,0,255,true);
+               end;
              else
                Message(sym_e_ill_type_decl_set);
            end;

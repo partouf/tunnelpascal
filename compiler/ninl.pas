@@ -2005,6 +2005,17 @@ implementation
                     hp:=genenumnode(enum);
                   do_lowhigh:=hp;
                end;
+             undefineddef:
+               begin
+                 { make a dummy node for undefined types }
+                 set_varstate(left,vs_read,[]);
+                 v.overflow:=false;
+                 v.signed:=true;
+                 v.svalue:=0;
+                 hp:=cordconstnode.create(v,def,false);
+                 typecheckpass(hp);
+                 do_lowhigh:=hp;
+               end;
            else
              internalerror(87);
            end;
