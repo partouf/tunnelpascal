@@ -1588,7 +1588,7 @@ implementation
            block_type:=old_block_type;
         end;
 
-        function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist):tdef;
+        function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist;sym:tsym;doregister:boolean):tdef;
           var
             is_func:boolean;
             pd:tprocvardef;
