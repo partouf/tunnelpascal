@@ -567,7 +567,13 @@ Procedure fpc_Read_Text_UInt_Iso(var f : Text; out u : ValUInt); compilerproc;
 Procedure fpc_Read_Text_Float(var f : Text; out v :ValReal); compilerproc;
 Procedure fpc_Read_Text_Float_Iso(var f : Text; out v : ValReal); compilerproc;
 {$endif}
+{$ifdef VER3_2}
 procedure fpc_read_text_enum(str2ordindex:pointer;var t:text;out ordinal:longint); compilerproc;
+{$else VER3_2}
+procedure fpc_read_text_enum_longint(str2ordindex:pointer;var t:text;out ordinal:longint); compilerproc;
+procedure fpc_read_text_enum_smallint(str2ordindex:pointer;var t:text;out ordinal:smallint); compilerproc;
+procedure fpc_read_text_enum_shortint(str2ordindex:pointer;var t:text;out ordinal:shortint); compilerproc;
+{$endif VER3_2}
 procedure fpc_Read_Text_Currency(var f : Text; out v : Currency); compilerproc;
 procedure fpc_Read_Text_Currency_Iso(var f : Text; out v : Currency); compilerproc;
 {$ifndef CPU64}
@@ -723,6 +729,9 @@ procedure fpc_Raiseexception (Obj : TObject; AnAddr : CodePointer; AFrame : Poin
 function fpc_PopObjectStack : TObject; compilerproc;
 function fpc_PopSecondObjectStack : TObject; compilerproc;
 Procedure fpc_ReRaise; compilerproc;
+{$if defined(FPC_WASM_NATIVE_EXCEPTIONS) or defined(FPC_WASM_BRANCHFUL_EXCEPTIONS)}
+Procedure fpc_ReRaise2; compilerproc;
+{$endif}
 Function fpc_Catches(Objtype : TClass) : TObject; compilerproc;
 function fpc_safecallhandler(obj: TObject): HResult; compilerproc;
 function fpc_safecallcheck(res : hresult) : hresult; compilerproc; {$ifdef CPU86} register; {$endif}

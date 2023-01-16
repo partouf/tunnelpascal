@@ -27,17 +27,24 @@ interface
 
     uses
       globtype,verbose,cclasses,
-      aasmbase,aasmtai,aasmdata,aasmsym,
+      aasmbase,aasmtai,aasmdata,aasmdef,aasmsym,aasmcnst,
       cpubase,cgbase,cgutils,
       symtype,symdef,symsym,
       llvmbase;
 
     type
+      pllvmcallpara = ^tllvmcallpara;
+
       { taillvm }
       taillvm = class(tai_cpu_abstract_sym)
+       const
+        callpdopernr = 3;
+       var
         llvmopcode: tllvmop;
+        metadata: tai;
 
         constructor create_llvm(op: tllvmop);
+        destructor Destroy; override;
 
         { e.g. unreachable }
         constructor op_none(op : tllvmop);
@@ -143,6 +150,10 @@ interface
         procedure loadasmlist(opidx: longint; _asmlist: tasmlist);
         procedure loadcallingconvention(opidx: longint; calloption: tproccalloption);
 
+        function getcallpara(callparaindex: longint): pllvmcallpara;
+
+        procedure addinsmetadata(insmeta: tai);
+
         procedure landingpad_add_clause(op: tllvmop; def: tdef; kind: TAsmSymbol);
 
         { register spilling code }
@@ -188,26 +199,27 @@ interface
       { initialisation data, if any }
       initdata: tasmlist;
       namesym: tasmsymbol;
+      { associated Pascal symbol (if any), mainly for debug info generation }
+      sym: tsym;
       def: tdef;
       sec: TAsmSectiontype;
       alignment: shortint;
       flags: taillvmdeclflags;
       secname: TSymStr;
-      constructor createdecl(_namesym: tasmsymbol; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
-      constructor createdef(_namesym: tasmsymbol; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
-      constructor createtls(_namesym: tasmsymbol; _def: tdef; _alignment: shortint);
+      metadata: tai;
+
+      constructor createdecl(_namesym: tasmsymbol; _sym: tsym; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
+      constructor createdef(_namesym: tasmsymbol; _sym: tsym; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
+      constructor createtls(_namesym: tasmsymbol; _sym: tsym; _def: tdef; _alignment: shortint);
       procedure setsecname(const name: TSymStr);
+      procedure addinsmetadata(insmeta: tai);
       destructor destroy; override;
     end;
 
-    { parameter to an llvm call instruction }
-    pllvmcallpara = ^tllvmcallpara;
-    tllvmcallpara = record
-      def: tdef;
-      alignment: shortint;
-      valueext: tllvmvalueextension;
-      byval,
-      sret: boolean;
+    tllvmcallparaflag = (lcp_byval, lcp_sret, lcp_metadata);
+    tllvmcallparaflags = set of tllvmcallparaflag;
+
+    tllvmcallparaval = record
       case typ: toptype of
         top_none: ();
         top_reg: (register: tregister);
@@ -215,23 +227,49 @@ interface
         top_const: (value: int64);
         top_undef :  ();
         top_tai    : (ai: tai);
+        top_local  : (localsym: tsym);
+    end;
+
+    { parameter to an llvm call instruction }
+    tllvmcallpara = object
+      def: tdef;
+      alignment: shortint;
+      valueext: tllvmvalueextension;
+      flags: tllvmcallparaflags;
+      val: tllvmcallparaval;
+
+      constructor initwithcopy(_other: pllvmcallpara);
+      constructor init(_def: tdef; _alignment: shortint; _valueext: tllvmvalueextension; _flags: tllvmcallparaflags);
+      destructor done;
+      procedure clearpara;
+      procedure loadreg(reg: tregister);
+      procedure loadsym(sym: TAsmSymbol);
+      procedure loadconst(value: int64);
+      procedure loadtai(ai: tai);
+      procedure loadlocalsym(localsym: tsym);
+      procedure loadundef;
+    end;
+
+    TLLVMAsmData = class(TAsmDataDef)
+     fnextmetaid: cardinal;
     end;
 
 
 implementation
 
-uses
-  cutils, strings,
-  symconst,
-  aasmcnst,aasmcpu;
+    uses
+      cutils, strings,
+      symconst,
+      aasmcpu;
 
     { taillvmprocdecl }
 
-    constructor taillvmdecl.createdecl(_namesym: tasmsymbol; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
+    constructor taillvmdecl.createdecl(_namesym: tasmsymbol; _sym: tsym; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
       begin
         inherited create;
         typ:=ait_llvmdecl;
         namesym:=_namesym;
+        sym:=_sym;
         def:=_def;
         initdata:=_initdata;
         sec:=_sec;
@@ -241,16 +279,16 @@ uses
       end;
 
 
-    constructor taillvmdecl.createdef(_namesym: tasmsymbol; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
+    constructor taillvmdecl.createdef(_namesym: tasmsymbol; _sym: tsym; _def: tdef; _initdata: tasmlist; _sec: tasmsectiontype; _alignment: shortint);
       begin
-        createdecl(_namesym,_def,_initdata,_sec,_alignment);
+        createdecl(_namesym,_sym,_def,_initdata,_sec,_alignment);
         include(flags,ldf_definition);
       end;
 
 
-    constructor taillvmdecl.createtls(_namesym: tasmsymbol; _def: tdef; _alignment: shortint);
+    constructor taillvmdecl.createtls(_namesym: tasmsymbol; _sym: tsym; _def: tdef; _alignment: shortint);
       begin
-        createdef(_namesym,_def,nil,sec_data,_alignment);
+        createdef(_namesym,_sym,_def,nil,sec_data,_alignment);
         include(flags,ldf_tls);
       end;
 
@@ -262,9 +300,23 @@ uses
         secname:=name;
       end;
 
+    procedure taillvmdecl.addinsmetadata(insmeta: tai);
+      begin
+        insmeta.next:=metadata;
+        metadata:=insmeta;
+      end;
+
 
     destructor taillvmdecl.destroy;
+      var
+        hp: tai;
       begin
+        while assigned(metadata) do
+          begin
+            hp:=tai(metadata.next);
+            metadata.free;
+            metadata:=hp;
+          end;
         initdata.free;
         inherited destroy;
       end;
@@ -310,6 +362,20 @@ uses
       end;
 
 
+    destructor taillvm.Destroy;
+      var
+        hp: tai;
+      begin
+        while assigned(metadata) do
+          begin
+            hp:=tai(metadata.next);
+            metadata.free;
+            metadata:=hp;
+          end;
+        inherited;
+      end;
+
+
     procedure taillvm.loadoper(opidx: longint; o: toper);
       var
         i: longint;
@@ -321,12 +387,11 @@ uses
             oper[opidx]^.paras:=tfplist.create;
             for i:=0 to o.paras.count-1 do
               begin
-                new(callpara);
-                callpara^:=pllvmcallpara(o.paras[i])^;
+                new(callpara,initwithcopy(pllvmcallpara(o.paras[i])));
                 oper[opidx]^.paras.add(callpara);
-                if (callpara^.typ = top_reg) and
+                if (callpara^.val.typ = top_reg) and
                    assigned(add_reg_instruction_hook) then
-                  add_reg_instruction_hook(self,callpara^.register);
+                  add_reg_instruction_hook(self,callpara^.val.register);
               end;
           end;
       end;
@@ -343,13 +408,7 @@ uses
               for i:=0 to oper[opidx]^.paras.count-1 do
                 begin
                   callpara:=pllvmcallpara(oper[opidx]^.paras[i]);
-                  case callpara^.typ of
-                    top_tai:
-                      callpara^.ai.free;
-                    else
-                      ;
-                  end;
-                  dispose(callpara);
+                  dispose(callpara,done);
                 end;
               oper[opidx]^.paras.free;
             end;
@@ -476,9 +535,9 @@ uses
             for i:=0 to _paras.count-1 do
               begin
                 callpara:=pllvmcallpara(_paras[i]);
-                if (callpara^.typ=top_reg) and
+                if (callpara^.val.typ=top_reg) and
                    assigned(add_reg_instruction_hook) then
-                  add_reg_instruction_hook(self,callpara^.register);
+                  add_reg_instruction_hook(self,callpara^.val.register);
               end;
             typ:=top_para;
           end;
@@ -506,6 +565,29 @@ uses
            callingconvention:=calloption;
            typ:=top_callingconvention;
          end;
+      end;
+
+    function taillvm.getcallpara(callparaindex: longint): pllvmcallpara;
+      var
+        i: longint;
+      begin
+        for i:=0 to ops do
+          begin
+            if oper[i]^.typ=top_para then
+              begin
+                if callparaindex>=oper[i]^.paras.count then
+                  internalerror(2022052611);
+                result:=pllvmcallpara(oper[i]^.paras[callparaindex]);
+                exit;
+              end;
+          end;
+        internalerror(2022052612);
+      end;
+
+    procedure taillvm.addinsmetadata(insmeta: tai);
+      begin
+        insmeta.next:=metadata;
+        metadata:=insmeta;
       end;
 
 
@@ -1146,7 +1228,7 @@ uses
         loaddef(0,retsize);
         loadreg(1,dst);
         loadcallingconvention(2,cc);
-        loaddef(3,callpd);
+        loaddef(callpdopernr,callpd);
         loadsymbol(4,name,0);
         loadparas(5,paras);
       end;
@@ -1159,7 +1241,7 @@ uses
         loaddef(0,retsize);
         loadreg(1,dst);
         loadcallingconvention(2,cc);
-        loaddef(3,callpd);
+        loaddef(callpdopernr,callpd);
         loadreg(4,reg);
         loadparas(5,paras);
       end;
@@ -1172,7 +1254,7 @@ uses
         loaddef(0,retsize);
         loadreg(1,dst);
         loadcallingconvention(2,cc);
-        loaddef(3,callpd);
+        loaddef(callpdopernr,callpd);
         loadsymbol(4,name,0);
         loadparas(5,paras);
         loadsymbol(6,retlab,0);
@@ -1187,7 +1269,7 @@ uses
         loaddef(0,retsize);
         loadreg(1,dst);
         loadcallingconvention(2,cc);
-        loaddef(3,callpd);
+        loaddef(callpdopernr,callpd);
         loadreg(4,reg);
         loadparas(5,paras);
         loadsymbol(6,retlab,0);
@@ -1214,4 +1296,89 @@ uses
         loadparas(1,paras);
       end;
 
+
+    { tllvmcallpara }
+
+    constructor tllvmcallpara.initwithcopy(_other: pllvmcallpara);
+      begin
+        self:=_other^;
+      end;
+
+
+    constructor tllvmcallpara.init(_def: tdef; _alignment: shortint; _valueext: tllvmvalueextension; _flags: tllvmcallparaflags);
+      begin
+        def:=_def;
+        alignment:=_alignment;
+        valueext:=_valueext;
+        flags:=_flags;
+        val.typ:=top_none;
+      end;
+
+
+    destructor tllvmcallpara.done;
+      begin
+        clearpara;
+      end;
+
+
+    procedure tllvmcallpara.clearpara;
+      begin
+        case val.typ of
+          top_tai:
+            val.ai.free;
+          else
+            ;
+        end;
+        val.typ:=top_none;
+      end;
+
+
+    procedure tllvmcallpara.loadreg(reg: tregister);
+      begin
+        clearpara;
+        val.typ:=top_reg;
+        val.register:=reg;
+      end;
+
+
+    procedure tllvmcallpara.loadsym(sym: TAsmSymbol);
+      begin
+        clearpara;
+        val.typ:=top_ref;
+        val.sym:=sym;
+      end;
+
+
+    procedure tllvmcallpara.loadconst(value: int64);
+      begin
+        clearpara;
+        val.typ:=top_const;
+        val.value:=value;
+      end;
+
+
+    procedure tllvmcallpara.loadtai(ai: tai);
+      begin
+        clearpara;
+        val.typ:=top_tai;
+        val.ai:=ai;
+      end;
+
+
+    procedure tllvmcallpara.loadlocalsym(localsym: tsym);
+      begin
+        clearpara;
+        val.typ:=top_local;
+        val.localsym:=localsym;
+      end;
+
+    procedure tllvmcallpara.loadundef;
+      begin
+        clearpara;
+        val.typ:=top_undef
+      end;
+
+
+begin
+  casmdata:=TLLVMAsmData;
 end.

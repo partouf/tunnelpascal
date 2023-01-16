@@ -238,10 +238,12 @@ implementation
         inherited;
         if tf_use_psabieh in target_info.flags then
           datatype:=dt_eh_frame
-        else if cs_debuginfo in current_settings.moduleswitches then
-          datatype:=dt_debug
         else
-          datatype:=dt_none;
+          { The CFI-information is always generated, regardless of the debug
+            settings. This way the CFI-information for units is always available
+            and during linking it can be omitted or not, based on the debug
+            settings. }
+          datatype:=dt_debug;
       end;
 
 {****************************************************************************
@@ -255,7 +257,11 @@ implementation
         FFrameEndLabel:=nil;
         FLastLocLabel:=nil;
         code_alignment_factor:=1;
+{$if defined(avr)}
+        data_alignment_factor:=-1;
+{$else defined(avr)}
         data_alignment_factor:=-4;
+{$endif defined(avr)}
         FDwarfList:=TAsmList.Create;
       end;
 
@@ -283,8 +289,7 @@ implementation
         list.concat(tai_const.create_8bit(DW_CFA_def_cfa));
         list.concat(tai_const.create_uleb128bit(32));
         list.concat(tai_const.create_uleb128bit(2));
-        list.concat(tai_const.create_8bit(DW_CFA_offset_extended));
-        list.concat(tai_const.create_uleb128bit(36));
+        list.concat(tai_const.create_8bit(DW_CFA_offset+36));
         list.concat(tai_const.create_uleb128bit((-1) div data_alignment_factor));
       end;
 {$elseif defined(arm)}
@@ -333,6 +338,8 @@ implementation
         fdeofslabel, curpos: tasmlabel;
         tc             : tai_const;
       begin
+        if DwarfList.Empty then
+          exit;
         CurrentLSDALabel:=nil;
         case datatype of
           dt_none:
@@ -419,7 +426,7 @@ implementation
         }
         generate_initial_instructions(list);
 
-        list.concat(cai_align.create_zeros(4));
+        list.concat(cai_align.create_zeros(sizeof(pint)));
         list.concat(tai_label.create(lenendlabel));
         lenstartlabel:=nil;
         lenendlabel:=nil;
@@ -465,7 +472,11 @@ implementation
                   current_asmdata.getlabel(curpos,alt_dbgframe);
                   list.concat(tai_label.create(curpos));
                   list.concat(tai_const.Create_sym(hp.oper[0].beginsym));
+{$if defined(avr)}
+                  list.concat(tai_const.create_rel_sym(aitconst_32bit,hp.oper[0].beginsym,hp.oper[0].endsym));
+{$else defined(avr)}
                   list.concat(tai_const.create_rel_sym(aitconst_ptr,hp.oper[0].beginsym,hp.oper[0].endsym));
+{$endif defined(avr)}
 
                   { we wrote a 'z' into the CIE augmentation data }
                   if datatype=dt_eh_frame then
@@ -483,7 +494,7 @@ implementation
                 end;
               DW_CFA_End_Frame :
                 begin
-                  list.concat(cai_align.create_zeros(4));
+                  list.concat(cai_align.create_zeros(sizeof(pint)));
                   list.concat(tai_label.create(lenendlabel));
                   lenstartlabel:=nil;
                   lenendlabel:=nil;

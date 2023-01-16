@@ -33,6 +33,14 @@ interface
       aasmllvm, aasmllvmmetadata;
 
     type
+      tmetadatakind = (
+        mk_none,
+        mk_normal,
+        mk_specialised,
+        mk_specialised_bool,
+        mk_specialised_enum
+      );
+
       TLLVMInstrWriter = class;
 
       TLLVMModuleInlineAssemblyDecorator = class(IExternalAssemblerOutputFileDecorator)
@@ -60,8 +68,8 @@ interface
         procedure WriteLlvmInstruction(hp: tai);
         procedure WriteDirectiveName(dir: TAsmDirective); virtual;
         procedure WriteRealConst(hp: tai_realconst; do_line: boolean);
-        procedure WriteOrdConst(hp: tai_const);
-        procedure WriteTai(const replaceforbidden: boolean; const do_line, inmetadata: boolean; var InlineLevel: cardinal; var asmblock: boolean; var hp: tai);
+        procedure WriteOrdConst(hp: tai_const; inmetadatakind: tmetadatakind);
+        procedure WriteTai(const replaceforbidden: boolean; const do_line: boolean; inmetadatakind: tmetadatakind; var InlineLevel: cardinal; var asmblock: boolean; var hp: tai);
        public
         constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
         procedure WriteTree(p:TAsmList);override;
@@ -93,13 +101,14 @@ interface
       TLLVMInstrWriter = class
         constructor create(_owner: TLLVMAssember);
         procedure WriteInstruction(hp : tai);
+        procedure WriterInstructionMetadata(sep: TSymStr; metatai: tai);
        protected
         owner: TLLVMAssember;
-        fstr: TSymStr;
 
         function getopcodestr(hp: taillvm): TSymStr;
         function getopstr(const o:toper; refwithalign: boolean) : TSymStr;
-        procedure writeparas(const paras: tfplist);
+        procedure writetaioper(ai: tai);
+        procedure writeparas(const paras: tfplist; asmblock: boolean);
         procedure WriteAsmRegisterAllocationClobbers(list: tasmlist);
       end;
 
@@ -320,31 +329,40 @@ implementation
       end;
 
 
-   procedure TLLVMInstrWriter.writeparas(const paras: tfplist);
+   procedure TLLVMInstrWriter.writeparas(const paras: tfplist; asmblock: boolean);
+
      var
+       hp: tai;
+       para: pllvmcallpara;
        i: longint;
        tmpinline: cardinal;
-       para: pllvmcallpara;
+       metadatakind: tmetadatakind;
        tmpasmblock: boolean;
-       hp: tai;
      begin
        tmpinline:=1;
        tmpasmblock:=false;
-       owner.writer.AsmWrite(fstr);
-       fstr:='';
        owner.writer.AsmWrite('(');
        for i:=0 to paras.count-1 do
          begin
            if i<>0 then
              owner.writer.AsmWrite(', ');
            para:=pllvmcallpara(paras[i]);
+           if (lcp_metadata in para^.flags) and
+              (para^.def<>llvm_metadatatype) then
+             begin
+               owner.writer.AsmWrite('metadata ')
+             end;
            owner.writer.AsmWrite(llvmencodetypename(para^.def));
            if para^.valueext<>lve_none then
              owner.writer.AsmWrite(llvmvalueextension2str[para^.valueext]);
-           if para^.byval then
-             owner.writer.AsmWrite(' byval');
-           if para^.sret then
-             owner.writer.AsmWrite(' sret');
+           if lcp_byval in para^.flags then
+             owner.writer.AsmWrite(llvmparatypeattr(' byval',para^.def,true));
+           if lcp_sret in para^.flags then
+             owner.writer.AsmWrite(llvmparatypeattr(' sret',para^.def,true));
+           if asmblock and
+              (([llvmflag_opaque_ptr_transition,llvmflag_opaque_ptr]*llvmversion_properties[current_settings.llvmversion])<>[]) and
+              (para^.def.typ=pointerdef) then
+             owner.writer.AsmWrite(llvmparatypeattr(' elementtype',para^.def,true));
            { For byval, this means "alignment on the stack" and of the passed source data.
              For other pointer parameters, this means "alignment of the passed source data" }
            if (para^.alignment<>std_param_align) or
@@ -353,30 +371,35 @@ implementation
                owner.writer.AsmWrite(' align ');
                owner.writer.AsmWrite(tostr(abs(para^.alignment)));
              end;
-           case para^.typ of
+           case para^.val.typ of
              top_reg:
                begin
                  owner.writer.AsmWrite(' ');
-                 owner.writer.AsmWrite(getregisterstring(para^.register));
+                 owner.writer.AsmWrite(getregisterstring(para^.val.register));
                end;
              top_ref:
                begin
                  owner.writer.AsmWrite(' ');
-                 owner.writer.AsmWrite(llvmasmsymname(para^.sym));
+                 owner.writer.AsmWrite(llvmasmsymname(para^.val.sym));
                end;
              top_const:
                begin
                  owner.writer.AsmWrite(' ');
-                 owner.writer.AsmWrite(tostr(para^.value));
+                 owner.writer.AsmWrite(tostr(para^.val.value));
                end;
              top_tai:
                begin
+                 owner.writer.AsmWrite(' ');
                  tmpinline:=1;
                  tmpasmblock:=false;
-                 hp:=para^.ai;
-                 owner.writer.AsmWrite(fstr);
-                 fstr:='';
-                 owner.WriteTai(false,false,para^.def=llvm_metadatatype,tmpinline,tmpasmblock,hp);
+                 hp:=para^.val.ai;
+                 if para^.def<>llvm_metadatatype then
+                   metadatakind:=mk_none
+                 else
+                   metadatakind:=mk_normal;
+                 inc(owner.fdecllevel);
+                 owner.WriteTai(false,false,metadatakind,tmpinline,tmpasmblock,hp);
+                 dec(owner.fdecllevel);
                end;
              { empty records }
              top_undef:
@@ -437,8 +460,6 @@ implementation
    function TLLVMInstrWriter.getopstr(const o:toper; refwithalign: boolean) : TSymStr;
      var
        hp: tai;
-       tmpinline: cardinal;
-       tmpasmblock: boolean;
      begin
        case o.typ of
          top_reg:
@@ -486,19 +507,14 @@ implementation
            end;
          top_para:
            begin
-             writeparas(o.paras);
+             writeparas(o.paras,false);
              result:='';
            end;
          top_tai:
            begin
              if assigned(o.ai) then
                begin
-                 tmpinline:=1;
-                 tmpasmblock:=false;
-                 hp:=o.ai;
-                 owner.writer.AsmWrite(fstr);
-                 fstr:='';
-                 owner.WriteTai(false,false,false,tmpinline,tmpasmblock,hp);
+                 writetaioper(o.ai);
                end;
              result:='';
            end;
@@ -515,6 +531,16 @@ implementation
          else
            internalerror(2013060227);
        end;
+     end;
+
+   procedure TLLVMInstrWriter.writetaioper(ai: tai);
+     var
+       tmpinline: cardinal;
+       tmpasmblock: boolean;
+     begin
+       tmpinline:=1;
+       tmpasmblock:=false;
+       owner.WriteTai(false,false,mk_none,tmpinline,tmpasmblock,ai);
      end;
 
 
@@ -584,7 +610,7 @@ implementation
             owner.writer.AsmWrite('~{memory},~{fpsr},~{flags}');
             WriteAsmRegisterAllocationClobbers(taillvm(hp).oper[0]^.asmlist);
             owner.writer.AsmWrite('"');
-            writeparas(taillvm(hp).oper[1]^.paras);
+            writeparas(taillvm(hp).oper[1]^.paras,true);
             done:=true;
           end;
         la_load,
@@ -602,20 +628,7 @@ implementation
               owner.writer.AsmWrite(' (')
             else
               owner.writer.AsmWrite(' ');
-            { can't just dereference the type, because it may be an
-              implicit pointer type such as a class -> resort to string
-              manipulation... Not very clean :( }
-            tmpstr:=llvmencodetypename(taillvm(hp).spilling_get_reg_type(0));
-            if op=la_getelementptr then
-              begin
-                if tmpstr[length(tmpstr)]<>'*' then
-                  begin
-                    writeln(tmpstr);
-                    internalerror(2016071101);
-                  end
-                else
-                  setlength(tmpstr,length(tmpstr)-1);
-              end;
+            tmpstr:=llvmencodetypename(taillvm(hp).spilling_get_reg_type(0),op=la_getelementptr);
             owner.writer.AsmWrite(tmpstr);
             owner.writer.AsmWrite(',');
           end;
@@ -646,15 +659,8 @@ implementation
                 owner.writer.AsmWrite(tmpstr);
               end;
             opdone:=true;
-            tmpstr:=llvmencodetypename(taillvm(hp).oper[3]^.def);
-            if tmpstr[length(tmpstr)]<>'*' then
-              begin
-                writeln(tmpstr);
-                internalerror(2016071102);
-              end
-            else
-              setlength(tmpstr,length(tmpstr)-1);
-            owner.writer.AsmWrite(tmpstr);
+            owner.writer.AsmWrite(' ');
+            owner.writer.AsmWrite(llvmencodetypename(taillvm(hp).oper[taillvm.callpdopernr]^.def,true));
             opstart:=4;
           end;
         la_blockaddress:
@@ -763,10 +769,22 @@ implementation
         end;
       if op=la_alloca then
         owner.writer.AsmWrite(getreferencealignstring(taillvm(hp).oper[0]^.ref^));
+      WriterInstructionMetadata(', ',taillvm(hp).metadata);
       if nested then
         owner.writer.AsmWrite(')')
       else if owner.fdecllevel=0 then
         owner.writer.AsmLn;
+    end;
+
+  procedure TLLVMInstrWriter.WriterInstructionMetadata(sep: TSymStr; metatai: tai);
+    begin
+      while assigned(metatai) do
+        begin
+          owner.writer.AsmWrite(sep);
+          sep:=', ';
+          writetaioper(metatai);
+          metatai:=tai(metatai.next);
+        end;
     end;
 
 
@@ -832,7 +850,10 @@ implementation
               WriteSourceLine(hp as tailineinfo);
           end;
 
-         WriteTai(replaceforbidden, do_line, false, InlineLevel, asmblock, hp);
+         if hp.typ=ait_section then
+           ResetSourceLines;
+
+         WriteTai(replaceforbidden,do_line,mk_none,InlineLevel,asmblock,hp);
          hp:=tai(hp.next);
        end;
     end;
@@ -905,7 +926,7 @@ implementation
       end;
 
 
-    procedure TLLVMAssember.WriteOrdConst(hp: tai_const);
+    procedure TLLVMAssember.WriteOrdConst(hp: tai_const; inmetadatakind: tmetadatakind);
       var
         consttyp: taiconst_type;
       begin
@@ -949,7 +970,15 @@ implementation
                     else
                       writer.AsmWrite(' -- symbol offset: ' + tostr(hp.value));
                 end
-              else if hp.value=0 then
+              else if inmetadatakind=mk_specialised_bool then
+                begin
+                  if hp.value=0 then
+                    writer.AsmWrite('false')
+                  else
+                    writer.AsmWrite('true')
+                end
+              else if (hp.value=0) and
+                      (inmetadatakind=mk_none) then
                 writer.AsmWrite('zeroinitializer')
               else
                 writer.AsmWrite(tostr(hp.value));
@@ -965,7 +994,7 @@ implementation
       end;
 
 
-    procedure TLLVMAssember.WriteTai(const replaceforbidden: boolean; const do_line, inmetadata: boolean; var InlineLevel: cardinal; var asmblock: boolean; var hp: tai);
+    procedure TLLVMAssember.WriteTai(const replaceforbidden: boolean; const do_line: boolean; inmetadatakind: tmetadatakind; var InlineLevel: cardinal; var asmblock: boolean; var hp: tai);
 
       procedure WriteLinkageVibilityFlags(bind: TAsmSymBind; is_definition: boolean);
         begin
@@ -1024,17 +1053,18 @@ implementation
             writer.AsmWrite(' null_pointer_is_valid');
           if not(pio_fastmath in pd.implprocoptions) then
             writer.AsmWrite(' strictfp');
+          if cs_sanitize_address in current_settings.moduleswitches then
+            writer.AsmWrite(' sanitize_address');
         end;
 
-
-      procedure WriteTypedConstData(hp: tai_abstracttypedconst; metadata: boolean);
+      procedure WriteTypedConstData(hp: tai_abstracttypedconst; metadatakind: tmetadatakind);
         var
           p: tai_abstracttypedconst;
           pval: tai;
           defstr: TSymStr;
-          first, gotstring: boolean;
+          first, gotstring, isspecialised: boolean;
         begin
-          if hp.def<>llvm_metadatatype then
+          if (hp.def<>llvm_metadatatype) and (metadatakind<mk_specialised) then
             begin
               defstr:=llvmencodetypename(hp.def)
             end
@@ -1046,7 +1076,7 @@ implementation
           case hp.adetyp of
             tck_record:
               begin
-                if not(metadata) then
+                if metadatakind=mk_none then
                   begin
                     writer.AsmWrite(defstr);
                     if not(df_llvm_no_struct_packing in hp.def.defoptions) then
@@ -1065,9 +1095,9 @@ implementation
                       writer.AsmWrite(', ')
                     else
                       first:=false;
-                    WriteTypedConstData(p,metadata);
+                    WriteTypedConstData(p,metadatakind);
                   end;
-                if not(metadata) then
+                if metadatakind=mk_none then
                   begin
                     if not(df_llvm_no_struct_packing in hp.def.defoptions) then
                       writer.AsmWrite(' }>')
@@ -1081,7 +1111,7 @@ implementation
               end;
             tck_array:
               begin
-                if not(metadata) then
+                if metadatakind=mk_none then
                   begin
                     writer.AsmWrite(defstr);
                   end;
@@ -1095,13 +1125,15 @@ implementation
                       begin
                         writer.AsmWrite(' ');
                         if (tai_abstracttypedconst(p).adetyp=tck_simple) and
+                           assigned(tai_simpletypedconst(p).val) and
+                           (tai_simpletypedconst(p).def<>charpointertype) and
                            (tai_simpletypedconst(p).val.typ=ait_string) then
                           begin
                             gotstring:=true;
                           end
                         else
                           begin
-                            if not metadata then
+                            if metadatakind=mk_none then
                               begin
                                 writer.AsmWrite('[');
                               end
@@ -1114,15 +1146,26 @@ implementation
                       end;
                     { cannot concat strings and other things }
                     if gotstring and
-                       not metadata and
+                       (metadatakind=mk_none) and
                        ((tai_abstracttypedconst(p).adetyp<>tck_simple) or
                         (tai_simpletypedconst(p).val.typ<>ait_string)) then
                       internalerror(2014062701);
-                    WriteTypedConstData(p,metadata);
+                    WriteTypedConstData(p,metadatakind);
                   end;
                 if not gotstring then
                   begin
-                    if not metadata then
+                    if first then
+                      begin
+                        if metadatakind=mk_none then
+                          begin
+                            writer.AsmWrite(' [');
+                          end
+                        else
+                          begin
+                            writer.AsmWrite(' !{');
+                          end;
+                      end;
+                    if metadatakind=mk_none then
                       begin
                         writer.AsmWrite(']');
                       end
@@ -1135,15 +1178,104 @@ implementation
             tck_simple:
               begin
                 pval:=tai_simpletypedconst(hp).val;
+                if not assigned(pval) then
+                  begin
+                    if metadatakind>=mk_normal then
+                      writer.asmWrite('null')
+                    else
+                      internalerror(2022041301);
+                    exit;
+                  end;
                 if (pval.typ<>ait_string) and
                    (defstr<>'') then
                   begin
                     writer.AsmWrite(defstr);
                     writer.AsmWrite(' ');
                   end;
-                WriteTai(replaceforbidden,do_line,metadata,InlineLevel,asmblock,pval);
+                WriteTai(replaceforbidden,do_line,metadatakind,InlineLevel,asmblock,pval);
               end;
           end;
+        end;
+
+      procedure WriteString(hp: tai_string);
+        var
+          i: longint;
+          s: string;
+          ch: ansichar;
+          endQuotes: boolean;
+        begin
+          if fdecllevel=0 then
+            internalerror(2016120201);
+          endQuotes:=true;
+          case inmetadatakind of
+            mk_none:
+              writer.AsmWrite('c"');
+            mk_normal:
+              writer.AsmWrite('!"');
+            mk_specialised:
+              writer.AsmWrite('"');
+            mk_specialised_bool:
+              internalerror(2022041201);
+            mk_specialised_enum:
+              endQuotes:=false;
+          end;
+          for i:=1 to tai_string(hp).len do
+           begin
+             ch:=tai_string(hp).str[i-1];
+             case ch of
+                       #0, {This can't be done by range, because a bug in FPC}
+                  #1..#31,
+               #128..#255,
+                      '"',
+                      '\' : s:='\'+hexStr(ord(ch),2);
+             else
+               s:=ch;
+             end;
+             writer.AsmWrite(s);
+           end;
+          if endQuotes then
+            writer.AsmWrite('"');
+        end;
+
+      procedure WriteSpecialisedMetadataNode(hp: tai_llvmspecialisedmetadatanode);
+        var
+          element: tai_abstracttypedconst;
+          specialised_element: tllvmspecialisedmetaitem;
+          s: shortstring;
+          metadatakind: tmetadatakind;
+          first: boolean;
+        begin
+          if hp.IsDistinct then
+            writer.AsmWrite(' distinct !')
+          else
+            writer.AsmWrite(' !');
+          str(hp.kind,s);
+          writer.AsmWrite(s);
+          writer.AsmWrite('(');
+          first:=true;
+          for element in hp do
+            begin
+              if not first then
+                writer.AsmWrite(', ')
+              else
+                first:=false;
+              specialised_element:=tllvmspecialisedmetaitem(element);
+              if specialised_element.itemname<>'' then
+                begin
+                  writer.AsmWrite(specialised_element.itemname);
+                  writer.AsmWrite(': ');
+                end;
+              case specialised_element.itemkind of
+                lsmik_boolean:
+                  metadatakind:=mk_specialised_bool;
+                lsmik_enum:
+                  metadatakind:=mk_specialised_enum;
+                else
+                  metadatakind:=mk_specialised;
+              end;
+              WriteTypedConstData(specialised_element,metadatakind);
+            end;
+            writer.AsmWrite(')');
         end;
 
       procedure WriteLlvmMetadataNode(hp: tai_llvmbasemetadatanode);
@@ -1155,17 +1287,18 @@ implementation
           writer.AsmWrite(tai_llvmbasemetadatanode(hp).name);
           writer.AsmWrite(' =');
           inc(fdecllevel);
-          WriteTypedConstData(hp,true);
+          if hp.isspecialised then
+            WriteSpecialisedMetadataNode(tai_llvmspecialisedmetadatanode(hp))
+          else
+            WriteTypedConstData(hp,mk_normal);
           writer.AsmLn;
           dec(fdecllevel);
         end;
 
       var
         hp2: tai;
-        s: string;
         sstr: TSymStr;
         i: longint;
-        ch: ansichar;
       begin
         case hp.typ of
           ait_align,
@@ -1184,7 +1317,7 @@ implementation
 
           ait_const:
             begin
-              WriteOrdConst(tai_const(hp));
+              WriteOrdConst(tai_const(hp),inmetadatakind);
             end;
 
           ait_realconst :
@@ -1194,27 +1327,7 @@ implementation
 
           ait_string :
             begin
-              if fdecllevel=0 then
-                internalerror(2016120201);
-              if not inmetadata then
-                writer.AsmWrite('c"')
-              else
-                writer.AsmWrite('!"');
-              for i:=1 to tai_string(hp).len do
-               begin
-                 ch:=tai_string(hp).str[i-1];
-                 case ch of
-                           #0, {This can't be done by range, because a bug in FPC}
-                      #1..#31,
-                   #128..#255,
-                          '"',
-                          '\' : s:='\'+hexStr(ord(ch),2);
-                 else
-                   s:=ch;
-                 end;
-                 writer.AsmWrite(s);
-               end;
-              writer.AsmWrite('"');
+              WriteString(tai_string(hp));
             end;
 
           ait_label :
@@ -1271,12 +1384,21 @@ implementation
                       WriteFunctionFlags(tprocdef(taillvmdecl(hp).def));
                       if assigned(tprocdef(taillvmdecl(hp).def).personality) then
                         begin
-                          writer.AsmWrite(' personality i8* bitcast (');
-                          writer.AsmWrite(llvmencodeproctype(tprocdef(taillvmdecl(hp).def).personality, '', lpd_procvar));
-                          writer.AsmWrite('* ');
-                          writer.AsmWrite(llvmmangledname(tprocdef(taillvmdecl(hp).def).personality.mangledname));
-                          writer.AsmWrite(' to i8*)');
+                          if not(llvmflag_opaque_ptr in llvmversion_properties[current_settings.llvmversion]) then
+                            begin
+                              writer.AsmWrite(' personality i8* bitcast (');
+                              writer.AsmWrite(llvmencodeproctype(tprocdef(taillvmdecl(hp).def).personality, '', lpd_procvar));
+                              writer.AsmWrite('* ');
+                              writer.AsmWrite(llvmmangledname(tprocdef(taillvmdecl(hp).def).personality.mangledname));
+                              writer.AsmWrite(' to i8*)');
+                            end
+                          else
+                            begin
+                              writer.AsmWrite(' personality ptr ');
+                              writer.AsmWrite(llvmmangledname(tprocdef(taillvmdecl(hp).def).personality.mangledname));
+                            end;
                         end;
+                      InstrWriter.WriterInstructionMetadata(' ', taillvmdecl(hp).metadata);
                       writer.AsmWriteln(' {');
                     end;
                 end
@@ -1315,7 +1437,7 @@ implementation
                       hp2:=tai(taillvmdecl(hp).initdata.first);
                       while assigned(hp2) do
                         begin
-                          WriteTai(replaceforbidden,do_line,inmetadata,InlineLevel,asmblock,hp2);
+                          WriteTai(replaceforbidden,do_line,inmetadatakind,InlineLevel,asmblock,hp2);
                           hp2:=tai(hp2.next);
                         end;
                       dec(fdecllevel);
@@ -1343,10 +1465,20 @@ implementation
                     begin
                       { alignment }
                       writer.AsmWrite(', align ');
-                      writer.AsmWriteln(tostr(taillvmdecl(hp).alignment));
-                    end
-                  else
-                    writer.AsmLn;
+                      writer.AsmWrite(tostr(taillvmdecl(hp).alignment));
+                    end;
+                  { address sanitizer adds a red zone after global variables,
+                    while vectorized sections like resource strings are indexed
+                    like arrays by Pascal code -> the red zones completely mess
+                    up this indexing }
+                  if (ldf_vectorized in (taillvmdecl(hp).flags)) and
+                     (cs_sanitize_address in current_settings.moduleswitches) and
+                     (llvmflag_sanitizer_attributes in llvmversion_properties[current_settings.llvmversion]) then
+                    begin
+                      writer.AsmWrite(', no_sanitize_address')
+                    end;
+                  InstrWriter.WriterInstructionMetadata(', ',taillvmdecl(hp).metadata);
+                  writer.AsmLn;
                 end;
             end;
           ait_llvmalias:
@@ -1360,8 +1492,15 @@ implementation
                 sstr:=llvmencodetypename(taillvmalias(hp).def);
               writer.AsmWrite(sstr);
               writer.AsmWrite(', ');
-              writer.AsmWrite(sstr);
-              writer.AsmWrite('* ');
+              if not(llvmflag_opaque_ptr in llvmversion_properties[current_settings.llvmversion]) then
+                begin
+                  writer.AsmWrite(sstr);
+                  writer.AsmWrite('* ');
+                end
+              else
+                begin
+                  writer.AsmWrite('ptr ');
+                end;
               writer.AsmWriteln(LlvmAsmSymName(taillvmalias(hp).oldsym));
             end;
           ait_llvmmetadatanode:
@@ -1378,13 +1517,13 @@ implementation
             end;
           ait_llvmmetadatarefoperand:
             begin
-              { must only appear as an operand }
-              if fdecllevel=0 then
-                internalerror(2019050101);
+              inc(fdecllevel);
               writer.AsmWrite('!');
               writer.AsmWrite(tai_llvmmetadatareferenceoperand(hp).id);
-              writer.AsmWrite(' !');
-              writer.AsmWrite(tai_llvmmetadatareferenceoperand(hp).value.name);
+              writer.AsmWrite(' ');
+              hp2:=tai_llvmmetadatareferenceoperand(hp).value;
+              WriteTai(replaceforbidden,do_line,mk_normal,inlinelevel,asmblock,hp2);
+              dec(fdecllevel);
             end;
           ait_symbolpair:
             begin
@@ -1459,7 +1598,7 @@ implementation
             end;
           ait_typedconst:
             begin
-              WriteTypedConstData(tai_abstracttypedconst(hp),false);
+              WriteTypedConstData(tai_abstracttypedconst(hp),inmetadatakind);
             end
           else
             if not WriteComments(hp) then
@@ -1606,6 +1745,15 @@ implementation
            and (target_info.system in [system_aarch64_darwin, system_aarch64_linux]) then
           optstr:=optstr+' -march='+cputypestr[current_settings.cputype];
 
+        if ([cs_sanitize_address]*current_settings.moduleswitches)<>[] then
+          begin
+            optstr:=optstr+' -fsanitize=';
+            if cs_sanitize_address in current_settings.moduleswitches then
+              begin
+                optstr:=optstr+'address';
+              end;
+          end;
+
         replace(result,'$OPT',optstr);
         inc(fnextpass);
       end;
@@ -1641,7 +1789,21 @@ implementation
           idtxt  : 'CLANG-LLVM';
           asmbin : 'clang';
           asmcmd: '-x ir $OPT -target $TRIPLET -c -o $OBJ $ASM $EXTRAOPT';
-          supported_targets : [system_x86_64_linux,system_x86_64_darwin,system_aarch64_darwin,system_aarch64_linux,system_arm_linux];
+          supported_targets : [system_x86_64_linux,system_aarch64_linux,system_arm_linux];
+          flags : [af_smartlink_sections,af_llvm];
+          labelprefix : '.L';
+          labelmaxlen : -1;
+          comment : '; ';
+          dollarsign: '$';
+        );
+
+     as_clang_llvm_darwin_info : tasminfo =
+        (
+          id     : as_clang_llvm_darwin;
+          idtxt  : 'CLANG-LLVM-DARWIN';
+          asmbin : 'clang';
+          asmcmd: '-x ir $OPT -target $TRIPLET -c -o $OBJ $ASM $EXTRAOPT';
+          supported_targets : [system_x86_64_darwin,system_aarch64_darwin];
           flags : [af_smartlink_sections,af_llvm];
           labelprefix : 'L';
           labelmaxlen : -1;
@@ -1651,4 +1813,5 @@ implementation
 
 begin
   RegisterAssembler(as_clang_llvm_info,TLLVMClangAssember);
+  RegisterAssembler(as_clang_llvm_darwin_info,TLLVMClangAssember);
 end.

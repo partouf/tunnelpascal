@@ -69,6 +69,7 @@ function ModulesLinkToLibc:boolean;
 var
   hp: tmodule;
 begin
+  result:=false;
   { This is called very early, ImportLibraryList is not yet merged into linkothersharedlibs.
     The former contains library names qualified with prefix and suffix (coming from
     "external 'c' name 'foo' declarations), the latter contains raw names (from "$linklib c"
@@ -126,7 +127,7 @@ procedure TLinkerBSD.SetDefaultInfo;
 var
   LdProgram: string='ld';
 begin
-  if target_info.system in (systems_openbsd+[system_x86_64_dragonfly]) then
+  if target_info.system in (systems_openbsd+systems_freebsd+[system_x86_64_dragonfly]) then
     LdProgram:='ld.bfd';
   LibrarySuffix:=' ';
   LdSupportsNoResponseFile := (target_info.system in ([system_m68k_netbsd]+systems_darwin));

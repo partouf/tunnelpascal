@@ -358,7 +358,8 @@ begin
       begin
         if unaligned(psrc^)=b then
           begin
-            result:=psrc-pword(@buf);
+            { the result is always >=0 so avoid handling of negative values }
+            result:=PtrUint(pointer(psrc)-pointer(@buf)) div sizeof(word);
             exit;
           end;
         inc(psrc);
@@ -369,7 +370,8 @@ begin
       begin
         if psrc^=b then
           begin
-            result:=psrc-pword(@buf);
+            { the result is always >=0 so avoid handling of negative values }
+            result:=PtrUint(pointer(psrc)-pointer(@buf)) div sizeof(word);
             exit;
           end;
         inc(psrc);
@@ -399,7 +401,8 @@ begin
       begin
         if unaligned(psrc^)=b then
           begin
-            result:=psrc-pdword(@buf);
+            { the result is always >=0 so avoid handling of negative values }
+            result:=PtrUint(pointer(psrc)-pointer(@buf)) div sizeof(DWord);
             exit;
           end;
         inc(psrc);
@@ -410,7 +413,8 @@ begin
       begin
         if psrc^=b then
           begin
-            result:=psrc-pdword(@buf);
+            { the result is always >=0 so avoid handling of negative values }
+            result:=PtrUint(pointer(psrc)-pointer(@buf)) div sizeof(DWord);
             exit;
           end;
         inc(psrc);
@@ -440,7 +444,8 @@ begin
       begin
         if unaligned(psrc^)=b then
           begin
-            result:=psrc-pqword(@buf);
+            { the result is always >=0 so avoid handling of negative values }
+            result:=PtrUint(pointer(psrc)-pointer(@buf)) div sizeof(QWord);
             exit;
           end;
         inc(psrc);
@@ -451,7 +456,8 @@ begin
       begin
         if psrc^=b then
           begin
-            result:=psrc-pqword(@buf);
+            { the result is always >=0 so avoid handling of negative values }
+            result:=PtrUint(pointer(psrc)-pointer(@buf)) div sizeof(QWord);
             exit;
           end;
         inc(psrc);
@@ -958,7 +964,9 @@ begin
     end;
   dests[0]:=chr(s1l+s2l);
 end;
+{$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT}
 
+{$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT_MULTI}
 procedure fpc_shortstr_concat_multi(var dests:shortstring;const sarr:array of pshortstring);compilerproc;
 var
   s2l : byte;
@@ -1020,7 +1028,7 @@ begin
   if needtemp then
     DestS:=TmpStr;
 end;
-{$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT}
+{$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT_MULTI}
 
 {$pop}
 
@@ -1263,7 +1271,7 @@ var
  len: byte;
 begin
   l:=high(arr)+1;
-  if l>=high(res)+1 then
+  if l>=ObjpasInt(high(res))+1 then
     l:=high(res)
   else if l<0 then
     l:=0;
@@ -2646,6 +2654,9 @@ end;
 procedure SysResetFpu;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   softfloat_exception_flags:=[];
+{$if declared(DefaultFPUControlWord)}
+  SetNativeFPUControlWord(DefaultFPUControlWord);
+{$endif}
 end;
 
 {$endif FPC_SYSTEM_HAS_SYSRESETFPU}
@@ -2655,9 +2666,26 @@ end;
 procedure SysInitFpu;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   softfloat_exception_mask:=[float_flag_underflow,float_flag_inexact,float_flag_denormal];
+  softfloat_exception_flags:=[];
 end;
 
 {$endif FPC_SYSTEM_HAS_SYSINITFPU}
+{$endif}
+
+{$ifndef FPC_SYSTEM_HAS_FPC_CPUINIT}
+procedure fpc_cpuinit;
+  begin
+{$ifndef FPUNONE}
+{$ifdef FPC_HAS_FEATURE_DYNLIBS}
+    if not IsLibrary then
+{$endif}
+      SysInitFPU;
+{$if declared(DefaultFPUControlWord)}
+    DefaultFPUControlWord:=GetNativeFPUControlWord;
+{$endif}
+    SysResetFPU;
+{$endif}
+  end;
 {$endif}
 
 {$ifndef FPC_SYSTEM_HAS_SWAPENDIAN}

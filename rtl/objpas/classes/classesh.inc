@@ -85,6 +85,7 @@ const
 
 Const
   FilerSignature : Array[1..4] of char = 'TPF0';
+  FilerSignature1 : Array[1..4] of char = 'TPF1';
 
 type
 { Text alignment types }
@@ -102,7 +103,8 @@ type
     ssLeft, ssRight, ssMiddle, ssDouble,
     // Extra additions
     ssMeta, ssSuper, ssHyper, ssAltGr, ssCaps, ssNum,
-    ssScroll,ssTriple,ssQuad,ssExtra1,ssExtra2);
+    ssScroll,ssTriple,ssQuad,ssExtra1,ssExtra2,
+    ssTouch, ssPen, ssHorizontal);
 
 {$packset 1}
   TShiftState = set of TShiftStateEnum;
@@ -151,6 +153,9 @@ type
 
 
 Const
+  // Delphi compatibility
+  ssCommand = ssMeta;
+  
   SGUIDObserved = '{663C603C-3F3C-4CC5-823C-AC8079F979E5}';
   SGUIDObserver = '{BC7376EA-199C-4C2A-8684-F4805F0691CA}';
 
@@ -368,59 +373,57 @@ Type
 
 {TBits Class}
 
-const
-   BITSHIFT = 5;
-   MASK = 31; {for longs that are 32-bit in size}
-   // to further increase, signed integer limits have to be researched.
-{$ifdef cpu16}
-   MaxBitFlags = $7FE0;
-{$else cpu16}
-   MaxBitFlags = $7FFFFFE0;
-{$endif cpu16}
-   MaxBitRec = MaxBitFlags Div (SizeOf(cardinal)*8);
 type
-   TBitArray = array[0..MaxBitRec - 1] of cardinal;
+   TBitsBase = PtrInt;
+   PBitsBase = ^TBitsBase;
+   TBitsBaseUnsigned = PtrUint;
 
+const
+   MaxBitFlags = High(SizeInt) - (bitsizeof(TBitsBase) - 1);
+
+type
    TBits = class(TObject)
    private
-      { Private declarations }
-      FBits : ^TBitArray;
-      FSize : longint;  { total longints currently allocated }
-      FBSize: longint;  {total bits currently allocated}
-      findIndex : longint;
-      findState : boolean;
+      FBits : PBitsBase;
+      FSize : SizeInt;  { total TBitsBases currently allocated }
+      FBSize: SizeInt;  {total bits currently allocated}
+      findIndex : SizeInt;
+      findXorMask : int8; { 0 (all zeros) or -1 (all ones), sign-extended to TBitsBase on read.
+                            0 is for searching ones, -1 is for searching zeros. }
+
+      function ScanFor1(start : SizeInt; xorMask : TBitsBase) : SizeInt;
+      function ScanFor1Rev(start : SizeInt; xorMask : TBitsBase) : SizeInt;
 
       { functions and properties to match TBits class }
-      procedure SetBit(bit : longint; value : Boolean);
-      procedure SetSize(value : longint);
+      procedure SetBit(bit : SizeInt; value : Boolean);
+      procedure SetSize(value : SizeInt);
    Protected
-      procedure CheckBitIndex (Bit : longint;CurrentSize : Boolean);
+      procedure CheckBitIndex (Bit : SizeInt;CurrentSize : Boolean);
    public
-      { Public declarations }
       constructor Create(TheSize : longint = 0); virtual;
       destructor Destroy; override;
-      function  GetFSize : longint;
-      procedure SetOn(Bit : longint);
-      procedure Clear(Bit : longint);
+      function  GetFSize : SizeInt;
+      procedure SetOn(Bit : SizeInt);
+      procedure Clear(Bit : SizeInt);
       procedure Clearall;
       procedure CopyBits(BitSet : TBits);
       procedure AndBits(BitSet : TBits);
       procedure OrBits(BitSet : TBits);
       procedure XorBits(BitSet : TBits);
       procedure NotBits(BitSet : TBits);
-      function  Get(Bit : longint) : boolean;
-      procedure Grow(NBit : longint);
+      function  Get(Bit : SizeInt) : boolean;
+      procedure Grow(NBit : SizeInt);
       function  Equals(Obj : TObject): Boolean; override; overload;
       function  Equals(BitSet : TBits) : Boolean; overload;
-      procedure SetIndex(Index : longint);
-      function  FindFirstBit(State : boolean) : longint;
-      function  FindNextBit : longint;
-      function  FindPrevBit : longint;
+      procedure SetIndex(Index : SizeInt);
+      function  FindFirstBit(State : boolean) : SizeInt;
+      function  FindNextBit : SizeInt;
+      function  FindPrevBit : SizeInt;
 
       { functions and properties to match TBits class }
-      function OpenBit: longint;
-      property Bits[Bit: longint]: Boolean read get write SetBit; default;
-      property Size: longint read FBSize write setSize;
+      function OpenBit: SizeInt;
+      property Bits[Bit: SizeInt]: Boolean read get write SetBit; default;
+      property Size: SizeInt read FBSize write setSize;
    end;
 
 { TPersistent abstract class }
@@ -955,6 +958,7 @@ type
     function WriteMaxSizeData(Const Buffer; aSize,aCount : NativeInt) : NativeInt;
     Procedure WriteExactSizeData(Const Buffer; aSize,aCount : NativeInt);
   public
+    const DefaultWriteUnitname : Boolean = false;
     function Read(var Buffer; Count: Longint): Longint; virtual; overload;
     function Read(var Buffer: TBytes; Count: Longint): Longint; overload;
     function Read( Buffer : TBytes; aOffset, Count: Longint): Longint; overload;
@@ -1111,10 +1115,14 @@ type
     function CopyFrom(Source: TStream; Count: Int64): Int64;
     function ReadComponent(Instance: TComponent): TComponent;
     function ReadComponentRes(Instance: TComponent): TComponent;
-    procedure WriteComponent(Instance: TComponent);
-    procedure WriteComponentRes(const ResName: string; Instance: TComponent);
-    procedure WriteDescendent(Instance, Ancestor: TComponent);
-    procedure WriteDescendentRes(const ResName: string; Instance, Ancestor: TComponent);
+    procedure WriteComponent(Instance: TComponent); overload;
+    procedure WriteComponent(Instance: TComponent; aWriteUnitname: boolean); overload;
+    procedure WriteComponentRes(const ResName: string; Instance: TComponent); overload;
+    procedure WriteComponentRes(const ResName: string; Instance: TComponent; aWriteUnitname: boolean); overload;
+    procedure WriteDescendent(Instance, Ancestor: TComponent); overload;
+    procedure WriteDescendent(Instance, Ancestor: TComponent; aWriteUnitname: boolean); overload;
+    procedure WriteDescendentRes(const ResName: string; Instance, Ancestor: TComponent); overload;
+    procedure WriteDescendentRes(const ResName: string; Instance, Ancestor: TComponent; aWriteUnitname: boolean); overload;
     procedure WriteResourceHeader(const ResName: string; {!!!:out} var FixupInfo: Longint);
     procedure FixupResourceHeader(FixupInfo: Longint);
     procedure ReadResHeader;
@@ -1393,6 +1401,8 @@ type
     procedure BeginRootComponent; virtual; abstract;
     procedure BeginComponent(var Flags: TFilerFlags; var AChildPos: Integer;
       var CompClassName, CompName: String); virtual; abstract;
+    procedure BeginComponent(var Flags: TFilerFlags; var AChildPos: Integer;
+      var CompUnitName, CompClassName, CompName: String); virtual;
     function BeginProperty: String; virtual; abstract;
 
     //Please don't use read, better use ReadBinary whenever possible
@@ -1423,12 +1433,23 @@ type
   { TBinaryObjectReader }
 
   TBinaryObjectReader = class(TAbstractObjectReader)
+  public
+    {$ScopedEnums on}
+    type
+      TBOVersion = (
+        boVersion0,
+        boVersion1
+        );
+    {$ScopedEnums off}
+    const
+      UnitnameSeparator = '/';
   protected
     FStream: TStream;
     FBuffer: Pointer;
     FBufSize: Integer;
     FBufPos: Integer;
     FBufEnd: Integer;
+    FVersion: TBOVersion;
 
     function ReadWord : word; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     function ReadDWord : longword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
@@ -1445,7 +1466,7 @@ type
     function ReadValue: TValueType; override;
     procedure BeginRootComponent; override;
     procedure BeginComponent(var Flags: TFilerFlags; var AChildPos: Integer;
-      var CompClassName, CompName: String); override;
+      var CompUnitName, CompClassName, CompName: String); override;
     function BeginProperty: String; override;
 
     //Please don't use read, better use ReadBinary whenever possible
@@ -1470,6 +1491,7 @@ type
     function ReadUnicodeString: UnicodeString;override;
     procedure SkipComponent(SkipComponentInfos: Boolean); override;
     procedure SkipValue; override;
+    property Version: TBOVersion read FVersion;
   end;
 
 
@@ -1490,6 +1512,8 @@ type
     var PropName: string; IsPath: boolean; var Handled, Skip: Boolean) of object;
   TFindComponentClassEvent = procedure(Reader: TReader; const ClassName: string;
     var ComponentClass: TComponentClass) of object;
+  TFindComponentClassExEvent = procedure(Reader: TReader; const anUnitname, ClassName: string;
+    var ComponentClass: TComponentClass) of object;
   TCreateComponentEvent = procedure(Reader: TReader;
     ComponentClass: TComponentClass; var Component: TComponent) of object;
 
@@ -1503,6 +1527,7 @@ type
   TReader = class(TFiler)
   private
     FDriver: TAbstractObjectReader;
+    FOnFindComponentClassEx: TFindComponentClassExEvent;
     FOwner: TComponent;
     FParent: TComponent;
     FFixups: TObject;
@@ -1521,7 +1546,7 @@ type
     FCanHandleExcepts: Boolean;
     FOnReadStringProperty:TReadWriteStringPropertyEvent;
     procedure DoFixupReferences;
-    function FindComponentClass(const AClassName: string): TComponentClass;
+    function FindComponentClass(const AName, anUnitName, AClassName: string): TComponentClass;
     procedure Lock;
     procedure Unlock;
   protected
@@ -1594,6 +1619,7 @@ type
     property OnAncestorNotFound: TAncestorNotFoundEvent read FOnAncestorNotFound write FOnAncestorNotFound;
     property OnCreateComponent: TCreateComponentEvent read FOnCreateComponent write FOnCreateComponent;
     property OnFindComponentClass: TFindComponentClassEvent read FOnFindComponentClass write FOnFindComponentClass;
+    property OnFindComponentClassEx: TFindComponentClassExEvent read FOnFindComponentClassEx write FOnFindComponentClassEx;
     property OnReadStringProperty: TReadWriteStringPropertyEvent read FOnReadStringProperty write FOnReadStringProperty;
   end;
 
@@ -1649,6 +1675,7 @@ type
     FBufSize: Integer;
     FBufPos: Integer;
     FBufEnd: Integer;
+    FVersion: TBinaryObjectReader.TBOVersion;
     procedure WriteWord(w : word); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     procedure WriteDWord(lw : longword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
     procedure WriteQWord(qw : qword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
@@ -1684,11 +1711,13 @@ type
     procedure WriteUInt64(Value: QWord); override;
     procedure WriteMethodName(const Name: String); override;
     procedure WriteSet(Value: LongInt; SetType: Pointer); override;
-    procedure WriteStr(const Value: String);
+    procedure WriteStr(const Value: String); // write shortstring
     procedure WriteString(const Value: String); override;
     procedure WriteWideString(const Value: WideString); override;
     procedure WriteUnicodeString(const Value: UnicodeString); override;
     procedure WriteVariant(const VarValue: Variant);override;
+
+    property Version: TBinaryObjectReader.TBOVersion read FVersion write FVersion;
   end;
 
   TTextObjectWriter = class(TAbstractObjectWriter)
@@ -1754,12 +1783,12 @@ type
     procedure WriteIdent(const Ident: string);
     procedure WriteInteger(Value: Longint); overload;
     procedure WriteInteger(Value: Int64); overload;
-    procedure WriteSet(Value: LongInt; SetType: Pointer);
+    procedure WriteSet(Value: Longint; SetType: Pointer);
     procedure WriteListBegin;
     procedure WriteListEnd;
     Procedure WriteSignature;
     procedure WriteRootComponent(ARoot: TComponent);
-    procedure WriteString(const Value: string);
+    procedure WriteString(const Value: String);
     procedure WriteWideString(const Value: WideString);
     procedure WriteUnicodeString(const Value: UnicodeString);
     procedure WriteVariant(const VarValue: Variant);
@@ -1844,6 +1873,9 @@ type
   EThreadDestroyCalled = class(EThread);
   TSynchronizeProcVar = procedure;
   TThreadMethod = procedure of object;
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+  TThreadProcedure = reference to procedure;
+{$endif}
 
   TThreadReportStatus = Procedure(Const status : String) of Object;
 
@@ -1866,8 +1898,9 @@ type
     PThreadQueueEntry = ^TThreadQueueEntry;
     TThreadQueueEntry = record
       Method: TThreadMethod;
-      // uncomment once closures are supported
-      //ThreadProc: TThreadProcedure;
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+      ThreadProc: TThreadProcedure;
+{$endif}
       Thread: TThread;
       ThreadID: TThreadID;
       Exception: TObject;
@@ -1897,6 +1930,9 @@ type
     class function GetCurrentThread: TThread; static;
     class function GetIsSingleProcessor: Boolean; static; inline;
     class procedure InternalQueue(aThread: TThread; aMethod: TThreadMethod; aQueueIfMain: Boolean); static;
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    class procedure InternalQueue(aThread: TThread; aProcedure: TThreadProcedure; aQueueIfMain: Boolean); static;
+{$endif}
     procedure CallOnTerminate;
     function GetPriority: TThreadPriority;
     procedure SetPriority(Value: TThreadPriority);
@@ -1914,7 +1950,13 @@ type
     procedure TerminatedSet; virtual;
     procedure Execute; virtual; abstract;
     procedure Synchronize(AMethod: TThreadMethod);
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    procedure Synchronize(AProcedure : TThreadProcedure);
+{$endif}
     procedure Queue(aMethod: TThreadMethod);
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    procedure Queue(aProcedure: TThreadProcedure);
+{$endif}
     procedure ForceQueue(aMethod: TThreadMethod); inline;
     property ReturnValue: Integer read FReturnValue write FReturnValue;
     property Terminated: Boolean read FTerminated;
@@ -1957,7 +1999,13 @@ type
     class procedure SetReturnValue(aValue: Integer); static;
     class function CheckTerminated: Boolean; static;
     class procedure Synchronize(AThread: TThread; AMethod: TThreadMethod);
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    class procedure Synchronize(AThread: TThread; AProcedure : TThreadProcedure);
+    {$endif}
     class procedure Queue(aThread: TThread; aMethod: TThreadMethod); static;
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    class procedure Queue(aThread: TThread; AProcedure : TThreadProcedure); static;
+    {$endif}
     class procedure ForceQueue(aThread: TThread; aMethod: TThreadMethod); inline; static;
     class procedure RemoveQueuedEvents(aThread: TThread; aMethod: TThreadMethod); static;
     class procedure RemoveQueuedEvents(aMethod: TThreadMethod); static;
@@ -2379,10 +2427,12 @@ procedure RegisterClass(AClass: TPersistentClass);
 procedure RegisterClasses(AClasses: array of TPersistentClass);
 procedure RegisterClassAlias(AClass: TPersistentClass; const Alias: string);
 procedure UnRegisterClass(AClass: TPersistentClass);
-procedure UnRegisterClasses(AClasses: array of TPersistentClass);
+procedure UnRegisterClasses(const AClasses: array of TPersistentClass);
 procedure UnRegisterModuleClasses(Module: HMODULE);
-function FindClass(const AClassName: string): TPersistentClass;
-function GetClass(const AClassName: string): TPersistentClass;
+function FindClass(const AClassName: string): TPersistentClass; overload;
+function FindClass(const anUnitname, aClassName: string): TPersistentClass; overload;
+function GetClass(const aClassName: string): TPersistentClass; overload;
+function GetClass(const anUnitname, aClassName: string): TPersistentClass; overload;
 procedure StartClassGroup(AClass: TPersistentClass);
 procedure GroupDescendentsWith(AClass, AClassGroup: TPersistentClass);
 function ActivateClassGroup(AClass: TPersistentClass): TPersistentClass;

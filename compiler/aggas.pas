@@ -364,7 +364,7 @@ implementation
           begin
             if (target_info.system in (systems_windows+systems_wince)) then
               secname:='.tls'
-            else if (target_info.system in systems_linux) then
+            else if (target_info.system in (systems_linux+systems_wasm)) then
               secname:='.tbss';
           end;
 
@@ -565,7 +565,8 @@ implementation
              writer.AsmWrite('.section ');
              { sectionname may rename those sections, so we do not write flags/progbits for them,
                the assembler will ignore them/spite out a warning anyways }
-             if not(atype in [sec_data,sec_rodata,sec_rodata_norel]) then
+             if not(atype in [sec_data,sec_rodata,sec_rodata_norel]) and
+                not(asminfo^.id=as_solaris_as) then
                begin
                  usesectionflags:=true;
                  usesectionprogbits:=true;
@@ -889,6 +890,8 @@ implementation
 
            ait_section :
              begin
+               ResetSourceLines;
+
                if tai_section(hp).sectype<>sec_none then
                  if replaceforbidden then
                    WriteSection(tai_section(hp).sectype,ApplyAsmSymbolRestrictions(tai_section(hp).name^),tai_section(hp).secorder,
@@ -1048,7 +1051,10 @@ implementation
                         internalerror(200404292);
                       if not(target_info.system in systems_aix) then
                         begin
-                          writer.AsmWrite(ait_const2str[aitconst_32bit]);
+                          if (target_info.system in use_ua_elf_systems) then
+                            writer.AsmWrite(ait_ua_elf_const2str[aitconst_32bit])
+                          else
+                            writer.AsmWrite(ait_const2str[aitconst_32bit]);
                           if target_info.endian = endian_little then
                             begin
                               writer.AsmWrite(tostr(longint(lo(tai_const(hp).value))));
@@ -1301,12 +1307,14 @@ implementation
 
            ait_label :
              begin
-               if (tai_label(hp).labsym.is_used) then
-                begin
 {$ifdef DEBUG_LABEL}
                   writer.AsmWrite(asminfo^.comment);
                   writer.AsmWriteLn('References = ' + tostr(tai_label(hp).labsym.getrefs));
+                  if tai_label(hp).labsym.getrefs=0 then
+                    writer.AsmWriteln(asminfo^.comment+'Optimized out label '+tai_label(hp).labsym.name);
 {$endif DEBUG_LABEL}
+               if (tai_label(hp).labsym.is_used) then
+                begin
                   if tai_label(hp).labsym.bind in [AB_GLOBAL,AB_PRIVATE_EXTERN] then
                    begin
                      if (tai_label(hp).labsym.bind=AB_PRIVATE_EXTERN) then
@@ -1646,6 +1654,16 @@ implementation
                if tai_globaltype(hp).immutable then
                  writer.AsmWrite(', immutable');
                writer.AsmLn;
+               if tai_globaltype(hp).is_global then
+                 begin
+                   writer.AsmWrite(#9'.globl ');
+                   writer.AsmWriteLn(tai_globaltype(hp).globalname);
+                 end;
+               if not tai_globaltype(hp).is_external then
+                 begin
+                   writer.AsmWrite(tai_globaltype(hp).globalname);
+                   writer.AsmWriteLn(':');
+                 end;
              end;
            ait_functype:
              WriteFuncTypeDirective(tai_functype(hp));

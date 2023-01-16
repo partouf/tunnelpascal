@@ -170,12 +170,12 @@ implementation
         include(enumclass.objectoptions,oo_is_enum_class);
         include(enumclass.objectoptions,oo_is_sealed);
         { implement FpcEnumValueObtainable interface }
-        enumclass.ImplementedInterfaces.add(TImplementedInterface.Create(tobjectdef(search_system_type('FPCENUMVALUEOBTAINABLE').typedef)));
+        enumclass.register_implemented_interface(tobjectdef(search_system_type('FPCENUMVALUEOBTAINABLE').typedef),false);
         { create an alias for this type inside itself: this way we can choose a
           name that can be used in generated Pascal code without risking an
           identifier conflict (since it is local to this class; the global name
           is unique because it's an identifier that contains $-signs) }
-        enumclass.symtable.insert(ctypesym.create('__FPC_TEnumClassAlias',enumclass));
+        enumclass.symtable.insertsym(ctypesym.create('__FPC_TEnumClassAlias',enumclass));
 
         { also create an alias for the enum type so that we can iterate over
           all enum values when creating the body of the class constructor }
@@ -183,7 +183,7 @@ implementation
         { don't pass def to the ttypesym constructor, because then it
           will replace the current (real) typesym of that def with the alias }
         temptypesym.typedef:=def;
-        enumclass.symtable.insert(temptypesym);
+        enumclass.symtable.insertsym(temptypesym);
         { but the name of the class as far as the JVM is concerned will match
           the enum's original name (the enum type itself won't be output in
           any class file, so no conflict there)
@@ -212,14 +212,14 @@ implementation
         for i:=0 to tenumdef(def).symtable.symlist.count-1 do
           begin
             fsym:=cfieldvarsym.create(tenumsym(tenumdef(def).symtable.symlist[i]).realname,vs_final,enumclass,[]);
-            enumclass.symtable.insert(fsym);
+            enumclass.symtable.insertsym(fsym);
             sym:=make_field_static(enumclass.symtable,fsym);
             { add alias for the field representing ordinal(0), for use in
               initialization code }
             if tenumsym(tenumdef(def).symtable.symlist[i]).value=0 then
               begin
                 aliassym:=cstaticvarsym.create('__FPC_Zero_Initializer',vs_final,enumclass,[vo_is_external]);
-                enumclass.symtable.insert(aliassym);
+                enumclass.symtable.insertsym(aliassym);
                 aliassym.set_raw_mangledname(sym.mangledname);
               end;
           end;
@@ -228,7 +228,7 @@ implementation
         arrdef:=carraydef.create(0,tenumdef(def).symtable.symlist.count-1,s32inttype);
         arrdef.elementdef:=enumclass;
         arrsym:=ctypesym.create('__FPC_TEnumValues',arrdef);
-        enumclass.symtable.insert(arrsym);
+        enumclass.symtable.insertsym(arrsym);
         { insert "public static values: array of enumclass" that returns $VALUES.clone()
           (rather than a dynamic array and using clone --which we don't support yet for arrays--
            simply use a fixed length array and copy it) }
@@ -242,12 +242,12 @@ implementation
           begin
             { add field for the value }
             fsym:=cfieldvarsym.create('__fpc_fenumval',vs_final,s32inttype,[]);
-            enumclass.symtable.insert(fsym);
+            enumclass.symtable.insertsym(fsym);
             tobjectsymtable(enumclass.symtable).addfield(fsym,vis_strictprivate);
             { add class field with hash table that maps from FPC-declared ordinal value -> enum instance }
             juhashmap:=search_system_type('JUHASHMAP').typedef;
             fsym:=cfieldvarsym.create('__fpc_ord2enum',vs_final,juhashmap,[]);
-            enumclass.symtable.insert(fsym);
+            enumclass.symtable.insertsym(fsym);
             make_field_static(enumclass.symtable,fsym);
             { add custom constructor }
             if not str_parse_method_dec('constructor Create(const __fpc_name: JLString; const __fpc_ord, __fpc_initenumval: longint);',potype_constructor,false,enumclass,pd) then
@@ -305,12 +305,12 @@ implementation
           checking when creating the "Values" method }
         fsym:=cfieldvarsym.create('$VALUES',vs_final,arrdef,[]);
         fsym.visibility:=vis_strictprivate;
-        enumclass.symtable.insert(fsym,false);
+        enumclass.symtable.insertsym(fsym,false);
         sym:=make_field_static(enumclass.symtable,fsym);
         { alias for accessing the field in generated Pascal code }
         sl:=tpropaccesslist.create;
         sl.addsym(sl_load,sym);
-        enumclass.symtable.insert(cabsolutevarsym.create_ref('__fpc_FVALUES',arrdef,sl));
+        enumclass.symtable.insertsym(cabsolutevarsym.create_ref('__fpc_FVALUES',arrdef,sl));
         { add initialization of the static class fields created above }
         if not str_parse_method_dec('constructor fpc_enum_class_constructor;',potype_class_constructor,true,enumclass,pd) then
           internalerror(2011062303);
@@ -356,7 +356,7 @@ implementation
         if df_generic in def.defoptions then
           include(pvclass.defoptions,df_generic);
         { associate typesym }
-        pvclass.symtable.insert(ctypesym.create('__FPC_TProcVarClassAlias',pvclass));
+        pvclass.symtable.insertsym(ctypesym.create('__FPC_TProcVarClassAlias',pvclass));
         { set external name to match procvar type name }
         if not islocal then
           pvclass.objextname:=stringdup(name)
@@ -370,7 +370,7 @@ implementation
 
         { add a method to call the procvar using unwrapped arguments, which
           then wraps them and calls through to JLRMethod.invoke }
-        methoddef:=tprocdef(tprocvardef(def).getcopyas(procdef,pc_bareproc,''));
+        methoddef:=tprocdef(tprocvardef(def).getcopyas(procdef,pc_bareproc,'',true));
         finish_copied_procdef(methoddef,'invoke',pvclass.symtable,pvclass);
         methoddef.synthetickind:=tsk_jvm_procvar_invoke;
         methoddef.calcparas;
@@ -381,7 +381,7 @@ implementation
         { don't pass def to the ttypesym constructor, because then it
           will replace the current (real) typesym of that def with the alias }
         temptypesym.typedef:=def;
-        pvclass.symtable.insert(temptypesym);
+        pvclass.symtable.insertsym(temptypesym);
 
         { in case of a procedure of object, add a nested interface type that
           has one method that conforms to the procvartype (with name
@@ -398,12 +398,12 @@ implementation
             if df_generic in def.defoptions then
               include(pvintf.defoptions,df_generic);
             { associate typesym }
-            pvclass.symtable.insert(ctypesym.create('Callback',pvintf));
+            pvclass.symtable.insertsym(ctypesym.create('Callback',pvintf));
 
             { add a method prototype matching the procvar (like the invoke
               in the procvarclass itself) }
             symtablestack.push(pvintf.symtable);
-            methoddef:=tprocdef(tprocvardef(def).getcopyas(procdef,pc_bareproc,''));
+            methoddef:=tprocdef(tprocvardef(def).getcopyas(procdef,pc_bareproc,'',true));
             finish_copied_procdef(methoddef,name+'Callback',pvintf.symtable,pvintf);
             { can't be final/static/private/protected, and must be virtual
               since it's an interface method }
@@ -467,7 +467,7 @@ implementation
         { wrapper is part of the same symtable as the original procdef }
         symtablestack.push(pd.owner);
         { get a copy of the virtual class method }
-        wrapperpd:=tprocdef(pd.getcopyas(procdef,pc_normal_no_hidden,''));
+        wrapperpd:=tprocdef(pd.getcopyas(procdef,pc_normal_no_hidden,'',true));
         { this one is not virtual nor override }
         exclude(wrapperpd.procoptions,po_virtualmethod);
         exclude(wrapperpd.procoptions,po_overridingmethod);
@@ -498,7 +498,7 @@ implementation
         wrapperpd.synthetickind:=tsk_jvm_virtual_clmethod;
         wrapperpd.skpara:=pd;
         { also create procvar type that we can use in the implementation }
-        wrapperpv:=tcpuprocvardef(pd.getcopyas(procvardef,pc_normal_no_hidden,''));
+        wrapperpv:=tcpuprocvardef(pd.getcopyas(procvardef,pc_normal_no_hidden,'',true));
         handle_calling_convention(wrapperpv,hcc_default_actions_intf);
         { no use in creating a callback wrapper here, this procvar type isn't
           for public consumption }
@@ -507,7 +507,7 @@ implementation
           Pascal code }
         typ:=ctypesym.create('__fpc_virtualclassmethod_pv_t'+wrapperpd.unique_id_str,wrapperpv);
         wrapperpv.classdef.typesym.visibility:=vis_strictprivate;
-        symtablestack.top.insert(typ);
+        symtablestack.top.insertsym(typ);
         symtablestack.pop(pd.owner);
       end;
 
@@ -526,7 +526,7 @@ implementation
         { wrapper is part of the same symtable as the original procdef }
         symtablestack.push(pd.owner);
         { get a copy of the constructor }
-        wrapperpd:=tprocdef(pd.getcopyas(procdef,pc_bareproc,''));
+        wrapperpd:=tprocdef(pd.getcopyas(procdef,pc_bareproc,'',true));
         { this one is a class method rather than a constructor }
         include(wrapperpd.procoptions,po_classmethod);
         wrapperpd.proctypeoption:=potype_function;
@@ -595,7 +595,7 @@ implementation
               { make sure we don't emit a definition for this field (we'll do
                 that for the constsym already) -> mark as external }
               ssym:=cstaticvarsym.create(internal_static_field_name(csym.realname),vs_final,csym.constdef,[vo_is_external]);
-              csym.owner.insert(ssym);
+              csym.owner.insertsym(ssym);
               { alias storage to the constsym }
               ssym.set_mangledname(csym.realname);
               for i:=0 to tenumdef(csym.constdef).symtable.symlist.count-1 do
@@ -633,7 +633,7 @@ implementation
               }
               symtablestack.push(current_module.localsymtable);
               ssym:=cstaticvarsym.create(internal_static_field_name(csym.realname),vs_final,tsetdef(csym.constdef).getcopy,[vo_is_external,vo_has_local_copy]);
-              symtablestack.top.insert(ssym);
+              symtablestack.top.insertsym(ssym);
               symtablestack.pop(current_module.localsymtable);
               { alias storage to the constsym }
               ssym.set_mangledname(csym.realname);

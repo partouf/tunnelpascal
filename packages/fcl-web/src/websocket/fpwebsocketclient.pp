@@ -19,7 +19,7 @@ unit fpwebsocketclient;
 interface
 
 uses
-  sysutils, classes, fpwebsocket, ssockets;
+  sysutils, classes, fpwebsocket, ssockets, sslsockets;
 
 Type
   EWebSocketClient = Class(EWebSocket);
@@ -112,6 +112,7 @@ Type
     FOnControl: TWSControlEvent;
     FOnDisconnect: TNotifyEvent;
     FOnConnect: TNotifyEvent;
+    procedure FreeConnectionObjects;
     procedure SetActive(const Value: Boolean);
     procedure SetHostName(const Value: String);
     procedure SetMessagePump(AValue: TWSMessagePump);
@@ -183,7 +184,7 @@ Type
     Property OnHandshakeResponse : TWSClientHandshakeResponseEvent Read FOnHandshakeResponse Write FOnHandshakeResponse;
     // Called when a text message is received.
     property OnMessageReceived: TWSMessageEvent read FOnMessageReceived write FOnMessageReceived;
-    // Called when a connection is disconnected. Sed
+    // Called when a connection is disconnected.
     property OnDisconnect: TNotifyEvent read FOnDisconnect write FOnDisconnect;
     // Called when a connection is established
     property OnConnect: TNotifyEvent read FOnConnect write FOnConnect;
@@ -271,20 +272,34 @@ begin
     MessagePump.RemoveClient(FConnection);
   If Assigned(OnDisconnect) then
     OnDisconnect(FConnection);
+  // We cannot free the connection here, because it still needs to call it's own OnDisconnect.
 end;
 
 procedure TCustomWebsocketClient.Connect;
+var
+  SSLHandler: TSSLSocketHandler;
 begin
   If Active then
     Exit;
-  FreeAndNil(FSocket);
-  FreeAndNil(FTransport);
-  FSocket:=TInetSocket.Create(HostName,Port,ConnectTimeout);
+  // Safety: Free any dangling objects before recreating
+  FreeConnectionObjects;
+  SSLHandler := nil;
+  if UseSSL then
+  begin
+    SSLHandler := TSSLSocketHandler.GetDefaultHandler;
+    SSLHandler.VerifyPeerCert := False;
+  end;
+  FSocket:=TInetSocket.Create(HostName,Port,ConnectTimeout, SSLHandler);
   FTransport:=TWSClientTransport.Create(FSocket);
   FConnection:=CreateClientConnection(FTransport);
   FConnection.OnMessageReceived:=@MessageReceived;
   FConnection.OnControl:=@ControlReceived;
-  FCOnnection.OutgoingFrameMask:=Self.OutGoingFrameMask;
+  // RFC states we MUST use a mask.
+  if OutGoingFrameMask=0 then
+    OutGoingFrameMask:=1+Random(MaxInt-1);
+  FConnection.OutgoingFrameMask:=Self.OutGoingFrameMask;
+  if UseSSL then
+    FSocket.Connect;
   FActive:=True;
   if not DoHandShake then
     Disconnect(False)
@@ -303,6 +318,7 @@ begin
   DisConnect(False);
   FreeAndNil(FHandShake);
   FreeAndNil(FHandshakeResponse);
+  FreeConnectionObjects;
   Inherited;
 end;
 
@@ -376,7 +392,7 @@ end;
 
 Function TCustomWebsocketClient.CheckHandShakeResponse(aHeaders : TStrings) : Boolean;
 
-Var
+Var 
   K : String;
   {%H-}hash : TSHA1Digest;
   B : TBytes;
@@ -449,20 +465,27 @@ begin
   FConnection.Send(ftPong,TEncoding.UTF8.GetAnsiBytes(aMessage));
 end;
 
+procedure TCustomWebsocketClient.FreeConnectionObjects;
+
+begin
+  FreeAndNil(FConnection);
+  FTransport:=nil; // FTransport is freed in TWSClientConnection.Destroy
+  FSocket:=nil; // FSocket is freed in TWSClientTransport.Destroy
+end;
+
 procedure TCustomWebsocketClient.Disconnect(SendClose : boolean = true);
 
 begin
   if Not Active then
     Exit;
-  if SendClose then
+  if SendClose and (Connection.CloseState <> csClosed) then
     Connection.Close('');
   if Assigned(MessagePump) then
     MessagePump.RemoveClient(Connection);
-  FreeAndNil(FConnection);
-  FActive:=False;
   If Assigned(OnDisconnect) then
-    OnDisconnect(FConnection);
-  // ConnectionDisconnected(Self);
+    OnDisconnect(Self);
+  FreeConnectionObjects;
+  FActive:=False;
 end;
 
 procedure TCustomWebsocketClient.SetActive(const Value: Boolean);

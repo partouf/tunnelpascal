@@ -478,6 +478,7 @@ const
   parser_e_section_directive_not_allowed_for_target=03362;
   parser_e_absolute_sym_cannot_reference_itself=03363;
   parser_e_syscall_format_not_support=03364;
+  parser_w_ignoring_published_property=03365;
   type_e_mismatch=04000;
   type_e_incompatible_types=04001;
   type_e_not_equal_types=04002;
@@ -599,6 +600,7 @@ const
   type_e_generic_const_type_not_allowed=04128;
   type_e_cant_read_write_type_in_iso_mode=04129;
   type_w_array_size_does_not_match_size_of_constant_string=04130;
+  type_e_nested_procvar_to_funcref=04131;
   sym_e_id_not_found=05000;
   sym_f_internal_error_in_symtablestack=05001;
   sym_e_duplicate_id=05002;
@@ -684,6 +686,7 @@ const
   sym_e_generic_type_param_mismatch=05096;
   sym_e_generic_type_param_decl=05097;
   sym_e_type_must_be_rec_or_object=05098;
+  sym_e_symbol_no_capture=05099;
   cg_e_parasize_too_big=06009;
   cg_e_file_must_call_by_reference=06012;
   cg_e_cant_use_far_pointer_there=06013;
@@ -904,6 +907,7 @@ const
   asmw_e_illegal_use_of_rip=08034;
   asmw_e_seh_invalid_data_size=08035;
   asmw_e_illegal_use_of_sp=08036;
+  asmw_e_illegal_unset_index=08037;
   exec_w_source_os_redefined=09000;
   exec_i_assembling_pipe=09001;
   exec_d_cant_create_asmfile=09002;
@@ -1039,6 +1043,7 @@ const
   unit_u_ppu_llvm_mismatch=10067;
   unit_u_ppu_invalid_wasm_exceptions_mode=10068;
   unit_u_ppu_symansistr_mismatch=10069;
+  unit_u_ppu_wasm_threads_mismatch=10070;
   option_usage=11000;
   option_only_one_source_support=11001;
   option_def_only_for_os2=11002;
@@ -1152,9 +1157,9 @@ const
   option_info=11024;
   option_help_pages=11025;
 
-  MsgTxtSize = 89619;
+  MsgTxtSize = 90553;
 
   MsgIdxMax : array[1..20] of longint=(
-    28,109,365,131,99,63,148,37,223,70,
+    28,109,366,132,100,63,148,38,223,71,
     65,20,30,1,1,1,1,1,1,1
   );

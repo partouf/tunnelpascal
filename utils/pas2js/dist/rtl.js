@@ -554,20 +554,20 @@ var rtl = {
     rtl.raiseE("EInvalidCast");
   },
 
-  createInterface: function(module, name, guid, fnnames, ancestor, initfn){
+  createInterface: function(module, name, guid, fnnames, ancestor, initfn, rttiname){
     //console.log('createInterface name="'+name+'" guid="'+guid+'" names='+fnnames);
     var i = ancestor?Object.create(ancestor):{};
     module[name] = i;
     i.$module = module;
-    i.$name = name;
-    i.$fullname = module.$name+'.'+name;
+    i.$name = rttiname?rttiname:name;
+    i.$fullname = module.$name+'.'+i.$name;
     i.$guid = guid;
     i.$guidr = null;
     i.$names = fnnames?fnnames:[];
     if (rtl.isFunction(initfn)){
       // rtti
       if (rtl.debug_rtti) rtl.debug('createInterface '+i.$fullname);
-      var t = i.$module.$rtti.$Interface(name,{ "interface": i, module: module });
+      var t = i.$module.$rtti.$Interface(i.$name,{ "interface": i, module: module });
       i.$rtti = t;
       if (ancestor) t.ancestor = ancestor.$rtti;
       if (!t.ancestor) t.ancestor = null;
@@ -814,6 +814,18 @@ var rtl = {
     return intf;
   },
 
+  _ReleaseArray: function(a,dim){
+    if (!a) return null;
+    for (var i=0; i<a.length; i++){
+      if (dim<=1){
+        if (a[i]) a[i]._Release();
+      } else {
+        rtl._ReleaseArray(a[i],dim-1);
+      }
+    }
+    return null;
+  },
+
   trunc: function(a){
     return a<0 ? Math.ceil(a) : Math.floor(a);
   },
@@ -990,6 +1002,10 @@ var rtl = {
     // This function does not range check.
     if(type === 'refSet') {
       for (; srcpos<endpos; srcpos++) dst[dstpos++] = rtl.refSet(src[srcpos]); // ref set
+    } else if (type === 'slice'){
+      for (; srcpos<endpos; srcpos++) dst[dstpos++] = src[srcpos].slice(0); // clone static array of simple types
+    } else if (typeof(type)==='function'){
+      for (; srcpos<endpos; srcpos++) dst[dstpos++] = type(src[srcpos]); // clone function
     } else if (rtl.isTRecord(type)){
       for (; srcpos<endpos; srcpos++) dst[dstpos++] = type.$clone(src[srcpos]); // clone record
     }  else {
@@ -1023,10 +1039,36 @@ var rtl = {
       if (src === null) continue;
       if (a===null){
         a=rtl.arrayRef(src); // Note: concat(a) does not clone
+      } else if (a['$pas2jsrefcnt']){
+        a=a.concat(src); // clone a and append src
       } else {
-        a=a.concat(src);
+        for (var i=0; i<src.length; i++){
+          a.push(src[i]);
+        }
       }
     };
+    return a;
+  },
+
+  arrayPush: function(type,a){
+    if(a===null){
+      a=[];
+    } else if (a['$pas2jsrefcnt']){
+      a=rtl.arrayCopy(type,a,0,a.length);
+    }
+    rtl.arrayClone(type,arguments,2,arguments.length,a,a.length);
+    return a;
+  },
+
+  arrayPushN: function(a){
+    if(a===null){
+      a=[];
+    } else if (a['$pas2jsrefcnt']){
+      a=a.concat();
+    }
+    for (var i=1; i<arguments.length; i++){
+      a.push(arguments[i]);
+    }
     return a;
   },
 

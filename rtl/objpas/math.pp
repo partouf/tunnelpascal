@@ -318,9 +318,61 @@ function GradToRad(grad : float) : float;inline;
 function RadToGrad(rad : float) : float;inline;
 function DegToGrad(deg : float) : float;inline;
 function GradToDeg(grad : float) : float;inline;
-{ one cycle are 2*Pi rad }
-function CycleToRad(cycle : float) : float;inline;
-function RadToCycle(rad : float) : float;inline;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CycleToDeg(const Cycles: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CycleToDeg(const Cycles: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CycleToDeg(const Cycles: Extended): Extended;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function DegToCycle(const Degrees: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function DegToCycle(const Degrees: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function DegToCycle(const Degrees: Extended): Extended;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CycleToGrad(const Cycles: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CycleToGrad(const Cycles: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CycleToGrad(const Cycles: Extended): Extended;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function GradToCycle(const Grads: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function GradToCycle(const Grads: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function GradToCycle(const Grads: Extended): Extended;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CycleToRad(const Cycles: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CycleToRad(const Cycles: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CycleToRad(const Cycles: Extended): Extended;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function RadToCycle(const Rads: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function RadToCycle(const Rads: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function RadToCycle(const Rads: Extended): Extended;
+{$ENDIF}
+
 {$ifdef FPC_HAS_TYPE_SINGLE}
 Function DegNormalize(deg : single) : single; inline;
 {$ENDIF}
@@ -354,17 +406,90 @@ function Csc(x : float) : float; inline;
 
 { inverse functions }
 
-function ArcCos(x : float) : float;
-function ArcSin(x : float) : float;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCos(x : Single) : Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCos(x : Double) : Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCos(x : Extended) : Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcSin(x : Single) : Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcSin(x : Double) : Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcSin(x : Extended) : Extended;
+{$ENDIF}
 
 { calculates arctan(y/x) and returns an angle in the correct quadrant }
 function ArcTan2(y,x : float) : float;
 
 { hyperbolic functions }
 
-function CosH(x : float) : float;
-function SinH(x : float) : float;
-function TanH(x : float) : float;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function cosh(x : Single) : Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function cosh(x : Double) : Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function cosh(x : Extended) : Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function sinh(x : Single) : Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function sinh(x : Double) : Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function sinh(x : Extended) : Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function tanh(x : Single) : Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function tanh(x : Double) : Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function tanh(x : Extended) : Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function SecH(const X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function SecH(const X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function SecH(const X: Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CscH(const X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CscH(const X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CscH(const X: Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CotH(const X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CotH(const X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CotH(const X: Extended): Extended;
+{$ENDIF}
 
 { area functions }
 
@@ -376,6 +501,66 @@ function ArcTanH(x : float) : float;inline;
 function ArCosH(x : float) : float;
 function ArSinH(x : float) : float;
 function ArTanH(x : float) : float;
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcSec(X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcSec(X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcSec(X: Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCsc(X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCsc(X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCsc(X: Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCot(X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCot(X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCot(X: Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcSecH(X : Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcSecH(X : Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcSecH(X : Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCscH(X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCscH(X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCscH(X: Extended): Extended;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCotH(X: Single): Single;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCotH(X: Double): Double;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCotH(X: Extended): Extended;
+{$ENDIF}
 
 { triangle functions }
 
@@ -396,10 +581,10 @@ function LnXP1(x : float) : float;
 
 function Power(base,exponent : float) : float;
 { base^exponent }
-function IntPower(base : float;const exponent : Integer) : float;
+function IntPower(base : float;exponent : longint) : float;
 
-operator ** (bas,expo : float) e: float; inline;
-operator ** (bas,expo : int64) i: int64; inline;
+operator ** (base,exponent : float) e: float; inline;
+operator ** (base,exponent : int64) res: int64;
 
 { number converting }
 
@@ -412,10 +597,20 @@ function Floor64(x: float): Int64;
 
 { misc. functions }
 
+{$ifdef FPC_HAS_TYPE_SINGLE}
 { splits x into mantissa and exponent (to base 2) }
-procedure Frexp(X: float; var Mantissa: float; var Exponent: integer);
+procedure Frexp(X: single; out Mantissa: single; out Exponent: integer);
 { returns x*(2^p) }
-function Ldexp(x : float; const p : Integer) : float;
+function Ldexp(X: single; p: Integer) : single;
+{$endif}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+procedure Frexp(X: double; out Mantissa: double; out Exponent: integer);
+function Ldexp(X: double; p: Integer) : double;
+{$endif}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+procedure Frexp(X: extended; out Mantissa: extended; out Exponent: integer);
+function Ldexp(X: extended; p: Integer) : extended;
+{$endif}
 
 { statistical functions }
 
@@ -770,16 +965,119 @@ function gradtodeg(grad : float) : float;inline;
      gradtodeg:=grad*(180.0/200.0);
   end;
 
-function cycletorad(cycle : float) : float;inline;
-  begin
-     cycletorad:=(2*pi)*cycle;
-  end;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CycleToDeg(const Cycles: Single): Single;
+begin
+  CycleToDeg:=Cycles*360.0;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CycleToDeg(const Cycles: Double): Double;
+begin
+  CycleToDeg:=Cycles*360.0;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CycleToDeg(const Cycles: Extended): Extended;
+begin
+  CycleToDeg:=Cycles*360.0;
+end;
+{$ENDIF}
 
-function radtocycle(rad : float) : float;inline;
-  begin
-     { avoid division }
-     radtocycle:=rad*(1/(2*pi));
-  end;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function DegToCycle(const Degrees: Single): Single;
+begin
+  DegToCycle:=Degrees*(1/360.0);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function DegToCycle(const Degrees: Double): Double;
+begin
+  DegToCycle:=Degrees*(1/360.0);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function DegToCycle(const Degrees: Extended): Extended;
+begin
+  DegToCycle:=Degrees*(1/360.0);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CycleToGrad(const Cycles: Single): Single;
+begin
+  CycleToGrad:=Cycles*400.0;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CycleToGrad(const Cycles: Double): Double;
+begin
+  CycleToGrad:=Cycles*400.0;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CycleToGrad(const Cycles: Extended): Extended;
+begin
+  CycleToGrad:=Cycles*400.0;
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function GradToCycle(const Grads: Single): Single;
+begin
+  GradToCycle:=Grads*(1/400.0);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function GradToCycle(const Grads: Double): Double;
+begin
+  GradToCycle:=Grads*(1/400.0);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function GradToCycle(const Grads: Extended): Extended;
+begin
+  GradToCycle:=Grads*(1/400.0);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CycleToRad(const Cycles: Single): Single;
+begin
+  CycleToRad:=Cycles*2*pi;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CycleToRad(const Cycles: Double): Double;
+begin
+  CycleToRad:=Cycles*2*pi;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CycleToRad(const Cycles: Extended): Extended;
+begin
+  CycleToRad:=Cycles*2*pi;
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function RadToCycle(const Rads: Single): Single;
+begin
+  RadToCycle:=Rads*(1/(2*pi));
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function RadToCycle(const Rads: Double): Double;
+begin
+  RadToCycle:=Rads*(1/(2*pi));
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function RadToCycle(const Rads: Extended): Extended;
+begin
+  RadToCycle:=Rads*(1/(2*pi));
+end;
+{$ENDIF}
 
 {$ifdef FPC_HAS_TYPE_SINGLE}
 Function DegNormalize(deg : single) : single;
@@ -886,72 +1184,307 @@ begin
 end;
 
 { arcsin and arccos functions from AMath library (C) Copyright 2009-2013 Wolfgang Ehrhardt }
-function arcsin(x : float) : float;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function arcsin(x : Single) : Single;
 begin
   arcsin:=arctan2(x,sqrt((1.0-x)*(1.0+x)));
 end;
-
-function Arccos(x : Float) : Float;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function arcsin(x : Double) : Double;
 begin
-  if abs(x)=1.0 then
-    if x<0.0 then
-      arccos:=Pi
-    else
-      arccos:=0
-  else
-    arccos:=arctan2(sqrt((1.0-x)*(1.0+x)),x);
+  arcsin:=arctan2(x,sqrt((1.0-x)*(1.0+x)));
 end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function arcsin(x : Extended) : Extended;
+begin
+  arcsin:=arctan2(x,sqrt((1.0-x)*(1.0+x)));
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function Arccos(x : Single) : Single;
+begin
+  arccos:=arctan2(sqrt((1.0-x)*(1.0+x)),x);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function Arccos(x : Double) : Double;
+begin
+  arccos:=arctan2(sqrt((1.0-x)*(1.0+x)),x);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function Arccos(x : Extended) : Extended;
+begin
+  arccos:=arctan2(sqrt((1.0-x)*(1.0+x)),x);
+end;
+{$ENDIF}
 
 
 {$ifndef FPC_MATH_HAS_ARCTAN2}
 function arctan2(y,x : float) : float;
   begin
-    if (x=0) then
+    if x=0 then
       begin
         if y=0 then
-          arctan2:=0.0
+          result:=0.0
         else if y>0 then
-          arctan2:=pi/2
-        else if y<0 then
-          arctan2:=-pi/2;
+          result:=pi/2
+        else
+          result:=-pi/2;
       end
     else
-      ArcTan2:=ArcTan(y/x);
-    if x<0.0 then
-      ArcTan2:=ArcTan2+pi;
-    if ArcTan2>pi then
-      ArcTan2:=ArcTan2-2*pi;
+      begin
+        result:=ArcTan(y/x);
+        if x<0 then
+          if y<0 then
+            result:=result-pi
+          else
+            result:=result+pi;
+      end;
   end;
 {$endif FPC_MATH_HAS_ARCTAN2}
 
-
-function cosh(x : float) : float;
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function cosh(x : Single) : Single;
   var
-     temp : float;
+     temp : ValReal;
   begin
      temp:=exp(x);
      cosh:=0.5*(temp+1.0/temp);
   end;
-
-function sinh(x : float) : float;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function cosh(x : Double) : Double;
   var
-     temp : float;
+     temp : ValReal;
   begin
      temp:=exp(x);
-     { copysign ensures that sinh(-0.0)=-0.0 }
-     sinh:=copysign(0.5*(temp-1.0/temp),x);
+     cosh:=0.5*(temp+1.0/temp);
   end;
-
-Const MaxTanh = 5678.22249441322; // Ln(MaxExtended)/2
-
-function tanh(x : float) : float;
-  var Temp : float;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function cosh(x : Extended) : Extended;
+  var
+     temp : Extended;
   begin
-     if x>MaxTanh then exit(1.0)
-     else if x<-MaxTanh then exit (-1.0);
-     temp:=exp(-2*x);
-     tanh:=(1-temp)/(1+temp)
+     temp:=exp(x);
+     cosh:=0.5*(temp+1.0/temp);
   end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function sinh(x : Single) : Single;
+  var
+     temp : ValReal;
+  begin
+     temp:=exp(x);
+     { gives better behavior around zero, and in particular ensures that sinh(-0.0)=-0.0 }
+     if temp=1 then
+       exit(x);
+     sinh:=0.5*(temp-1.0/temp);
+  end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function sinh(x : Double) : Double;
+  var
+     temp : ValReal;
+  begin
+     temp:=exp(x);
+     if temp=1 then
+       exit(x);
+     sinh:=0.5*(temp-1.0/temp);
+  end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function sinh(x : Extended) : Extended;
+  var
+     temp : Extended;
+  begin
+     temp:=exp(x);
+     if temp=1 then
+       exit(x);
+     sinh:=0.5*(temp-1.0/temp);
+  end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function tanh(x : Single) : Single;
+  var
+    tmp:ValReal;
+  begin
+    if x < 0 then begin
+      tmp:=exp(2*x);
+      if tmp=1 then
+        exit(x);
+      result:=(tmp-1)/(1+tmp)
+    end
+    else begin
+      tmp:=exp(-2*x);
+      if tmp=1 then
+        exit(x);
+      result:=(1-tmp)/(1+tmp)
+    end;
+  end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function tanh(x : Double) : Double;
+  var
+    tmp:ValReal;
+  begin
+    if x < 0 then begin
+      tmp:=exp(2*x);
+      if tmp=1 then
+        exit(x);
+      result:=(tmp-1)/(1+tmp)
+    end
+    else begin
+      tmp:=exp(-2*x);
+      if tmp=1 then
+        exit(x);
+      result:=(1-tmp)/(1+tmp)
+    end;
+  end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function tanh(x : Extended) : Extended;
+  var
+    tmp:Extended;
+  begin
+    if x < 0 then begin
+      tmp:=exp(2*x);
+      if tmp=1 then
+        exit(x);
+      result:=(tmp-1)/(1+tmp)
+    end
+    else begin
+      tmp:=exp(-2*x);
+      if tmp=1 then
+        exit(x);
+      result:=(1-tmp)/(1+tmp)
+    end;
+  end;
+{$ENDIF}
+
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function SecH(const X: Single): Single;
+var
+  Ex: ValReal;
+begin
+  //https://en.wikipedia.org/wiki/Hyperbolic_functions#Definitions
+  //SecH = 2 / (e^X + e^-X)
+  Ex:=Exp(X);
+  SecH:=2/(Ex+1/Ex);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function SecH(const X: Double): Double;
+var
+  Ex: ValReal;
+begin
+  Ex:=Exp(X);
+  SecH:=2/(Ex+1/Ex);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function SecH(const X: Extended): Extended;
+var
+  Ex: Extended;
+begin
+  Ex:=Exp(X);
+  SecH:=2/(Ex+1/Ex);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CscH(const X: Single): Single;
+var
+  Ex: ValReal;
+begin
+  //CscH = 2 / (e^X - e^-X)
+  Ex:=Exp(X);
+  CscH:=2/(Ex-1/Ex);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CscH(const X: Double): Double;
+var
+  Ex: ValReal;
+begin
+  Ex:=Exp(X);
+  CscH:=2/(Ex-1/Ex);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CscH(const X: Extended): Extended;
+var
+  Ex: Extended;
+begin
+  Ex:=Exp(X);
+  CscH:=2/(Ex-1/Ex);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function CotH(const X: Single): Single;
+var
+  e2: ValReal;
+begin
+  if x < 0 then begin
+    e2:=exp(2*x);
+    if e2=1 then
+      exit(1/x);
+    result:=(1+e2)/(e2-1)
+  end
+  else begin
+    e2:=exp(-2*x);
+    if e2=1 then
+      exit(1/x);
+    result:=(1+e2)/(1-e2)
+  end;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function CotH(const X: Double): Double;
+var
+  e2: ValReal;
+begin
+  if x < 0 then begin
+    e2:=exp(2*x);
+    if e2=1 then
+      exit(1/x);
+    result:=(1+e2)/(e2-1)
+  end
+  else begin
+    e2:=exp(-2*x);
+    if e2=1 then
+      exit(1/x);
+    result:=(1+e2)/(1-e2)
+  end;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function CotH(const X: Extended): Extended;
+var
+  e2: Extended;
+begin
+  if x < 0 then begin
+    e2:=exp(2*x);
+    if e2=1 then
+      exit(1/x);
+    result:=(1+e2)/(e2-1)
+  end
+  else begin
+    e2:=exp(-2*x);
+    if e2=1 then
+      exit(1/x);
+    result:=(1+e2)/(1-e2)
+  end;
+end;
+{$ENDIF}
 
 function arccosh(x : float) : float; inline;
   begin
@@ -988,6 +1521,133 @@ function artanh(x : float) : float;
   begin
     artanh:=(lnxp1(x)-lnxp1(-x))*0.5;
   end;
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcSec(X: Single): Single;
+begin
+  ArcSec:=ArcCos(1/X);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcSec(X: Double): Double;
+begin
+  ArcSec:=ArcCos(1/X);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcSec(X: Extended): Extended;
+begin
+  ArcSec:=ArcCos(1/X);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCsc(X: Single): Single;
+begin
+  ArcCsc:=ArcSin(1/X);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCsc(X: Double): Double;
+begin
+  ArcCsc:=ArcSin(1/X);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCsc(X: Extended): Extended;
+begin
+  ArcCsc:=ArcSin(1/X);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCot(X: Single): Single;
+begin
+  if x=0 then
+    ArcCot:=0.5*pi
+  else
+    ArcCot:=ArcTan(1/X);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCot(X: Double): Double;
+begin
+  begin
+    if x=0 then
+      ArcCot:=0.5*pi
+    else
+      ArcCot:=ArcTan(1/X);
+  end;
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCot(X: Extended): Extended;
+begin
+  begin
+    if x=0 then
+      ArcCot:=0.5*pi
+    else
+      ArcCot:=ArcTan(1/X);
+  end;
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcSecH(X : Single): Single;
+begin
+  ArcSecH:=ln((1+(sqrt(1.0-sqr(X))))/X);  //replacing division inside ln() by subtracting 2 ln()'s seems to be slower
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcSecH(X : Double): Double;
+begin
+  ArcSecH:=ln((1+(sqrt(1.0-sqr(X))))/X);
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcSecH(X : Extended): Extended;
+begin
+  ArcSecH:=ln((1+(sqrt(1.0-sqr(X))))/X);
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCscH(X: Single): Single;
+begin
+  ArcCscH:=ln((1.0/X)+sqrt(1.0/(sqr(x))+1.0));
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCscH(X: Double): Double;
+begin
+  ArcCscH:=ln((1.0/X)+sqrt(1.0/(sqr(x))+1.0));
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCscH(X: Extended): Extended;
+begin
+  ArcCscH:=ln((1.0/X)+sqrt(1.0/(sqr(x))+1.0));
+end;
+{$ENDIF}
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+function ArcCotH(X: Single): Single;
+begin
+  ArcCotH:=0.5*ln((x + 1.0)/(x - 1.0));
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ArcCotH(X: Double): Double;
+begin
+  ArcCotH:=0.5*ln((x + 1.0)/(x - 1.0));
+end;
+{$ENDIF}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ArcCotH(X: Extended): Extended;
+begin
+  ArcCotH:=0.5*ln((x + 1.0)/(x - 1.0));
+end;
+{$ENDIF}
 
 { hypot function from AMath library (C) Copyright 2009-2013 Wolfgang Ehrhardt }
 function hypot(x,y : float) : float;
@@ -1054,42 +1714,51 @@ function power(base,exponent : float) : float;
   end;
 
 
-function intpower(base : float;const exponent : Integer) : float;
-  var
-     i : longint;
+function intpower(base : float;exponent : longint) : float;
   begin
-     if (base = 0.0) and (exponent = 0) then
-       result:=1
-     else
-       begin
-         if exponent<0 then
-           base:=1.0/base;
-         i:=abs(exponent);
-         intpower:=1.0;
-         while i>0 do
-           begin
-              while (i and 1)=0 do
-                begin
-                   i:=i shr 1;
-                   base:=sqr(base);
-                end;
-              i:=i-1;
-              intpower:=intpower*base;
-           end;
-       end;
+    if exponent<0 then
+      begin
+        base:=1.0/base;
+        exponent:=-exponent;
+      end;
+    intpower:=1.0;
+    while exponent<>0 do
+      begin
+        if exponent and 1<>0 then
+          intpower:=intpower*base;
+        exponent:=exponent shr 1;
+        base:=sqr(base);
+      end;
   end;
 
 
-operator ** (bas,expo : float) e: float; inline;
+operator ** (base,exponent : float) e: float; inline;
   begin
-    e:=power(bas,expo);
+    e:=power(base,exponent);
   end;
 
 
-operator ** (bas,expo : int64) i: int64; inline;
-  begin
-    i:=round(intpower(bas,expo));
-  end;
+operator ** (base,exponent : int64) res: int64;
+begin
+  if exponent<0 then
+    begin
+      if base<=0 then
+        raise EInvalidArgument.Create('Non-positive base with negative exponent in **');
+      if base=1 then
+        res:=1
+      else
+        res:=0;
+      exit;
+    end; 
+  res:=1;
+  while exponent<>0 do
+    begin
+      if exponent and 1<>0 then
+        res:=res*base;
+      exponent:=exponent shr 1;
+      base:=base*base;
+    end;
+end;
 
 
 function ceil(x : float) : integer;
@@ -1116,28 +1785,229 @@ function floor64(x: float): Int64;
   end;
 
 
-procedure Frexp(X: float; var Mantissa: float; var Exponent: integer);
-begin
-  Exponent:=0;
-  if (X<>0) then
-    if (abs(X)<0.5) then
-      repeat
-        X:=X*2;
-        Dec(Exponent);
-      until (abs(X)>=0.5)
-    else
-      while (abs(X)>=1) do
-        begin
-        X:=X/2;
-        Inc(Exponent);
-        end;
-  Mantissa:=X;
-end;
-
-function ldexp(x : float;const p : Integer) : float;
+// Correction for "rounding to nearest, ties to even".
+// RoundToNearestTieToEven(QWE.RTYUIOP) = QWE + TieToEven(ER, TYUIOP <> 0).
+function TieToEven(AB: cardinal; somethingAfter: boolean): cardinal;
   begin
-     ldexp:=x*intpower(2.0,p);
+    result := AB and 1;
+    if (result <> 0) and not somethingAfter then
+      result := AB shr 1;
   end;
+
+{$ifdef FPC_HAS_TYPE_SINGLE}
+procedure Frexp(X: single; out Mantissa: single; out Exponent: integer);
+  var
+    M: uint32;
+    E, ExtraE: int32;
+  begin
+    Mantissa := X;
+    E := TSingleRec(X).Exp;
+    if (E > 0) and (E < 2 * TSingleRec.Bias + 1) then
+    begin
+      // Normal.
+      TSingleRec(Mantissa).Exp := TSingleRec.Bias - 1;
+      Exponent := E - (TSingleRec.Bias - 1);
+      exit;
+    end;
+    if E = 0 then
+    begin
+      M := TSingleRec(X).Frac;
+      if M <> 0 then
+      begin
+        // Subnormal.
+        ExtraE := 23 - BsrDWord(M);
+        TSingleRec(Mantissa).Frac := M shl ExtraE; // "and (1 shl 23 - 1)" required to remove starting 1, but .SetFrac already does it.
+        TSingleRec(Mantissa).Exp  := TSingleRec.Bias - 1;
+        Exponent := -TSingleRec.Bias + 2 - ExtraE;
+        exit;
+      end;
+    end;
+    // ±0, ±Inf, NaN.
+    Exponent := 0;
+  end;
+
+
+function Ldexp(X: single; p: integer): single;
+  var
+    M, E: uint32;
+    xp, sh: integer;
+  begin
+    E := TSingleRec(X).Exp;
+    if (E = 0) and (TSingleRec(X).Frac = 0) or (E = 2 * TSingleRec.Bias + 1) then
+      // ±0, ±Inf, NaN.
+      exit(X);
+
+    Frexp(X, result, xp);
+    inc(xp, p);
+    if (xp >= -TSingleRec.Bias + 2) and (xp <= TSingleRec.Bias + 1) then
+      // Normalized.
+      TSingleRec(result).Exp := xp + (TSingleRec.Bias - 1)
+    else if xp > TSingleRec.Bias + 1 then
+    begin
+      // Overflow.
+      TSingleRec(result).Exp := 2 * TSingleRec.Bias + 1;
+      TSingleRec(result).Frac := 0;
+    end else
+    begin
+      TSingleRec(result).Exp := 0;
+      if xp >= -TSingleRec.Bias + 2 - 23 then
+      begin
+        // Denormalized.
+        M := TSingleRec(result).Frac or uint32(1) shl 23;
+        sh := -TSingleRec.Bias + 1 - xp;
+        TSingleRec(result).Frac := M shr (sh + 1) + TieToEven(M shr sh and 3, M and (uint32(1) shl sh - 1) <> 0);
+      end else
+        // Underflow.
+        TSingleRec(result).Frac := 0;
+    end;
+  end;
+{$endif}
+
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+procedure Frexp(X: double; out Mantissa: double; out Exponent: integer);
+  var
+    M: uint64;
+    E, ExtraE: int32;
+  begin
+    Mantissa := X;
+    E := TDoubleRec(X).Exp;
+    if (E > 0) and (E < 2 * TDoubleRec.Bias + 1) then
+    begin
+      // Normal.
+      TDoubleRec(Mantissa).Exp := TDoubleRec.Bias - 1;
+      Exponent := E - (TDoubleRec.Bias - 1);
+      exit;
+    end;
+    if E = 0 then
+    begin
+      M := TDoubleRec(X).Frac;
+      if M <> 0 then
+      begin
+        // Subnormal.
+        ExtraE := 52 - BsrQWord(M);
+        TDoubleRec(Mantissa).Frac := M shl ExtraE; // "and (1 shl 52 - 1)" required to remove starting 1, but .SetFrac already does it.
+        TDoubleRec(Mantissa).Exp  := TDoubleRec.Bias - 1;
+        Exponent := -TDoubleRec.Bias + 2 - ExtraE;
+        exit;
+      end;
+    end;
+    // ±0, ±Inf, NaN.
+    Exponent := 0;
+  end;
+
+function Ldexp(X: double; p: integer): double;
+  var
+    M: uint64;
+    E: uint32;
+    xp, sh: integer;
+  begin
+    E := TDoubleRec(X).Exp;
+    if (E = 0) and (TDoubleRec(X).Frac = 0) or (E = 2 * TDoubleRec.Bias + 1) then
+      // ±0, ±Inf, NaN.
+      exit(X);
+
+    Frexp(X, result, xp);
+    inc(xp, p);
+    if (xp >= -TDoubleRec.Bias + 2) and (xp <= TDoubleRec.Bias + 1) then
+      // Normalized.
+      TDoubleRec(result).Exp := xp + (TDoubleRec.Bias - 1)
+    else if xp > TDoubleRec.Bias + 1 then
+    begin
+      // Overflow.
+      TDoubleRec(result).Exp := 2 * TDoubleRec.Bias + 1;
+      TDoubleRec(result).Frac := 0;
+    end else
+    begin
+      TDoubleRec(result).Exp := 0;
+      if xp >= -TDoubleRec.Bias + 2 - 52 then
+      begin
+        // Denormalized.
+        M := TDoubleRec(result).Frac or uint64(1) shl 52;
+        sh := -TSingleRec.Bias + 1 - xp;
+        TDoubleRec(result).Frac := M shr (sh + 1) + TieToEven(M shr sh and 3, M and (uint64(1) shl sh - 1) <> 0);
+      end else
+        // Underflow.
+        TDoubleRec(result).Frac := 0;
+    end;
+  end;
+{$endif}
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+procedure Frexp(X: extended; out Mantissa: extended; out Exponent: integer);
+  var
+    M: uint64;
+    E, ExtraE: int32;
+  begin
+    Mantissa := X;
+    E := TExtended80Rec(X).Exp;
+    if (E > 0) and (E < 2 * TExtended80Rec.Bias + 1) then
+    begin
+      // Normal.
+      TExtended80Rec(Mantissa).Exp := TExtended80Rec.Bias - 1;
+      Exponent := E - (TExtended80Rec.Bias - 1);
+      exit;
+    end;
+    if E = 0 then
+    begin
+      M := TExtended80Rec(X).Frac;
+      if M <> 0 then
+      begin
+        // Subnormal. Extended has explicit starting 1.
+        ExtraE := 63 - BsrQWord(M);
+        TExtended80Rec(Mantissa).Frac := M shl ExtraE;
+        TExtended80Rec(Mantissa).Exp  := TExtended80Rec.Bias - 1;
+        Exponent := -TExtended80Rec.Bias + 2 - ExtraE;
+        exit;
+      end;
+    end;
+    // ±0, ±Inf, NaN.
+    Exponent := 0;
+  end;
+
+function Ldexp(X: extended; p: integer): extended;
+  var
+    M: uint64;
+    E: uint32;
+    xp, sh: integer;
+  begin
+    E := TExtended80Rec(X).Exp;
+    if (E = 0) and (TExtended80Rec(X).Frac = 0) or (E = 2 * TExtended80Rec.Bias + 1) then
+      // ±0, ±Inf, NaN.
+      exit(X);
+
+    Frexp(X, result, xp);
+    inc(xp, p);
+    if (xp >= -TExtended80Rec.Bias + 2) and (xp <= TExtended80Rec.Bias + 1) then
+      // Normalized.
+      TExtended80Rec(result).Exp := xp + (TExtended80Rec.Bias - 1)
+    else if xp > TExtended80Rec.Bias + 1 then
+    begin
+      // Overflow.
+      TExtended80Rec(result).Exp := 2 * TExtended80Rec.Bias + 1;
+      TExtended80Rec(result).Frac := uint64(1) shl 63;
+    end
+    else if xp >= -TExtended80Rec.Bias + 2 - 63 then
+    begin
+      // Denormalized... usually.
+      // Mantissa of subnormal 'extended' (Exp = 0) must always start with 0.
+      // If the calculated mantissa starts with 1, extended instead becomes normalized with Exp = 1.
+      M := TExtended80Rec(result).Frac;
+      sh := -TExtended80Rec.Bias + 1 - xp;
+      M := M shr (sh + 1) + TieToEven(M shr sh and 3, M and (uint64(1) shl sh - 1) <> 0);
+      TExtended80Rec(result).Exp := M shr 63;
+      TExtended80Rec(result).Frac := M;
+    end else
+    begin
+      // Underflow.
+      TExtended80Rec(result).Exp := 0;
+      TExtended80Rec(result).Frac := 0;
+    end;
+  end;
+{$endif}
+
+const
+  { Cutoff for https://en.wikipedia.org/wiki/Pairwise_summation; sums of at least this many elements are split in two halves. }
+  RecursiveSumThreshold=12;
 
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function mean(const data : array of Single) : float;
@@ -1161,9 +2031,14 @@ function sum(const data : PSingle;Const N : longint) : float;
   var
      i : SizeInt;
   begin
-     sum:=0.0;
-     for i:=0 to N-1 do
-       sum:=sum+data[i];
+    if N>=RecursiveSumThreshold then
+      result:=sum(data,longword(N) div 2)+sum(data+longword(N) div 2,N-longword(N) div 2)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+data[i];
+      end;
   end;
 {$endif FPC_HAS_TYPE_SINGLE}
 
@@ -1188,9 +2063,14 @@ function sum(const data : PDouble;Const N : longint) : float;
   var
      i : SizeInt;
   begin
-     sum:=0.0;
-     for i:=0 to N-1 do
-       sum:=sum+data[i];
+    if N>=RecursiveSumThreshold then
+      result:=sum(data,longword(N) div 2)+sum(data+longword(N) div 2,N-longword(N) div 2)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+data[i];
+      end;
   end;
 {$endif FPC_HAS_TYPE_DOUBLE}
 
@@ -1215,9 +2095,14 @@ function sum(const data : PExtended;Const N : longint) : float;
   var
      i : SizeInt;
   begin
-     sum:=0.0;
-     for i:=0 to N-1 do
-       sum:=sum+data[i];
+    if N>=RecursiveSumThreshold then
+      result:=sum(data,longword(N) div 2)+sum(data+longword(N) div 2,N-longword(N) div 2)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+data[i];
+      end;
   end;
 {$endif FPC_HAS_TYPE_EXTENDED}
 
@@ -1281,9 +2166,14 @@ function mean(const data: array of Integer):Float;
   var
      i : SizeInt;
   begin
-     sumofsquares:=0.0;
-     for i:=0 to N-1 do
-       sumofsquares:=sumofsquares+sqr(data[i]);
+    if N>=RecursiveSumThreshold then
+      result:=sumofsquares(data,cardinal(N) div 2)+sumofsquares(data+cardinal(N) div 2,N-cardinal(N) div 2)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+sqr(data[i]);
+      end;
   end;
 
 procedure sumsandsquares(const data : array of Single;
@@ -1296,16 +2186,28 @@ procedure sumsandsquares(const data : PSingle; Const N : Integer;
   var sum,sumofsquares : float);
   var
      i : SizeInt;
-     temp : float;
+     temp,tsum,tsumofsquares,sum0,sumofsquares0,sum1,sumofsquares1 : float;
   begin
-     sumofsquares:=0.0;
-     sum:=0.0;
-     for i:=0 to N-1 do
-       begin
-          temp:=data[i];
-          sumofsquares:=sumofsquares+sqr(temp);
-          sum:=sum+temp;
-       end;
+    if N>=RecursiveSumThreshold then
+      begin
+        sumsandsquares(data,cardinal(N) div 2,sum0,sumofsquares0);
+        sumsandsquares(data+cardinal(N) div 2,N-cardinal(N) div 2,sum1,sumofsquares1);
+        sum:=sum0+sum1;
+        sumofsquares:=sumofsquares0+sumofsquares1;
+      end
+    else
+      begin
+        tsum:=0;
+        tsumofsquares:=0;
+        for i:=0 to N-1 do
+          begin
+            temp:=data[i];
+            tsum:=tsum+temp;
+            tsumofsquares:=tsumofsquares+sqr(temp);
+          end;
+        sum:=tsum;
+        sumofsquares:=tsumofsquares;
+      end;
   end;
 {$endif FPC_HAS_TYPE_SINGLE}
 
@@ -1319,9 +2221,14 @@ procedure sumsandsquares(const data : PSingle; Const N : Integer;
   var
      i : SizeInt;
   begin
-     sumofsquares:=0.0;
-     for i:=0 to N-1 do
-       sumofsquares:=sumofsquares+sqr(data[i]);
+    if N>=RecursiveSumThreshold then
+      result:=sumofsquares(data,cardinal(N) div 2)+sumofsquares(data+cardinal(N) div 2,N-cardinal(N) div 2)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+sqr(data[i]);
+      end;
   end;
 
 procedure sumsandsquares(const data : array of Double;
@@ -1334,16 +2241,28 @@ procedure sumsandsquares(const data : PDouble; Const N : Integer;
   var sum,sumofsquares : float);
   var
      i : SizeInt;
-     temp : float;
+     temp,tsum,tsumofsquares,sum0,sumofsquares0,sum1,sumofsquares1 : float;
   begin
-     sumofsquares:=0.0;
-     sum:=0.0;
-     for i:=0 to N-1 do
-       begin
-          temp:=data[i];
-          sumofsquares:=sumofsquares+sqr(temp);
-          sum:=sum+temp;
-       end;
+    if N>=RecursiveSumThreshold then
+      begin
+        sumsandsquares(data,cardinal(N) div 2,sum0,sumofsquares0);
+        sumsandsquares(data+cardinal(N) div 2,N-cardinal(N) div 2,sum1,sumofsquares1);
+        sum:=sum0+sum1;
+        sumofsquares:=sumofsquares0+sumofsquares1;
+      end
+    else
+      begin
+        tsum:=0;
+        tsumofsquares:=0;
+        for i:=0 to N-1 do
+          begin
+            temp:=data[i];
+            tsum:=tsum+temp;
+            tsumofsquares:=tsumofsquares+sqr(temp);
+          end;
+        sum:=tsum;
+        sumofsquares:=tsumofsquares;
+      end;
   end;
 {$endif FPC_HAS_TYPE_DOUBLE}
 
@@ -1357,9 +2276,14 @@ procedure sumsandsquares(const data : PDouble; Const N : Integer;
   var
      i : SizeInt;
   begin
-     sumofsquares:=0.0;
-     for i:=0 to N-1 do
-       sumofsquares:=sumofsquares+sqr(data[i]);
+    if N>=RecursiveSumThreshold then
+      result:=sumofsquares(data,cardinal(N) div 2)+sumofsquares(data+cardinal(N) div 2,N-cardinal(N) div 2)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+sqr(data[i]);
+      end;
   end;
 
 procedure sumsandsquares(const data : array of Extended;
@@ -1372,16 +2296,28 @@ procedure sumsandsquares(const data : PExtended; Const N : Integer;
   var sum,sumofsquares : float);
   var
      i : SizeInt;
-     temp : float;
+     temp,tsum,tsumofsquares,sum0,sumofsquares0,sum1,sumofsquares1 : float;
   begin
-     sumofsquares:=0.0;
-     sum:=0.0;
-     for i:=0 to N-1 do
-       begin
-          temp:=data[i];
-          sumofsquares:=sumofsquares+sqr(temp);
-          sum:=sum+temp;
-       end;
+    if N>=RecursiveSumThreshold then
+      begin
+        sumsandsquares(data,cardinal(N) div 2,sum0,sumofsquares0);
+        sumsandsquares(data+cardinal(N) div 2,N-cardinal(N) div 2,sum1,sumofsquares1);
+        sum:=sum0+sum1;
+        sumofsquares:=sumofsquares0+sumofsquares1;
+      end
+    else
+      begin
+        tsum:=0;
+        tsumofsquares:=0;
+        for i:=0 to N-1 do
+          begin
+            temp:=data[i];
+            tsum:=tsum+temp;
+            tsumofsquares:=tsumofsquares+sqr(temp);
+          end;
+        sum:=tsum;
+        sumofsquares:=tsumofsquares;
+      end;
   end;
 {$endif FPC_HAS_TYPE_EXTENDED}
 
@@ -1411,12 +2347,24 @@ end;
 {$ifdef FPC_HAS_TYPE_SINGLE}
 procedure MeanAndTotalVariance
   (const data: PSingle; N: LongInt; var mu, variance: float);
-var i: SizeInt;
+
+  function CalcVariance(data: PSingle; N: SizeInt; mu: float): float;
+  var
+    i: SizeInt;
+  begin
+    if N>=RecursiveSumThreshold then
+      result:=CalcVariance(data,SizeUint(N) div 2,mu)+CalcVariance(data+SizeUint(N) div 2,N-SizeUint(N) div 2,mu)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+Sqr(data[i]-mu);
+      end;
+  end;
+
 begin
   mu := Mean( data, N );
-  variance := 0;
-  for i := 0 to N - 1 do
-    variance := variance + Sqr( data[i] - mu );
+  variance := CalcVariance( data, N, mu );
 end;
 
 function stddev(const data : array of Single) : float; inline;
@@ -1500,6 +2448,9 @@ begin
   momentskewkurtosis(PSingle(@Data[0]),High(Data)+1,m1,m2,m3,m4,skew,kurtosis);
 end;
 
+type
+  TMoments2to4 = array[2 .. 4] of float;
+
 procedure momentskewkurtosis(
   const data: pSingle;
   Const N: integer;
@@ -1510,39 +2461,50 @@ procedure momentskewkurtosis(
   out skew: float;
   out kurtosis: float
 );
+
+  procedure CalcDevSums2to4(data: PSingle; N: SizeInt; m1: float; out m2to4: TMoments2to4);
+  var
+    tm2, tm3, tm4, dev, dev2: float;
+    i: SizeInt;
+    m2to4Part0, m2to4Part1: TMoments2to4;
+  begin
+    if N >= RecursiveSumThreshold then
+      begin
+        CalcDevSums2to4(data, SizeUint(N) div 2, m1, m2to4Part0);
+        CalcDevSums2to4(data + SizeUint(N) div 2, N - SizeUint(N) div 2, m1, m2to4Part1);
+        for i := Low(TMoments2to4) to High(TMoments2to4) do
+          m2to4[i] := m2to4Part0[i] + m2to4Part1[i];
+      end
+    else
+      begin
+        tm2 := 0;
+        tm3 := 0;
+        tm4 := 0;
+        for i := 0 to N - 1 do
+          begin
+            dev := data[i] - m1;
+            dev2 := sqr(dev);
+            tm2 := tm2 + dev2;
+            tm3 := tm3 + dev2 * dev;
+            tm4 := tm4 + sqr(dev2);
+          end;
+        m2to4[2] := tm2;
+        m2to4[3] := tm3;
+        m2to4[4] := tm4;
+      end;
+  end;
+
 var
-  i: SizeInt;
-  value : psingle;
-  deviation, deviation2: single;
   reciprocalN: float;
+  m2to4: TMoments2to4;
 begin
   m1 := 0;
   reciprocalN := 1/N;
-  value := data;
-  for i := 0 to N-1 do
-  begin
-    m1 := m1 + value^;
-    inc(value);
-  end;
-  m1 := reciprocalN * m1;
-
-  m2 := 0;
-  m3 := 0;
-  m4 := 0;
-  value := data;
-  for i := 0 to N-1 do
-  begin
-    deviation := (value^-m1);
-    deviation2 := deviation * deviation;
-    m2 := m2 + deviation2;
-    m3 := m3 + deviation2 * deviation;
-    m4 := m4 + deviation2 * deviation2;
-    inc(value);
-  end;
-  m2 := reciprocalN * m2;
-  m3 := reciprocalN * m3;
-  m4 := reciprocalN * m4;
-
+  m1 := reciprocalN * sum(data, N);
+  CalcDevSums2to4(data, N, m1, m2to4);
+  m2 := reciprocalN * m2to4[2];
+  m3 := reciprocalN * m2to4[3];
+  m4 := reciprocalN * m2to4[4];
   skew := m3 / (sqrt(m2)*m2);
   kurtosis := m4 / (m2 * m2);
 end;
@@ -1562,12 +2524,24 @@ function norm(const data : PSingle; Const N : Integer) : float;
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 procedure MeanAndTotalVariance
   (const data: PDouble; N: LongInt; var mu, variance: float);
-var i: SizeInt;
+
+  function CalcVariance(data: PDouble; N: SizeInt; mu: float): float;
+  var
+    i: SizeInt;
+  begin
+    if N>=RecursiveSumThreshold then
+      result:=CalcVariance(data,SizeUint(N) div 2,mu)+CalcVariance(data+SizeUint(N) div 2,N-SizeUint(N) div 2,mu)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+Sqr(data[i]-mu);
+      end;
+  end;
+
 begin
   mu := Mean( data, N );
-  variance := 0;
-  for i := 0 to N - 1 do
-    variance := variance + Sqr( data[i] - mu );
+  variance := CalcVariance( data, N, mu );
 end;
 
 function stddev(const data : array of Double) : float; inline;
@@ -1665,39 +2639,50 @@ procedure momentskewkurtosis(
   out skew: float;
   out kurtosis: float
 );
+
+  procedure CalcDevSums2to4(data: PDouble; N: SizeInt; m1: float; out m2to4: TMoments2to4);
+  var
+    tm2, tm3, tm4, dev, dev2: float;
+    i: SizeInt;
+    m2to4Part0, m2to4Part1: TMoments2to4;
+  begin
+    if N >= RecursiveSumThreshold then
+      begin
+        CalcDevSums2to4(data, SizeUint(N) div 2, m1, m2to4Part0);
+        CalcDevSums2to4(data + SizeUint(N) div 2, N - SizeUint(N) div 2, m1, m2to4Part1);
+        for i := Low(TMoments2to4) to High(TMoments2to4) do
+          m2to4[i] := m2to4Part0[i] + m2to4Part1[i];
+      end
+    else
+      begin
+        tm2 := 0;
+        tm3 := 0;
+        tm4 := 0;
+        for i := 0 to N - 1 do
+          begin
+            dev := data[i] - m1;
+            dev2 := sqr(dev);
+            tm2 := tm2 + dev2;
+            tm3 := tm3 + dev2 * dev;
+            tm4 := tm4 + sqr(dev2);
+          end;
+        m2to4[2] := tm2;
+        m2to4[3] := tm3;
+        m2to4[4] := tm4;
+      end;
+  end;
+
 var
-  i: SizeInt;
-  value : pdouble;
-  deviation, deviation2: double;
   reciprocalN: float;
+  m2to4: TMoments2to4;
 begin
   m1 := 0;
   reciprocalN := 1/N;
-  value := data;
-  for i := 0 to N-1 do
-  begin
-    m1 := m1 + value^;
-    inc(value);
-  end;
-  m1 := reciprocalN * m1;
-
-  m2 := 0;
-  m3 := 0;
-  m4 := 0;
-  value := data;
-  for i := 0 to N-1 do
-  begin
-    deviation := (value^-m1);
-    deviation2 := deviation * deviation;
-    m2 := m2 + deviation2;
-    m3 := m3 + deviation2 * deviation;
-    m4 := m4 + deviation2 * deviation2;
-    inc(value);
-  end;
-  m2 := reciprocalN * m2;
-  m3 := reciprocalN * m3;
-  m4 := reciprocalN * m4;
-
+  m1 := reciprocalN * sum(data, N);
+  CalcDevSums2to4(data, N, m1, m2to4);
+  m2 := reciprocalN * m2to4[2];
+  m3 := reciprocalN * m2to4[3];
+  m4 := reciprocalN * m2to4[4];
   skew := m3 / (sqrt(m2)*m2);
   kurtosis := m4 / (m2 * m2);
 end;
@@ -1717,12 +2702,24 @@ function norm(const data : PDouble; Const N : Integer) : float;
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 procedure MeanAndTotalVariance
   (const data: PExtended; N: LongInt; var mu, variance: float);
-var i: SizeInt;
+
+  function CalcVariance(data: PExtended; N: SizeInt; mu: float): float;
+  var
+    i: SizeInt;
+  begin
+    if N>=RecursiveSumThreshold then
+      result:=CalcVariance(data,SizeUint(N) div 2,mu)+CalcVariance(data+SizeUint(N) div 2,N-SizeUint(N) div 2,mu)
+    else
+      begin
+        result:=0;
+        for i:=0 to N-1 do
+          result:=result+Sqr(data[i]-mu);
+      end;
+  end;
+
 begin
   mu := Mean( data, N );
-  variance := 0;
-  for i := 0 to N - 1 do
-    variance := variance + Sqr( data[i] - mu );
+  variance := CalcVariance( data, N, mu );
 end;
 
 function stddev(const data : array of Extended) : float; inline;
@@ -1818,39 +2815,50 @@ procedure momentskewkurtosis(
   out skew: float;
   out kurtosis: float
 );
+
+  procedure CalcDevSums2to4(data: PExtended; N: SizeInt; m1: float; out m2to4: TMoments2to4);
+  var
+    tm2, tm3, tm4, dev, dev2: float;
+    i: SizeInt;
+    m2to4Part0, m2to4Part1: TMoments2to4;
+  begin
+    if N >= RecursiveSumThreshold then
+      begin
+        CalcDevSums2to4(data, SizeUint(N) div 2, m1, m2to4Part0);
+        CalcDevSums2to4(data + SizeUint(N) div 2, N - SizeUint(N) div 2, m1, m2to4Part1);
+        for i := Low(TMoments2to4) to High(TMoments2to4) do
+          m2to4[i] := m2to4Part0[i] + m2to4Part1[i];
+      end
+    else
+      begin
+        tm2 := 0;
+        tm3 := 0;
+        tm4 := 0;
+        for i := 0 to N - 1 do
+          begin
+            dev := data[i] - m1;
+            dev2 := sqr(dev);
+            tm2 := tm2 + dev2;
+            tm3 := tm3 + dev2 * dev;
+            tm4 := tm4 + sqr(dev2);
+          end;
+        m2to4[2] := tm2;
+        m2to4[3] := tm3;
+        m2to4[4] := tm4;
+      end;
+  end;
+
 var
-  i: integer;
-  value : pextended;
-  deviation, deviation2: extended;
   reciprocalN: float;
+  m2to4: TMoments2to4;
 begin
   m1 := 0;
   reciprocalN := 1/N;
-  value := data;
-  for i := 0 to N-1 do
-  begin
-    m1 := m1 + value^;
-    inc(value);
-  end;
-  m1 := reciprocalN * m1;
-
-  m2 := 0;
-  m3 := 0;
-  m4 := 0;
-  value := data;
-  for i := 0 to N-1 do
-  begin
-    deviation := (value^-m1);
-    deviation2 := deviation * deviation;
-    m2 := m2 + deviation2;
-    m3 := m3 + deviation2 * deviation;
-    m4 := m4 + deviation2 * deviation2;
-    inc(value);
-  end;
-  m2 := reciprocalN * m2;
-  m3 := reciprocalN * m3;
-  m4 := reciprocalN * m4;
-
+  m1 := reciprocalN * sum(data, N);
+  CalcDevSums2to4(data, N, m1, m2to4);
+  m2 := reciprocalN * m2to4[2];
+  m3 := reciprocalN * m2to4[3];
+  m4 := reciprocalN * m2to4[4];
   skew := m3 / (sqrt(m2)*m2);
   kurtosis := m4 / (m2 * m2);
 end;
@@ -2194,9 +3202,9 @@ end;
 {$endif FPC_HAS_TYPE_DOUBLE}
 
 Const
-  EZeroResolution = 1E-16;
-  DZeroResolution = 1E-12;
-  SZeroResolution = 1E-4;
+  EZeroResolution = Extended(1E-16);
+  DZeroResolution = Double(1E-12);
+  SZeroResolution = Single(1E-4);
 
 
 function IsZero(const A: Single; Epsilon: Single): Boolean;

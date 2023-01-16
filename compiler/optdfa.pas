@@ -54,7 +54,9 @@ unit optdfa;
   implementation
 
     uses
-      globtype,constexp,
+      globtype,
+      systems,
+      constexp,
       verbose,
       symconst,symdef,symsym,
       defutil,
@@ -289,7 +291,12 @@ unit optdfa;
                 { for while loops, node use set is included at the beginning of loop }
                 l:=twhilerepeatnode(node).right.optinfo^.life;
                 if lnf_testatbegin in twhilerepeatnode(node).loopflags then
-                  DFASetIncludeSet(l,node.optinfo^.use);
+                  begin
+                    DFASetIncludeSet(l,node.optinfo^.use);
+                    { ... loop body could be skipped, so include life info of the successsor node }
+                    if assigned(node.successor) then
+                      DFASetIncludeSet(l,node.successor.optinfo^.life);
+                  end;
 
                 UpdateLifeInfo(node,l);
 
@@ -407,8 +414,8 @@ unit optdfa;
               begin
                 { nested statement }
                 CreateInfo(tstatementnode(node).statement);
-                { inherit info }
-                node.optinfo^.life:=tstatementnode(node).statement.optinfo^.life;
+                { propagate info }
+                node.optinfo^.life:=tstatementnode(node).successor.optinfo^.life;
               end;
 
             blockn:
@@ -442,7 +449,9 @@ unit optdfa;
 
                 { get life info from then branch }
                 if assigned(tifnode(node).right) then
-                  DFASetIncludeSet(l,tifnode(node).right.optinfo^.life);
+                  DFASetIncludeSet(l,tifnode(node).right.optinfo^.life)
+                else if assigned(node.successor) then
+                  DFASetIncludeSet(l,node.successor.optinfo^.life);
 
                 { get life info from else branch }
                 if assigned(tifnode(node).t1) then
@@ -637,6 +646,9 @@ unit optdfa;
           begin
             if current_procinfo.procdef.proctypeoption=potype_constructor then
               resultnode:=load_self_node
+            else if (current_procinfo.procdef.proccalloption=pocall_safecall) and
+              (tf_safecall_exceptions in target_info.flags) then
+              resultnode:=load_safecallresult_node
             else
               resultnode:=load_result_node;
             resultnode.allocoptinfo;
@@ -729,8 +741,10 @@ unit optdfa;
                    ((vo_is_funcret in sym.varoptions) and
                     (current_procinfo.procdef.parast.symtablelevel=sym.owner.symtablelevel)
                    )
-                  ) and not(vo_is_external in sym.varoptions) and
-                  not sym.inparentfpstruct;
+                  ) and
+                  not(vo_is_external in sym.varoptions) and
+                  not sym.inparentfpstruct and
+                  not(vo_is_internal in sym.varoptions);
         end;
 
       var
@@ -886,7 +900,7 @@ unit optdfa;
             exit;
           include(node.flags,nf_processing);
 
-          if not(DFASetIn(node.optinfo^.life,nodetosearch.optinfo^.index)) then
+          if not(assigned(node.optinfo)) or not(DFASetIn(node.optinfo^.life,nodetosearch.optinfo^.index)) then
             exit;
 
           { we do not need this info always, so try to safe some time here, CheckAndWarn

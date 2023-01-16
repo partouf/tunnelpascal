@@ -1120,6 +1120,7 @@ begin
       Add('    *(.rodata)  /* We need to include .rodata here if gcc is used */');
       Add('    *(.rodata*) /* with -fdata-sections.  */');
       Add('    *(.gnu.linkonce.d*)');
+      add('    KEEP (*(.fpc .fpc.n_version .fpc.n_links))');
       Add('    . = ALIGN(2);');
       Add('     _edata = . ;');
       Add('     PROVIDE (__data_end = .) ;');
@@ -1196,7 +1197,7 @@ begin
       Add('  .debug_ranges   0 : { *(.debug_ranges) }');
       Add('  /* DWARF Extension.  */');
       Add('  .debug_macro    0 : { *(.debug_macro) }');
-
+      Add('  .debug_addr     0 : { *(.debug_addr) }');
       Add('}');
     end;
 {$endif AVR}
@@ -1400,7 +1401,7 @@ begin
           Add('  flash      (rx)   : ORIGIN = 0x'+IntToHex(flashbase,6)+', LENGTH = 0x'+IntToHex(flashsize,6));
           Add('  ram        (rw!x) : ORIGIN = 0x'+IntToHex(srambase,6)+', LENGTH = 0x'+IntToHex(sramsize,6));
           Add('}');
-          Add('_stack_top = 0x' + IntToHex(srambase+sramsize-1,4) + ';');
+          Add('_stack_top = 0x' + IntToHex(srambase+sramsize,4) + ';');
         end;
       Add('SECTIONS');
       Add('{');
@@ -2154,7 +2155,7 @@ constructor TLinkerEmbedded_Wasm.Create;
 
 procedure TLinkerEmbedded_Wasm.SetDefaultInfo;
   begin
-    Info.DllCmd[1] := 'wasm-ld $SONAME $GCSECTIONS -o $EXE';
+    Info.DllCmd[1] := 'wasm-ld -m wasm32 $SONAME $GCSECTIONS $MAP -z stack-size=$STACKSIZE $OPT -o $EXE';
     //Info.DllCmd[2] := 'wasmtool --exportrename $INPUT $EXE';
   end;
 
@@ -2171,8 +2172,13 @@ function TLinkerEmbedded_Wasm.MakeSharedLibrary: boolean;
     tmp : TCmdStrListItem;
     tempFileName : ansistring;
   begin
-    //Result := true;
-    //Result:=inherited MakeSharedLibrary;
+    Result:=false;
+    if not(cs_link_nolink in current_settings.globalswitches) then
+      Message1(exec_i_linking,current_module.sharedlibfilename);
+
+    mapstr:='';
+    if (cs_link_map in current_settings.globalswitches) then
+      mapstr:='-Map '+maybequoted(ChangeFileExt(current_module.sharedlibfilename,'.map'));
     if (cs_link_smart in current_settings.globalswitches) and
        create_smartlink_sections then
      GCSectionsStr:='--gc-sections'
@@ -2181,7 +2187,7 @@ function TLinkerEmbedded_Wasm.MakeSharedLibrary: boolean;
 
     SoNameStr:='';
     SplitBinCmd(Info.DllCmd[1],binstr,cmdstr);
-    Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
+    Replace(cmdstr,'$EXE',maybequoted(current_module.sharedlibfilename));
 
     tmp := TCmdStrListItem(ObjectFiles.First);
     while Assigned(tmp) do begin
@@ -2200,15 +2206,15 @@ function TLinkerEmbedded_Wasm.MakeSharedLibrary: boolean;
        cmdstr := cmdstr + ' --strip-all';
      end;
 
-    //Replace(cmdstr,'$OPT',Info.ExtraOptions);
+    Replace(cmdstr,'$OPT',Info.ExtraOptions);
     //Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
     //Replace(cmdstr,'$INIT',InitStr);
     //Replace(cmdstr,'$FINI',FiniStr);
+    Replace(cmdstr,'$STACKSIZE',tostr(stacksize));
     Replace(cmdstr,'$SONAME',SoNameStr);
-    //Replace(cmdstr,'$MAP',mapstr);
+    Replace(cmdstr,'$MAP',mapstr);
     //Replace(cmdstr,'$LTO',ltostr);
     Replace(cmdstr,'$GCSECTIONS',GCSectionsStr);
-    writeln(utilsprefix+binstr,' ',cmdstr);
     success:=DoExec(FindUtil(utilsprefix+binstr),cmdstr,true,false);
 
     //SplitBinCmd(Info.DllCmd[2],binstr,cmdstr);

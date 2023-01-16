@@ -17,7 +17,6 @@ unit ssockets;
 interface
 
 uses
-// This must be here, to prevent it from overriding the sockets definitions... :/
   SysUtils, Classes, ctypes, sockets;
 
 type
@@ -45,6 +44,15 @@ type
   TAcceptErrorAction = (aeaRaise,aeaIgnore,aeaStop);
   TSocketStream = Class;
   TSocketServer = Class;
+  TInetSocket = Class;
+{$IFDEF UNIX}
+  TUnixSocket = class;
+  TUnixSocketClass = Class of TUnixSocket;
+{$ENDIF}
+  TSocketStreamClass = Class of TSocketStream;
+  TInetSocketClass = Class of TInetSocket;
+
+
 
   // Handles all OS calls
 
@@ -54,7 +62,6 @@ type
 
   TSocketHandler = Class(TObject)
   Private
-    FServer: TSocketServer;
     FSocket: TSocketStream;
   Protected
     FLastError : integer;
@@ -85,6 +92,9 @@ type
 
   TSocketStream = class(THandleStream)
   Private
+    FClosed: Boolean;
+    FOnClose: TNotifyEvent;
+    FPeerClosed: Boolean;
     FReadFlags: Integer;
     FSocketInitialized : Boolean;
     FSocketOptions : TSocketOptions;
@@ -96,43 +106,57 @@ type
     Procedure GetSockOptions;
     procedure SetConnectTimeout(AValue: Integer);
     Procedure SetSocketOptions(Value : TSocketOptions);
-    function GetLocalAddress: TSockAddr;
-    function GetRemoteAddress: TSockAddr;
+    function GetLocalAddress: sockets.TSockAddr;
+    function GetRemoteAddress: sockets.TSockAddr;
     procedure SetIOTimeout(AValue: Integer);
   Protected
+    Procedure DoOnClose; virtual;
   Public
     Constructor Create (AHandle : Longint; AHandler : TSocketHandler = Nil);virtual;
     destructor Destroy; override;
     Class Function Select(Var aRead,aWrite,aExceptions : TSocketStreamArray; aTimeOut: Integer): Boolean; virtual;
+    Procedure Close;
     function Seek(Offset: Longint; Origin: Word): Longint; override;
     function Select(aCheck : TSocketStates; TimeOut : Integer): TSocketStates;
-    Function CanRead(TimeOut : Integer): Boolean;
+    Function CanRead(TimeOut : Integer): Boolean; virtual;
     Function Read (Var Buffer; Count : Longint) : longint; Override;
     Function Write (Const Buffer; Count : Longint) :Longint; Override;
     Property SocketOptions : TSocketOptions Read FSocketOptions
                                             Write SetSocketOptions;
-    property LocalAddress: TSockAddr read GetLocalAddress;
-    property RemoteAddress: TSockAddr read GetRemoteAddress;
+    property LocalAddress: sockets.TSockAddr read GetLocalAddress;
+    property RemoteAddress: sockets.TSockAddr read GetRemoteAddress;
     Property LastError : Integer Read GetLastError;
     Property ReadFlags : Integer Read FReadFlags Write FReadFlags;
     Property WriteFlags : Integer Read FWriteFlags Write FWriteFlags;
     Property IOTimeout : Integer read FIOTimeout Write SetIOTimeout;
     Property ConnectTimeout : Integer read FConnectTimeout Write SetConnectTimeout;
+    Property OnClose : TNotifyEvent Read FOnClose Write FOnClose;
     Property Handler : TSocketHandler Read FHandler;
+    // We called close
+    Property Closed : Boolean read FClosed;
+    // Peer closed detected when reading.
+    Property PeerClosed : Boolean Read FPeerClosed;
   end;
 
-  TConnectEvent = Procedure (Sender : TObject; Data : TSocketStream) Of Object;
+  TSocketClientEvent = Procedure (Sender : TObject; Data : TSocketStream) Of Object;
+  TConnectEvent = TSocketClientEvent;
+  TDisconnectEvent = TSocketClientEvent;
+  TConnectionDroppedEvent = TSocketClientEvent;
   TConnectQuery = Procedure (Sender : TObject; ASocket : Longint; Var Allow : Boolean) of Object;
   TOnAcceptError = Procedure (Sender : TObject; ASocket : Longint; E : Exception; Var ErrorAction : TAcceptErrorAction) of Object;
   TGetClientSocketHandlerEvent = Procedure (Sender : TObject; Out AHandler : TSocketHandler) of object;
+  TForeachHandler = Procedure (Sender : TObject; aClient : TSocketStream; var aContinue : Boolean) of object;
 
   { TSocketServer }
 
   TSocketServer = Class(TObject)
   Private
     FIdleTimeOut: Cardinal;
+    FMaxSimultaneousConnections: longint;
     FOnAcceptError: TOnAcceptError;
+    FOnConnectionDropped: TConnectionDroppedEvent;
     FOnCreateClientSocketHandler: TGetClientSocketHandlerEvent;
+    FOnDisconnect: TDisconnectEvent;
     FOnIdle : TNotifyEvent;
     FNonBlocking : Boolean;
     FSocket : longint;
@@ -143,7 +167,9 @@ type
     FOnConnect : TConnectEvent;
     FOnConnectQuery : TConnectQuery;
     FHandler : TSocketHandler;
+    FConnections : TThreadList;
     Procedure DoOnIdle;
+    function GetConnectionCount: Integer;
     Function GetReuseAddress: Boolean;
     Function GetKeepAlive : Boolean;
     Function GetLinger : Integer;
@@ -153,6 +179,9 @@ type
   Protected
     FSockType : Longint;
     FBound : Boolean;
+    Procedure SocketClosed(aSocket: TSocketStream);
+    Procedure DoConnectionDropped(aSocket : TSocketStream); virtual;
+    Procedure DoDisconnect(aSocket : TSocketStream); virtual;
     Procedure DoConnect(ASocket : TSocketStream); Virtual;
     Function  DoConnectQuery(ASocket : longint): Boolean ;Virtual;
     Procedure Bind; Virtual; Abstract;
@@ -160,6 +189,8 @@ type
     Function  SockToStream (ASocket : Longint) : TSocketStream;Virtual;Abstract;
     Procedure Close; Virtual;
     Procedure Abort;
+    Procedure RemoveSelfFromConnections; virtual;
+
     Function RunIdleLoop : Boolean;
     function GetConnection: TSocketStream; virtual; abstract;
     Function HandleAcceptError(E : ESocketError) : TAcceptErrorAction;
@@ -174,11 +205,16 @@ type
     Procedure StartAccepting;
     Procedure StopAccepting(DoAbort : Boolean = False);
     Procedure SetNonBlocking;
+    Procedure Foreach(aHandler : TForeachHandler);
     Property Bound : Boolean Read FBound;
     // Maximium number of connections in total. *Not* the simultaneous connection count. -1 keeps accepting.
     Property MaxConnections : longint Read FMaxConnections Write FMaxConnections;
+    Property MaxSimultaneousConnections : longint Read FMaxSimultaneousConnections Write FMaxSimultaneousConnections;
+
     Property QueueSize : Longint Read FQueueSize Write FQueueSize default 5;
     Property OnConnect : TConnectEvent Read FOnConnect Write FOnConnect;
+    Property OnDisconnect : TDisconnectEvent Read FOnDisconnect Write FOnDisconnect;
+    Property OnConnectionDropped : TConnectionDroppedEvent Read FOnConnectionDropped Write FOnConnectionDropped;
     Property OnConnectQuery : TConnectQuery Read FOnConnectQuery Write FOnConnectQuery;
     Property OnAcceptError : TOnAcceptError Read FOnAcceptError Write FOnAcceptError;
     Property OnIdle : TNotifyEvent Read FOnIdle Write FOnIdle;
@@ -193,19 +229,23 @@ type
     // If Different from 0, then there will be an idle loop before accepting new connections, Calling OnIdle if no new connection appeared in the specified timeout.
     Property AcceptIdleTimeOut : Cardinal Read FIdleTimeOut Write FIdleTimeout;
     Property OnCreateClientSocketHandler : TGetClientSocketHandlerEvent Read FOnCreateClientSocketHandler Write FOnCreateClientSocketHandler;
+    Property ConnectionCount : Integer Read GetConnectionCount;
   end;
 
   { TInetServer }
 
   TInetServer = Class(TSocketServer)
   private
-  Protected
     FAddr : TINetSockAddr;
     FPort : Word;
     FHost: string;
+  Protected
     Function GetConnection: TSocketStream; override;
     Function SockToStream (ASocket : Longint) : TSocketStream;Override;
     Function Accept : Longint;override;
+    Property Addr : TINetSockAddr Read FAddr;
+  Public
+    DefaultInetSocketClass : TInetSocketClass;
   Public
     Procedure Bind; Override;
     Constructor Create(APort: Word);
@@ -229,7 +269,9 @@ type
     Function SockToStream (ASocket : Longint) : TSocketStream;Override;
     Procedure Close; override;
   Public
-    Constructor Create(AFileName : String; AHandler : TSocketHandler = Nil);
+    DefaultUnixSocketClass : TUnixSocketClass;
+  Public
+    Constructor Create(const AFileName : String; AHandler : TSocketHandler = Nil);
     Property FileName : String Read FFileName;
   end;
 {$endif}
@@ -238,6 +280,18 @@ type
   TBlockingMode = (bmBlocking,bmNonBlocking);
   TBlockingModes = Set of TBlockingMode;
   TCheckTimeoutResult = (ctrTimeout,ctrError,ctrOK);
+
+  { TServerSocketStream }
+
+  TServerSocketStream = class(TSocketStream)
+  Protected
+    FServer : TSocketServer;
+  Protected
+    Procedure DoOnClose; override;
+    Property Server : TSocketServer Read FServer;
+  Public
+    Function CanRead(TimeOut : Integer): Boolean; override;
+  end;
 
 {$if defined(unix) or defined(windows)}
 {$DEFINE HAVENONBLOCKING}
@@ -268,7 +322,7 @@ type
     Procedure DoConnect(ASocket : longint); Virtual;
   Public
     Constructor Create(ASocket : Longint); Overload;
-    Constructor Create(AFileName : String); Overload;
+    Constructor Create(const AFileName : String); Overload;
     Property FileName : String Read FFileName;
   end;
 {$endif}
@@ -276,6 +330,7 @@ type
 Implementation
 
 uses
+// This must be here, to prevent it from overriding the sockets definitions... :/
 {$ifdef unix}
   BaseUnix,Unix,
 {$endif}
@@ -305,6 +360,21 @@ resourcestring
   strSocketIOTimeOut = 'Failed to set IO Timeout to %d';
   strErrNoStream = 'Socket stream not assigned';
   strSocketConnectTimeOut = 'Connection to %s timed out.';
+
+{ TServerSocketStream }
+
+function TServerSocketStream.CanRead(TimeOut : Integer): Boolean;
+begin
+  Result:=inherited CanRead(TimeOut);
+  Result:=Result and Assigned(FServer); // main server is gone, cannot read from it
+end;
+
+procedure TServerSocketStream.DoOnClose;
+begin
+  if Assigned(FServer) then
+    FServer.SocketClosed(Self);
+  inherited DoOnClose;
+end;
 
 { TSocketHandler }
 
@@ -515,7 +585,7 @@ end;
 { ---------------------------------------------------------------------
     TSocketStream
   ---------------------------------------------------------------------}
-Constructor TSocketStream.Create (AHandle : Longint; AHandler : TSocketHandler = Nil);
+constructor TSocketStream.Create(AHandle: Longint; AHandler: TSocketHandler);
 
 begin
   Inherited Create(AHandle);
@@ -529,14 +599,12 @@ end;
 
 destructor TSocketStream.Destroy;
 begin
-  if FSocketInitialized then
-    FHandler.Close; // Ignore the result
-  FreeAndNil(FHandler);  
-  CloseSocket(Handle);
+  Close;
   inherited Destroy;
 end;
 
-class function TSocketStream.Select(var aRead, aWrite, aExceptions: TSocketStreamArray; ATimeout : Integer): Boolean;
+class function TSocketStream.Select(var aRead, aWrite,
+  aExceptions: TSocketStreamArray; aTimeOut: Integer): Boolean;
 
 {$if defined(unix) or defined(windows)}
 var
@@ -626,6 +694,16 @@ begin
 {$ENDIF}  
 end;
 
+procedure TSocketStream.Close;
+begin
+  DoOnClose;
+  if FSocketInitialized then
+    FHandler.Close; // Ignore the result
+  FreeAndNil(FHandler);
+  CloseSocket(Handle);
+  FClosed:=True;
+end;
+
 procedure TSocketStream.GetSockOptions;
 {$ifdef windows}
 var
@@ -661,7 +739,7 @@ begin
   Result:=FHandler.LastError;
 end;
 
-Procedure TSocketStream.SetSocketOptions(Value : TSocketOptions);
+procedure TSocketStream.SetSocketOptions(Value: TSocketOptions);
 
 begin
   FSocketOptions:=Value;
@@ -678,18 +756,20 @@ begin
   Result:=FHandler.Select(aCheck,TimeOut);
 end;
 
-Function TSocketStream.CanRead (TimeOut : Integer) : Boolean;
+function TSocketStream.CanRead(TimeOut: Integer): Boolean;
 begin
   Result:=FHandler.CanRead(TimeOut);
 end;
 
-Function TSocketStream.Read (Var Buffer; Count : Longint) : longint;
+function TSocketStream.Read(var Buffer; Count: Longint): longint;
 
 begin
   Result:=FHandler.Recv(Buffer,Count);
+  if (Result=0) then
+    FPeerClosed:=True;
 end;
 
-Function TSocketStream.Write (Const Buffer; Count : Longint) :Longint;
+function TSocketStream.Write(const Buffer; Count: Longint): Longint;
 
 begin
   Result:=FHandler.Send(Buffer,Count);
@@ -746,6 +826,12 @@ begin
     Raise ESocketError.Create(seIOTimeout,[AValue]);
 end;
 
+procedure TSocketStream.DoOnClose;
+begin
+  If Assigned(FOnClose) then
+    FOnClose(Self);
+end;
+
 { ---------------------------------------------------------------------
     TSocketServer
   ---------------------------------------------------------------------}
@@ -759,11 +845,14 @@ begin
   if (AHandler=Nil) then
     AHandler:=TSocketHandler.Create;
   FHandler:=AHandler;
+  FConnections:=TThreadList.Create;
 end;
 
 destructor TSocketServer.Destroy;
 
 begin
+  RemoveSelfFromConnections;
+  FreeAndNil(FConnections);
   Close;
   FreeAndNil(FHandler);
   Inherited;
@@ -791,6 +880,22 @@ begin
   fpShutdown(ASocket,SHUT_RDWR);
   CloseSocket(ASocket);
 {$endif}
+end;
+
+procedure TSocketServer.RemoveSelfFromConnections;
+
+Var
+  L : TList;
+  P: Pointer;
+
+begin
+  L:=FConnections.LockList;
+  try
+    for P in L do
+      TServerSocketStream(P).FServer:=Nil;
+  finally
+    FConnections.UnlockList;
+  end;
 end;
 
 function TSocketServer.RunIdleLoop: Boolean;
@@ -903,10 +1008,22 @@ begin
         else
           Stream:=Nil;
         if Assigned(Stream) then
-          begin
-          Inc(NoConnections);
-          DoConnect(Stream);
-          end;
+          if (MaxSimultaneousConnections>0) and (ConnectionCount>=MaxSimultaneousConnections) then
+            begin
+            Stream.Close;
+            DoConnectionDropped(Stream);
+            FreeAndNil(Stream);
+            end
+          else
+            begin
+            if Stream is TServerSocketStream then
+              begin
+              FConnections.Add(Stream);
+              TServerSocketStream(Stream).FServer:=Self;
+              end;
+            Inc(NoConnections);
+            DoConnect(Stream);
+            end;
       except
         On E : ESocketError do
           begin
@@ -937,6 +1054,20 @@ procedure TSocketServer.DoOnIdle;
 begin
   If Assigned(FOnIdle) then
     FOnIdle(Self);
+end;
+
+function TSocketServer.GetConnectionCount: Integer;
+
+Var
+  L : TList;
+
+begin
+  L:=FConnections.LockList;
+  try
+    Result:=L.Count;
+  finally
+    FConnections.UnlockList;
+  end;
 end;
 
 function TSocketServer.GetReuseAddress: Boolean;
@@ -1012,6 +1143,28 @@ begin
   FNonBlocking:=True;
 end;
 
+procedure TSocketServer.Foreach(aHandler: TForeachHandler);
+
+Var
+  L : TList;
+  P : Pointer;
+  aContinue : Boolean;
+
+begin
+  L:=FConnections.LockList;
+  try
+    aContinue:=True;
+    For P in L do
+      begin
+      aHandler(Self,TSocketStream(P),aContinue);
+      if not aContinue then
+        break;
+      end;
+  finally
+    FConnections.UnlockList;
+  end;
+end;
+
 procedure TSocketServer.SetLinger(ALinger: Integer);
 Var
   L : linger;
@@ -1023,6 +1176,24 @@ begin
     l.l_linger:=0;
   if Not SetSockOpt(SOL_SOCKET, SO_LINGER, l, SizeOf(L)) then
     Raise ESocketError.CreateFmt('Failed to set linger: %d',[socketerror]);
+end;
+
+procedure TSocketServer.SocketClosed(aSocket: TSocketStream);
+begin
+  FConnections.Remove(aSocket);
+  DoDisConnect(aSocket);
+end;
+
+procedure TSocketServer.DoConnectionDropped(aSocket: TSocketStream);
+begin
+  If Assigned(FOnConnectionDropped) then
+    FOnConnectionDropped(Self,aSocket);
+end;
+
+procedure TSocketServer.DoDisconnect(aSocket: TSocketStream);
+begin
+  If Assigned(FOnDisconnect) then
+    FOnDisconnect(Self,aSocket);
 end;
 
 procedure TSocketServer.SetReuseAddress(AValue: Boolean);
@@ -1086,6 +1257,7 @@ function TInetServer.SockToStream(ASocket: Longint): TSocketStream;
 Var
   H : TSocketHandler;
   A : Boolean;
+  aClass : TInetSocketClass;
 
   procedure ShutDownH;
   begin
@@ -1093,9 +1265,13 @@ Var
     FreeAndNil(Result);
   end;
 
+
 begin
   H:=GetClientSocketHandler(aSocket);
-  Result:=TInetSocket.Create(ASocket,H);
+  aClass:=DefaultInetSocketClass;
+  if aClass=Nil then
+      aClass:=TInetSocket;
+  Result:=aClass.Create(ASocket,H);
   (Result as TInetSocket).FHost:='';
   (Result as TInetSocket).FPort:=FPort;
 
@@ -1143,7 +1319,7 @@ end;
     TUnixServer
   ---------------------------------------------------------------------}
 {$ifdef Unix}
-Constructor TUnixServer.Create(AFileName : String; AHandler : TSocketHandler = Nil);
+Constructor TUnixServer.Create(const AFileName : String; AHandler : TSocketHandler = Nil);
 
 Var S : Longint;
 
@@ -1190,8 +1366,14 @@ end;
 
 Function  TUnixServer.SockToStream (ASocket : Longint) : TSocketStream;
 
+var
+  aClass : TUnixSocketClass;
+
 begin
-  Result:=TUnixSocket.Create(ASocket);
+  aClass:=DefaultUnixSocketClass;
+  if aClass=Nil then
+    aClass:=TUnixSocket;
+  Result:=aClass.Create(ASocket);
   (Result as TUnixSocket).FFileName:=FFileName;
 end;
 
@@ -1289,7 +1471,7 @@ var
 begin
   locTimeVal := PTimeVal(ATimeVPtr);
   locFDS := PFDSet(AFDSPtr);
-  locTimeVal^.tv_usec := 0;
+  locTimeVal^.tv_usec := (FConnectTimeout mod 1000) * 1000;
   locTimeVal^.tv_sec := FConnectTimeout div 1000;
   Res:=-1;
   {$ifdef unix}
@@ -1409,7 +1591,7 @@ begin
   Inherited Create(ASocket);
 end;
 
-Constructor TUnixSocket.Create(AFileName : String);
+Constructor TUnixSocket.Create(const AFileName : String);
 
 Var S : Longint;
 

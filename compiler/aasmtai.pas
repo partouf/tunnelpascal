@@ -388,6 +388,16 @@ interface
         mark_AsmBlockStart,mark_AsmBlockEnd,
         mark_NoLineInfoStart,mark_NoLineInfoEnd,mark_BlockStart,
         mark_Position
+{$ifdef avr}
+        { spilling on avr destroys the flags as it might use adiw/add/adc, so in case
+          the flags are allocated during spilling, this marker must be translated into
+          a push of the flags when assembler post processing is carried out }
+        ,mark_may_store_flags_with_r26
+        { spilling on avr destroys the flags as it might use adiw/add/adc, so in case
+          the flags are allocated during spilling, this marker must be translated into
+          a pop of the flags when assembler post processing is carried out }
+        ,mark_may_restore_flags_with_r26
+{$endif avr}
       );
 
       TRegAllocType = (ra_alloc,ra_dealloc,ra_sync,ra_resize,ra_markused);
@@ -591,6 +601,7 @@ interface
           { extra len so the string can contain an \0 }
           len : longint;
           constructor Create(const _str : string);
+          constructor Create(const _str : ansistring);
           constructor Create_pchar(_str : pchar;length : longint);
           destructor Destroy;override;
           constructor ppuload(t:taitype;ppufile:tcompilerppufile);override;
@@ -1328,6 +1339,9 @@ implementation
         TObjData.sectiontype2progbitsandflags(sectype,secprogbits,secflags);
         name:=stringdup(Aname);
         sec:=nil;
+        // .noinit section should be marked with the nobits flag
+        if (sectype=sec_user) and (Aname='.noinit') then
+          secprogbits:=SPB_NOBITS;
       end;
 
     constructor tai_section.Create_proc(Asectype:TAsmSectiontype;
@@ -2391,8 +2405,21 @@ implementation
           typ:=ait_string;
           len:=length(_str);
           getmem(str,len+1);
-          move(_str[1],str^,len);
+          if len>0 then
+            move(_str[1],str^,len);
           str[len]:=#0;
+       end;
+
+
+     constructor tai_string.Create(const _str: ansistring);
+       begin
+         inherited Create;
+         typ:=ait_string;
+         len:=length(_str);
+         getmem(str,len+1);
+         if len>0 then
+           move(_str[1],str^,len);
+         str[len]:=#0;
        end;
 
 
@@ -3119,6 +3146,14 @@ implementation
                 begin
                   new(p.oper[i]^.ref);
                   p.oper[i]^.ref^:=oper[i]^.ref^;
+                  if Assigned(p.oper[i]^.ref^.symbol) then
+                    p.oper[i]^.ref^.symbol.increfs;
+                  if Assigned(p.oper[i]^.ref^.relsymbol) then
+                    p.oper[i]^.ref^.relsymbol.increfs;
+{$ifdef jvm}
+                  if Assigned(p.oper[i]^.ref^.indexsymbol) then
+                    p.oper[i]^.ref^.indexsymbol.increfs;
+{$endif jvm}
                 end;
 {$ifdef ARM}
               top_shifterop:
@@ -3608,7 +3643,9 @@ implementation
         stackslot:=_stackslot;
         desc:=stringdup(_desc);
         startlab:=_startlab;
+        startlab.increfs;
         stoplab:=_stoplab;
+        stoplab.increfs;
       end;
 
 

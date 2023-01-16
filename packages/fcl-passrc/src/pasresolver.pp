@@ -1067,7 +1067,8 @@ type
 
   TPasProcedureScopeFlag = (
     ppsfIsGroupOverload, // mode objfpc: one overload is enough for all procs in same scope
-    ppsfIsSpecialized
+    ppsfIsSpecialized,
+    ppsfIsOverrideOverload
     );
   TPasProcedureScopeFlags = set of TPasProcedureScopeFlag;
 
@@ -1555,8 +1556,8 @@ type
       TFindCallElData = record
         Params: TParamsExpr;
         TemplCnt: integer;
-        Found: TPasElement; // TPasProcedure or TPasUnresolvedSymbolRef(built in proc) or TPasType (typecast)
-        LastProc: TPasProcedure;
+        Found: TPasElement; // TPasProcedure or TPasUnresolvedSymbolRef(built in proc) or TPasType (typecast), best candidate so far
+        LastProc: TPasProcedure; // last checked TPasProcedure
         ElScope, StartScope: TPasScope;
         Distance: integer; // compatibility distance
         Count: integer;
@@ -1594,7 +1595,7 @@ type
     procedure OnFindProcDeclaration(El: TPasElement; ElScope, StartScope: TPasScope;
       FindProcData: Pointer; var Abort: boolean); virtual;
     function IsSameProcContext(ProcParentA, ProcParentB: TPasElement): boolean;
-    function IsProcOverload(LastProc, LastExactProc, CurProc: TPasProcedure): boolean;
+    function IsProcOverloading(LastProc, CurProc: TPasProcedure): boolean;
     function FindProcSameSignature(const ProcName: string; Proc: TPasProcedure;
       Scope: TPasIdentifierScope; OnlyLocal: boolean): TPasProcedure;
   protected
@@ -2084,6 +2085,7 @@ type
       AParent: TPasElement; AVisibility: TPasMemberVisibility;
       const ASrcPos: TPasSourcePos; TypeParams: TFPList = nil): TPasElement;
       overload; override;
+    function CreateOwnedElement(AClass: TPTreeElement; const AName: String; AParent: TPasElement): TPasElement; virtual;
     function FindModule(const AName: String; NameExpr, InFileExpr: TPasExpr): TPasModule; override;
     function FindUnit(const AName, InFilename: String;
       NameExpr, InFileExpr: TPasExpr): TPasModule; virtual; abstract;
@@ -2392,6 +2394,7 @@ type
     function ProcHasSelf(El: TPasProcedure): boolean; // returns false for local procs
     procedure CreateProcSelfArg(Proc: TPasProcedure); virtual;
     function IsProcOverride(AncestorProc, DescendantProc: TPasProcedure): boolean;
+    function IsProcOverload(Proc: TPasProcedure): boolean;
     function GetTopLvlProc(El: TPasElement): TPasProcedure;
     function GetParentProc(El: TPasElement; GetDeclProc: boolean): TPasProcedure;
     function GetRangeLength(RangeExpr: TPasExpr): TMaxPrecInt;
@@ -2533,9 +2536,9 @@ begin
     if El.ClassType=TUnaryExpr then
       Result:=Result+GetTreeDbg(TUnaryExpr(El).Operand,Indent)
     else if El.ClassType=TBinaryExpr then
-      Result:=Result+'Left={'+GetTreeDbg(TBinaryExpr(El).left,Indent)+'}'
+      Result:=Result+'Left={'+GetTreeDbg(TBinaryExpr(El).Left,Indent)+'}'
          +OpcodeStrings[TPasExpr(El).OpCode]
-         +'Right={'+GetTreeDbg(TBinaryExpr(El).right,Indent)+'}'
+         +'Right={'+GetTreeDbg(TBinaryExpr(El).Right,Indent)+'}'
     else if El.ClassType=TPrimitiveExpr then
       Result:=Result+TPrimitiveExpr(El).Value
     else if El.ClassType=TBoolConstExpr then
@@ -3097,9 +3100,9 @@ begin
     Bin:=TBinaryExpr(Expr);
     if Bin.OpCode=eopSubIdent then
       begin
-      Result:=DotExprToName(Bin.left);
+      Result:=DotExprToName(Bin.Left);
       if Result='' then exit;
-      s:=DotExprToName(Bin.right);
+      s:=DotExprToName(Bin.Right);
       if s='' then exit('');
       Result:=Result+'.'+s;
       end;
@@ -3208,11 +3211,7 @@ end;
 { TPRSpecializedItem }
 
 destructor TPRSpecializedItem.Destroy;
-var
-  i: Integer;
 begin
-  for i:=0 to length(SpecializedConstraints)-1 do
-    SpecializedConstraints[i].Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
   SetLength(SpecializedConstraints,0);
   inherited Destroy;
 end;
@@ -3222,22 +3221,14 @@ end;
 procedure TPRSpecializedTypeItem.SetSpecializedType(AValue: TPasGenericType);
 begin
   if FSpecializedType=AValue then Exit;
-  if FSpecializedType<>nil then
-    FSpecializedType.Release{$IFDEF CheckPasTreeRefCount}('TPRSpecializedTypeItem.SpecializedType'){$ENDIF};
   FSpecializedEl:=AValue;
   FSpecializedType:=AValue;
-  if FSpecializedType<>nil then
-    FSpecializedType.AddRef{$IFDEF CheckPasTreeRefCount}('TPRSpecializedTypeItem.SpecializedType'){$ENDIF};
 end;
 
 destructor TPRSpecializedTypeItem.Destroy;
-var
-  i: Integer;
 begin
   if ImplProcs<>nil then
     begin
-    for i:=0 to ImplProcs.Count-1 do
-      TPasElement(ImplProcs[i]).Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
     ImplProcs.Free;
     ImplProcs:=nil;
     end;
@@ -3253,19 +3244,14 @@ procedure TPRSpecializedProcItem.SetSpecializedProc(const AValue: TPasProcedure
   );
 begin
   if FSpecializedProc=AValue then Exit;
-  if FSpecializedProc<>nil then
-    FSpecializedProc.Release{$IFDEF CheckPasTreeRefCount}('TPRSpecializedProcItem.SpecializedProc'){$ENDIF};
   FSpecializedEl:=AValue;
   FSpecializedProc:=AValue;
-  if FSpecializedProc<>nil then
-    FSpecializedProc.AddRef{$IFDEF CheckPasTreeRefCount}('TPRSpecializedProcItem.SpecializedProc'){$ENDIF};
 end;
 
 destructor TPRSpecializedProcItem.Destroy;
 begin
   if ImplProc<>nil then
     begin
-    ImplProc.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
     ImplProc:=nil;
     end;
   SpecializedProc:=nil;
@@ -3506,7 +3492,7 @@ end;
 
 destructor TResElDataBuiltInProc.Destroy;
 begin
-  ReleaseAndNil(TPasElement(Proc){$IFDEF CheckPasTreeRefCount},'TResElDataBuiltInProc.Proc'{$ENDIF});
+  Proc:=nil;
   inherited Destroy;
 end;
 
@@ -3542,11 +3528,7 @@ end;
 procedure TPasScopeReference.SetElement(const AValue: TPasElement);
 begin
   if FElement=AValue then Exit;
-  if FElement<>nil then
-    FElement.Release{$IFDEF CheckPasTreeRefCount}('TPasScopeReference.SetElement'){$ENDIF};
   FElement:=AValue;
-  if FElement<>nil then
-    FElement.AddRef{$IFDEF CheckPasTreeRefCount}('TPasScopeReference.SetElement'){$ENDIF};
 end;
 
 destructor TPasScopeReference.Destroy;
@@ -3730,7 +3712,7 @@ begin
   {$IFDEF VerbosePasResolverMem}
   writeln('TPasEnumTypeScope.Destroy START ',ClassName);
   {$ENDIF}
-  ReleaseAndNil(TPasElement(CanonicalSet){$IFDEF CheckPasTreeRefCount},'TPasEnumTypeScope.CanonicalSet'{$ENDIF});
+  CanonicalSet:=nil;
   inherited Destroy;
   {$IFDEF VerbosePasResolverMem}
   writeln('TPasEnumTypeScope.Destroy END ',ClassName);
@@ -3872,7 +3854,7 @@ begin
   FreeAndNil(GroupScope);
   NestedMembersScope:=nil; // NestedMembersScope is auto freed
   inherited Destroy;
-  ReleaseAndNil(TPasElement(SelfArg){$IFDEF CheckPasTreeRefCount},'TPasProcedureScope.SelfArg'{$ENDIF});
+  SelfArg:=nil;
   {$IFDEF VerbosePasResolverMem}
   writeln('TPasProcedureScope.Destroy END ',ClassName);
   {$ENDIF}
@@ -3915,11 +3897,7 @@ begin
       end;
     FreeAndNil(Interfaces);
     end;
-  if CanonicalClassOf<>nil then
-    begin
-    CanonicalClassOf.Parent:=nil;
-    ReleaseAndNil(TPasElement(CanonicalClassOf){$IFDEF CheckPasTreeRefCount},'TPasClassScope.CanonicalClassOf'{$ENDIF});
-    end;
+  CanonicalClassOf:=nil;
   inherited Destroy;
 end;
 
@@ -3928,11 +3906,7 @@ end;
 procedure TPasIdentifier.SetElement(AValue: TPasElement);
 begin
   if FElement=AValue then Exit;
-  if Element<>nil then
-    Element.Release{$IFDEF CheckPasTreeRefCount}('TPasIdentifier.SetElement'){$ENDIF};
   FElement:=AValue;
-  if Element<>nil then
-    Element.AddRef{$IFDEF CheckPasTreeRefCount}('TPasIdentifier.SetElement'){$ENDIF};
 end;
 
 destructor TPasIdentifier.Destroy;
@@ -3950,19 +3924,9 @@ end;
 { EPasResolve }
 
 procedure EPasResolve.SetPasElement(AValue: TPasElement);
-var
-  Old: TPasElement;
 begin
   if FPasElement=AValue then Exit;
-  Old:=FPasElement;
-  if Old<>nil then
-    begin
-    Old:=nil;
-    PasElement.Release{$IFDEF CheckPasTreeRefCount}('EPasResolve.SetPasElement'){$ENDIF};
-    end;
   FPasElement:=AValue;
-  if PasElement<>nil then
-    PasElement.AddRef{$IFDEF CheckPasTreeRefCount}('EPasResolve.SetPasElement'){$ENDIF};
 end;
 
 destructor EPasResolve.Destroy;
@@ -3982,11 +3946,7 @@ end;
 procedure TResolvedReference.SetDeclaration(AValue: TPasElement);
 begin
   if FDeclaration=AValue then Exit;
-  if Declaration<>nil then
-    Declaration.Release{$IFDEF CheckPasTreeRefCount}('TResolvedReference.SetDeclaration'){$ENDIF};
   FDeclaration:=AValue;
-  if Declaration<>nil then
-    Declaration.AddRef{$IFDEF CheckPasTreeRefCount}('TResolvedReference.SetDeclaration'){$ENDIF};
 end;
 
 destructor TResolvedReference.Destroy;
@@ -4025,11 +3985,7 @@ end;
 procedure TPasModuleDotScope.SetModule(AValue: TPasModule);
 begin
   if FModule=AValue then Exit;
-  if Module<>nil then
-    Module.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleDotScope.SetModule'){$ENDIF};
   FModule:=AValue;
-  if Module<>nil then
-    Module.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleDotScope.SetModule'){$ENDIF};
 end;
 
 destructor TPasModuleDotScope.Destroy;
@@ -4202,64 +4158,40 @@ end;
 procedure TPasModuleScope.SetAssertClass(const AValue: TPasClassType);
 begin
   if FAssertClass=AValue then Exit;
-  if FAssertClass<>nil then
-    FAssertClass.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetAssertClass'){$ENDIF};
   FAssertClass:=AValue;
-  if FAssertClass<>nil then
-    FAssertClass.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetAssertClass'){$ENDIF};
 end;
 
 procedure TPasModuleScope.SetAssertDefConstructor(const AValue: TPasConstructor
   );
 begin
   if FAssertDefConstructor=AValue then Exit;
-  if FAssertDefConstructor<>nil then
-    FAssertDefConstructor.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetAssertDefConstructor'){$ENDIF};
   FAssertDefConstructor:=AValue;
-  if FAssertDefConstructor<>nil then
-    FAssertDefConstructor.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetAssertDefConstructor'){$ENDIF};
 end;
 
 procedure TPasModuleScope.SetAssertMsgConstructor(const AValue: TPasConstructor
   );
 begin
   if FAssertMsgConstructor=AValue then Exit;
-  if FAssertMsgConstructor<>nil then
-    FAssertMsgConstructor.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetAssertMsgConstructor'){$ENDIF};
   FAssertMsgConstructor:=AValue;
-  if FAssertMsgConstructor<>nil then
-    FAssertMsgConstructor.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetAssertMsgConstructor'){$ENDIF};
 end;
 
 procedure TPasModuleScope.SetRangeErrorClass(const AValue: TPasClassType);
 begin
   if FRangeErrorClass=AValue then Exit;
-  if FRangeErrorClass<>nil then
-    FRangeErrorClass.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetRangeErrorClass'){$ENDIF};
   FRangeErrorClass:=AValue;
-  if FRangeErrorClass<>nil then
-    FRangeErrorClass.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetRangeErrorClass'){$ENDIF};
 end;
 
 procedure TPasModuleScope.SetRangeErrorConstructor(const AValue: TPasConstructor
   );
 begin
   if FRangeErrorConstructor=AValue then Exit;
-  if FRangeErrorConstructor<>nil then
-    FRangeErrorConstructor.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetRangeErrorConstructor'){$ENDIF};
   FRangeErrorConstructor:=AValue;
-  if FRangeErrorConstructor<>nil then
-    FRangeErrorConstructor.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetRangeErrorConstructor'){$ENDIF};
 end;
 
 procedure TPasModuleScope.SetSystemTVarRec(const AValue: TPasRecordType);
 begin
   if FSystemTVarRec=AValue then Exit;
-  if FSystemTVarRec<>nil then
-    FSystemTVarRec.Release{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetSystemTVarRec'){$ENDIF};
   FSystemTVarRec:=AValue;
-  if FSystemTVarRec<>nil then
-    FSystemTVarRec.AddRef{$IFDEF CheckPasTreeRefCount}('TPasModuleScope.SetSystemTVarRec'){$ENDIF};
 end;
 
 constructor TPasModuleScope.Create;
@@ -4675,11 +4607,11 @@ begin
     if not (El.Parent is TBinaryExpr) then exit;
     Bin:=TBinaryExpr(El.Parent);
     if Bin.OpCode<>eopSubIdent then exit;
-    if El=Bin.right then
+    if El=Bin.Right then
       El:=Bin
     else
       begin
-      El:=Bin.right;
+      El:=Bin.Right;
       // find left most
       repeat
         C:=El.ClassType;
@@ -4693,7 +4625,7 @@ begin
           begin
           if TBinaryExpr(El).OpCode<>eopSubIdent then
             RaiseNotYetImplemented(20170502163718,El);
-          El:=TBinaryExpr(El).left;
+          El:=TBinaryExpr(El).Left;
           end
         else if C=TParamsExpr then
           begin
@@ -4720,7 +4652,7 @@ begin
       begin
       if TBinaryExpr(Result).OpCode<>eopSubIdent then
         exit;
-      Result:=TBinaryExpr(Result).left;
+      Result:=TBinaryExpr(Result).Left;
       end
     else if C=TParamsExpr then
       begin
@@ -4746,7 +4678,7 @@ begin
       begin
       if TBinaryExpr(Result).OpCode<>eopSubIdent then
         exit;
-      Result:=TBinaryExpr(Result).right;
+      Result:=TBinaryExpr(Result).Right;
       end
     else
       exit;
@@ -4782,7 +4714,7 @@ begin
   if Parent.ClassType=TBinaryExpr then
     begin
     Bin:=TBinaryExpr(Parent);
-    if (Bin.OpCode<>eopSubIdent) or (Bin.right<>El) then
+    if (Bin.OpCode<>eopSubIdent) or (Bin.Right<>El) then
       exit;
     El:=Bin;
     Parent:=El.Parent;
@@ -4806,7 +4738,7 @@ begin
   if Parent is TBinaryExpr then
     begin
     if (TBinaryExpr(Parent).OpCode<>eopSubIdent)
-        or (TBinaryExpr(Parent).right<>El) then
+        or (TBinaryExpr(Parent).Right<>El) then
       exit;
     El:=TBinaryExpr(Parent); // continue
     Parent:=El.Parent;
@@ -4860,7 +4792,7 @@ begin
     else if C=TBinaryExpr then
       begin
       if TBinaryExpr(El).OpCode=eopSubIdent then
-        El:=TBinaryExpr(El).left
+        El:=TBinaryExpr(El).Left
       else
         exit;
       end
@@ -4888,7 +4820,7 @@ begin
     begin
     Bin:=TBinaryExpr(El);
     if Bin.OpCode=eopSubIdent then
-      El:=Bin.right
+      El:=Bin.Right
     else
       exit(nil);
     end;
@@ -4913,7 +4845,7 @@ begin
     if C=TBinaryExpr then
       begin
       if TBinaryExpr(El).OpCode=eopSubIdent then
-        El:=TBinaryExpr(El).right
+        El:=TBinaryExpr(El).Right
       else
         exit;
       end
@@ -5016,7 +4948,7 @@ procedure TPasResolver.OnFindFirst_GenericEl(El: TPasElement; ElScope,
 var
   Data: PPRFindGenericData absolute FindFirstGenericData;
   GenericTemplateTypes: TFPList;
-  Proc, LastExactProc: TPasProcedure;
+  Proc: TPasProcedure;
   ProcScope: TPasProcedureScope;
 begin
   Proc:=nil;
@@ -5035,11 +4967,7 @@ begin
 
     if (Data^.LastProc<>nil) then
       begin
-      if Data^.Find.Found is TPasProcedure then
-        LastExactProc:=TPasProcedure(Data^.Find.Found)
-      else
-        LastExactProc:=nil;
-      if not IsProcOverload(Data^.LastProc,LastExactProc,Proc) then
+      if not IsProcOverloading(Data^.LastProc,Proc) then
         begin
         Abort:=true;
         exit;
@@ -5073,7 +5001,7 @@ begin
 
   if Proc<>nil then
     begin
-    if (not Proc.IsOverload) and (msDelphi in ProcScope.ModeSwitches) then
+    if (msDelphi in ProcScope.ModeSwitches) and (not IsProcOverload(Proc)) then
       // stop searching after this proc
     else if ProcNeedsParams(Proc.ProcType) then
       begin
@@ -5124,10 +5052,40 @@ begin
       El:=Proc;
       end;
 
+    if (msDelphi in ProcScope.ModeSwitches) and not IsProcOverload(Proc) then
+      begin
+      Abort:=true; // stop searching after this proc
+      if Data^.LastProc<>nil then
+        exit;
+      end;
+
+    if (Data^.Found is TPasProcedure) and IsProcOverride(Proc,TPasProcedure(Data^.Found)) then
+      begin
+      // already checked the override -> skip
+      Data^.LastProc:=Proc;
+      exit;
+      end;
+
+    if (Data^.LastProc<>nil) then
+      begin
+      if not IsProcOverloading(Data^.LastProc,Proc) then
+        begin
+        Abort:=true;
+        exit;
+        end;
+      end;
+
     if Data^.Found is TPasProcedure then
       begin
       // there is already a previous proc
       PrevProc:=TPasProcedure(Data^.Found);
+
+      if IsProcOverride(Proc,TPasProcedureScope(PrevProc.CustomData).OverriddenProc) then
+        begin
+        // already checked the override -> skip
+        Data^.LastProc:=Proc;
+        exit;
+        end;
 
       if (Data^.Distance=cExact) and (PrevProc.Parent<>Proc.Parent)
           and (PrevProc.Parent.ClassType=TPasClassType) then
@@ -5136,17 +5094,7 @@ begin
         Abort:=true;
         exit;
         end;
-
-      if not IsProcOverload(Data^.LastProc,PrevProc,Proc) then
-        begin
-        Abort:=true;
-        exit;
-        end;
-
       end;
-
-    if (msDelphi in ProcScope.ModeSwitches) and not Proc.IsOverload then
-      Abort:=true; // stop searching after this proc
 
     CandidateFound:=true;
     if Data^.TemplCnt>0 then
@@ -5380,7 +5328,7 @@ procedure TPasResolver.OnFindProc(El: TPasElement; ElScope,
   StartScope: TPasScope; FindProcData: Pointer; var Abort: boolean);
 var
   Data: PFindProcData absolute FindProcData;
-  Proc: TPasProcedure;
+  Proc, DataProc: TPasProcedure;
   Store, SameScope: Boolean;
   ProcScope: TPasProcedureScope;
   CurResolver: TPasResolver;
@@ -5394,6 +5342,7 @@ var
 
 begin
   //writeln('TPasResolver.OnFindProc START ',El.Name,':',GetElementTypeName(El),' itself=',El=Data^.Proc);
+  DataProc:=Data^.Proc;
   if not (El is TPasProcedure) then
     begin
     // identifier is not a proc
@@ -5410,38 +5359,38 @@ begin
     Abort:=true;
     if (El.CustomData is TResElDataBuiltInProc) then
       begin
-      if Data^.FoundOverloadModifier or Data^.Proc.IsOverload then
+      if Data^.FoundOverloadModifier or IsProcOverload(DataProc) then
         exit; // no hint
       end;
     case Data^.Kind of
     fpkProc:
       // proc hides a non proc
-      if (Data^.Proc.GetModule=El.GetModule) then
+      if (DataProc.GetModule=El.GetModule) then
         // forbidden within same module
         RaiseMsg(20170216151649,nDuplicateIdentifier,sDuplicateIdentifier,
-          [El.Name,GetElementSourcePosStr(El)],Data^.Proc.ProcType)
+          [El.Name,GetElementSourcePosStr(El)],DataProc.ProcType)
       else
         begin
         // give a hint
-        if Data^.Proc.Parent is TPasMembersType then
+        if DataProc.Parent is TPasMembersType then
           begin
           if El.Visibility=visStrictPrivate then
-          else if (El.Visibility=visPrivate) and (El.GetModule<>Data^.Proc.GetModule) then
+          else if (El.Visibility=visPrivate) and (El.GetModule<>DataProc.GetModule) then
           else
             LogMsg(20171118205344,mtHint,nFunctionHidesIdentifier_NonProc,sFunctionHidesIdentifier,
-              [GetElementSourcePosStr(El)],Data^.Proc.ProcType);
+              [GetElementSourcePosStr(El)],DataProc.ProcType);
           end;
         end;
     fpkMethod:
       // method hides a non proc
       begin
-      ProcScope:=TPasProcedureScope(Data^.Proc.CustomData);
+      ProcScope:=TPasProcedureScope(DataProc.CustomData);
       CurResolver:=ProcScope.Owner as TPasResolver;
       if msDelphi in CurResolver.CurrentParser.CurrentModeswitches then
         // ok in delphi
       else
         RaiseMsg(20171118232543,nDuplicateIdentifier,sDuplicateIdentifier,
-          [El.Name,GetElementSourcePosStr(El)],Data^.Proc.ProcType);
+          [El.Name,GetElementSourcePosStr(El)],DataProc.ProcType);
       end;
     end;
     exit;
@@ -5449,7 +5398,7 @@ begin
 
   // identifier is a proc
   Proc:=TPasProcedure(El);
-  if El=Data^.Proc then
+  if El=DataProc then
     begin
     // found itself -> this is normal when searching for overloads
     CountProcInSameScope;
@@ -5459,32 +5408,32 @@ begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.OnFindProc ',GetTreeDbg(El,2));
   {$ENDIF}
-  Store:=CheckProcOverloadCompatibility(Data^.Proc,Proc);
+  Store:=CheckProcOverloadCompatibility(DataProc,Proc);
   case Data^.Kind of
   fpkProc:
-    SameScope:=Data^.Proc.GetModule=Proc.GetModule;
+    SameScope:=DataProc.GetModule=Proc.GetModule;
   fpkMethod:
-    SameScope:=Data^.Proc.Parent=Proc.Parent;
+    SameScope:=DataProc.Parent=Proc.Parent;
   else
     // use OnFindProcDeclaration instead
-    RaiseNotYetImplemented(20191010123525,Data^.Proc);
+    RaiseNotYetImplemented(20191010123525,DataProc);
   end;
   if SameScope then
     begin
     // same scope
     if (msObjfpc in CurrentParser.CurrentModeswitches) then
       begin
-        if ProcHasGroupOverload(Data^.Proc) then
+        if ProcHasGroupOverload(DataProc) then
           Include(TPasProcedureScope(Proc.CustomData).Flags,ppsfIsGroupOverload)
         else if ProcHasGroupOverload(Proc) then
-          Include(TPasProcedureScope(Data^.Proc.CustomData).Flags,ppsfIsGroupOverload);
+          Include(TPasProcedureScope(DataProc.CustomData).Flags,ppsfIsGroupOverload);
       end;
     if Store then
       begin
       // same scope, same signature
       // Note: forward declaration was already handled in FinishProcedureHeader
       RaiseMsg(20171118221821,nDuplicateIdentifier,sDuplicateIdentifier,
-                [Proc.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+                [Proc.Name,GetElementSourcePosStr(Proc)],DataProc.ProcType);
       end
     else
       begin
@@ -5492,12 +5441,20 @@ begin
       if (msDelphi in CurrentParser.CurrentModeswitches) then
         begin
         // Delphi does not allow different procs without 'overload' in a scope
-        if not Proc.IsOverload then
+        if not IsProcOverload(Proc) then
           RaiseMsg(20171118222112,nPreviousDeclMissesOverload,sPreviousDeclMissesOverload,
-            [Proc.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType)
-        else if not Data^.Proc.IsOverload then
-          RaiseMsg(20171118222147,nOverloadedProcMissesOverload,sOverloadedProcMissesOverload,
-            [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+            [Proc.Name,GetElementSourcePosStr(Proc)],DataProc.ProcType)
+        else if (not DataProc.IsOverload) then
+          begin
+          // Note: the OverriddenProc might not yet be set
+          if DataProc.IsOverride
+              or ((TPasProcedureScope(DataProc.CustomData).OverriddenProc<>nil)
+                and (ppsfIsOverrideOverload in TPasProcedureScope(DataProc.CustomData).Flags)) then
+            // is override or inherited override
+          else
+            RaiseMsg(20171118222147,nOverloadedProcMissesOverload,sOverloadedProcMissesOverload,
+              [GetElementSourcePosStr(Proc)],DataProc.ProcType);
+          end;
         end
       else
         begin
@@ -5509,29 +5466,33 @@ begin
   else
     begin
     // different scopes
-    if Data^.Proc.IsOverride then
-    else if Data^.Proc.IsReintroduced then
+    if DataProc.IsOverride then
+      // overrides are not overloads
+    else if DataProc.IsReintroduced then
+      // reintroduce do not warn
+    else if ProcHasGroupOverload(DataProc) then
+      // overload
     else
       begin
       if Store
-          or ((Data^.FoundInSameScope=1) // missing 'overload' hints only for the first proc in a scope
-             and not ProcHasGroupOverload(Data^.Proc)) then
+          or (Data^.FoundInSameScope=1) // missing 'overload' hints only for the first proc in a scope
+             then
         begin
         if (Data^.Kind=fpkMethod) and (Proc.IsVirtual or Proc.IsOverride) then
           // give a hint, that method hides a virtual method in ancestor
           LogMsg(20170216151712,mtWarning,nMethodHidesMethodOfBaseType,
             sMethodHidesMethodOfBaseType,
-            [Data^.Proc.Name,Proc.Parent.Name,GetElementSourcePosStr(Proc)],Data^.Proc.ProcType)
+            [DataProc.Name,Proc.Parent.Name,GetElementSourcePosStr(Proc)],DataProc.ProcType)
         else
           begin
           // Delphi/FPC do not give a message when hiding a non virtual method
           // -> emit Hint with other message id
-          if (Data^.Proc.Parent is TPasMembersType) then
+          if (DataProc.Parent is TPasMembersType) then
             begin
             ProcScope:=Proc.CustomData as TPasProcedureScope;
             if (Proc.Visibility=visStrictPrivate)
                 or ((Proc.Visibility=visPrivate)
-                  and (Proc.GetModule<>Data^.Proc.GetModule)) then
+                  and (Proc.GetModule<>DataProc.GetModule)) then
               // a private method is hidden by definition -> no hint
             else if (Proc.Visibility=visPublished) then
               // a published can hide (used for overloading rtti) -> no hint
@@ -5541,21 +5502,21 @@ begin
               // -> do not give a hint for hiding this useless method
               // Note: if this happens in the same unit, the body was not yet parsed
             else if (Proc is TPasConstructor)
-                and (Data^.Proc.ClassType=Proc.ClassType) then
+                and (DataProc.ClassType=Proc.ClassType) then
               // do not give a hint for hiding a constructor
             else if Store then
               begin
               // method hides ancestor method with same signature
               LogMsg(20190316152656,mtHint,
                 nMethodHidesNonVirtualMethodExactly,sMethodHidesNonVirtualMethodExactly,
-                [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+                [GetElementSourcePosStr(Proc)],DataProc.ProcType);
               end
             else
               begin
-              //writeln('TPasResolver.OnFindProc Proc=',Proc.PathName,' Data^.Proc=',Data^.Proc.PathName,' ',Proc.Visibility);
+              //writeln('TPasResolver.OnFindProc Proc=',Proc.PathName,' DataProc=',DataProc.PathName,' ',Proc.Visibility);
               LogMsg(20171118214523,mtHint,
                 nFunctionHidesIdentifier_NonVirtualMethod,sFunctionHidesIdentifier,
-                [GetElementSourcePosStr(Proc)],Data^.Proc.ProcType);
+                [GetElementSourcePosStr(Proc)],DataProc.ProcType);
               end;
             end;
           end;
@@ -5628,12 +5589,12 @@ begin
   Result:=false;
 end;
 
-function TPasResolver.IsProcOverload(LastProc, LastExactProc,
-  CurProc: TPasProcedure): boolean;
+function TPasResolver.IsProcOverloading(LastProc, CurProc: TPasProcedure
+  ): boolean;
 begin
   if msDelphi in TPasProcedureScope(LastProc.CustomData).ModeSwitches then
     begin
-    if (not LastProc.IsOverload) or (not CurProc.IsOverload) then
+    if (not IsProcOverload(LastProc)) or (not IsProcOverload(CurProc)) then
       exit(false);
     end
   else
@@ -5647,13 +5608,6 @@ begin
       if not ProcHasGroupOverload(LastProc) then
         exit(false);
       end;
-    end;
-
-  // check if previous found proc is override of found proc
-  if (LastExactProc<>nil) and IsProcOverride(CurProc,LastExactProc) then
-    begin
-    // previous found proc is override of found proc -> skip
-    exit(false);
     end;
 
   Result:=true;
@@ -6020,7 +5974,7 @@ begin
     for j:=0 to length(IntfHelpers)-1 do
       AddActiveHelper(TPRHelperEntry(IntfHelpers[j]).Helper);
 
-    EmitElementHints(Section,UseUnit);
+    EmitElementHints(UseUnit,UseModule);
     end;
 
   // Add first name of dotted unitname (top level subnamespace) as identifier
@@ -6113,7 +6067,6 @@ procedure TPasResolver.FinishTypeSectionEl(El: TPasType);
   var
     Abort: boolean;
     Data: TPRFindData;
-    OldDestType: TPasType;
   begin
     Abort:=false;
     Data:=Default(TPRFindData);
@@ -6136,10 +6089,7 @@ procedure TPasResolver.FinishTypeSectionEl(El: TPasType);
         RaiseXExpectedButYFound(20170216151548,'class',GetElementTypeName(Data.Found),ErrorEl);
       end;
     // replace unresolved
-    OldDestType:=DestType;
     DestType:=TPasType(Data.Found);
-    DestType.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
-    OldDestType.Release{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
     CheckUseAsType(DestType,20190123100649,El);
     // check cycles
     if Decl is TPasPointerType then
@@ -6325,10 +6275,7 @@ begin
       begin
       // When a TPasEnumType is created a CanonicalSet is created.
       // Release the autocreated CanonicalSet and use the parent.
-      if EnumScope.CanonicalSet<>nil then
-        EnumScope.CanonicalSet.Release{$IFDEF CheckPasTreeRefCount}('TPasEnumTypeScope.CanonicalSet'){$ENDIF};
       EnumScope.CanonicalSet:=TPasSetType(Parent);
-      Parent.AddRef{$IFDEF CheckPasTreeRefCount}('TPasEnumTypeScope.CanonicalSet'){$ENDIF};
       end;
     end;
 end;
@@ -6339,8 +6286,8 @@ var
   StartResolved, EndResolved: TPasResolverResult;
 begin
   RangeExpr:=El.RangeExpr;
-  ResolveExpr(RangeExpr.left,rraRead);
-  ResolveExpr(RangeExpr.right,rraRead);
+  ResolveExpr(RangeExpr.Left,rraRead);
+  ResolveExpr(RangeExpr.Right,rraRead);
   FinishConstRangeExpr(RangeExpr,StartResolved,EndResolved);
 end;
 
@@ -6351,8 +6298,8 @@ var
   RgValue: TResEvalValue;
   Left, Right: TPasExpr;
 begin
-  Left:=RangeExpr.left;
-  Right:=RangeExpr.right;
+  Left:=RangeExpr.Left;
+  Right:=RangeExpr.Right;
   {$IFDEF VerbosePasResEval}
   writeln('TPasResolver.FinishConstRangeExpr Left=',GetObjName(Left),' Right=',GetObjName(Right));
   {$ENDIF}
@@ -6581,10 +6528,7 @@ var
 begin
   TypeEl:=ResolveAliasType(El.DestType);
   if TypeEl is TUnresolvedPendingRef then
-    begin
-    TypeEl.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
     exit;
-    end;
   if (TypeEl is TPasClassType) and (TPasClassType(TypeEl).ObjKind=okClass) then exit;
   RaiseMsg(20170216151602,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
     [El.DestType.Name,'class'],El);
@@ -6596,10 +6540,7 @@ var
 begin
   TypeEl:=ResolveAliasType(El.DestType);
   if TypeEl is TUnresolvedPendingRef then
-    begin
-    TypeEl.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
     exit;
-    end;
   if El.DestType.Parent=El then
     RaiseMsg(20180429094237,nNotYetImplemented,sNotYetImplemented,['pointer of anonymous type'], El.DestType);
   CheckUseAsType(El.DestType,20190123095118,El);
@@ -7477,6 +7418,9 @@ begin
         for i:=length(TPasClassScope(ClassOrRecScope).AbstractProcs)-1 downto 0 do
           if TPasClassScope(ClassOrRecScope).AbstractProcs[i]=OverloadProc then
             Delete(TPasClassScope(ClassOrRecScope).AbstractProcs,i,1);
+      // check inherited "overload"
+      if IsProcOverload(OverloadProc) then
+        Include(ProcScope.Flags,ppsfIsOverrideOverload);
       end;
     end;
   // add abstract
@@ -7582,7 +7526,6 @@ begin
     begin
     // add 'Self'
     ImplProcScope.SelfArg:=SelfArg;
-    SelfArg.AddRef{$IFDEF CheckPasTreeRefCount}('TPasProcedureScope.SelfArg'){$ENDIF};
     {$IFDEF CheckPasTreeRefCount}SelfArg.RefIds.Add('TPasProcedureScope.SelfArg');{$ENDIF}
     AddIdentifier(ImplProcScope,'Self',SelfArg,pikSimple);
     end;
@@ -7634,6 +7577,7 @@ var
   bt: TResolverBaseType;
   TypeEl, ElType: TPasType;
   C: TClass;
+  IdentEl: TPasElement;
 begin
   CreateScope(Loop,TPasForLoopScope);
 
@@ -7642,6 +7586,19 @@ begin
   ComputeElement(Loop.VariableName,VarResolved,[rcNoImplicitProc,rcSetReferenceFlags]);
   if not ResolvedElCanBeVarParam(VarResolved,Loop.VariableName) then
     RaiseVarExpected(20170216151955,Loop.VariableName,VarResolved.IdentEl);
+  IdentEl:=VarResolved.IdentEl;
+  C:=IdentEl.ClassType;
+  if (C=TPasArgument)
+    or (C=TPasResultElement)
+    or ((C=TPasVariable) and ((IdentEl.Parent is TProcedureBody) or (IdentEl.Parent is TPasSection))) then
+    // loop var is simple local var
+  else
+    begin
+    {$IFDEF VerbosePasResolver}
+    writeln('TPasResolver.FinishForLoopHeader ',GetResolverResultDbg(VarResolved),' IdentEl=',GetObjPath(IdentEl));
+    {$ENDIF}
+    RaiseMsg(20220815164902,nForLoopControlVarMustBeSimpleLocalVar,sForLoopControlVarMustBeSimpleLocalVar,[],Loop.VariableName);
+    end;
 
   // resolve start expression
   ResolveExpr(Loop.StartExpr,rraRead);
@@ -7919,7 +7876,8 @@ begin
     C:=ResolvedAbs.IdentEl.ClassType;
     if (C=TPasVariable)
         or (C=TPasArgument)
-        or ((C=TPasConst) and (TPasConst(ResolvedAbs.IdentEl).VarType<>nil)) then
+        or ((C=TPasConst) and (TPasConst(ResolvedAbs.IdentEl).VarType<>nil))
+        or (C=TPasResultElement) then
     else
       RaiseMsg(20171225235203,nVariableIdentifierExpected,sVariableIdentifierExpected,[],El.AbsoluteExpr);
     if not (rrfReadable in ResolvedAbs.Flags) then
@@ -8949,11 +8907,10 @@ begin
   if aClass.ObjKind in ([okClass]+okAllHelpers) then
     begin
     // create canonical class-of for the "Self" in non static class functions
-    CanonicalSelf:=TPasClassOfType.Create('Self',aClass);
+    CanonicalSelf:=TPasClassOfType(CreateOwnedElement(TPasClassOfType,'Self',aClass));
     ClassScope.CanonicalClassOf:=CanonicalSelf;
     {$IFDEF CheckPasTreeRefCount}CanonicalSelf.RefIds.Add('TPasClassScope.CanonicalClassOf');{$ENDIF}
     CanonicalSelf.DestType:=aClass;
-    aClass.AddRef{$IFDEF CheckPasTreeRefCount}('TPasAliasType.DestType'){$ENDIF};
     CanonicalSelf.Visibility:=visStrictPrivate;
     CanonicalSelf.SourceFilename:=aClass.SourceFilename;
     CanonicalSelf.SourceLinenumber:=aClass.SourceLinenumber;
@@ -9088,7 +9045,7 @@ begin
     if NameExpr is TBinaryExpr then
       begin
       Bin:=TBinaryExpr(NameExpr);
-      ResolveExpr(Bin.left,rraRead);
+      ResolveExpr(Bin.Left,rraRead);
       ComputeElement(Bin.Left,LeftResolved,[rcType,rcSetReferenceFlags]);
       if LeftResolved.BaseType=btModule then
         begin
@@ -9119,7 +9076,7 @@ begin
       else
         RaiseMsg(20190221102049,nXExpectedButYFound,sXExpectedButYFound,
           ['module or type',GetResolverResultDescription(LeftResolved,true)],NameExpr);
-      NameExpr:=Bin.right;
+      NameExpr:=Bin.Right;
       end;
     // find attribute class
     if not IsNameExpr(NameExpr) then
@@ -9798,7 +9755,7 @@ type
         end
       else if CaseExprType.ClassType=TPasRangeType then
         begin
-        ComputeElement(TPasRangeType(CaseExprType).RangeExpr.left,ElTypeResolved,[rcConstant]);
+        ComputeElement(TPasRangeType(CaseExprType).RangeExpr.Left,ElTypeResolved,[rcConstant]);
         Result:=CreateValues(ElTypeResolved,ValueSet);
         end;
       end;
@@ -10093,16 +10050,16 @@ begin
     Access:=rraAssign
   else
     Access:=rraReadAndAssign;
-  ResolveExpr(El.left,Access);
+  ResolveExpr(El.Left,Access);
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.ResolveImplAssign Kind=',El.Kind,' left=',GetObjName(El.left),' right=',GetObjName(el.right));
+  writeln('TPasResolver.ResolveImplAssign Kind=',El.Kind,' left=',GetObjName(El.Left),' right=',GetObjName(el.Right));
   {$ENDIF}
   // check LHS can be assigned
-  ComputeElement(El.left,LeftResolved,[rcNoImplicitProc,rcSetReferenceFlags]);
-  CheckCanBeLHS(LeftResolved,true,GetRightMostExpr(El.left));
+  ComputeElement(El.Left,LeftResolved,[rcNoImplicitProc,rcSetReferenceFlags]);
+  CheckCanBeLHS(LeftResolved,true,GetRightMostExpr(El.Left));
 
   // compute RHS
-  ResolveExpr(El.right,rraRead);
+  ResolveExpr(El.Right,rraRead);
   Flags:=[rcSetReferenceFlags];
   if IsProcedureType(LeftResolved,true) then
     begin
@@ -10114,7 +10071,7 @@ begin
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.ResolveImplAssign Left=',GetResolverResultDbg(LeftResolved),' Flags=',dbgs(Flags));
   {$ENDIF}
-  ComputeElement(El.right,RightResolved,Flags);
+  ComputeElement(El.Right,RightResolved,Flags);
   {$IFDEF VerbosePasResolver}
   writeln('TPasResolver.ResolveImplAssign Right=',GetResolverResultDbg(RightResolved));
   {$ENDIF}
@@ -10122,10 +10079,10 @@ begin
   case El.Kind of
   akDefault:
     begin
-    CheckAssignResCompatibility(LeftResolved,RightResolved,El.right,true);
-    CheckAssignExprRange(LeftResolved,El.right);
+    CheckAssignResCompatibility(LeftResolved,RightResolved,El.Right,true);
+    CheckAssignExprRange(LeftResolved,El.Right);
     if (LeftResolved.BaseType=btContext) and (LeftResolved.LoTypeEl.ClassType=TPasArrayType) then
-      MarkArrayExprRecursive(El.right,TPasArrayType(LeftResolved.LoTypeEl));
+      MarkArrayExprRecursive(El.Right,TPasArrayType(LeftResolved.LoTypeEl));
     end;
   akAdd, akMinus,akMul,akDivision:
     begin
@@ -10134,14 +10091,14 @@ begin
       if (not (rrfReadable in RightResolved.Flags))
           or not (RightResolved.BaseType in btAllInteger) then
         RaiseMsg(20170216152009,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
-          [BaseTypes[RightResolved.BaseType],BaseTypes[LeftResolved.BaseType]],El.right);
+          [BaseTypes[RightResolved.BaseType],BaseTypes[LeftResolved.BaseType]],El.Right);
       end
     else if (LeftResolved.BaseType in btAllStrings) and (El.Kind=akAdd) then
       begin
       if (not (rrfReadable in RightResolved.Flags))
           or not (RightResolved.BaseType in btAllStringAndChars) then
         RaiseMsg(20170216152012,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
-          [BaseTypes[RightResolved.BaseType],BaseTypes[LeftResolved.BaseType]],El.right);
+          [BaseTypes[RightResolved.BaseType],BaseTypes[LeftResolved.BaseType]],El.Right);
       end
     else if (LeftResolved.BaseType in btAllFloats)
         and (El.Kind in [akAdd,akMinus,akMul,akDivision]) then
@@ -10149,21 +10106,21 @@ begin
       if (not (rrfReadable in RightResolved.Flags))
           or not (RightResolved.BaseType in (btAllInteger+btAllFloats)) then
         RaiseMsg(20170216152107,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
-          [BaseTypes[RightResolved.BaseType],BaseTypes[LeftResolved.BaseType]],El.right);
+          [BaseTypes[RightResolved.BaseType],BaseTypes[LeftResolved.BaseType]],El.Right);
       end
     else if (LeftResolved.BaseType=btSet) and (El.Kind in [akAdd,akMinus,akMul]) then
       begin
       if (not (rrfReadable in RightResolved.Flags))
           or not (RightResolved.BaseType in [btSet,btArrayOrSet]) then
         RaiseMsg(20170216152110,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
-          [BaseTypeNames[RightResolved.BaseType],'set of '+BaseTypeNames[LeftResolved.SubType]],El.right);
+          [BaseTypeNames[RightResolved.BaseType],'set of '+BaseTypeNames[LeftResolved.SubType]],El.Right);
       if (LeftResolved.SubType=RightResolved.SubType)
           or ((LeftResolved.SubType in btAllInteger) and (RightResolved.SubType in btAllInteger))
           or ((LeftResolved.SubType in btAllBooleans) and (RightResolved.SubType in btAllBooleans))
       then
       else
         RaiseMsg(20170216152117,nIncompatibleTypesGotExpected,sIncompatibleTypesGotExpected,
-          ['set of '+BaseTypeNames[RightResolved.SubType],'set of '+BaseTypeNames[LeftResolved.SubType]],El.right);
+          ['set of '+BaseTypeNames[RightResolved.SubType],'set of '+BaseTypeNames[LeftResolved.SubType]],El.Right);
       end
     else if LeftResolved.BaseType=btContext then
       begin
@@ -10181,7 +10138,7 @@ begin
     else
       RaiseIncompatibleTypeRes(20180208115707,nOperatorIsNotOverloadedAOpB,[AssignKindNames[El.Kind]],LeftResolved,RightResolved,El);
     // store const expression result
-    Value:=Eval(El.right,[]);
+    Value:=Eval(El.Right,[]);
     ReleaseEvalValue(Value);
     end;
   else
@@ -10293,10 +10250,10 @@ begin
   else
     RaiseNotYetImplemented(20170222184329,El);
 
-  if El.format1<>nil then
-    ResolveExpr(El.format1,rraRead);
-  if El.format2<>nil then
-    ResolveExpr(El.format2,rraRead);
+  if El.Format1<>nil then
+    ResolveExpr(El.Format1,rraRead);
+  if El.Format2<>nil then
+    ResolveExpr(El.Format2,rraRead);
 end;
 
 procedure TPasResolver.ResolveStatementConditionExpr(El: TPasExpr);
@@ -10403,7 +10360,7 @@ begin
       if (Access=rraAssign) and (Proc.ProcType is TPasFunctionType)
           and (El.ClassType=TPrimitiveExpr)
           and (El.Parent.ClassType=TPasImplAssign)
-          and (TPasImplAssign(El.Parent).left=El) then
+          and (TPasImplAssign(El.Parent).Left=El) then
         begin
         // e.g. funcname:=
         ProcScope:=Proc.CustomData as TPasProcedureScope;
@@ -10449,14 +10406,14 @@ begin
       if El=nil then
         RaiseInternalError(20170503002012);
       CreateReference(DeclEl,El,Access);
-      if (El.Parent is TBinaryExpr) and (TBinaryExpr(El.Parent).right=El) then
+      if (El.Parent is TBinaryExpr) and (TBinaryExpr(El.Parent).Right=El) then
         begin
         Bin:=TBinaryExpr(El.Parent);
         while Bin.OpCode=eopSubIdent do
           begin
           CreateReference(DeclEl,Bin,Access);
           if not (Bin.Parent is TBinaryExpr) then break;
-          if (TBinaryExpr(Bin.Parent).right<>Bin) then break;
+          if (TBinaryExpr(Bin.Parent).Right<>Bin) then break;
           Bin:=TBinaryExpr(Bin.Parent);
           end;
         end;
@@ -10602,7 +10559,7 @@ begin
       InhScope:=PushInheritedScope(TPasMembersType(HelperForType),false,
         AncestorScope);
       InhScope.OnlyTypeMembers:=OnlyTypeMembers;
-      ResolveExpr(El.right,Access);
+      ResolveExpr(El.Right,Access);
       PopScope;
       exit;
       end
@@ -10617,12 +10574,12 @@ begin
     end;
   // search in ancestor and its helpers
   if AncestorScope=nil then
-    RaiseMsg(20170216152151,nInheritedNeedsAncestor,sInheritedNeedsAncestor,[],El.left);
+    RaiseMsg(20170216152151,nInheritedNeedsAncestor,sInheritedNeedsAncestor,[],El.Left);
   // search call in ancestor
   AncestorClass:=TPasClassType(AncestorScope.Element);
   InhScope:=PushInheritedScope(AncestorClass,true,nil);
   InhScope.OnlyTypeMembers:=OnlyTypeMembers;
-  ResolveExpr(El.right,Access);
+  ResolveExpr(El.Right,Access);
   PopScope;
 end;
 
@@ -10633,26 +10590,26 @@ var
   Bin: TBinaryExpr;
 begin
   {$IFDEF VerbosePasResolver}
-  //writeln('TPasResolver.ResolveBinaryExpr left=',GetObjName(El.left),' right=',GetObjName(El.right),' opcode=',OpcodeStrings[El.OpCode]);
+  //writeln('TPasResolver.ResolveBinaryExpr left=',GetObjName(El.Left),' right=',GetObjName(El.Right),' opcode=',OpcodeStrings[El.OpCode]);
   {$ENDIF}
   case El.OpCode of
   eopNone:
     case El.Kind of
     pekRange:
       begin
-      ResolveExpr(El.left,rraRead);
-      if El.right=nil then exit;
-      ResolveExpr(El.right,rraRead);
+      ResolveExpr(El.Left,rraRead);
+      if El.Right=nil then exit;
+      ResolveExpr(El.Right,rraRead);
       end;
     else
-      if El.left.ClassType=TInheritedExpr then
+      if El.Left.ClassType=TInheritedExpr then
         begin
-        ResolveExpr(El.left,Access);
+        ResolveExpr(El.Left,Access);
         end
       else
         begin
         {$IFDEF VerbosePasResolver}
-        writeln('TPasResolver.ResolveBinaryExpr El.Kind=',ExprKindNames[El.Kind],' El.Left=',GetObjName(El.left),' El.Right=',GetObjName(El.right),' parent=',GetObjName(El.Parent));
+        writeln('TPasResolver.ResolveBinaryExpr El.Kind=',ExprKindNames[El.Kind],' El.Left=',GetObjName(El.Left),' El.Right=',GetObjName(El.Right),' parent=',GetObjName(El.Parent));
         {$ENDIF}
         RaiseNotYetImplemented(20160922163456,El);
         end;
@@ -10660,12 +10617,12 @@ begin
   eopAdd:
     begin
     // handle multi add
-    Left:=El.left;
+    Left:=El.Left;
     while (Left.ClassType=TBinaryExpr) do
       begin
       Bin:=TBinaryExpr(Left);
       if Bin.OpCode<>eopAdd then break;
-      Next:=TBinaryExpr(Left).left;
+      Next:=TBinaryExpr(Left).Left;
       if Next.Parent<>Left then
         RaiseNotYetImplemented(20210321201257,Left);
       Left:=Next;
@@ -10673,8 +10630,8 @@ begin
     ResolveExpr(Left,rraRead);
     repeat
       Bin:=TBinaryExpr(Left.Parent);
-      if Bin.right<>nil then
-        ResolveExpr(Bin.right,rraRead);
+      if Bin.Right<>nil then
+        ResolveExpr(Bin.Right,rraRead);
       Left:=Bin;
     until Left=El;
     end;
@@ -10701,14 +10658,14 @@ begin
   eopAs,
   eopSymmetricaldifference:
     begin
-    ResolveExpr(El.left,rraRead);
-    if El.right=nil then exit;
-    ResolveExpr(El.right,rraRead);
+    ResolveExpr(El.Left,rraRead);
+    if El.Right=nil then exit;
+    ResolveExpr(El.Right,rraRead);
     end;
   eopSubIdent:
     begin
-    ResolveExpr(El.left,rraRead);
-    if El.right=nil then exit;
+    ResolveExpr(El.Left,rraRead);
+    if El.Right=nil then exit;
     ResolveSubIdent(El,Access);
     end;
   else
@@ -10721,7 +10678,7 @@ procedure TPasResolver.ResolveSubIdent(El: TBinaryExpr;
 
   procedure ResolveRight; inline;
   begin
-    ResolveExpr(El.right,Access);
+    ResolveExpr(El.Right,Access);
     PopScope;
   end;
 
@@ -10754,7 +10711,7 @@ begin
   if El.CustomData is TResolvedReference then
     exit; // for example, when a.b has a dotted unit name
 
-  Left:=El.left;
+  Left:=El.Left;
   //writeln('TPasResolver.ResolveSubIdent Left=',GetObjName(Left));
   ComputeElement(Left,LeftResolved,[rcSetReferenceFlags]);
 
@@ -10823,7 +10780,7 @@ begin
       else
         begin
         // e.g. aPoint.X
-        AccessExpr(El.left,Access);
+        AccessExpr(El.Left,Access);
         RecordScope.OnlyTypeMembers:=false;
         end;
       ResolveRight;
@@ -10871,7 +10828,7 @@ begin
     end;
 
   {$IFDEF VerbosePasResolver}
-  writeln('TPasResolver.ResolveSubIdent left=',GetObjName(Left),' right=',GetObjName(El.right),' leftresolved=',GetResolverResultDbg(LeftResolved));
+  writeln('TPasResolver.ResolveSubIdent left=',GetObjName(Left),' right=',GetObjName(El.Right),' leftresolved=',GetResolverResultDbg(LeftResolved));
   {$ENDIF}
   RaiseMsg(20170216152157,nIllegalQualifierAfter,sIllegalQualifierAfter,
     ['.',GetResolverResultDescription(LeftResolved)],El);
@@ -10938,7 +10895,7 @@ begin
     //         /                 \
     // left = TPrimitiveExpr 'a'  right = TPrimitiveExpr 'b'
     if (Value is TBinaryExpr) and (TBinaryExpr(Value).OpCode=eopSubIdent) then
-      Value:=TBinaryExpr(Value).right;
+      Value:=TBinaryExpr(Value).Right;
     if IsNameExpr(Value) then
       begin
       ResolveBinaryExpr(TBinaryExpr(Params.Value),Access);
@@ -11215,7 +11172,6 @@ begin
         // check if params fit the implicit specialized function, e.g. Run()
         CheckCallProcCompatibility(TPasProcedure(FoundEl).ProcType,Params,true);
       finally
-        ReleaseElementList(InferenceParams{$IFDEF CheckPasTreeRefCount},RefIdInferenceParamsExpr{$ENDIF});
         FreeAndNil(InferenceParams);
       end;
       end
@@ -11391,7 +11347,7 @@ begin
     //         /                 \
     // left = TPrimitiveExpr 'a'  right = TPrimitiveExpr 'b'
     while (Value is TBinaryExpr) and (TBinaryExpr(Value).OpCode=eopSubIdent) do
-      Value:=TBinaryExpr(Value).right;
+      Value:=TBinaryExpr(Value).Right;
     if IsNameExpr(Value) then
       begin
       ResolveBinaryExpr(TBinaryExpr(Params.Value),Access);
@@ -11448,7 +11404,7 @@ begin
     if (Access=rraAssign)
         and (Proc.ProcType is TPasFunctionType)
         and (Params.Parent.ClassType=TPasImplAssign)
-        and (TPasImplAssign(Params.Parent).left=Params) then
+        and (TPasImplAssign(Params.Parent).Left=Params) then
       begin
       // e.g. funcname[]:=
       ProcScope:=Proc.CustomData as TPasProcedureScope;
@@ -11484,7 +11440,7 @@ procedure TPasResolver.ResolveArrayParamsArgs(Params: TParamsExpr;
       // -> writing the element needs reading the value
       Left:=Params.Value;
       if (Left is TBinaryExpr) and (TBinaryExpr(Left).OpCode=eopSubIdent) then
-        Left:=TBinaryExpr(Left).right;
+        Left:=TBinaryExpr(Left).Right;
       if Left.CustomData is TResolvedReference then
         begin
         Ref:=TResolvedReference(Left.CustomData);
@@ -11800,9 +11756,9 @@ begin
   if Expr.ClassType=TBinaryExpr then
     begin
     DeclEl:=nil;
-    if (TBinaryExpr(Expr).left is TPrimitiveExpr) then
+    if (TBinaryExpr(Expr).Left is TPrimitiveExpr) then
       begin
-      Prim:=TPrimitiveExpr(TBinaryExpr(Expr).left);
+      Prim:=TPrimitiveExpr(TBinaryExpr(Expr).Left);
       DeclEl:=SubResolvePrimitive(Prim);
       if not (DeclEl is TPasMembersType) then
         RaiseXExpectedButYFound(20170216151752,'class',GetElementTypeName(DeclEl),Prim);
@@ -11817,7 +11773,7 @@ begin
       PushRecordDotScope(TPasRecordType(DeclEl))
     else
       RaiseMsg(20190123145559,nIllegalQualifier,sIllegalQualifier,[OpcodeStrings[TBinaryExpr(Expr).OpCode]],Expr);
-    Expr:=TBinaryExpr(Expr).right;
+    Expr:=TBinaryExpr(Expr).Right;
     Result:=ResolveAccessor(Expr);
     PopScope;
     end
@@ -11880,7 +11836,7 @@ begin
     begin
     Bin:=TBinaryExpr(Expr);
     if Bin.OpCode in [eopSubIdent,eopNone] then
-      AccessExpr(Bin.right,Access);
+      AccessExpr(Bin.Right,Access);
     end
   else if C=TParamsExpr then
     begin
@@ -11974,8 +11930,8 @@ procedure TPasResolver.MarkArrayExprRecursive(Expr: TPasExpr;
   begin
     if IsArrayOperatorAdd(CurExpr) then
       begin
-      Traverse(TBinaryExpr(CurExpr).left,ArrayType,RgIndex);
-      Traverse(TBinaryExpr(CurExpr).right,ArrayType,RgIndex);
+      Traverse(TBinaryExpr(CurExpr).Left,ArrayType,RgIndex);
+      Traverse(TBinaryExpr(CurExpr).Right,ArrayType,RgIndex);
       end
     else if CurExpr.ClassType=TParamsExpr then
       begin
@@ -12068,7 +12024,6 @@ procedure TPasResolver.DeanonymizeType(El: TPasType);
       begin
       List.Add(El);
       end;
-    El.AddRef{$IFDEF CheckPasTreeRefCount}(aID){$ENDIF};
     {$IFDEF VerbosePasResolver}
     if El.Parent<>NewParent then writeln('TPasResolver.DeanonymizeType.InsertInFront OldParent=',GetObjName(El.Parent),' -> ',GetObjPath(NewParent));
     {$ENDIF}
@@ -12514,14 +12469,12 @@ begin
     begin
     // set of anonymous enumtype, e.g. "set of ()"
     CanonicalSet:=TPasSetType(El.Parent);
-    CanonicalSet.AddRef{$IFDEF CheckPasTreeRefCount}('TPasEnumTypeScope.CanonicalSet'){$ENDIF};
     end
   else
     begin
-    CanonicalSet:=TPasSetType.Create('',El);
+    CanonicalSet:=TPasSetType(CreateOwnedElement(TPasSetType,'',El));
     {$IFDEF CheckPasTreeRefCount}CanonicalSet.RefIds.Add('TPasEnumTypeScope.CanonicalSet'){$ENDIF};
     CanonicalSet.EnumType:=El;
-    El.AddRef{$IFDEF CheckPasTreeRefCount}('TPasSetType.EnumType'){$ENDIF};
     end;
   EnumScope.CanonicalSet:=CanonicalSet;
 end;
@@ -13141,16 +13094,16 @@ var
   SubBin: TBinaryExpr;
 begin
   if (Bin.OpCode=eopSubIdent)
-  or ((Bin.OpCode=eopNone) and (Bin.left is TInheritedExpr)) then
+  or ((Bin.OpCode=eopNone) and (Bin.Left is TInheritedExpr)) then
     begin
-    // Note: bin.left was already resolved via ResolveSubIdent
-    ComputeElement(Bin.right,ResolvedEl,Flags,StartEl);
+    // Note: bin.Left was already resolved via ResolveSubIdent
+    ComputeElement(Bin.Right,ResolvedEl,Flags,StartEl);
     exit;
     end;
 
   if Bin.OpCode in [eopEqual,eopNotEqual] then
     begin
-    if CheckEqualElCompatibility(Bin.left,Bin.right,nil,true,
+    if CheckEqualElCompatibility(Bin.Left,Bin.Right,nil,true,
         rcSetReferenceFlags in Flags)=cIncompatible then
       RaiseInternalError(20161007215912);
     SetResolverValueExpr(ResolvedEl,btBoolean,FBaseTypes[btBoolean],FBaseTypes[btBoolean],
@@ -13162,18 +13115,18 @@ begin
   if Bin.OpCode=eopAdd then
     begin
     // handle multi-adds without stack
-    Left:=Bin.left;
+    Left:=Bin.Left;
     while Left.ClassType=TBinaryExpr do
       begin
       SubBin:=TBinaryExpr(Left);
       if SubBin.OpCode<>eopAdd then break;
-      Left:=SubBin.left;
+      Left:=SubBin.Left;
       end;
     // Left is now left-most of multi add
     ComputeElement(Left,LeftResolved,Flags,StartEl);
     repeat
       SubBin:=TBinaryExpr(Left.Parent);
-      ComputeElement(SubBin.right,RightResolved,Flags,StartEl);
+      ComputeElement(SubBin.Right,RightResolved,Flags,StartEl);
 
       // ToDo: check operator overloading
       ComputeBinaryExprRes(SubBin,ResolvedEl,Flags,LeftResolved,RightResolved);
@@ -13183,8 +13136,8 @@ begin
     end
   else
     begin
-    ComputeElement(Bin.left,LeftResolved,Flags,StartEl);
-    ComputeElement(Bin.right,RightResolved,Flags,StartEl);
+    ComputeElement(Bin.Left,LeftResolved,Flags,StartEl);
+    ComputeElement(Bin.Right,RightResolved,Flags,StartEl);
 
     // ToDo: check operator overloading
     ComputeBinaryExprRes(Bin,ResolvedEl,Flags,LeftResolved,RightResolved);
@@ -13257,7 +13210,7 @@ begin
             if (Bin.Kind=pekRange) then
               begin
               if not (RightResolved.BaseType in btAllInteger) then
-                RaiseXExpectedButYFound(20170216152600,'integer',BaseTypeNames[RightResolved.BaseType],Bin.right);
+                RaiseXExpectedButYFound(20170216152600,'integer',BaseTypeNames[RightResolved.BaseType],Bin.Right);
               // use left type for result
               SetLeftValueExpr([rrfReadable]);
               if Bin.Parent is TPasRangeType then
@@ -13366,7 +13319,7 @@ begin
           if (Bin.Kind=pekRange) and (LeftResolved.BaseType in btAllChars) then
             begin
             if not (RightResolved.BaseType in btAllChars) then
-              RaiseXExpectedButYFound(20170216152603,'char',BaseTypeNames[RightResolved.BaseType],Bin.right);
+              RaiseXExpectedButYFound(20170216152603,'char',BaseTypeNames[RightResolved.BaseType],Bin.Right);
             SetResolverValueExpr(ResolvedEl,btRange,
               FBaseTypes[LeftResolved.BaseType],FBaseTypes[LeftResolved.BaseType],
               Bin,[rrfReadable]);
@@ -13469,7 +13422,7 @@ begin
         if (rrfReadable in LeftResolved.Flags)
             and (rrfReadable in RightResolved.Flags) then
           begin
-          CheckSetLitElCompatible(Bin.left,Bin.right,LeftResolved,RightResolved);
+          CheckSetLitElCompatible(Bin.Left,Bin.Right,LeftResolved,RightResolved);
           ResolvedEl:=LeftResolved;
           ResolvedEl.IdentEl:=nil;
           ResolvedEl.SubType:=ResolvedEl.BaseType;
@@ -13485,19 +13438,19 @@ begin
         if LeftResolved.BaseType in btArrayRangeTypes then
           begin
           if not (RightResolved.BaseType in [btSet,btArrayOrSet]) then
-            RaiseXExpectedButYFound(20170216152607,'set of '+BaseTypeNames[LeftResolved.BaseType],GetElementTypeName(LeftResolved.LoTypeEl),Bin.right);
+            RaiseXExpectedButYFound(20170216152607,'set of '+BaseTypeNames[LeftResolved.BaseType],GetElementTypeName(LeftResolved.LoTypeEl),Bin.Right);
           if LeftResolved.BaseType in btAllBooleans then
             begin
             if not (RightResolved.SubType in btAllBooleans) then
-              RaiseXExpectedButYFound(20170216152610,'set of '+BaseTypeNames[LeftResolved.BaseType],'set of '+BaseTypeNames[RightResolved.SubType],Bin.right);
+              RaiseXExpectedButYFound(20170216152610,'set of '+BaseTypeNames[LeftResolved.BaseType],'set of '+BaseTypeNames[RightResolved.SubType],Bin.Right);
             end
           else if LeftResolved.BaseType in btAllChars then
             begin
             if not (RightResolved.SubType in btAllChars) then
-              RaiseXExpectedButYFound(20170216152609,'set of '+BaseTypeNames[LeftResolved.BaseType],'set of '+BaseTypeNames[RightResolved.SubType],Bin.right);
+              RaiseXExpectedButYFound(20170216152609,'set of '+BaseTypeNames[LeftResolved.BaseType],'set of '+BaseTypeNames[RightResolved.SubType],Bin.Right);
             end
           else if not (RightResolved.SubType in btAllInteger) then
-            RaiseXExpectedButYFound(20170216152612,'set of '+BaseTypeNames[LeftResolved.BaseType],'set of '+BaseTypeNames[RightResolved.SubType],Bin.right);
+            RaiseXExpectedButYFound(20170216152612,'set of '+BaseTypeNames[LeftResolved.BaseType],'set of '+BaseTypeNames[RightResolved.SubType],Bin.Right);
           SetBaseType(btBoolean);
           exit;
           end
@@ -13505,18 +13458,18 @@ begin
             and (LeftTypeEl.ClassType=TPasEnumType) then
           begin
           if not (RightResolved.BaseType in [btSet,btArrayOrSet]) then
-            RaiseXExpectedButYFound(20170216152615,'set of '+LeftResolved.LoTypeEl.Name,GetElementTypeName(LeftResolved.LoTypeEl),Bin.right);
+            RaiseXExpectedButYFound(20170216152615,'set of '+LeftResolved.LoTypeEl.Name,GetElementTypeName(LeftResolved.LoTypeEl),Bin.Right);
           RightTypeEl:=RightResolved.LoTypeEl;
           if LeftTypeEl=RightTypeEl then
             // enum in setofenum
           else if RightResolved.LoTypeEl.ClassType=TPasRangeType then
             begin
-            ComputeElement(TPasRangeType(RightTypeEl).RangeExpr.left,ElTypeResolved,[rcConstant]);
+            ComputeElement(TPasRangeType(RightTypeEl).RangeExpr.Left,ElTypeResolved,[rcConstant]);
             if LeftTypeEl<>ElTypeResolved.LoTypeEl then
-              RaiseXExpectedButYFound(20171109215833,'set of '+LeftResolved.LoTypeEl.Name,'set of '+RightResolved.LoTypeEl.Name,Bin.right);
+              RaiseXExpectedButYFound(20171109215833,'set of '+LeftResolved.LoTypeEl.Name,'set of '+RightResolved.LoTypeEl.Name,Bin.Right);
             end
           else
-            RaiseXExpectedButYFound(20170216152618,'set of '+LeftResolved.LoTypeEl.Name,'set of '+RightResolved.LoTypeEl.Name,Bin.right);
+            RaiseXExpectedButYFound(20170216152618,'set of '+LeftResolved.LoTypeEl.Name,'set of '+RightResolved.LoTypeEl.Name,Bin.Right);
           SetBaseType(btBoolean);
           exit;
           end
@@ -13593,7 +13546,7 @@ begin
             end;
           end
         else
-          RaiseXExpectedButYFound(20170216152625,'class type',GetElementTypeName(RightResolved.LoTypeEl),Bin.right);
+          RaiseXExpectedButYFound(20170216152625,'class type',GetElementTypeName(RightResolved.LoTypeEl),Bin.Right);
         end
       else if (proClassOfIs in Options) and (LeftTypeEl is TPasClassOfType)
           and (rrfReadable in LeftResolved.Flags) then
@@ -13626,7 +13579,7 @@ begin
             end
           end
         else
-          RaiseXExpectedButYFound(20170322105252,'class type',GetElementTypeName(RightResolved.LoTypeEl),Bin.right);
+          RaiseXExpectedButYFound(20170322105252,'class type',GetElementTypeName(RightResolved.LoTypeEl),Bin.Right);
         end
       else if LeftResolved.LoTypeEl=nil then
         begin
@@ -13634,7 +13587,7 @@ begin
         writeln('TPasResolver.ComputeBinaryExprRes is-operator: left=',GetResolverResultDbg(LeftResolved),' right=',GetResolverResultDbg(RightResolved));
         {$ENDIF}
         RaiseMsg(20170216152232,nLeftSideOfIsOperatorExpectsAClassButGot,sLeftSideOfIsOperatorExpectsAClassButGot,
-                 [BaseTypeNames[LeftResolved.BaseType]],Bin.left);
+                 [BaseTypeNames[LeftResolved.BaseType]],Bin.Left);
         end
       else
         begin
@@ -13642,7 +13595,7 @@ begin
         writeln('TPasResolver.ComputeBinaryExprRes is-operator: left=',GetResolverResultDbg(LeftResolved),' right=',GetResolverResultDbg(RightResolved));
         {$ENDIF}
         RaiseMsg(20170216152234,nLeftSideOfIsOperatorExpectsAClassButGot,sLeftSideOfIsOperatorExpectsAClassButGot,
-                 [GetElementTypeName(LeftResolved.LoTypeEl)],Bin.left);
+                 [GetElementTypeName(LeftResolved.LoTypeEl)],Bin.Left);
         end;
       end;
     eopAs:
@@ -13659,11 +13612,11 @@ begin
             [OpcodeStrings[Bin.OpCode]],LeftResolved,RightResolved,Bin);
           end;
         if RightResolved.IdentEl=nil then
-          RaiseXExpectedButYFound(20170216152630,'class',GetElementTypeName(RightResolved.LoTypeEl),Bin.right);
+          RaiseXExpectedButYFound(20170216152630,'class',GetElementTypeName(RightResolved.LoTypeEl),Bin.Right);
         if not (RightResolved.IdentEl is TPasType) then
-          RaiseXExpectedButYFound(20170216152632,'class',RightResolved.IdentEl.Name,Bin.right);
+          RaiseXExpectedButYFound(20170216152632,'class',RightResolved.IdentEl.Name,Bin.Right);
         if not (RightResolved.BaseType=btContext) then
-          RaiseXExpectedButYFound(20180426195816,'class',RightResolved.IdentEl.Name,Bin.right);
+          RaiseXExpectedButYFound(20180426195816,'class',RightResolved.IdentEl.Name,Bin.Right);
         RightTypeEl:=RightResolved.LoTypeEl;
         if RightTypeEl is TPasClassType then
           begin
@@ -13707,11 +13660,11 @@ begin
           RaiseIncompatibleTypeRes(20190908191127,nOperatorIsNotOverloadedAOpB,
             [OpcodeStrings[Bin.OpCode]],LeftResolved,RightResolved,Bin);
         if RightResolved.IdentEl=nil then
-          RaiseXExpectedButYFound(20190908191202,'class',GetElementTypeName(RightResolved.LoTypeEl),Bin.right);
+          RaiseXExpectedButYFound(20190908191202,'class',GetElementTypeName(RightResolved.LoTypeEl),Bin.Right);
         if not (RightResolved.IdentEl is TPasType) then
-          RaiseXExpectedButYFound(20190908191204,'class',RightResolved.IdentEl.Name,Bin.right);
+          RaiseXExpectedButYFound(20190908191204,'class',RightResolved.IdentEl.Name,Bin.Right);
         if not (RightResolved.BaseType=btContext) then
-          RaiseXExpectedButYFound(20190908191206,'class',RightResolved.IdentEl.Name,Bin.right);
+          RaiseXExpectedButYFound(20190908191206,'class',RightResolved.IdentEl.Name,Bin.Right);
         RightTypeEl:=RightResolved.LoTypeEl;
         if RightTypeEl is TPasClassType then
           begin
@@ -14995,7 +14948,7 @@ begin
       RaiseNotYetImplemented(20161001155834,ResolvedEl.ExprEl);
   TypeEl:=ResolvedEl.LoTypeEl;
   if TypeEl is TPasRangeType then
-    ComputeElement(TPasRangeType(TypeEl).RangeExpr.left,ResolvedEl,[rcConstant])
+    ComputeElement(TPasRangeType(TypeEl).RangeExpr.Left,ResolvedEl,[rcConstant])
   else
     begin
     ResolvedEl.BaseType:=ResolvedEl.SubType;
@@ -15574,7 +15527,7 @@ begin
           if Proc.ProcType.Args.Count=0 then
             exit(TPasConstructor(El));
           end;
-        if Proc.IsOverload then
+        if IsProcOverload(Proc) then
           HasOverload:=true;
         Identifier:=Identifier.NextSameIdentifier;
         end;
@@ -15798,7 +15751,7 @@ begin
       else if C=TPasRangeType then
         begin
         // typecast to custom range
-        ComputeElement(TPasRangeType(Decl).RangeExpr.left,ResolvedEl,[rcConstant]);
+        ComputeElement(TPasRangeType(Decl).RangeExpr.Left,ResolvedEl,[rcConstant]);
         if ResolvedEl.BaseType=btContext then
           begin
           TypeEl:=ResolvedEl.LoTypeEl;
@@ -16267,7 +16220,6 @@ type
           // template type inferred first time
           InferenceParams[i].InferType:=ParamHiType;
           InferenceParams[i].IsVarOut:=NeedVar;
-          ParamHiType.AddRef{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
           exit;
           end;
 
@@ -16300,10 +16252,8 @@ type
             // second is var/out, and do not match
             RaiseInferTypeMismatch(20191006220402,ArgType,ErrorPos);
           // first can be widened to fit
-          InferenceParams[i].InferType.Release{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
           InferenceParams[i].InferType:=ParamHiType;
           InferenceParams[i].IsVarOut:=NeedVar;
-          ParamHiType.AddRef{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
           exit;
           end
         else if InferenceParams[i].IsVarOut then
@@ -16371,10 +16321,8 @@ type
           end;
         if NewBaseType<>btNone then
           begin
-          InferenceParams[i].InferType.Release{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
           InferenceParams[i].InferType:=BaseTypes[NewBaseType];
           InferenceParams[i].IsVarOut:=NeedVar;
-          BaseTypes[NewBaseType].AddRef{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
           exit;
           end;
 
@@ -16465,38 +16413,32 @@ begin
     RaiseNotYetImplemented(20191006183021,Params);
 
   IsDelphi:=msDelphi in CurrentParser.CurrentModeswitches;
-  try
-    SetLength(InferenceTypes{%H-},TemplTypes.Count);
-    for i:=0 to TemplTypes.Count-1 do
-      InferenceTypes[i]:=Default(TInferredType);
 
-    // first infer from var/out args exact types
-    for i:=0 to ProcArgs.Count-1 do
-      InferParam(i,true,ParamsExprs,ProcArgs,InferenceTypes,TemplTypes,IsDelphi);
+  SetLength(InferenceTypes{%H-},TemplTypes.Count);
+  for i:=0 to TemplTypes.Count-1 do
+    InferenceTypes[i]:=Default(TInferredType);
 
-    // then infer from the other args
-    for i:=0 to ProcArgs.Count-1 do
-      InferParam(i,false,ParamsExprs,ProcArgs,InferenceTypes,TemplTypes,IsDelphi);
+  // first infer from var/out args exact types
+  for i:=0 to ProcArgs.Count-1 do
+    InferParam(i,true,ParamsExprs,ProcArgs,InferenceTypes,TemplTypes,IsDelphi);
 
-    // check that all types are inferred
-    for i:=0 to TemplTypes.Count-1 do
-      if InferenceTypes[i].InferType=nil then
-        RaiseMsg(20191006175104,nCouldNotInferTypeArgXForMethodY,
-          sCouldNotInferTypeArgXForMethodY,
-          [TPasGenericTemplateType(TemplTypes[i]).Name,TargetProc.Name],Params);
+  // then infer from the other args
+  for i:=0 to ProcArgs.Count-1 do
+    InferParam(i,false,ParamsExprs,ProcArgs,InferenceTypes,TemplTypes,IsDelphi);
 
-    Result:=TFPList.Create;
-    for i:=0 to length(InferenceTypes)-1 do
-      begin
-      Result.Add(InferenceTypes[i].InferType);
-      InferenceTypes[i].InferType:=nil;
-      end;
-  finally
-    if Result=nil then
-      for i:=0 to length(InferenceTypes)-1 do
-        if InferenceTypes[i].InferType<>nil then
-          InferenceTypes[i].InferType.Release{$IFDEF CheckPasTreeRefCount}(RefIdInferenceParamsExpr){$ENDIF};
-  end;
+  // check that all types are inferred
+  for i:=0 to TemplTypes.Count-1 do
+    if InferenceTypes[i].InferType=nil then
+      RaiseMsg(20191006175104,nCouldNotInferTypeArgXForMethodY,
+        sCouldNotInferTypeArgXForMethodY,
+        [TPasGenericTemplateType(TemplTypes[i]).Name,TargetProc.Name],Params);
+
+  Result:=TFPList.Create;
+  for i:=0 to length(InferenceTypes)-1 do
+    begin
+    Result.Add(InferenceTypes[i].InferType);
+    InferenceTypes[i].InferType:=nil;
+    end;
 end;
 
 function TPasResolver.CheckGenericConstraintFitsParam(ParamType: TPasType;
@@ -16549,8 +16491,8 @@ function TPasResolver.CheckGenericConstraintFitsParam(ParamType: TPasType;
     else if C=TBinaryExpr then
       begin
       Bin:=TBinaryExpr(El);
-      Result:=ElementReferencesTemplateTypes(Bin.left,GenericTemplateTypes)
-        or ElementReferencesTemplateTypes(Bin.right,GenericTemplateTypes);
+      Result:=ElementReferencesTemplateTypes(Bin.Left,GenericTemplateTypes)
+        or ElementReferencesTemplateTypes(Bin.Right,GenericTemplateTypes);
       end
     else if C=TInlineSpecializeExpr then
       begin
@@ -17041,7 +16983,7 @@ begin
   NewName:=CreateSpecializedTypeName(Result);
   NewClass:=TPTreeElement(GenericEl.ClassType);
   NewParent:=GenericEl.Parent;
-  NewEl:=TPasElement(NewClass.Create(NewName,NewParent));
+  NewEl:=TPasElement(CreateOwnedElement(NewClass,NewName,NewParent));
   if TypeItem<>nil then
     TypeItem.SpecializedType:=TPasGenericType(NewEl) // this calls AddRef
   else
@@ -17056,9 +16998,7 @@ begin
     begin
     InsertBehind(TPasMembersType(NewParent).Members);
     {$IFDEF CheckPasTreeRefCount}NewEl.RefIds.Add('TPasMembersType.Members');{$ENDIF}
-    end
-  else
-    NewEl.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF}; // fix refcount
+    end;
 
   if GenScope.GenericStep>=psgsInterfaceParsed then
     SpecializeGenericIntf(Result);
@@ -17401,7 +17341,7 @@ begin
     if GenEl.Parent<>GenMembersType then
       RaiseNotYetImplemented(20190728145634,GenEl,GetObjName(GenEl.Parent));
     NewClass:=TPTreeElement(GenEl.ClassType);
-    NewEl:=TPasElement(NewClass.Create(GenEl.Name,SpecMembersType));
+    NewEl:=TPasElement(CreateOwnedElement(NewClass,GenEl.Name,SpecMembersType));
     SpecMembersType.Members.Add(NewEl);
     SpecializeElement(GenEl,NewEl);
     end;
@@ -17517,7 +17457,6 @@ procedure TPasResolver.SpecializeGenImplProc(GenDeclProc,
       RaiseNotYetImplemented(20191017122900,GenDeclProc);
       end;
     ParentElList.Insert(i+1,SpecImplProc);
-    SpecImplProc.AddRef{$IFDEF CheckPasTreeRefCount}('TPasDeclarations.Children'){$ENDIF};
   end;
 
 var
@@ -17601,7 +17540,7 @@ begin
   // create impl proc
   NewClass:=TPTreeElement(GenImplProc.ClassType);
   NewParent:=GenImplProc.Parent;
-  SpecImplProc:=TPasProcedure(NewClass.Create(NewImplProcName,NewParent));
+  SpecImplProc:=TPasProcedure(CreateOwnedElement(NewClass,NewImplProcName,NewParent));
   SpecDeclProcScope.ImplProc:=SpecImplProc;
   if SpecializedProcItem<>nil then
     SpecializedProcItem.ImplProc:=SpecImplProc
@@ -17909,14 +17848,13 @@ begin
     // reference
     GenElType:=SpecializeTypeRef(GenEl,SpecEl,GenElType);
     SpecElType:=GenElType;
-    SpecElType.AddRef{$IFDEF CheckPasTreeRefCount}('ResolveTypeReference'){$ENDIF};
     exit;
     end;
   // e.g. anonymous type
   if SpecElType<>nil then
     RaiseNotYetImplemented(20190808222744,SpecEl,GetObjName(SpecElType));
   NewClass:=TPTreeElement(GenElType.ClassType);
-  SpecElType:=TPasType(NewClass.Create(GenElType.Name,SpecEl));
+  SpecElType:=TPasType(CreateOwnedElement(NewClass,GenElType.Name,SpecEl));
   SpecializeElement(GenElType,SpecElType);
 end;
 
@@ -17932,7 +17870,7 @@ begin
     RaiseNotYetImplemented(20190809160834,GenEl);
   // normal expression
   NewClass:=TPTreeElement(GenElExpr.ClassType);
-  SpecElExpr:=TPasExpr(NewClass.Create(GenElExpr.Name,SpecEl));
+  SpecElExpr:=TPasExpr(CreateOwnedElement(NewClass,GenElExpr.Name,SpecEl));
   SpecializeElement(GenElExpr,SpecElExpr);
 end;
 
@@ -17945,7 +17883,7 @@ begin
   if GenImplEl.Parent<>GenEl then
     RaiseNotYetImplemented(20190808222638,GenEl,GetObjName(GenImplEl.Parent));
   NewClass:=TPTreeElement(GenImplEl.ClassType);
-  SpecImplEl:=TPasImplElement(NewClass.Create(GenImplEl.Name,SpecEl));
+  SpecImplEl:=TPasImplElement(CreateOwnedElement(NewClass,GenImplEl.Name,SpecEl));
   SpecializeElement(GenImplEl,SpecImplEl);
 end;
 
@@ -17962,7 +17900,6 @@ begin
   SpecImplAlias:=TObject(SpecEl.Elements[i]) as TPasImplElement;
   if SpecImplAlias.ClassType<>GenImplAlias.ClassType then
     RaiseNotYetImplemented(20190808231616,GenImplAlias,GetObjName(SpecImplAlias));
-  SpecImplAlias.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
 end;
 
 procedure TPasResolver.SpecializeElList(GenEl, SpecEl: TPasElement;
@@ -17984,14 +17921,13 @@ begin
         RaiseNotYetImplemented(20190812025715,GenEl,IntToStr(i)+' GenListItem='+GetObjName(GenListItem));
       // reference
       Ref:=SpecializeTypeRef(GenEl,SpecEl,TpasType(GenListItem));
-      Ref.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
       SpecList.Add(Ref);
       continue;
       end;
     if GenListItem.ClassType=TPasGenericTemplateType then
       RaiseNotYetImplemented(20190812233309,GenEl);
     NewClass:=TPTreeElement(GenListItem.ClassType);
-    SpecListItem:=TPasElement(NewClass.Create(GenListItem.Name,SpecEl));
+    SpecListItem:=CreateOwnedElement(NewClass,GenListItem.Name,SpecEl);
     SpecList.Add(SpecListItem);
     SpecializeElement(GenListItem,SpecListItem);
     end;
@@ -18022,14 +17958,13 @@ begin
         RaiseNotYetImplemented(20190914102957,GenEl,IntToStr(i)+' GenListItem='+GetObjName(GenListItem));
       // reference
       Ref:=SpecializeTypeRef(GenEl,SpecEl,TPasType(GenListItem));
-      Ref.AddRef{$IFDEF CheckPasTreeRefCount}(RefId){$ENDIF};
       SpecList[i]:=Ref;
       continue;
       end;
     if GenListItem.ClassType=TPasGenericTemplateType then
       RaiseNotYetImplemented(20190914103040,GenEl);
     NewClass:=TPTreeElement(GenListItem.ClassType);
-    SpecListItem:=TPasElement(NewClass.Create(GenListItem.Name,SpecEl));
+    SpecListItem:=CreateOwnedElement(NewClass,GenListItem.Name,SpecEl);
     SpecList[i]:=SpecListItem;
     SpecializeElement(GenListItem,SpecListItem);
     end;
@@ -18115,7 +18050,7 @@ begin
           if GenTempl.Parent<>GenEl then
             RaiseNotYetImplemented(20190818130001,GenEl,IntToStr(i)+','+IntToStr(j)+':'+GenTempl.Name+' GenParent='+GetObjName(GenTempl.Parent)+' GenEl='+GetObjName(GenEl));
           NewClass:=TPTreeElement(GenTempl.ClassType);
-          SpecTempl:=TPasGenericTemplateType(NewClass.Create(GenTempl.Name,SpecEl));
+          SpecTempl:=TPasGenericTemplateType(CreateOwnedElement(NewClass,GenTempl.Name,SpecEl));
           SpecPart.Templates.Add(SpecTempl);
           SpecializeElement(GenTempl,SpecTempl);
           end;
@@ -18133,7 +18068,7 @@ begin
       RaiseNotYetImplemented(20190803212426,GenEl,GetObjPath(GenProcType.Parent));
       end;
     NewClass:=TPTreeElement(GenProcType.ClassType);
-    SpecEl.ProcType:=TPasProcedureType(NewClass.Create(GenProcType.Name,SpecEl));
+    SpecEl.ProcType:=TPasProcedureType(CreateOwnedElement(NewClass,GenProcType.Name,SpecEl));
     SpecializeElement(GenProcType,SpecEl.ProcType);
     end;
   SpecProcScope.GenericStep:=psgsInterfaceParsed;
@@ -18149,7 +18084,7 @@ begin
     if SpecEl.Body<>nil then
       RaiseNotYetImplemented(20190920211853,SpecEl);
     NewClass:=TPTreeElement(GenBody.ClassType);
-    SpecEl.Body:=TProcedureBody(NewClass.Create(GenBody.Name,SpecEl));
+    SpecEl.Body:=TProcedureBody(CreateOwnedElement(NewClass,GenBody.Name,SpecEl));
     SpecializeElement(GenBody,SpecEl.Body);
     FinishProcedure(SpecEl);
     end
@@ -18218,7 +18153,7 @@ begin
       if GenResultEl.Parent<>GenEl then
         RaiseNotYetImplemented(20190803212935,GenEl,GetObjName(GenResultEl.Parent));
       NewClass:=TPTreeElement(GenResultEl.ClassType);
-      NewResultEl:=TPasResultElement(NewClass.Create(GenResultEl.Name,SpecEl));
+      NewResultEl:=TPasResultElement(CreateOwnedElement(NewClass,GenResultEl.Name,SpecEl));
       TPasFunctionType(SpecEl).ResultEl:=NewResultEl;
       AddFunctionResult(NewResultEl);
       SpecializeElType(GenResultEl,NewResultEl,GenResultEl.ResultType,NewResultEl.ResultType);
@@ -18244,7 +18179,7 @@ begin
     if GenBody.Parent<>GenEl then
       RaiseNotYetImplemented(20190804184934,GenBody);
     NewClass:=TPTreeElement(GenBody.ClassType);
-    NewBody:=TPasImplBlock(NewClass.Create(GenBody.Name,SpecEl));
+    NewBody:=TPasImplBlock(CreateOwnedElement(NewClass,GenBody.Name,SpecEl));
     SpecEl.Body:=NewBody;
     SpecializeElement(GenBody,NewBody);
     end;
@@ -18262,7 +18197,7 @@ begin
     if GenDecl.Parent<>GenEl then
       RaiseNotYetImplemented(20190806091336,GenEl,GetObjName(GenDecl));
     NewClass:=TPTreeElement(GenDecl.ClassType);
-    NewDecl:=TPasElement(NewClass.Create(GenDecl.Name,SpecEl));
+    NewDecl:=CreateOwnedElement(NewClass,GenDecl.Name,SpecEl);
     SpecEl.Declarations.Add(NewDecl);
     if NewClass=TPasAttributes then
       SpecEl.Attributes.Add(NewDecl)
@@ -18305,7 +18240,6 @@ begin
   if not (Ref is TPasGenericType) then
     RaiseNotYetImplemented(20190812022359,GenEl,GetObjName(Ref));
   SpecEl.DestType:=TPasGenericType(Ref);
-  SpecEl.DestType.AddRef{$IFDEF CheckPasTreeRefCount}('ResolveTypeReference'){$ENDIF};
 
   SpecializeElExpr(GenEl,SpecEl,GenEl.Expr,SpecEl.Expr);
   SpecializeElList(GenEl,SpecEl,GenEl.Params,SpecEl.Params,true
@@ -18372,7 +18306,7 @@ begin
     if GenImpl.Parent<>GenEl then
       RaiseNotYetImplemented(20190806092151,GenEl,GetElementSourcePosStr(GenImpl));
     NewClass:=TPTreeElement(GenImpl.ClassType);
-    NewImpl:=TPasImplElement(NewClass.Create(GenImpl.Name,SpecEl));
+    NewImpl:=TPasImplElement(CreateOwnedElement(NewClass,GenImpl.Name,SpecEl));
     SpecEl.Elements.Add(NewImpl);
     SpecializeElement(GenImpl,NewImpl);
     end;
@@ -18423,7 +18357,7 @@ begin
     if GenExpr.Parent<>GenEl then
       RaiseNotYetImplemented(20190808224343,GenEl,IntToStr(i));
     NewClass:=TPTreeElement(GenExpr.ClassType);
-    SpecExpr:=TPasExpr(NewClass.Create(GenExpr.Name,SpecEl));
+    SpecExpr:=TPasExpr(CreateOwnedElement(NewClass,GenExpr.Name,SpecEl));
     SpecEl.Expressions.Add(SpecExpr);
     SpecializeElement(GenExpr,SpecExpr);
     BeginScope(stWithExpr,SpecExpr);
@@ -18455,8 +18389,8 @@ begin
   if GenEl.Elements.Count>0 then
     RaiseNotYetImplemented(20190808142935,GenEl);
   SpecEl.Kind:=GenEl.Kind;
-  SpecializeElExpr(GenEl,SpecEl,GenEl.left,SpecEl.left);
-  SpecializeElExpr(GenEl,SpecEl,GenEl.right,SpecEl.right);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Left,SpecEl.Left);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Right,SpecEl.Right);
 end;
 
 procedure TPasResolver.SpecializeImplSimple(GenEl, SpecEl: TPasImplSimple);
@@ -18487,7 +18421,7 @@ begin
     if GenImpl.Parent<>GenEl then
       RaiseNotYetImplemented(20190806092151,GenEl,GetElementSourcePosStr(GenImpl));
     NewClass:=TPTreeElement(GenImpl.ClassType);
-    NewImpl:=TPasImplElement(NewClass.Create(GenImpl.Name,SpecEl));
+    NewImpl:=TPasImplElement(CreateOwnedElement(NewClass,GenImpl.Name,SpecEl));
     SpecEl.AddElement(NewImpl);
     SpecializeElement(GenImpl,NewImpl);
     end;
@@ -18515,12 +18449,11 @@ begin
     if GenVar.Parent<>GenEl then
       RaiseNotYetImplemented(20190808232327,GenEl);
     NewClass:=TPTreeElement(GenVar.ClassType);
-    SpecEl.VarEl:=TPasVariable(NewClass.Create(GenVar.Name,SpecEl));
+    SpecEl.VarEl:=TPasVariable(CreateOwnedElement(NewClass,GenVar.Name,SpecEl));
     SpecializeElement(GenVar,SpecEl.VarEl);
     if GenVar.VarType<>GenEl.TypeEl then
       RaiseNotYetImplemented(20190808232601,GenEl);
     SpecEl.TypeEl:=SpecEl.VarEl.VarType;
-    SpecEl.TypeEl.AddRef{$IFDEF CheckPasTreeRefCount}('TPasVariable.VarType'){$ENDIF};
     end
   else
     SpecializeElType(GenEl,SpecEl,GenEl.TypeEl,SpecEl.TypeEl);
@@ -18540,8 +18473,8 @@ procedure TPasResolver.SpecializeExpr(GenEl, SpecEl: TPasExpr);
 begin
   SpecEl.Kind:=GenEl.Kind;
   SpecEl.OpCode:=GenEl.OpCode;
-  SpecializeElExpr(GenEl,SpecEl,GenEl.format1,SpecEl.format1);
-  SpecializeElExpr(GenEl,SpecEl,GenEl.format2,SpecEl.format2);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Format1,SpecEl.Format1);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Format2,SpecEl.Format2);
 end;
 
 procedure TPasResolver.SpecializeExprArray(GenEl, SpecEl: TPasElement;
@@ -18573,8 +18506,8 @@ end;
 procedure TPasResolver.SpecializeBinaryExpr(GenEl, SpecEl: TBinaryExpr);
 begin
   SpecializeExpr(GenEl,SpecEl);
-  SpecializeElExpr(GenEl,SpecEl,GenEl.left,SpecEl.left);
-  SpecializeElExpr(GenEl,SpecEl,GenEl.right,SpecEl.right);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Left,SpecEl.Left);
+  SpecializeElExpr(GenEl,SpecEl,GenEl.Right,SpecEl.Right);
 end;
 
 procedure TPasResolver.SpecializeBoolConstExpr(GenEl, SpecEl: TBoolConstExpr);
@@ -18648,7 +18581,7 @@ begin
   if GenProc.Parent<>GenEl then
     RaiseNotYetImplemented(20210331223856,GenEl);
   NewClass:=TPTreeElement(GenProc.ClassType);
-  SpecEl.Proc:=TPasAnonymousProcedure(NewClass.Create(GenProc.Name,SpecEl));
+  SpecEl.Proc:=TPasAnonymousProcedure(CreateOwnedElement(NewClass,GenProc.Name,SpecEl));
   SpecializeElement(GenProc,SpecEl.Proc);
 end;
 
@@ -19116,7 +19049,7 @@ begin
         else if LoTypeEl.ClassType=TPasRangeType then
           begin
           RgType:=TPasRangeType(LoTypeEl);
-          ComputeElement(RgType.RangeExpr.left,Param0Resolved,[]);
+          ComputeElement(RgType.RangeExpr.Left,Param0Resolved,[]);
           Result:=CheckAssignResCompatibility(Param0Resolved,Param1Resolved,Param1,RaiseOnError);
           end;
         end;
@@ -19475,7 +19408,7 @@ begin
         TypeEl:=ParamResolved.LoTypeEl;
         if TypeEl.ClassType=TPasRangeType then
           begin
-          ComputeElement(TPasRangeType(TypeEl).RangeExpr.left,ResolvedEl,[rcConstant]);
+          ComputeElement(TPasRangeType(TypeEl).RangeExpr.Left,ResolvedEl,[rcConstant]);
           if ResolvedEl.LoTypeEl.ClassType=TPasEnumType then
             exit(cExact);
           end;
@@ -19947,9 +19880,9 @@ begin
     end;
   if Result=cIncompatible then
     exit(CheckRaiseTypeArgNo(20170319220517,ArgNo,Param,ParamResolved,'boolean, integer, enum value',RaiseOnError));
-  if not CheckFormat(Param.format1,1,ParamResolved) then
+  if not CheckFormat(Param.Format1,1,ParamResolved) then
     exit(cIncompatible);
-  if not CheckFormat(Param.format2,2,ParamResolved) then
+  if not CheckFormat(Param.Format2,2,ParamResolved) then
     exit(cIncompatible);
 end;
 
@@ -21175,118 +21108,120 @@ begin
     RaiseInternalError(20190131154235);
 
   // create element
-  El:=AClass.Create(AName,AParent);
+  El:=CreateOwnedElement(AClass,AName,AParent);
   {$IFDEF CheckPasTreeRefCount}El.RefIds.Add('CreateElement');{$ENDIF}
   FLastElement:=El;
-  try
-    El.Visibility:=AVisibility;
-    El.SourceFilename:=ASrcPos.FileName;
-    El.SourceLinenumber:=SrcY;
-    if FRootElement=nil then
-      begin
-      RootElement:=El as TPasModule;
-      if FStep=prsInit then
-        FStep:=prsParsing;
-      end
-    else if (AParent is TPasSection) and (TPasSection(AParent).Declarations.Count=0) then
-      begin
-      // first element of section
-      SectionScope:=TPasSectionScope(AParent.CustomData);
-      SectionScope.BoolSwitches:=CurrentParser.Scanner.CurrentBoolSwitches;
-      SectionScope.ModeSwitches:=CurrentParser.Scanner.CurrentModeSwitches;
-      end;
+  El.Visibility:=AVisibility;
+  El.SourceFilename:=ASrcPos.FileName;
+  El.SourceLinenumber:=SrcY;
+  if FRootElement=nil then
+    begin
+    RootElement:=El as TPasModule;
+    if FStep=prsInit then
+      FStep:=prsParsing;
+    end
+  else if (AParent is TPasSection) and (TPasSection(AParent).Declarations.Count=0) then
+    begin
+    // first element of section
+    SectionScope:=TPasSectionScope(AParent.CustomData);
+    SectionScope.BoolSwitches:=CurrentParser.Scanner.CurrentBoolSwitches;
+    SectionScope.ModeSwitches:=CurrentParser.Scanner.CurrentModeSwitches;
+    end;
 
-    if IsElementSkipped(El) then exit;
+  if IsElementSkipped(El) then exit;
 
-    // create scope
-    if AClass.InheritsFrom(TPasExpr) then
-      // resolved when finished
-    else if (AClass=TPasVariable)
-        or (AClass=TPasConst) then
-      AddVariable(TPasVariable(El))
-    else if AClass=TPasResString then
-      AddResourceString(TPasResString(El))
-    else if (AClass=TPasProperty) then
-      AddProperty(TPasProperty(El))
-    else if AClass=TPasArgument then
-      AddArgument(TPasArgument(El))
-    else if AClass=TPasEnumType then
-      AddEnumType(TPasEnumType(El))
-    else if AClass=TPasEnumValue then
-      AddEnumValue(TPasEnumValue(El))
-    else if (AClass=TUnresolvedPendingRef) then
-    else if (AClass=TPasAliasType)
-        or (AClass=TPasTypeAliasType)
-        or (AClass=TPasClassOfType)
-        or (AClass=TPasPointerType)
-        or (AClass=TPasSetType)
-        or (AClass=TPasRangeType)
-        or (AClass=TPasSpecializeType) then
-      AddType(TPasType(El))
-    else if AClass=TPasArrayType then
-      AddArrayType(TPasArrayType(El),TypeParams)
-    else if (AClass=TPasProcedureType)
-        or (AClass=TPasFunctionType) then
-      AddProcedureType(TPasProcedureType(El),TypeParams)
-    else if AClass=TPasGenericTemplateType then
-      AddGenericTemplateType(TPasGenericTemplateType(El))
-    else if AClass=TPasStringType then
-      begin
-      AddType(TPasType(El));
-      {$ifdef FPC_HAS_CPSTRING}
-      if BaseTypes[btShortString]=nil then
-      {$endif}
-        RaiseMsg(20170419203043,nIllegalQualifier,sIllegalQualifier,['['],El);
-      end
-    else if AClass=TPasRecordType then
-      AddRecordType(TPasRecordType(El),TypeParams)
-    else if AClass=TPasVariant then
-      AddRecordVariant(TPasVariant(El))
-    else if AClass=TPasClassType then
-      AddClassType(TPasClassType(El),TypeParams)
-    else if AClass.InheritsFrom(TPasProcedure) then
-      AddProcedure(TPasProcedure(El),TypeParams)
-    else if AClass=TPasResultElement then
-      AddFunctionResult(TPasResultElement(El))
-    else if AClass=TProcedureBody then
-      AddProcedureBody(TProcedureBody(El))
-    else if AClass=TPasMethodResolution then
-    else if AClass=TPasImplExceptOn then
-      AddExceptOn(TPasImplExceptOn(El))
-    else if AClass=TPasImplWithDo then
-      AddWithDo(TPasImplWithDo(El))
-    else if AClass=TPasImplLabelMark then
-    else if AClass=TPasOverloadedProc then
-    else if (AClass=TInterfaceSection)
-        or (AClass=TImplementationSection)
-        or (AClass=TProgramSection)
-        or (AClass=TLibrarySection) then
-      AddSection(TPasSection(El))
-    else if (AClass=TPasModule)
-        or (AClass=TPasProgram)
-        or (AClass=TPasLibrary) then
-      AddModule(TPasModule(El))
-    else if AClass=TPasUsesUnit then
-    else if AClass=TInitializationSection then
-      AddInitialFinalizationSection(TInitializationSection(El))
-    else if AClass=TFinalizationSection then
-      AddInitialFinalizationSection(TFinalizationSection(El))
-    else if AClass=TPasImplCommand then
-    else if AClass.InheritsFrom(TPasImplBlock) then
-      // resolved when finished
-    else if AClass=TPasAttributes then
-    else if AClass=TPasExportSymbol then
-      AddExportSymbol(TPasExportSymbol(El))
-    else if AClass=TPasUnresolvedUnitRef then
-      RaiseMsg(20171018121900,nCantFindUnitX,sCantFindUnitX,[AName],El)
-    else
-      RaiseNotYetImplemented(20160922163544,El);
+  // create scope
+  if AClass.InheritsFrom(TPasExpr) then
+    // resolved when finished
+  else if (AClass=TPasVariable)
+      or (AClass=TPasConst) then
+    AddVariable(TPasVariable(El))
+  else if AClass=TPasResString then
+    AddResourceString(TPasResString(El))
+  else if (AClass=TPasProperty) then
+    AddProperty(TPasProperty(El))
+  else if AClass=TPasArgument then
+    AddArgument(TPasArgument(El))
+  else if AClass=TPasEnumType then
+    AddEnumType(TPasEnumType(El))
+  else if AClass=TPasEnumValue then
+    AddEnumValue(TPasEnumValue(El))
+  else if (AClass=TUnresolvedPendingRef) then
+  else if (AClass=TPasAliasType)
+      or (AClass=TPasTypeAliasType)
+      or (AClass=TPasClassOfType)
+      or (AClass=TPasPointerType)
+      or (AClass=TPasSetType)
+      or (AClass=TPasRangeType)
+      or (AClass=TPasSpecializeType) then
+    AddType(TPasType(El))
+  else if AClass=TPasArrayType then
+    AddArrayType(TPasArrayType(El),TypeParams)
+  else if (AClass=TPasProcedureType)
+      or (AClass=TPasFunctionType) then
+    AddProcedureType(TPasProcedureType(El),TypeParams)
+  else if AClass=TPasGenericTemplateType then
+    AddGenericTemplateType(TPasGenericTemplateType(El))
+  else if AClass=TPasStringType then
+    begin
+    AddType(TPasType(El));
+    {$ifdef FPC_HAS_CPSTRING}
+    if BaseTypes[btShortString]=nil then
+    {$endif}
+      RaiseMsg(20170419203043,nIllegalQualifier,sIllegalQualifier,['['],El);
+    end
+  else if AClass=TPasRecordType then
+    AddRecordType(TPasRecordType(El),TypeParams)
+  else if AClass=TPasVariant then
+    AddRecordVariant(TPasVariant(El))
+  else if AClass=TPasClassType then
+    AddClassType(TPasClassType(El),TypeParams)
+  else if AClass.InheritsFrom(TPasProcedure) then
+    AddProcedure(TPasProcedure(El),TypeParams)
+  else if AClass=TPasResultElement then
+    AddFunctionResult(TPasResultElement(El))
+  else if AClass=TProcedureBody then
+    AddProcedureBody(TProcedureBody(El))
+  else if AClass=TPasMethodResolution then
+  else if AClass=TPasImplExceptOn then
+    AddExceptOn(TPasImplExceptOn(El))
+  else if AClass=TPasImplWithDo then
+    AddWithDo(TPasImplWithDo(El))
+  else if AClass=TPasImplLabelMark then
+  else if AClass=TPasOverloadedProc then
+  else if (AClass=TInterfaceSection)
+      or (AClass=TImplementationSection)
+      or (AClass=TProgramSection)
+      or (AClass=TLibrarySection) then
+    AddSection(TPasSection(El))
+  else if (AClass=TPasModule)
+      or (AClass=TPasProgram)
+      or (AClass=TPasLibrary) then
+    AddModule(TPasModule(El))
+  else if AClass=TPasUsesUnit then
+  else if AClass=TInitializationSection then
+    AddInitialFinalizationSection(TInitializationSection(El))
+  else if AClass=TFinalizationSection then
+    AddInitialFinalizationSection(TFinalizationSection(El))
+  else if AClass=TPasImplCommand then
+  else if AClass.InheritsFrom(TPasImplBlock) then
+    // resolved when finished
+  else if AClass=TPasAttributes then
+  else if AClass=TPasExportSymbol then
+    AddExportSymbol(TPasExportSymbol(El))
+  else if AClass=TPasUnresolvedUnitRef then
+    RaiseMsg(20171018121900,nCantFindUnitX,sCantFindUnitX,[AName],El)
+  else
+    RaiseNotYetImplemented(20160922163544,El);
 
-    Result:=El;
-  finally
-    if Result=nil then
-      El.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
-  end;
+  Result:=El;
+end;
+
+function TPasResolver.CreateOwnedElement(AClass: TPTreeElement;
+  const AName: String; AParent: TPasElement): TPasElement;
+begin
+  Result:=AClass.Create(AName,AParent);
+  FOwnedElements.Add(Result);
 end;
 
 function TPasResolver.FindModule(const AName: String; NameExpr,
@@ -21395,6 +21330,9 @@ begin
             and not IsFullySpecialized(TPasGenericType(CurScopeEl)) then
           RaiseMsg(20200217131215,nGenericsWithoutSpecializationAsType,
             sGenericsWithoutSpecializationAsType,['reference'],ErrorEl);
+        if (CurScopeEl is TPasClassType) and TPasClassType(CurScopeEl).IsForward then
+          RaiseMsg(20220527113900,nIdentifierNotFound,
+            sIdentifierNotFound,[CurName],ErrorEl);
         CurScope:=PushDotScope(TPasType(CurScopeEl));
         if CurScope=nil then
           RaiseMsg(20190122122529,nIllegalQualifierAfter,sIllegalQualifierAfter,
@@ -22108,7 +22046,6 @@ begin
     OldType := TPasTypeAliasType(NewType);
     NewType := aClass;
     TPasTypeAliasType(OldType).DestType:=nil; // clear reference
-    OldType.Release{$IFDEF CheckPasTreeRefCount}('CreateElement'){$ENDIF};
 
     // set ancestor
     aClass.AncestorType := DestType;
@@ -22361,7 +22298,7 @@ var
 begin
   ClearResolveDataList(lkBuiltIn);
   for bt in TResolverBaseType do
-    ReleaseAndNil(TPasElement(FBaseTypes[bt]){$IFDEF CheckPasTreeRefCount},'TPasResolver.AddBaseType'{$ENDIF});
+    FBaseTypes[bt]:=nil;
   for bp in TResolverBuiltInProc do
     FBuiltInProcs[bp]:=nil;
 end;
@@ -22510,7 +22447,7 @@ function TPasResolver.AddBaseType(const aName: string; Typ: TResolverBaseType
 var
   El: TPasUnresolvedSymbolRef;
 begin
-  El:=TPasUnresolvedSymbolRef.Create(aName,nil);
+  El:=TPasUnresolvedSymbolRef(CreateOwnedElement(TPasUnresolvedSymbolRef,aName,nil));
   {$IFDEF CheckPasTreeRefCount}El.RefIds.Add('TPasResolver.AddBaseType');{$ENDIF}
   if not (Typ in [btNone,btCustom]) then
     FBaseTypes[Typ]:=El;
@@ -22525,7 +22462,7 @@ function TPasResolver.AddCustomBaseType(const aName: string;
 var
   CustomData: TResElDataBaseType;
 begin
-  Result:=TPasUnresolvedSymbolRef.Create(aName,nil);
+  Result:=TPasUnresolvedSymbolRef(CreateOwnedElement(TPasUnresolvedSymbolRef,aName,nil));
   {$IFDEF CheckPasTreeRefCount}Result.RefIds.Add('TPasResolver.AddCustomBaseType');{$ENDIF}
   CustomData:=aClass.Create;
   CustomData.BaseType:=btCustom;
@@ -22553,7 +22490,7 @@ function TPasResolver.AddBuiltInProc(const aName: string; Signature: string;
 var
   El: TPasUnresolvedSymbolRef;
 begin
-  El:=TPasUnresolvedSymbolRef.Create(aName,nil);
+  El:=TPasUnresolvedSymbolRef(CreateOwnedElement(TPasUnresolvedSymbolRef,aName,nil));
   Result:=TResElDataBuiltInProc.Create;
   Result.Proc:=El;
   {$IFDEF CheckPasTreeRefCount}El.RefIds.Add('TResElDataBuiltInProc.Proc');{$ENDIF}
@@ -23877,7 +23814,7 @@ begin
 
   Value:=Params.Value;
   if Value is TBinaryExpr then
-    Value:=TBinaryExpr(Value).right; // Note: parser guarantees that this is the rightmost
+    Value:=TBinaryExpr(Value).Right; // Note: parser guarantees that this is the rightmost
 
   // check args
   ParamCnt:=length(Params.Params);
@@ -25193,7 +25130,7 @@ begin
           RTypeEl:=RHS.LoTypeEl;
           if RTypeEl.ClassType=TPasRangeType then
             begin
-            ComputeElement(TPasRangeType(RTypeEl).RangeExpr.left,RightSubResolved,[rcConstant]);
+            ComputeElement(TPasRangeType(RTypeEl).RangeExpr.Left,RightSubResolved,[rcConstant]);
             if (RightSubResolved.BaseType=btContext)
                 and IsSameType(LTypeEl,RightSubResolved.LoTypeEl,prraAlias) then
               begin
@@ -25588,7 +25525,7 @@ begin
       LTypeEl:=LHS.LoTypeEl;
       if LTypeEl.ClassType=TPasRangeType then
         begin
-        ComputeElement(TPasRangeType(LTypeEl).RangeExpr.left,ResolvedEl,[rcConstant]);
+        ComputeElement(TPasRangeType(LTypeEl).RangeExpr.Left,ResolvedEl,[rcConstant]);
         if ResolvedEl.BaseType=btContext then
           begin
           LTypeEl:=ResolvedEl.LoTypeEl;
@@ -25615,7 +25552,7 @@ begin
         RTypeEl:=RHS.LoTypeEl;
         if RTypeEl.ClassType=TPasRangeType then
           begin
-          ComputeElement(TPasRangeType(RTypeEl).RangeExpr.left,ResolvedEl,[rcConstant]);
+          ComputeElement(TPasRangeType(RTypeEl).RangeExpr.Left,ResolvedEl,[rcConstant]);
           if ResolvedEl.BaseType=btContext then
             begin
             RTypeEl:=ResolvedEl.LoTypeEl;
@@ -26790,13 +26727,13 @@ function TPasResolver.CheckAssignCompatibilityArrayType(const LHS,
         if length(ArrType.Ranges)>0 then
           exit; // ToDo: StaticArray:=A+B
         // check a:=left
-        ComputeElement(TBinaryExpr(Expr).left,ValueResolved,ExprCompFlags);
+        ComputeElement(TBinaryExpr(Expr).Left,ValueResolved,ExprCompFlags);
         CheckRange(ArrType,RangeIndex,ValueResolved,ErrorEl);
         if Result=cIncompatible then exit;
         LeftResult:=Result;
         // check a:=right
         Result:=cIncompatible;
-        ComputeElement(TBinaryExpr(Expr).right,ValueResolved,ExprCompFlags);
+        ComputeElement(TBinaryExpr(Expr).Right,ValueResolved,ExprCompFlags);
         CheckRange(ArrType,RangeIndex,ValueResolved,ErrorEl);
         if Result=cIncompatible then exit;
         if Result<LeftResult then
@@ -28731,7 +28668,7 @@ begin
       end
     else if C=TBinaryExpr then
       begin
-      if TBinaryExpr(Parent).right<>El then exit;
+      if TBinaryExpr(Parent).Right<>El then exit;
       if TBinaryExpr(Parent).OpCode<>eopSubIdent then exit;
       end
     else if C=TParamsExpr then
@@ -28746,7 +28683,7 @@ begin
       end
     else if C=TPasImplAssign then
       begin
-      if TPasImplAssign(Parent).right<>El then exit;
+      if TPasImplAssign(Parent).Right<>El then exit;
       if (msDelphi in CurrentParser.CurrentModeswitches) then exit(true);
       exit;
       end
@@ -28769,10 +28706,10 @@ begin
   C:=P.ClassType;
   if C=TBinaryExpr then
     begin
-    if TBinaryExpr(P).right=El then
+    if TBinaryExpr(P).Right=El then
       begin
       if (TBinaryExpr(P).OpCode=eopSubIdent)
-          or ((TBinaryExpr(P).OpCode=eopNone) and (TBinaryExpr(P).left is TInheritedExpr)) then
+          or ((TBinaryExpr(P).OpCode=eopNone) and (TBinaryExpr(P).Left is TInheritedExpr)) then
         Result:=ParentNeedsExprResult(TBinaryExpr(P))
       else
         Result:=true;
@@ -28814,7 +28751,7 @@ begin
     Result:=(TPasImplForLoop(P).StartExpr=El)
          or (TPasImplForLoop(P).EndExpr=El)
   else if C=TPasImplAssign then
-    Result:=(TPasImplAssign(P).right=El)
+    Result:=(TPasImplAssign(P).Right=El)
   else if C=TPasImplRaise then
     Result:=(TPasImplRaise(P).ExceptAddr=El);
 end;
@@ -28852,7 +28789,7 @@ begin
       El:=TInlineSpecializeExpr(El).NameExpr
     else if (El.ClassType=TBinaryExpr)
         and (TBinaryExpr(El).OpCode=eopSubIdent) then
-      El:=TBinaryExpr(El).right
+      El:=TBinaryExpr(El).Right
     else
       exit;
     end;
@@ -29714,12 +29651,11 @@ begin
       begin
       // 'Self' in a class method is the hidden classtype argument
       // Note: this is true in classes, adv records and helpers
-      SelfArg:=TPasArgument.Create('Self',Proc);
+      SelfArg:=TPasArgument(CreateOwnedElement(TPasArgument,'Self',Proc));
       ProcScope.SelfArg:=SelfArg;
       {$IFDEF CheckPasTreeRefCount}SelfArg.RefIds.Add('TPasProcedureScope.SelfArg');{$ENDIF}
       SelfArg.Access:=argConst;
       SelfArg.ArgType:=TPasClassScope(ClassOrRecScope).CanonicalClassOf;
-      SelfArg.ArgType.AddRef{$IFDEF CheckPasTreeRefCount}('TPasArgument.ArgType'){$ENDIF};
       end
     else
       RaiseInternalError(20190106121745);
@@ -29727,7 +29663,7 @@ begin
   else
     begin
     // 'Self' in a method is the hidden instance argument
-    SelfArg:=TPasArgument.Create('Self',Proc);
+    SelfArg:=TPasArgument(CreateOwnedElement(TPasArgument,'Self',Proc));
     ProcScope.SelfArg:=SelfArg;
     {$IFDEF CheckPasTreeRefCount}SelfArg.RefIds.Add('TPasProcedureScope.SelfArg');{$ENDIF}
     SelfType:=ClassRecType;
@@ -29744,7 +29680,6 @@ begin
     else
       SelfArg.Access:=argVar;
     SelfArg.ArgType:=SelfType;
-    SelfType.AddRef{$IFDEF CheckPasTreeRefCount}('TPasArgument.ArgType'){$ENDIF};
     end;
 end;
 
@@ -29754,6 +29689,8 @@ var
   Proc, OverriddenProc: TPasProcedure;
 begin
   Result:=false;
+  if AncestorProc=nil then exit;
+  if DescendantProc=nil then exit;
   Proc:=DescendantProc;
   if not Proc.IsOverride then exit;
   if not AncestorProc.IsOverride and not AncestorProc.IsVirtual then exit;
@@ -29762,6 +29699,21 @@ begin
     if AncestorProc=OverriddenProc then exit(true);
     Proc:=OverriddenProc;
   until Proc=nil;
+end;
+
+function TPasResolver.IsProcOverload(Proc: TPasProcedure): boolean;
+var
+  ProcScope: TPasProcedureScope;
+begin
+  if Proc.IsOverload then
+    exit(true)
+  else if Proc.IsOverride and (Proc.CustomData is TPasProcedureScope) then
+    begin
+    ProcScope:=TPasProcedureScope(Proc.CustomData);
+    if ppsfIsOverrideOverload in ProcScope.Flags then
+      exit(true);
+    end;
+  Result:=false;
 end;
 
 function TPasResolver.GetTopLvlProc(El: TPasElement): TPasProcedure;

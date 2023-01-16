@@ -22,7 +22,7 @@ begin
     P.License := 'LGPL with modification, ';
     P.HomepageURL := 'http://ptcpas.sourceforge.net/';
     P.Description := 'A free, portable framebuffer library.';
-    p.OSes:=[linux,win32,win64,go32v2,macosx];
+    p.OSes:=[linux,win32,win64,go32v2,macosx,openbsd,freebsd];
 
     P.SourcePath.Add('src');
     P.SourcePath.Add('src/ptcwrapper');
@@ -34,6 +34,7 @@ begin
     P.SourcePath.Add('src/dos/vesa',[go32v2]);
     P.SourcePath.Add('src/dos/vga',[go32v2]);
     P.IncludePath.Add('src');
+    P.IncludePath.Add('src/ptcwrapper');
     P.IncludePath.Add('src/cocoa',[macosx]);
     P.IncludePath.Add('src/core');
     P.IncludePath.Add('src/dos',[go32v2]);
@@ -199,13 +200,13 @@ begin
     T:=P.Targets.AddUnit('ptceventqueue.pp');
     with T.Dependencies do
       begin
-        AddInclude('ptceventqueue_st.inc');
-        AddInclude('ptceventqueue_mt.inc');
         AddUnit('ptc');
       end;
     T:=P.Targets.AddUnit('ptcwrapper.pp');
     with T.Dependencies do
       begin
+        AddInclude('ptcwrapper_st.inc');
+        AddInclude('ptcwrapper_mt.inc');
         AddUnit('ptc');
         AddUnit('ptceventqueue');
       end;

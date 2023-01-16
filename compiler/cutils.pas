@@ -100,6 +100,7 @@ interface
     function PadSpace(const s:string;len:longint):string;
     function PadSpace(const s:AnsiString;len:longint):AnsiString;
     function GetToken(var s:string;endchar:char):string;
+    function GetToken(var s:ansistring;endchar:char):ansistring;
     procedure uppervar(var s : string);
     function realtostr(e:extended):string;{$ifdef USEINLINE}inline;{$endif}
     function tostr(i : qword) : string;{$ifdef USEINLINE}inline;{$endif}overload;
@@ -132,7 +133,6 @@ interface
     function DePascalQuote(var s: ansistring): Boolean;
     function CompareStr(const S1, S2: string): Integer;
     function CompareText(S1, S2: string): integer;
-    function CompareVersionStrings(s1,s2: string): longint;
 
     { releases the string p and assignes nil to p }
     { if p=nil then freemem isn't called          }
@@ -467,7 +467,7 @@ implementation
           minalign  : Minimum alignment of this structure, 0 = undefined
           maxalign  : Maximum alignment of this structure, 0 = undefined }
         if (minalign>0) and
-           (varalign<minalign) then
+           (varalign<=minalign) then
          used_align:=minalign
         else
          begin
@@ -644,12 +644,23 @@ implementation
       return uppercased string of s
     }
       var
-        i  : longint;
+        i,n : sizeint;
       begin
-        Result:='';
-        setlength(upper,length(s));
-        for i:=1 to length(s) do
-          upper[i]:=uppertbl[s[i]];
+        Result:=s;
+        n:=length(s);
+        i:=0;
+        while i<n do
+          if PChar(Pointer(s))[i] in ['a'..'z'] then
+            begin
+              UniqueString(Result);
+              repeat
+                PChar(Pointer(Result))[i]:=uppertbl[PChar(Pointer(s))[i]];
+                inc(i);
+              until i=n;
+              exit;
+            end
+          else
+            inc(i);
       end;
 
 
@@ -680,12 +691,23 @@ implementation
       return lowercased string of s
     }
       var
-        i : longint;
+        i,n : sizeint;
       begin
-        Result:='';
-        setlength(lower,length(s));
-        for i:=1 to length(s) do
-          lower[i]:=lowertbl[s[i]];
+        Result:=s;
+        n:=length(s);
+        i:=0;
+        while i<n do
+          if PChar(Pointer(s))[i] in ['A'..'Z'] then
+            begin
+              UniqueString(Result);
+              repeat
+                PChar(Pointer(Result))[i]:=lowertbl[PChar(Pointer(s))[i]];
+                inc(i);
+              until i=n;
+              exit;
+            end
+          else
+            inc(i);
       end;
 
 
@@ -834,6 +856,60 @@ implementation
 
 
     function GetToken(var s:string;endchar:char):string;
+      var
+        i : longint;
+        quote : char;
+      begin
+        GetToken:='';
+        s:=TrimSpace(s);
+        if (length(s)>0) and
+           (s[1] in ['''','"']) then
+         begin
+           quote:=s[1];
+           i:=1;
+           while (i<length(s)) do
+            begin
+              inc(i);
+              if s[i]=quote then
+               begin
+                 { Remove double quote }
+                 if (i<length(s)) and
+                    (s[i+1]=quote) then
+                  begin
+                    Delete(s,i,1);
+                    inc(i);
+                  end
+                 else
+                  begin
+                    GetToken:=Copy(s,2,i-2);
+                    Delete(s,1,i);
+                    exit;
+                  end;
+               end;
+            end;
+           GetToken:=s;
+           s:='';
+         end
+        else
+         begin
+           i:=pos(EndChar,s);
+           if i=0 then
+            begin
+              GetToken:=s;
+              s:='';
+              exit;
+            end
+           else
+            begin
+              GetToken:=Copy(s,1,i-1);
+              Delete(s,1,i);
+              exit;
+            end;
+         end;
+      end;
+
+
+    function GetToken(var s:ansistring;endchar:char):ansistring;
       var
         i : longint;
         quote : char;
@@ -1220,72 +1296,6 @@ implementation
       end;
 
 
-    function CompareVersionStrings(s1,s2: string): longint;
-      var
-        start1, start2,
-        i1, i2,
-        num1,num2,
-        res,
-        err        : longint;
-      begin
-        i1:=1;
-        i2:=1;
-        repeat
-          start1:=i1;
-          start2:=i2;
-          while (i1<=length(s1)) and
-                (s1[i1] in ['0'..'9']) do
-             inc(i1);
-          while (i2<=length(s2)) and
-                (s2[i2] in ['0'..'9']) do
-             inc(i2);
-          { one of the strings misses digits -> other is the largest version }
-          if i1=start1 then
-            if i2=start2 then
-              exit(0)
-            else
-              exit(-1)
-          else if i2=start2 then
-            exit(1);
-          { get version number part }
-          val(copy(s1,start1,i1-start1),num1,err);
-          val(copy(s2,start2,i2-start2),num2,err);
-          { different -> done }
-          res:=num1-num2;
-          if res<>0 then
-            exit(res);
-          { if one of the two is at the end while the other isn't, add a '.0' }
-          if (i1>length(s1)) and
-             (i2<=length(s2)) then
-            s1:=s1+'.0';
-          if (i2>length(s2)) and
-             (i1<=length(s1)) then
-             s2:=s2+'.0';
-          { compare non-numerical characters normally }
-          while (i1<=length(s1)) and
-                not(s1[i1] in ['0'..'9']) and
-                (i2<=length(s2)) and
-                not(s2[i2] in ['0'..'9']) do
-            begin
-              res:=ord(s1[i1])-ord(s2[i2]);
-              if res<>0 then
-                exit(res);
-              inc(i1);
-              inc(i2);
-            end;
-          { both should be digits again now, otherwise pick the one with the
-            digits as the largest (it more likely means that the input was
-            ill-formatted though) }
-          if (i1<=length(s1)) and
-             not(s1[i1] in ['0'..'9']) then
-            exit(-1);
-          if (i2<=length(s2)) and
-             not(s2[i2] in ['0'..'9']) then
-            exit(1);
-        until false;
-      end;
-
-
 {*****************************************************************************
                                Ansistring (PChar+Length)
 *****************************************************************************}
@@ -1596,34 +1606,17 @@ implementation
       begin
         result:=0;
         repeat
-          a := a shr 7;
           inc(result);
-          if a=0 then
-            break;
-        until false;
+          a := a shr 7;
+        until a=0;
       end;
 
 
     function LengthSleb128(a: int64) : byte;
-      var
-        b: byte;
-        more: boolean;
       begin
-        more := true;
-        result:=0;
-        repeat
-          b := a and $7f;
-          a := SarInt64(a, 7);
-
-          if (
-            ((a = 0) and (b and $40 = 0)) or
-            ((a = -1) and (b and $40 <> 0))
-          ) then
-            more := false;
-          inc(result);
-          if not(more) then
-            break;
-        until false;
+        { 'a xor SarInt64(a,63)' has upper bits 0...01 where '0's symbolize sign bits of 'a' and 1 symbolizes its most significant non-sign bit.
+          'shl 1' ensures storing the sign bit. }
+        result:=LengthUleb128(qword(a xor SarInt64(a,63)) shl 1);
       end;
 
 
@@ -1642,9 +1635,7 @@ implementation
           pbuf^:=b;
           inc(pbuf);
           inc(result);
-          if (a=0) and  (result>=len) then
-            break;
-        until false;
+        until (a=0) and (result>=len);
       end;
 
 
@@ -1654,23 +1645,15 @@ implementation
         more: boolean;
         pbuf : pbyte;
       begin
-        more := true;
         result:=0;
         pbuf:=@buf;
         repeat
           b := a and $7f;
           a := SarInt64(a, 7);
-
-          if (result+1>=len) and (
-            ((a = 0) and (b and $40 = 0)) or
-            ((a = -1) and (b and $40 <> 0))
-          ) then
-            more := false
-          else
-            b := b or $80;
-          pbuf^:=b;
-          inc(pbuf);
           inc(result);
+          more:=(result<len) or (a<>-(b shr 6));
+          pbuf^:=b or byte(more) shl 7;
+          inc(pbuf);
         until not more;
       end;
 

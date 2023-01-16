@@ -287,7 +287,8 @@ type
                woCloseExplicit,     // SeDo Close explicitly, not implicitly.
                woIndividualFrames,  // Send frames one by one, do not concatenate.
                woSkipUpgradeCheck,  // Skip handshake "Upgrade:" HTTP header cheack.
-               woSkipVersionCheck   // Skip handshake "Sec-WebSocket-Version' HTTP header check.
+               woSkipVersionCheck,  // Skip handshake "Sec-WebSocket-Version' HTTP header check.
+               woSendErrClosesConn  // Don't raise an exception when writing to a broken connection
               );
   TWSOptions = set of TWSOption;
 
@@ -421,7 +422,7 @@ type
   end;
 
   { TWSServerConnection }
-  TWSConnectionHandshakeEvent =  procedure (aRequest : TWSHandShakeRequest; aResponse : TWSHandShakeResponse) of object;
+  TWSConnectionHandshakeEvent =  function(aRequest : TWSHandShakeRequest; aResponse : TWSHandShakeResponse): boolean of object;
 
   TWSServerConnection = Class(TWSConnection)
   Private
@@ -432,7 +433,7 @@ type
   Protected
     Procedure DoDisconnect; override;
     function GetTransport: IWSTransport; override;
-    procedure DoPrepareHandshakeResponse(aRequest : TWSHandShakeRequest; aResponse : TWSHandShakeResponse); virtual;
+    function DoPrepareHandshakeResponse(aRequest : TWSHandShakeRequest; aResponse : TWSHandShakeResponse): boolean; virtual;
     function GetHandshakeCompleted: Boolean; override;
   public
     // Transport is owned by connection
@@ -442,7 +443,7 @@ type
     // Do full circle.
     Procedure PerformHandshake; virtual;
     // Given a request, send response
-    function DoHandshake(const aRequest : TWSHandShakeRequest): Boolean;
+    function DoHandshake(const aRequest : TWSHandShakeRequest): Boolean; virtual;
     // Has handshake been exchanged?
     property HandshakeResponseSent: Boolean read FHandshakeResponseSent;
     // Extra handshake headers
@@ -482,6 +483,7 @@ Resourcestring
   SErrServerActive = 'Operation cannot be performed while the websocket connection is active';
   SErrInvalidSizeFlag = 'Invalid size flag: %d';
   SErrInvalidFrameType = 'Invalid frame type flag: %d';
+  SErrWriteReturnedError = 'Write operation returned error: (%d) %s';
 
 function DecodeBytesBase64(const s: string; Strict: boolean = false) : TBytes;
 function EncodeBytesBase64(const aBytes : TBytes) : String;
@@ -568,7 +570,7 @@ end;
 
 function TWSTransport.GetSocket: TSocketStream;
 begin
-  Result:=FHelper.Socket
+  Result:=FHelper.Socket;
 end;
 
 constructor TWSTransport.Create(aStream : TSocketStream);
@@ -666,7 +668,7 @@ begin
   aPos := 0;
   SetLength(aBytes, aCount);
   repeat
-    SetLength(buf, aCount);
+    SetLength(buf{%H-}, aCount);
     Result := FSocket.Read(buf[0], aCount - aPos);
     if Result <= 0 then
       break;
@@ -699,9 +701,8 @@ end;
 { TWSMessage }
 
 function TWSMessage.GetAsString: UTF8String;
-
 begin
-  Result:=TEncoding.UTF8.GetString(Payload);
+  Result:=UTF8String(TEncoding.UTF8.GetString(Payload));
 end;
 
 function TWSMessage.GetAsUnicodeString: UnicodeString;
@@ -948,9 +949,6 @@ end;
 
 constructor TWSFrame.Create(aType: TFrameType; aIsFinal: Boolean; APayload: TBytes; aMask: Integer=0);
 
-var
-  closeData: TBytes;
-
 begin
   Create(aType,aIsFinal,aMask);
 
@@ -970,14 +968,13 @@ begin
   FFinalFrame := AIsFinal;
 end;
 
-
 constructor TWSFrame.Create(const aMessage: UTF8String; aMask: Integer=0);
 
 Var
   Data : TBytes;
 
 begin
-  Data:=TEncoding.UTF8.GetBytes(AMessage);
+  Data:=TEncoding.UTF8.GetBytes(UnicodeString(AMessage));
   Create(ftText,True,Data,aMask);
 end;
 
@@ -1024,7 +1021,7 @@ begin
       FReason:=SwapEndian(FPayload.Data.ToWord(0));
       FPayload.DataLength := FPayload.DataLength - 2;
       if FPayload.DataLength > 0 then
-        move(FPayload.Data[2], FPayload.Data[0], FPayload.DataLength - 2);
+        move(FPayload.Data[2], FPayload.Data[0], FPayload.DataLength);
       SetLength(FPayload.Data, FPayload.DataLength);
     end;
   Result:=True;
@@ -1180,7 +1177,7 @@ Var
 begin
   if not (aFrameType in [ftClose,ftPing,ftPong]) then
     Raise EWebSocket.CreateFmt(SErrNotSimpleOperation,[Ord(aFrameType)]);
-  aFrame:=FrameClass.Create(aFrameType,True,aData);
+  aFrame:=FrameClass.Create(aFrameType,True,aData, OutgoingFrameMask);
   try
     Send(aFrame);
   finally
@@ -1468,7 +1465,7 @@ begin
   c := @AValue[0];
   while i < len do
   begin
-    if (c^ >= $00) and (c^ <= $7f) then
+    if (c^ <= $7f) then
       n := 0
     else if (c^ >= $c2) and (c^ <= $df) then
       n := 1
@@ -1537,7 +1534,7 @@ var
   aFrame: TWSFrame;
 
 begin
-  aFrame:=FrameClass.Create(aMessage);
+  aFrame:=FrameClass.Create(aMessage, OutgoingFrameMask);
   try
     Send(aFrame);
   finally
@@ -1549,7 +1546,7 @@ procedure TWSConnection.Send(const ABytes: TBytes);
 var
   aFrame: TWSFrame;
 begin
-  aFrame:=FrameClass.Create(ftBinary,True,ABytes);
+  aFrame:=FrameClass.Create(ftBinary,True,ABytes, OutgoingFrameMask);
   try
     Send(aFrame);
   finally
@@ -1595,12 +1592,27 @@ procedure TWSConnection.Send(aFrame: TWSFrame);
 
 Var
   Data : TBytes;
+  Res: Integer;
+  ErrMsg: UTF8String;
 
 begin
   if FCloseState=csClosed then
     Raise EWebSocket.Create(SErrCloseAlreadySent);
   Data:=aFrame.AsBytes;
-  Transport.WriteBytes(Data,Length(Data));
+  Res := Transport.WriteBytes(Data,Length(Data));
+  if Res < 0 then
+  begin
+    FCloseState:=csClosed;
+    ErrMsg := Format(SErrWriteReturnedError, [GetLastOSError, SysErrorMessage(GetLastOSError)]);
+    if woSendErrClosesConn in Options then
+    begin
+      SetLength(Data, 0);
+      Data.Append(TEncoding.UTF8.GetBytes(UnicodeString(ErrMsg)));
+      DispatchEvent(ftClose, nil, Data);
+    end
+    else
+      Raise EWebSocket.Create(ErrMsg);
+  end;
   if (aFrame.FrameType=ftClose) then
     begin
     if FCloseState=csNone then
@@ -1746,7 +1758,9 @@ end;
 
 destructor TWSServerConnection.Destroy;
 begin
-  DisConnect;
+  if Assigned(FTransport) then
+    DisConnect;
+  FreeAndNil(FExtraHeaders);
   inherited;
 end;
 
@@ -1796,10 +1810,13 @@ begin
   Result:=FTransport;
 end;
 
-procedure TWSServerConnection.DoPrepareHandshakeResponse(aRequest: TWSHandShakeRequest; aResponse: TWSHandShakeResponse);
+function TWSServerConnection.DoPrepareHandshakeResponse(
+  aRequest: TWSHandShakeRequest; aResponse: TWSHandShakeResponse): boolean;
 begin
   If Assigned(OnHandshake) then
-    OnHandShake(aRequest,aResponse);
+    Result:=OnHandShake(aRequest,aResponse)
+  else
+    Result:=true;
 end;
 
 
@@ -1817,8 +1834,8 @@ begin
   H:=Nil;
   aResp:=TWSHandShakeResponse.Create('',FExtraHeaders);
   try
-    DoPrepareHandshakeResponse(aRequest,aResp);
     try
+      DoPrepareHandshakeResponse(aRequest,aResp);
       H:=TStringList.Create;
       aResp.ToStrings(aRequest,H,True);
       Reply:='';

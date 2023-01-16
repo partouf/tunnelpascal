@@ -80,7 +80,7 @@ implementation
        nmat,nadd,nmem,nset,ncnv,ninl,ncon,nld,nflw,nbas,nutils,
        { parser }
        scanner,
-       pbase,pinline,ptype,pgenutil,procinfo,cpuinfo
+       pbase,pinline,ptype,pgenutil,psub,procinfo,cpuinfo
        ;
 
     function sub_expr(pred_level:Toperator_precedence;flags:texprflags;factornode:tnode):tnode;forward;
@@ -346,8 +346,8 @@ implementation
                                   exit_procinfo.nestedexitlabel.used:=true;
 
                                   exit_procinfo.nestedexitlabel.jumpbuf:=clocalvarsym.create('LABEL$_'+exit_procinfo.nestedexitlabel.name,vs_value,rec_jmp_buf,[]);
-                                  exit_procinfo.procdef.localst.insert(exit_procinfo.nestedexitlabel);
-                                  exit_procinfo.procdef.localst.insert(exit_procinfo.nestedexitlabel.jumpbuf);
+                                  exit_procinfo.procdef.localst.insertsym(exit_procinfo.nestedexitlabel);
+                                  exit_procinfo.procdef.localst.insertsym(exit_procinfo.nestedexitlabel.jumpbuf);
                                 end;
 
                               statement_syssym:=cgotonode.create(exit_procinfo.nestedexitlabel);
@@ -984,6 +984,9 @@ implementation
                    end
                  else
                    p1:=load_self_node;
+                 { don't try to call the invokable again }
+                 if is_invokable(tdef(st.defowner)) then
+                   include(p1.flags,nf_load_procvar);
                  { We are calling a member }
                  maybe_load_methodpointer:=true;
                end;
@@ -1016,12 +1019,15 @@ implementation
 
          { When we are expecting a procvar we also need
            to get the address in some cases }
-         if assigned(getprocvardef) then
+         if assigned(getprocvardef) or assigned(getfuncrefdef) then
           begin
             if (block_type=bt_const) or
                getaddr then
              begin
-               aprocdef:=Tprocsym(sym).Find_procdef_byprocvardef(getprocvardef);
+               if assigned(getfuncrefdef) then
+                 aprocdef:=Tprocsym(sym).Find_procdef_byfuncrefdef(getfuncrefdef)
+               else
+                 aprocdef:=Tprocsym(sym).Find_procdef_byprocvardef(getprocvardef);
                getaddr:=true;
              end
             else
@@ -1029,7 +1035,10 @@ implementation
                  (m_mac_procvar in current_settings.modeswitches)) and
                 not(token in [_CARET,_POINT,_LKLAMMER]) then
               begin
-                aprocdef:=Tprocsym(sym).Find_procdef_byprocvardef(getprocvardef);
+                if assigned(getfuncrefdef) then
+                  aprocdef:=Tprocsym(sym).Find_procdef_byfuncrefdef(getfuncrefdef)
+                else
+                  aprocdef:=Tprocsym(sym).Find_procdef_byprocvardef(getprocvardef);
                 if assigned(aprocdef) then
                  getaddr:=true;
               end;
@@ -1056,6 +1065,9 @@ implementation
              if not assigned(aprocdef) and
                 assigned(getprocvardef) then
                aprocdef:=Tprocsym(sym).Find_procdef_byprocvardef(getprocvardef);
+             if not assigned(aprocdef) and
+                assigned(getfuncrefdef) then
+               aprocdef:=Tprocsym(sym).Find_procdef_byfuncrefdef(getfuncrefdef);
 
              { generate a methodcallnode or proccallnode }
              { we shouldn't convert things like @tcollection.load }
@@ -1076,7 +1088,16 @@ implementation
                 else
                   begin
                     typecheckpass(p1);
-                    if (p1.resultdef.typ=objectdef) then
+                    if (p1.resultdef.typ=classrefdef) and
+                       (
+                         assigned(getprocvardef) or
+                         assigned(getfuncrefdef)
+                       ) then
+                      begin
+                        p1:=cloadvmtaddrnode.create(p1);
+                        tloadnode(p2).set_mp(p1);
+                      end
+                    else if (p1.resultdef.typ=objectdef) then
                       { so we can create the correct  method pointer again in case
                         this is a "objectprocvar:=@classname.method" expression }
                       tloadnode(p2).symtable:=tobjectdef(p1.resultdef).symtable
@@ -1134,6 +1155,10 @@ implementation
                end
              else
                p1:=ccallnode.create(para,tprocsym(sym),st,p1,callflags,spezcontext);
+             { in case of calling an anonynmous function we already know the concrete
+               procdef that is going to be called }
+             if (tprocsym(sym).ProcdefList.count=1) and (po_anonymous in tprocdef(tprocsym(sym).procdeflist[0]).procoptions) then
+               tcallnode(p1).procdefinition:=tprocdef(tprocsym(sym).procdeflist[0]);
            end;
          afterassignment:=prevafterassn;
       end;
@@ -1169,6 +1194,45 @@ implementation
                  hp2:=cloadnode.create_procvar(tprocsym(tcallnode(hp).symtableprocentry),currprocdef,tcallnode(hp).symtableproc);
                  if (po_methodpointer in pv.procoptions) then
                    tloadnode(hp2).set_mp(tcallnode(hp).methodpointer.getcopy);
+                 hp.free;
+                 { replace the old callnode with the new loadnode }
+                 hpp^:=hp2;
+               end;
+            end;
+         end;
+      end;
+
+
+    procedure handle_funcref(fr:tobjectdef;var p2:tnode);
+      var
+        hp,hp2 : tnode;
+        hpp    : ^tnode;
+        currprocdef : tprocdef;
+      begin
+        if not assigned(fr) then
+          internalerror(2022032401);
+        if not is_invokable(fr) then
+          internalerror(2022032402);
+        if (m_tp_procvar in current_settings.modeswitches) or
+           (m_mac_procvar in current_settings.modeswitches) then
+         begin
+           hp:=p2;
+           hpp:=@p2;
+           while assigned(hp) and
+                 (hp.nodetype=typeconvn) do
+            begin
+              hp:=ttypeconvnode(hp).left;
+              { save orignal address of the old tree so we can replace the node }
+              hpp:=@hp;
+            end;
+           if (hp.nodetype=calln) and
+              { a procvar can't have parameters! }
+              not assigned(tcallnode(hp).left) then
+            begin
+              currprocdef:=tcallnode(hp).symtableprocentry.Find_procdef_byfuncrefdef(fr);
+              if assigned(currprocdef) then
+               begin
+                 hp2:=cloadnode.create_procvar(tprocsym(tcallnode(hp).symtableprocentry),currprocdef,tcallnode(hp).symtableproc);
                  hp.free;
                  { replace the old callnode with the new loadnode }
                  hpp^:=hp2;
@@ -1226,14 +1290,19 @@ implementation
                          consume(_ASSIGNMENT);
                          { read the expression }
                          if propsym.propdef.typ=procvardef then
-                           getprocvardef:=tprocvardef(propsym.propdef);
+                           getprocvardef:=tprocvardef(propsym.propdef)
+                         else if is_invokable(propsym.propdef) then
+                           getfuncrefdef:=tobjectdef(propsym.propdef);
                          p2:=comp_expr([ef_accept_equal]);
                          if assigned(getprocvardef) then
-                           handle_procvar(getprocvardef,p2);
+                           handle_procvar(getprocvardef,p2)
+                         else if assigned(getfuncrefdef) then
+                           handle_funcref(getfuncrefdef,p2);
                          tcallnode(p1).left:=ccallparanode.create(p2,tcallnode(p1).left);
                          { mark as property, both the tcallnode and the real call block }
                          include(p1.flags,nf_isproperty);
                          getprocvardef:=nil;
+                         getfuncrefdef:=nil;
                        end;
                      fieldvarsym :
                        begin
@@ -1243,7 +1312,17 @@ implementation
                          include(p1.flags,nf_isproperty);
                          consume(_ASSIGNMENT);
                          { read the expression }
+                         if propsym.propdef.typ=procvardef then
+                           getprocvardef:=tprocvardef(propsym.propdef)
+                         else if is_invokable(propsym.propdef) then
+                           getfuncrefdef:=tobjectdef(propsym.propdef);
                          p2:=comp_expr([ef_accept_equal]);
+                         if assigned(getprocvardef) then
+                           handle_procvar(getprocvardef,p2)
+                         else if assigned(getfuncrefdef) then
+                           handle_funcref(getfuncrefdef,p2);
+                         getprocvardef:=nil;
+                         getfuncrefdef:=nil;
                          p1:=cassignmentnode.create(p1,p2);
                       end
                     else
@@ -1361,8 +1440,25 @@ implementation
                                    again,p1,callflags,spezcontext);
                       { we need to know which procedure is called }
                       do_typecheckpass(p1);
+
+                      { We are loading... }
+                      if p1.nodetype=loadn then
+                       begin
+                         { an instance method }
+                         if not (po_classmethod in tloadnode(p1).procdef.procoptions) and
+                             { into a method pointer (not just taking a code address) }
+                             not getaddr and
+                             { and the selfarg is... }
+                             (
+                               { either a record/object/helper type, }
+                               not assigned(tloadnode(p1).left) or
+                               { or a class/metaclass type, or a class reference }
+                               (tloadnode(p1).left.resultdef.typ=classrefdef)
+                             ) then
+                           Message(parser_e_only_class_members_via_class_ref);
+                       end
                       { calling using classref? }
-                      if (
+                      else if (
                             isclassref or
                             (
                               (isobjecttype or
@@ -1500,7 +1596,7 @@ implementation
       end;
 
 
-    function handle_specialize_inline_specialization(var srsym:tsym;out srsymtable:tsymtable;out spezcontext:tspecializationcontext):boolean;
+    function handle_specialize_inline_specialization(var srsym:tsym;enforce_unit:boolean;out srsymtable:tsymtable;out spezcontext:tspecializationcontext):boolean;
       var
         spezdef : tdef;
         symname : tsymstr;
@@ -1525,7 +1621,7 @@ implementation
                 symname:=srsym.RealName
               else
                 symname:='';
-              spezdef:=generate_specialization_phase1(spezcontext,spezdef,symname,srsym.owner);
+              spezdef:=generate_specialization_phase1(spezcontext,spezdef,enforce_unit,symname,srsym.owner);
               case spezdef.typ of
                 errordef:
                   begin
@@ -1629,7 +1725,7 @@ implementation
                  if isspecialize then
                    begin
                      consume(_ID);
-                     if not handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) then
+                     if not handle_specialize_inline_specialization(srsym,false,srsymtable,spezcontext) then
                        begin
                          result.free;
                          result:=cerrornode.create;
@@ -1672,7 +1768,7 @@ implementation
                 if isspecialize and assigned(srsym) then
                   begin
                     consume(_ID);
-                    if handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) then
+                    if handle_specialize_inline_specialization(srsym,false,srsymtable,spezcontext) then
                       erroroutresult:=false;
                   end
                 else
@@ -1685,7 +1781,7 @@ implementation
                             not (token in [_LT,_LSHARPBRACKET]) then
                           check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,savedfilepos)
                         else
-                          result:=cspecializenode.create(result,getaddr,srsym);
+                          result:=cspecializenode.create(result,getaddr,srsym,false);
                         erroroutresult:=false;
                       end
                     else
@@ -2292,7 +2388,7 @@ implementation
                  end;
                { procvar.<something> can never mean anything so always
                  try to call it in case it returns a record/object/... }
-               maybe_call_procvar(p1,false);
+               maybe_call_procvar(p1,is_invokable(p1.resultdef) and not is_funcref(p1.resultdef));
 
                if (p1.nodetype=ordconstn) and
                    not is_boolean(p1.resultdef) and
@@ -2430,7 +2526,7 @@ implementation
                                begin
                                  searchsym_in_record(structh,pattern,srsym,srsymtable);
                                  consume(_ID);
-                                 if handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) then
+                                 if handle_specialize_inline_specialization(srsym,false,srsymtable,spezcontext) then
                                    erroroutp1:=false;
                                end;
                            end
@@ -2445,7 +2541,7 @@ implementation
                                      not (token in [_LT,_LSHARPBRACKET]) then
                                    check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,old_current_filepos)
                                  else
-                                   p1:=cspecializenode.create(p1,getaddr,srsym);
+                                   p1:=cspecializenode.create(p1,getaddr,srsym,false);
                                  erroroutp1:=false;
                                end
                              else
@@ -2606,7 +2702,7 @@ implementation
                                 begin
                                   searchsym_in_class(tobjectdef(structh),tobjectdef(structh),pattern,srsym,srsymtable,[ssf_search_helper]);
                                   consume(_ID);
-                                  if handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) then
+                                  if handle_specialize_inline_specialization(srsym,false,srsymtable,spezcontext) then
                                     erroroutp1:=false;
                                 end;
                             end
@@ -2621,7 +2717,7 @@ implementation
                                       not (token in [_LT,_LSHARPBRACKET]) then
                                     check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,old_current_filepos)
                                   else
-                                    p1:=cspecializenode.create(p1,getaddr,srsym);
+                                    p1:=cspecializenode.create(p1,getaddr,srsym,false);
                                   erroroutp1:=false;
                                 end
                               else
@@ -2660,7 +2756,7 @@ implementation
                                 begin
                                   searchsym_in_class(tobjectdef(structh),tobjectdef(structh),pattern,srsym,srsymtable,[ssf_search_helper]);
                                   consume(_ID);
-                                  if handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) then
+                                  if handle_specialize_inline_specialization(srsym,false,srsymtable,spezcontext) then
                                     erroroutp1:=false;
                                 end;
                             end
@@ -2675,7 +2771,7 @@ implementation
                                        not (token in [_LT,_LSHARPBRACKET]) then
                                      check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,old_current_filepos)
                                    else
-                                     p1:=cspecializenode.create(p1,getaddr,srsym);
+                                     p1:=cspecializenode.create(p1,getaddr,srsym,false);
                                    erroroutp1:=false;
                                 end
                               else
@@ -2763,7 +2859,15 @@ implementation
           else
             begin
               { is this a procedure variable ? }
-              if assigned(p1.resultdef) and
+              if is_invokable(p1.resultdef) and
+                  (token=_LKLAMMER) then
+                begin
+                  if not searchsym_in_class(tobjectdef(p1.resultdef),tobjectdef(p1.resultdef),method_name_funcref_invoke_find,srsym,srsymtable,[]) then
+                    internalerror(2021040202);
+                  include(p1.flags,nf_load_procvar);
+                  do_proc_call(srsym,srsymtable,tabstractrecorddef(p1.resultdef),false,again,p1,[],nil);
+                end
+              else if assigned(p1.resultdef) and
                  (p1.resultdef.typ=procvardef) then
                 begin
                   { Typenode for typecasting or expecting a procvar }
@@ -2771,6 +2875,10 @@ implementation
                      (
                       assigned(getprocvardef) and
                       equal_defs(p1.resultdef,getprocvardef)
+                     ) or
+                     (
+                      assigned(getfuncrefdef) and
+                      equal_defs(p1.resultdef,getfuncrefdef)
                      ) then
                     begin
                       if try_to_consume(_LKLAMMER) then
@@ -2948,7 +3056,7 @@ implementation
                    begin
                      if block_type in [bt_type,bt_const_type,bt_var_type] then
                        begin
-                         if not handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) or (srsym.typ=procsym) then
+                         if not handle_specialize_inline_specialization(srsym,unit_found,srsymtable,spezcontext) or (srsym.typ=procsym) then
                            begin
                              spezcontext.free;
                              result:=cerrornode.create;
@@ -2967,7 +3075,7 @@ implementation
                            end;
                        end
                      else
-                       result:=cspecializenode.create(nil,getaddr,srsym)
+                       result:=cspecializenode.create(nil,getaddr,srsym,unit_found)
                    end
                  else
                    begin
@@ -3004,7 +3112,7 @@ implementation
                   (sp_generic_dummy in srsym.symoptions) and
                   (token in [_LT,_LSHARPBRACKET]) then
                 begin
-                  result:=cspecializenode.create(nil,getaddr,srsym)
+                  result:=cspecializenode.create(nil,getaddr,srsym,unit_found)
                 end
               { check if it's a method/class method }
               else if is_member_read(srsym,srsymtable,result,hdef) then
@@ -3276,9 +3384,11 @@ implementation
                      end
                    else
                      begin
+                       if not unit_found then
+                         srsymtable:=nil;
                        {$push}
                        {$warn 5036 off}
-                       hdef:=generate_specialization_phase1(spezcontext,nil,nil,orgstoredpattern,nil,dummypos);
+                       hdef:=generate_specialization_phase1(spezcontext,nil,unit_found,nil,orgstoredpattern,srsymtable,dummypos);
                        {$pop}
                        if hdef=generrordef then
                          begin
@@ -3309,19 +3419,12 @@ implementation
                              if hdef.typ=procdef then
                                begin
                                  if block_type<>bt_body then
-                                   begin
-                                     message(parser_e_illegal_expression);
-                                     srsym:=generrorsym;
-                                     srsymtable:=nil;
-                                   end
+                                   message(parser_e_illegal_expression);
+                                 srsym:=tprocdef(hdef).procsym;
+                                 if assigned(spezcontext.symtable) then
+                                   srsymtable:=spezcontext.symtable
                                  else
-                                   begin
-                                     srsym:=tprocdef(hdef).procsym;
-                                     if assigned(spezcontext.symtable) then
-                                       srsymtable:=spezcontext.symtable
-                                     else
-                                       srsymtable:=srsym.owner;
-                                   end;
+                                   srsymtable:=srsym.owner;
                                end
                              else
                                internalerror(2015061204);
@@ -3550,6 +3653,8 @@ implementation
          again,
          updatefpos,
          nodechanged  : boolean;
+         oldprocvardef : tprocvardef;
+         oldfuncrefdef : tobjectdef;
       begin
         { can't keep a copy of p1 and compare pointers afterwards, because
           p1 may be freed and reallocated in the same place!  }
@@ -3719,7 +3824,7 @@ implementation
                          searchsym_in_class(hclassdef,current_structdef,hs,srsym,srsymtable,[ssf_search_helper]);
                        if isspecialize and assigned(srsym) then
                          begin
-                           if not handle_specialize_inline_specialization(srsym,srsymtable,spezcontext) then
+                           if not handle_specialize_inline_specialization(srsym,false,srsymtable,spezcontext) then
                              srsym:=nil;
                          end;
                      end;
@@ -4154,6 +4259,33 @@ implementation
                  p1:=cinlinenode.create(in_objc_protocol_x,false,p1);
                end;
 
+             _PROCEDURE,
+             _FUNCTION:
+               begin
+                 if (block_type=bt_body) and
+                     (m_anonymous_functions in current_settings.modeswitches) then
+                   begin
+                     oldprocvardef:=getprocvardef;
+                     oldfuncrefdef:=getfuncrefdef;
+                     getprocvardef:=nil;
+                     getfuncrefdef:=nil;
+                     pd:=read_proc([rpf_anonymous],nil);
+                     getprocvardef:=oldprocvardef;
+                     getfuncrefdef:=oldfuncrefdef;
+                     { assume that we try to get the address except if certain
+                       tokens follow that indicate a call }
+                     do_proc_call(pd.procsym,pd.owner,nil,not (token in [_POINT,_CARET,_LECKKLAMMER]),
+                                  again,p1,[],nil);
+                   end
+                 else
+                   begin
+                     Message(parser_e_illegal_expression);
+                     p1:=cerrornode.create;
+                     { recover }
+                     consume(token);
+                   end;
+               end
+
              else
                begin
                  Message(parser_e_illegal_expression);
@@ -4280,7 +4412,8 @@ implementation
       function generate_inline_specialization(gendef:tdef;n:tnode;filepos:tfileposinfo;parseddef:tdef;gensym:tsym;p2:tnode):tnode;
         var
           again,
-          getaddr : boolean;
+          getaddr,
+          unitspecific : boolean;
           pload : tnode;
           spezcontext : tspecializationcontext;
           structdef,
@@ -4292,6 +4425,7 @@ implementation
               getaddr:=tspecializenode(n).getaddr;
               pload:=tspecializenode(n).left;
               inheriteddef:=tabstractrecorddef(tspecializenode(n).inheriteddef);
+              unitspecific:=tspecializenode(n).unit_specific;
               tspecializenode(n).left:=nil;
             end
           else
@@ -4299,12 +4433,13 @@ implementation
               getaddr:=false;
               pload:=nil;
               inheriteddef:=nil;
+              unitspecific:=false;
             end;
 
           if assigned(parseddef) and assigned(gensym) and assigned(p2) then
-            gendef:=generate_specialization_phase1(spezcontext,gendef,parseddef,gensym.realname,gensym.owner,p2.fileinfo)
+            gendef:=generate_specialization_phase1(spezcontext,gendef,unitspecific,parseddef,gensym.realname,gensym.owner,p2.fileinfo)
           else
-            gendef:=generate_specialization_phase1(spezcontext,gendef);
+            gendef:=generate_specialization_phase1(spezcontext,gendef,unitspecific);
           case gendef.typ of
             errordef:
               begin
@@ -4424,6 +4559,53 @@ implementation
           spezcontext.free;
         end;
 
+      function maybe_handle_specialization(var p1,p2:tnode;filepos:tfileposinfo):boolean;
+        var
+          gensym : tsym;
+          parseddef,
+          gendef : tdef;
+          ptmp : tnode;
+        begin
+          result:=false;
+          { we need to decide whether we have an inline specialization
+            (type nodes to the left and right of "<", mode Delphi and
+            ">" or "," following) or a normal "<" comparison }
+          { TODO : p1 could be a non type if e.g. a variable with the
+                   same name is defined in the same unit where the
+                   generic is defined (though "same unit" is not
+                   necessarily needed) }
+          if getgenericsym(p1,gensym) and
+             { Attention: when nested specializations are supported
+                          p2 could be a loadn if a "<" follows }
+             istypenode(p2) and
+              (m_delphi in current_settings.modeswitches) and
+              { TODO : add _LT, _LSHARPBRACKET for nested specializations }
+              (token in [_GT,_RSHARPBRACKET,_COMMA]) then
+            begin
+              { this is an inline specialization }
+
+              { retrieve the defs of two nodes }
+              if p1.nodetype=specializen then
+                gendef:=gettypedef(tspecializenode(p1).sym)
+              else
+                gendef:=nil;
+              parseddef:=gettypedef(p2);
+
+              { check the hints for parseddef }
+              check_hints(parseddef.typesym,parseddef.typesym.symoptions,parseddef.typesym.deprecatedmsg,p1.fileinfo);
+
+              ptmp:=generate_inline_specialization(gendef,p1,filepos,parseddef,gensym,p2);
+
+              { we don't need these nodes anymore }
+              p1.free;
+              p2.free;
+
+              p1:=ptmp;
+
+              result:=true;
+            end;
+        end;
+
       label
         SubExprStart;
       var
@@ -4473,41 +4655,8 @@ implementation
                  p1:=caddnode.create(gtn,p1,p2);
                _LT :
                  begin
-                   { we need to decice whether we have an inline specialization
-                     (type nodes to the left and right of "<", mode Delphi and
-                     ">" or "," following) or a normal "<" comparison }
-                   { TODO : p1 could be a non type if e.g. a variable with the
-                            same name is defined in the same unit where the
-                            generic is defined (though "same unit" is not
-                            necessarily needed) }
-                   if getgenericsym(p1,gensym) and
-                      { Attention: when nested specializations are supported
-                                   p2 could be a loadn if a "<" follows }
-                      istypenode(p2) and
-                       (m_delphi in current_settings.modeswitches) and
-                       { TODO : add _LT, _LSHARPBRACKET for nested specializations }
-                       (token in [_GT,_RSHARPBRACKET,_COMMA]) then
+                   if maybe_handle_specialization(p1,p2,filepos) then
                      begin
-                       { this is an inline specialization }
-
-                       { retrieve the defs of two nodes }
-                       if p1.nodetype=specializen then
-                         gendef:=gettypedef(tspecializenode(p1).sym)
-                       else
-                         gendef:=nil;
-                       parseddef:=gettypedef(p2);
-
-                       { check the hints for parseddef }
-                       check_hints(parseddef.typesym,parseddef.typesym.symoptions,parseddef.typesym.deprecatedmsg,p1.fileinfo);
-
-                       ptmp:=generate_inline_specialization(gendef,p1,filepos,parseddef,gensym,p2);
-
-                       { we don't need these nodes anymore }
-                       p1.free;
-                       p2.free;
-
-                       p1:=ptmp;
-
                        { with p1 now set we are in reality directly behind the
                          call to "factor" thus we need to call down to that
                          again }
@@ -4686,6 +4835,27 @@ implementation
           else
            break;
         until false;
+        if (p1.nodetype=specializen) and
+            (token=_LSHARPBRACKET) and
+            (m_delphi in current_settings.modeswitches) then
+          begin
+            filepos:=current_tokenpos;
+            consume(token);
+            p2:=factor(false,[]);
+            if maybe_handle_specialization(p1,p2,filepos) then
+              begin
+                { with p1 now set we are in reality directly behind the
+                  call to "factor" thus we need to call down to that
+                  again }
+                { This is disabled until specializations on the right
+                  hand side work as well, because
+                  "not working expressions" is better than "half working
+                  expressions" }
+                {factornode:=p1;
+                goto SubExprStart;}
+              end else
+                message(parser_e_illegal_expression);
+          end;
         sub_expr:=p1;
       end;
 
@@ -4735,12 +4905,18 @@ implementation
            _ASSIGNMENT :
              begin
                 consume(_ASSIGNMENT);
-                if assigned(p1.resultdef) and (p1.resultdef.typ=procvardef) then
-                  getprocvardef:=tprocvardef(p1.resultdef);
+                if assigned(p1.resultdef) then
+                  if (p1.resultdef.typ=procvardef) then
+                    getprocvardef:=tprocvardef(p1.resultdef)
+                  else if is_invokable(p1.resultdef) then
+                    getfuncrefdef:=tobjectdef(p1.resultdef);
                 p2:=sub_expr(opcompare,[ef_accept_equal],nil);
                 if assigned(getprocvardef) then
-                  handle_procvar(getprocvardef,p2);
+                  handle_procvar(getprocvardef,p2)
+                else if assigned(getfuncrefdef) then
+                  handle_funcref(getfuncrefdef,p2);
                 getprocvardef:=nil;
+                getfuncrefdef:=nil;
                 p1:=cassignmentnode.create(p1,p2);
              end;
            _PLUSASN :
@@ -4775,7 +4951,7 @@ implementation
          if not assigned(p1.resultdef) and
             dotypecheck then
           do_typecheckpass(p1);
-         { transfer generic paramter flag }
+         { transfer generic parameter flag }
          if nf_generic_para in oldflags then
            include(p1.flags,nf_generic_para);
          afterassignment:=oldafterassignment;

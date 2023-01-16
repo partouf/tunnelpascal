@@ -224,10 +224,10 @@ unit cgx86;
       begin
 {$ifdef x86_64}
         { The stack pointer and base pointer will be aligned to 16-byte boundaries if the machine code is well-behaved }
-        if (ref.base = NR_RSP) or (ref.base = NR_RBP) then
+        if (ref.base = NR_STACK_POINTER_REG) or (ref.base = current_procinfo.framepointer) then
           begin
-            if (ref.index = NR_NO) and ((ref.offset mod 16) = 0) then
-              Result := 16
+            if (ref.index = NR_NO) and ((ref.offset mod target_info.stackalign) = 0) then
+              Result := target_info.stackalign
             else
               Result := ref.alignment;
           end
@@ -2077,7 +2077,7 @@ unit cgx86;
             href.index:=src2;
             list.concat(taicpu.op_ref_reg(A_LEA,TCgSize2OpSize[size],href,dst));
           end
-        else if (op in [OP_SHR,OP_SHL]) and
+        else if (op in [OP_SAR,OP_SHR,OP_SHL]) and
           (CPUX86_HAS_BMI2 in cpu_capabilities[current_settings.cputype]) and
           (size in [OS_32,OS_S32
 {$ifdef x86_64}
@@ -2085,10 +2085,14 @@ unit cgx86;
 {$endif x86_64}
           ]) then
           begin
-            if op=OP_SHL then
-              list.concat(taicpu.op_reg_reg_reg(A_SHLX,TCgSize2OpSize[size],src1,src2,dst))
-            else
-              list.concat(taicpu.op_reg_reg_reg(A_SHRX,TCgSize2OpSize[size],src1,src2,dst));
+            case op of
+              OP_SAR:
+                list.concat(taicpu.op_reg_reg_reg(A_SARX,TCgSize2OpSize[size],src1,src2,dst));
+              OP_SHL:
+                list.concat(taicpu.op_reg_reg_reg(A_SHLX,TCgSize2OpSize[size],src1,src2,dst));
+              else
+                list.concat(taicpu.op_reg_reg_reg(A_SHRX,TCgSize2OpSize[size],src1,src2,dst));
+            end;
           end
         else
           inherited a_op_reg_reg_reg(list,op,size,src1,src2,dst);
@@ -2548,8 +2552,10 @@ unit cgx86;
             exit;
           end;
 {$endif x86_64}
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_const_ref(A_CMP,TCgSize2OpSize[size],a,tmpref));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2559,8 +2565,10 @@ unit cgx86;
       begin
         check_register_size(size,reg1);
         check_register_size(size,reg2);
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_reg_reg(A_CMP,TCgSize2OpSize[size],reg1,reg2));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2571,8 +2579,10 @@ unit cgx86;
         tmpref:=ref;
         make_simple_ref(list,tmpref);
         check_register_size(size,reg);
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_ref_reg(A_CMP,TCgSize2OpSize[size],tmpref,reg));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 
@@ -2583,8 +2593,10 @@ unit cgx86;
         tmpref:=ref;
         make_simple_ref(list,tmpref);
         check_register_size(size,reg);
+        cg.a_reg_alloc(list,NR_DEFAULTFLAGS);
         list.concat(taicpu.op_reg_ref(A_CMP,TCgSize2OpSize[size],reg,tmpref));
         a_jmp_cond(list,cmp_op,l);
+        cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
       end;
 
 

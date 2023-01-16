@@ -149,7 +149,7 @@ uses
    symtable,
    defutil,defcmp,
    { pass 1 }
-   htypechk,procinfo,
+   htypechk,procinfo,pass_1,
    nmem,ncnv,ninl,ncon,nld,nadd,
    { parser specific stuff }
    pbase,pexpr,
@@ -844,8 +844,21 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         { maybe pchar ? }
         else
           if is_char(def.pointeddef) and
-            ((node.nodetype=stringconstn) or is_constcharnode(node)) then
+            ((node.nodetype=stringconstn) or is_constcharnode(node) or is_constwidecharnode(node)) then
             begin
+              { ensure that a widestring is converted to the current codepage }
+              if is_constwidecharnode(node) then
+                begin
+                  initwidestring(pw);
+                  concatwidestringchar(pw,tcompilerwidechar(word(tordconstnode(node).value.svalue)));
+                  hp:=cstringconstnode.createunistr(pw);
+                  donewidestring(pw);
+                  node.free;
+                  do_typecheckpass(hp);
+                  node:=hp;
+                end;
+              if (node.nodetype=stringconstn) and is_wide_or_unicode_string(node.resultdef) then
+                tstringconstnode(node).changestringtype(getansistringdef);
               { create a tcb for the string data (it's placed in a separate
                 asmlist) }
               ftcb.start_internal_data_builder(fdatalist,sec_rodata_norel,'',datatcb,ll);
@@ -952,7 +965,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                                is_constcharnode(taddnode(hp).right) or
                                is_constboolnode(taddnode(hp).right)) and
                                is_pointer(taddnode(hp).left.resultdef) then
-                               ftcb.queue_addn(tpointerdef(taddnode(hp).left.resultdef).pointeddef,get_ordinal_value(taddnode(hp).right))
+                               ftcb.queue_pointeraddn(tpointerdef(taddnode(hp).left.resultdef),get_ordinal_value(taddnode(hp).right))
                              else
                                Message(parser_e_illegal_expression);
                            end;
@@ -963,7 +976,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                                is_constcharnode(taddnode(hp).right) or
                                is_constboolnode(taddnode(hp).right)) and
                                is_pointer(taddnode(hp).left.resultdef) then
-                               ftcb.queue_subn(tpointerdef(taddnode(hp).left.resultdef).pointeddef,get_ordinal_value(taddnode(hp).right))
+                               ftcb.queue_pointersubn(tpointerdef(taddnode(hp).left.resultdef),get_ordinal_value(taddnode(hp).right))
                              else
                                Message(parser_e_illegal_expression);
                            end;
@@ -1215,7 +1228,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
               sec:=sec_data;
             secname:=asmsym.Name;
           end;
-        reslist:=ftcb.get_final_asmlist(asmsym,fsym.vardef,sec,secname,fsym.vardef.alignment);
+        reslist:=ftcb.get_final_asmlist(asmsym,fsym,fsym.vardef,sec,secname,fsym.vardef.alignment);
         if addstabx then
           begin
             { see same code in ncgutil.insertbssdata }
@@ -1346,7 +1359,8 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                 consume(_RKLAMMER);
               end;
             curoffset:=oldoffset;
-            ftcb.maybe_end_aggregate(def);
+            if ErrorCount=0 then
+              ftcb.maybe_end_aggregate(def);
           end
         { if array of char then we allow also a string }
         else if is_anychar(def.elementdef) then
@@ -1464,6 +1478,8 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         procaddrdef: tprocvardef;
         havepd,
         haveblock: boolean;
+        selfnode: tnode;
+        selfdef: tdef;
       begin
         { Procvars and pointers are no longer compatible.  }
         { under tp:  =nil or =var under fpc: =nil or =@var }
@@ -1478,12 +1494,6 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
              ftcb.maybe_end_aggregate(def);
              exit;
           end;
-        { you can't assign a value other than NIL to a typed constant  }
-        { which is a "procedure of object", because this also requires }
-        { address of an object/class instance, which is not known at   }
-        { compile time (JM)                                            }
-        if (po_methodpointer in def.procoptions) then
-          Message(parser_e_no_procvarobj_const);
         { parse the rest too, so we can continue with error checking }
         getprocvardef:=def;
         n:=comp_expr([ef_accept_equal]);
@@ -1549,10 +1559,31 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
               begin
                 ftcb.queue_emit_staticvar(tstaticvarsym(tloadnode(n).symtableentry));
               end;
+            { the Data field of a method pointer can be initialised
+              either with NIL (handled above) or with a class type }
+            if po_methodpointer in def.procoptions then
+              begin
+                selfnode:=tloadnode(n).left;
+                { class type must be known at compile time }
+                if assigned(selfnode) and
+                    (selfnode.nodetype=loadvmtaddrn) and
+                    (tloadvmtaddrnode(selfnode).left.nodetype=typen) then
+                  begin
+                    selfdef:=selfnode.resultdef;
+                    if selfdef.typ<>classrefdef then
+                      internalerror(2021122301);
+                    selfdef:=tclassrefdef(selfdef).pointeddef;
+                    ftcb.emit_tai(Tai_const.Create_sym(
+                      current_asmdata.RefAsmSymbol(tobjectdef(selfdef).vmt_mangledname,AT_DATA)),
+                      voidpointertype);
+                  end
+                else
+                  Message(parser_e_no_procvarobj_const);
+              end
             { nested procvar typed consts can only be initialised with nil
               (checked above) or with a global procedure (checked here),
               because in other cases we need a valid frame pointer }
-            if is_nested_pd(def) then
+            else if is_nested_pd(def) then
               begin
                 if haveblock or
                    is_nested_pd(pd) then
@@ -1645,13 +1676,13 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         srsym:=get_next_varsym(def,symlist,symidx);
         recsym := nil;
         startoffset:=curoffset;
+        error := false;
         while token<>_RKLAMMER do
           begin
             s:=pattern;
             sorg:=orgpattern;
             consume(_ID);
             consume(_COLON);
-            error := false;
             recsym := tsym(def.symtable.Find(s));
             if not assigned(recsym) then
               begin
@@ -1773,7 +1804,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
            ) then
           Message1(parser_w_skipped_fields_after,sorg);
 
-        if not error then
+        if ErrorCount=0 then
           begin
             if not(is_packed) then
               fillbytes:=0
@@ -1785,9 +1816,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
               end;
             for i:=1 to fillbytes do
               ftcb.emit_tai(Tai_const.Create_8bit(0),u8inttype);
+
+            ftcb.maybe_end_aggregate(def);
           end;
 
-        ftcb.maybe_end_aggregate(def);
         consume(_RKLAMMER);
       end;
 

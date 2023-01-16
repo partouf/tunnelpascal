@@ -160,6 +160,10 @@ const
   { prefix for names of class helper procsyms added to regular symtables }
   class_helper_prefix = 'CH$';
 
+  { name of the Invoke method of a function reference interface }
+  method_name_funcref_invoke_decl = 'Invoke';
+  method_name_funcref_invoke_find = 'INVOKE';
+
   { tsym.symid value in case the sym has not yet been registered }
   symid_not_registered = -2;
   { tsym.symid value in case the sym has been registered, but not put in a
@@ -214,7 +218,9 @@ type
                               "overridden" with a completely different symbol }
     sp_explicitrename,      { this is used to keep track of type renames created
                               by the user }
-    sp_generic_const
+    sp_generic_const,
+    sp_generic_unnamed_type { type symbol created for an anonymous type during
+                              an implicit function specialization }
   );
   tsymoptions=set of tsymoption;
 
@@ -334,7 +340,8 @@ type
     po_finalmethod,       { Procedure is a final method }
     po_staticmethod,      { static method }
     po_overridingmethod,  { method with override directive }
-    po_methodpointer,     { method pointer, only in procvardef, also used for 'with object do' }
+    po_methodpointer,     { method pointer, only in procvardef, also used for 'with object do'
+                            and anonymous functions assigned to method pointers }
     po_interrupt,         { Procedure is an interrupt handler }
     po_iocheck,           { IO checking should be done after a call to the procedure }
     po_assembler,         { Procedure is written in assembler }
@@ -435,7 +442,9 @@ type
       "varargs" modifier or Mac-Pascal ".." parameter }
     po_variadic,
     { implicitly return same type as the class instance to which the message is sent }
-    po_objc_related_result_type
+    po_objc_related_result_type,
+    { Delphi-style anonymous function }
+    po_anonymous
   );
   tprocoptions=set of tprocoption;
 
@@ -559,7 +568,10 @@ type
     oo_has_class_constructor, { the object/class has a class constructor }
     oo_has_class_destructor,  { the object/class has a class destructor  }
     oo_is_enum_class,     { the class represents an enum (JVM) }
-    oo_has_new_destructor { the object/class declares a destructor (apart from potentially inherting one from the parent) }
+    oo_has_new_destructor,{ the object/class declares a destructor (apart from potentially inherting one from the parent) }
+    oo_is_funcref,        { interface has a single Invoke method that can be directly called }
+    oo_is_invokable,      { interface that is invokable like a function }
+    oo_is_capturer        { the class is the capturer for anonymous functions (or converted proc(var)s) }
   );
   tobjectoptions=set of tobjectoption;
 
@@ -630,7 +642,8 @@ type
     { i8086 'external far' (can only be used in combination with vo_is_external) }
     vo_is_far,
     { a static symbol that is referenced from a global function }
-    vo_has_global_ref
+    vo_has_global_ref,
+    vo_is_internal
   );
   tvaroptions=set of tvaroption;
 
@@ -671,7 +684,7 @@ type
     localsymtable,         { subroutine symtable             }
     parasymtable,          { arguments symtable              }
     withsymtable,          { with operator symtable          }
-    stt_excepTSymtable,    { try/except symtable             }
+    exceptsymtable,        { try/except symtable             }
     exportedmacrosymtable, { }
     localmacrosymtable,    { }
     enumsymtable,          { symtable for enum members       }
@@ -755,7 +768,6 @@ type
     itp_1byte,
     itp_emptyrec,
     itp_llvmstruct,
-    itp_vmtdef,
     itp_vmt_tstringmesssagetable,
     itp_vmt_msgint_table_entries,
     itp_vmt_tmethod_name_table,
@@ -909,7 +921,6 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
        '$1byte$',
        '$emptyrec',
        '$llvmstruct$',
-       '$vmtdef$',
        '$vmt_TStringMesssageTable$',
        '$vmt_msgint_table_entries$',
        '$vmt_tmethod_name_table$',
@@ -1099,7 +1110,8 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'po_is_auto_setter',{po_is_auto_setter}
       'po_noinline',{po_noinline}
       'C-style array-of-const', {po_variadic}
-      'objc-related-result-type' {po_objc_related_result_type}
+      'objc-related-result-type', {po_objc_related_result_type}
+      'po_anonymous' {po_anonymous}
     );
 
 implementation

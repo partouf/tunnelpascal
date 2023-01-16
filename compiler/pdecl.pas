@@ -65,6 +65,7 @@ implementation
        { parser }
        scanner,
        pbase,pexpr,ptype,ptconst,pdecsub,pdecvar,pdecobj,pgenutil,pparautl,
+       procdefutil,
 {$ifdef jvm}
        pjvm,
 {$endif}
@@ -221,6 +222,7 @@ implementation
          orgname : TIDString;
          hdef : tdef;
          sym : tsym;
+         flags : thccflags;
          dummysymoptions : tsymoptions;
          deprecatedmsg : pshortstring;
          storetokenpos,filepos : tfileposinfo;
@@ -228,9 +230,10 @@ implementation
          old_block_type : tblock_type;
          first,
          isgeneric,
-         skipequal : boolean;
-         tclist : tasmlist;
+         expect_directive,
+         skip_initialiser : boolean;
          varspez : tvarspez;
+         asmtype : tasmlisttype;
       begin
          old_block_type:=block_type;
          block_type:=bt_const;
@@ -256,7 +259,7 @@ implementation
                        sym.symoptions:=sym.symoptions+dummysymoptions;
                        sym.deprecatedmsg:=deprecatedmsg;
                        sym.visibility:=symtablestack.top.currentvisibility;
-                       symtablestack.top.insert(sym);
+                       symtablestack.top.insertsym(sym);
                        sym.register_sym;
 {$ifdef jvm}
                        { for the JVM target, some constants need to be
@@ -288,14 +291,19 @@ implementation
                    consume(_COLON);
                    read_anon_type(hdef,false);
                    block_type:=bt_const;
-                   skipequal:=false;
                    { create symbol }
                    storetokenpos:=current_tokenpos;
                    current_tokenpos:=filepos;
                    if not (cs_typed_const_writable in current_settings.localswitches) then
-                     varspez:=vs_const
+                     begin
+                       varspez:=vs_const;
+                       asmtype:=al_rotypedconsts;
+                     end
                    else
-                     varspez:=vs_value;
+                     begin
+                       varspez:=vs_value;
+                       asmtype:=al_typedconsts;
+                     end;
                    { if we are dealing with structure const then we need to handle it as a
                      structure static variable: create a symbol in unit symtable and a reference
                      to it from the structure or linking will fail }
@@ -305,50 +313,46 @@ implementation
                                constant data correctly for error recovery }
                        check_allowed_for_var_or_const(hdef,false);
                        sym:=cfieldvarsym.create(orgname,varspez,hdef,[]);
-                       symtablestack.top.insert(sym);
+                       symtablestack.top.insertsym(sym);
                        sym:=make_field_static(symtablestack.top,tfieldvarsym(sym));
                      end
                    else
                      begin
                        sym:=cstaticvarsym.create(orgname,varspez,hdef,[]);
                        sym.visibility:=symtablestack.top.currentvisibility;
-                       symtablestack.top.insert(sym);
+                       symtablestack.top.insertsym(sym);
                      end;
                    sym.register_sym;
                    current_tokenpos:=storetokenpos;
-                   { procvar can have proc directives, but not type references }
-                   if (hdef.typ=procvardef) and
-                      (hdef.typesym=nil) then
+                   skip_initialiser:=false;
+                   { Anonymous proctype definitions can have proc directives }
+                   if (
+                         (hdef.typ=procvardef) or
+                         is_funcref(hdef)
+                       ) and
+                       (hdef.typesym=nil) then
                     begin
-                      { support p : procedure;stdcall=nil; }
-                      if try_to_consume(_SEMICOLON) then
+                      { Either "procedure; stdcall" or "procedure stdcall" }
+                      expect_directive:=try_to_consume(_SEMICOLON);
+                      if check_proc_directive(true) then
+                        parse_proctype_directives(hdef)
+                      else if expect_directive then
                        begin
-                         if check_proc_directive(true) then
-                          parse_var_proc_directives(sym)
-                         else
-                          begin
-                            Message(parser_e_proc_directive_expected);
-                            skipequal:=true;
-                          end;
-                       end
-                      else
-                      { support p : procedure stdcall=nil; }
-                       begin
-                         if check_proc_directive(true) then
-                          parse_var_proc_directives(sym);
+                         Message(parser_e_proc_directive_expected);
+                         skip_initialiser:=true;
                        end;
                       { add default calling convention }
-                      handle_calling_convention(tabstractprocdef(hdef),hcc_default_actions_intf);
-                    end;
-                   if not skipequal then
-                    begin
-                      { get init value }
-                      consume(_EQ);
-                      if (cs_typed_const_writable in current_settings.localswitches) then
-                        tclist:=current_asmdata.asmlists[al_typedconsts]
+                      if hdef.typ=procvardef then
+                        flags:=hcc_default_actions_intf
                       else
-                        tclist:=current_asmdata.asmlists[al_rotypedconsts];
-                      read_typed_const(tclist,tstaticvarsym(sym),in_structure);
+                        flags:=hcc_default_actions_intf_struct;
+                      handle_calling_convention(hdef,flags);
+                    end;
+                   { Parse the initialiser }
+                   if not skip_initialiser then
+                    begin
+                      consume(_EQ);
+                      read_typed_const(current_asmdata.asmlists[asmtype],tstaticvarsym(sym),in_structure);
                     end;
                 end;
 
@@ -396,18 +400,18 @@ implementation
                     labelsym:=clabelsym.create(pattern);
                   end;
 
-                symtablestack.top.insert(labelsym);
+                symtablestack.top.insertsym(labelsym);
                 if m_non_local_goto in current_settings.modeswitches then
                   begin
                     if symtablestack.top.symtabletype=localsymtable then
                       begin
                         labelsym.jumpbuf:=clocalvarsym.create('LABEL$_'+labelsym.name,vs_value,rec_jmp_buf,[]);
-                        symtablestack.top.insert(labelsym.jumpbuf);
+                        symtablestack.top.insertsym(labelsym.jumpbuf);
                       end
                     else
                       begin
                         labelsym.jumpbuf:=cstaticvarsym.create('LABEL$_'+labelsym.name,vs_value,rec_jmp_buf,[]);
-                        symtablestack.top.insert(labelsym.jumpbuf);
+                        symtablestack.top.insertsym(labelsym.jumpbuf);
                         cnodeutils.insertbssdata(tstaticvarsym(labelsym.jumpbuf));
                       end;
                     include(labelsym.jumpbuf.symoptions,sp_internal);
@@ -692,12 +696,15 @@ implementation
          typename,orgtypename,
          gentypename,genorgtypename : TIDString;
          newtype  : ttypesym;
+         dummysym,
          sym      : tsym;
          hdef,
          hdef2    : tdef;
          defpos,storetokenpos : tfileposinfo;
          old_block_type : tblock_type;
          old_checkforwarddefs: TFPObjectList;
+         flags : thccflags;
+         setdummysym,
          first,
          isgeneric,
          isunique,
@@ -721,9 +728,11 @@ implementation
          hdef:=nil;
          first:=true;
          had_generic:=false;
+         storetokenpos:=Default(tfileposinfo);
          repeat
            defpos:=current_tokenpos;
            istyperenaming:=false;
+           setdummysym:=false;
            generictypelist:=nil;
            localgenerictokenbuf:=nil;
 
@@ -836,7 +845,7 @@ implementation
                       Include(sym.symoptions,sp_generic_dummy);
                       ttypesym(sym).typedef.typesym:=sym;
                       sym.visibility:=symtablestack.top.currentvisibility;
-                      symtablestack.top.insert(sym);
+                      symtablestack.top.insertsym(sym);
                       ttypesym(sym).typedef.owner:=sym.owner;
                     end
                   else
@@ -875,7 +884,7 @@ implementation
                 begin
                   newtype:=ctypesym.create(genorgtypename,hdef);
                   newtype.visibility:=symtablestack.top.currentvisibility;
-                  symtablestack.top.insert(newtype);
+                  symtablestack.top.insertsym(newtype);
                 end;
               current_tokenpos:=defpos;
               current_tokenpos:=storetokenpos;
@@ -884,9 +893,6 @@ implementation
               { update the definition of the type }
               if assigned(hdef) then
                 begin
-                  if df_generic in hdef.defoptions then
-                    { flag parent symtables that they now contain a generic }
-                    hdef.owner.includeoption(sto_has_generic);
                   if assigned(hdef.typesym) then
                     begin
                       istyperenaming:=true;
@@ -951,13 +957,20 @@ implementation
               if isgeneric and assigned(sym) and
                   not (m_delphi in current_settings.modeswitches) and
                   (ttypesym(sym).typedef.typ=undefineddef) then
-                { don't free the undefineddef as the defids rely on the count
-                  of the defs in the def list of the module}
-                ttypesym(sym).typedef:=hdef;
+                begin
+                  { don't free the undefineddef as the defids rely on the count
+                    of the defs in the def list of the module}
+                  ttypesym(sym).typedef:=hdef;
+                  setdummysym:=true;
+                end;
               newtype.typedef:=hdef;
               { ensure that the type is registered when no specialization is
                 currently done }
-              if current_scanner.replay_stack_depth=0 then
+              if (current_scanner.replay_stack_depth=0) and
+                  (
+                    (hdef.typ<>procvardef) or
+                    not (po_is_function_ref in tabstractprocdef(hdef).procoptions)
+                  ) then
                 hdef.register_def;
               { KAZ: handle TGUID declaration in system unit }
               if (cs_compilesystem in current_settings.moduleswitches) and
@@ -1051,24 +1064,29 @@ implementation
                            try_consume_hintdirective(newtype.symoptions,newtype.deprecatedmsg);
                            consume(_SEMICOLON);
                          end;
-                       parse_var_proc_directives(tsym(newtype));
+                       parse_proctype_directives(tprocvardef(hdef));
                        if po_is_function_ref in tprocvardef(hdef).procoptions then
                          begin
-                           { these always support everything, no "of object" or
-                             "is_nested" is allowed }
-                           if is_nested_pd(tprocvardef(hdef)) or
-                              is_methodpointer(hdef) then
-                             cgmessage(type_e_function_reference_kind)
+                           if not (m_function_references in current_settings.modeswitches) and
+                               not (po_is_block in tprocvardef(hdef).procoptions) then
+                             messagepos(storetokenpos,sym_e_error_in_type_def)
                            else
                              begin
-                               { this message is only temporary; once Delphi style anonymous functions
-                                 are supported, this check is no longer required }
-                               if not (po_is_block in tprocvardef(hdef).procoptions) then
-                                 comment(v_error,'Function references are not yet supported, only C blocks (add "cblock;" at the end)');
+                               if setdummysym then
+                                 dummysym:=sym
+                               else
+                                 dummysym:=nil;
+                               adjust_funcref(hdef,newtype,dummysym);
                              end;
+                           if current_scanner.replay_stack_depth=0 then
+                             hdef.register_def;
                          end;
-                       handle_calling_convention(tprocvardef(hdef),hcc_default_actions_intf);
-                       if po_is_function_ref in tprocvardef(hdef).procoptions then
+                       if hdef.typ=procvardef then
+                         flags:=hcc_default_actions_intf
+                       else
+                         flags:=hcc_default_actions_intf_struct;
+                       handle_calling_convention(hdef,flags);
+                       if (hdef.typ=procvardef) and (po_is_function_ref in tprocvardef(hdef).procoptions) then
                          begin
                            if (po_is_block in tprocvardef(hdef).procoptions) and
                               not (tprocvardef(hdef).proccalloption in [pocall_cdecl,pocall_mwpascal]) then
@@ -1080,8 +1098,22 @@ implementation
                   end;
                 objectdef :
                   begin
-                    try_consume_hintdirective(newtype.symoptions,newtype.deprecatedmsg);
-                    consume(_SEMICOLON);
+                    if is_funcref(hdef) then
+                      begin
+                        if not check_proc_directive(true) then
+                          begin
+                            try_consume_hintdirective(newtype.symoptions,newtype.deprecatedmsg);
+                            consume(_SEMICOLON);
+                          end;
+                        parse_proctype_directives(hdef);
+                        if try_consume_hintdirective(newtype.symoptions,newtype.deprecatedmsg) then
+                          consume(_SEMICOLON);
+                      end
+                    else
+                      begin
+                        try_consume_hintdirective(newtype.symoptions,newtype.deprecatedmsg);
+                        consume(_SEMICOLON);
+                      end;
 
                     { change a forward and external class declaration into
                       formal external definition, so the compiler does not
@@ -1130,6 +1162,10 @@ implementation
                 attributes to this def }
               if not istyperenaming or isunique then
                 trtti_attribute_list.bind(rtti_attrs_def,tstoreddef(hdef).rtti_attribute_list);
+
+              if df_generic in hdef.defoptions then
+                { flag parent symtables that they now contain a generic }
+                hdef.owner.includeoption(sto_has_generic);
             end;
 
            if isgeneric and (not(hdef.typ in [objectdef,recorddef,arraydef,procvardef])) then
@@ -1314,7 +1350,7 @@ implementation
                      begin
                        sym.symoptions:=sym.symoptions+dummysymoptions;
                        sym.deprecatedmsg:=deprecatedmsg;
-                       symtablestack.top.insert(sym);
+                       symtablestack.top.insertsym(sym);
                      end
                    else
                      stringdispose(deprecatedmsg);

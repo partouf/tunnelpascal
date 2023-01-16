@@ -830,7 +830,7 @@ begin
           Add('  flash      (rx)   : ORIGIN = 0x'+IntToHex(flashbase,6)+', LENGTH = 0x'+IntToHex(flashsize,6));
           Add('  ram        (rw!x) : ORIGIN = 0x'+IntToHex(srambase,6)+', LENGTH = 0x'+IntToHex(sramsize,6));
           Add('}');
-          Add('_stack_top = 0x' + IntToHex(srambase+sramsize-1,4) + ';');
+          Add('_stack_top = 0x' + IntToHex(srambase+sramsize,4) + ';');
         end;
       Add('SECTIONS');
       Add('{');
@@ -1213,7 +1213,7 @@ begin
   else if current_settings.controllertype = ct_esp32 then
     begin
       if idf_version>=40400 then
-        cmdstr:=cmdstr+'$IDF_PATH/components/esp_system/ld/esp32/sections.ld.in'
+        cmdstr:=cmdstr+'-I $IDF_PATH/components/esp_system/ld $IDF_PATH/components/esp_system/ld/esp32/memory.ld.in'
       else
         cmdstr:=cmdstr+'$IDF_PATH/components/esp32/ld/esp32.ld';
     end
@@ -1252,7 +1252,7 @@ begin
   if (current_settings.controllertype = ct_esp32) then
     begin
      if idf_version>=40400 then
-       cmdstr:=cmdstr+' --input $IDF_PATH/components/esp_system/esp32/ld/sections.ld.in'
+       cmdstr:=cmdstr+' --input $IDF_PATH/components/esp_system/ld/esp32/sections.ld.in'
      else
        cmdstr:=cmdstr+' --input $IDF_PATH/components/esp32/ld/esp32.project.ld.in';
     end

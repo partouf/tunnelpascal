@@ -37,6 +37,15 @@ interface
        max_macro_nesting=16;
        preprocbufsize=32*1024;
 
+       { when parsing an internally generated macro, if an identifier is
+         prefixed with this constant then it will always be interpreted as a
+         unit name (to avoid clashes with user-specified parameter or field
+         names duplicated in internally generated code) }
+       internal_macro_escape_unit_namespace_name = #1;
+
+       internal_macro_escape_begin = internal_macro_escape_unit_namespace_name;
+       internal_macro_escape_end = internal_macro_escape_unit_namespace_name;
+
 
     type
        tcommentstyle = (comment_none,comment_tp,comment_oldtp,comment_delphi,comment_c);
@@ -168,7 +177,7 @@ interface
           procedure addfile(hp:tinputfile);
           procedure reload;
           { replaces current token with the text in p }
-          procedure substitutemacro(const macname:string;p:pchar;len,line,fileindex:longint);
+          procedure substitutemacro(const macname:string;p:pchar;len,line,fileindex:longint;internally_generated: boolean);
         { Scanner things }
           procedure gettokenpos;
           procedure inc_comment_level;
@@ -615,12 +624,16 @@ implementation
                  include(init_settings.localswitches,cs_strict_var_strings);
              end;
 
-           { in delphi mode, excess precision is by default on }
+           { in delphi mode, excess precision and open strings are by default on }
            if ([m_delphi] * current_settings.modeswitches <> []) then
              begin
                include(current_settings.localswitches,cs_excessprecision);
+               include(current_settings.localswitches,cs_openstring);
                if changeinit then
-                 include(init_settings.localswitches,cs_excessprecision);
+                 begin
+                   include(init_settings.localswitches,cs_excessprecision);
+                   include(init_settings.localswitches,cs_openstring);
+                 end;
              end;
 
 {$ifdef i8086}
@@ -2309,7 +2322,7 @@ type
           begin
             mac:=tmacro.create(hs);
             mac.defined:=true;
-            current_module.localmacrosymtable.insert(mac);
+            current_module.localmacrosymtable.insertsym(mac);
           end
         else
           begin
@@ -2419,7 +2432,7 @@ type
             mac:=tmacro.create(hs);
             mac.defined:=true;
             mac.is_compiler_var:=true;
-            current_module.localmacrosymtable.insert(mac);
+            current_module.localmacrosymtable.insertsym(mac);
           end
         else
           begin
@@ -2495,7 +2508,7 @@ type
           begin
              mac:=tmacro.create(hs);
              mac.defined:=false;
-             current_module.localmacrosymtable.insert(mac);
+             current_module.localmacrosymtable.insertsym(mac);
           end
         else
           begin
@@ -2645,7 +2658,7 @@ type
            if macroIsString then
              hs:=''''+hs+'''';
            current_scanner.substitutemacro(path,@hs[1],length(hs),
-             current_scanner.line_no,current_scanner.inputfile.ref_index);
+             current_scanner.line_no,current_scanner.inputfile.ref_index,false);
          end
         else
          begin
@@ -3632,6 +3645,8 @@ type
 
 
     procedure tscannerfile.reload;
+      var
+        wasmacro: Boolean;
       begin
         with inputfile do
          begin
@@ -3689,6 +3704,7 @@ type
               end
              else
               begin
+                wasmacro:=inputfile.is_macro;
               { load eof position in tokenpos/current_filepos }
                 gettokenpos;
               { close file }
@@ -3704,6 +3720,15 @@ type
                 tempopeninputfile;
               { status }
                 Message1(scan_t_back_in,inputfile.name);
+              { end of include file is like a line break which ends e.g. also // style comments }
+                if not(wasmacro) and (current_commentstyle=comment_delphi) then
+                  begin
+                    c:=#10;
+                  { ... but we have to decrease the line number first because it is increased due to this
+                    inserted line break later on }
+                    dec(line_no);
+                    exit;
+                  end;
               end;
            { load next char }
              c:=inputpointer^;
@@ -3713,7 +3738,7 @@ type
       end;
 
 
-    procedure tscannerfile.substitutemacro(const macname:string;p:pchar;len,line,fileindex:longint);
+    procedure tscannerfile.substitutemacro(const macname:string;p:pchar;len,line,fileindex:longint;internally_generated: boolean);
       var
         hp : tinputfile;
       begin
@@ -3733,6 +3758,7 @@ type
            inputpointer:=buf;
            inputstart:=bufstart;
            ref_index:=fileindex;
+           internally_generated_macro:=internally_generated;
          end;
       { reset line }
         line_no:=line;
@@ -4162,7 +4188,33 @@ type
           case c of
             '_',
             '0'..'9',
-            'A'..'Z' :
+            'A'..'Z',
+            'a'..'z' :
+              begin
+                if i<255 then
+                 begin
+                   inc(i);
+                   orgpattern[i]:=c;
+                   if c in ['a'..'z'] then
+                     pattern[i]:=chr(ord(c)-32)
+                   else
+                     pattern[i]:=c;
+                 end
+                else
+                 begin
+                   if not err then
+                     begin
+                       Message(scan_e_string_exceeds_255_chars);
+                       err:=true;
+                     end;
+                 end;
+                c:=inputpointer^;
+                inc(inputpointer);
+              end;
+            #0 :
+              reload;
+            else if inputfile.internally_generated_macro and
+                    (c in [internal_macro_escape_begin..internal_macro_escape_end]) then
               begin
                 if i<255 then
                  begin
@@ -4180,28 +4232,7 @@ type
                  end;
                 c:=inputpointer^;
                 inc(inputpointer);
-              end;
-            'a'..'z' :
-              begin
-                if i<255 then
-                 begin
-                   inc(i);
-                   orgpattern[i]:=c;
-                   pattern[i]:=chr(ord(c)-32)
-                 end
-                else
-                 begin
-                   if not err then
-                     begin
-                       Message(scan_e_string_exceeds_255_chars);
-                       err:=true;
-                     end;
-                 end;
-                c:=inputpointer^;
-                inc(inputpointer);
-              end;
-            #0 :
-              reload;
+              end
             else
               break;
           end;
@@ -4919,7 +4950,7 @@ type
                        mac.is_used:=true;
                        inc(yylexcount);
                        substitutemacro(pattern,mac.buftext,mac.buflen,
-                         mac.fileinfo.line,mac.fileinfo.fileindex);
+                         mac.fileinfo.line,mac.fileinfo.fileindex,false);
                        { handle empty macros }
                        if c=#0 then
                          begin
@@ -5601,6 +5632,12 @@ type
                  checkpreprocstack;
                  goto exit_label;
                end;
+             else if inputfile.internally_generated_macro and
+                     (c in [internal_macro_escape_begin..internal_macro_escape_end]) then
+               begin
+                 token:=_ID;
+                 readstring;
+               end
              else
                Illegal_Char(c);
            end;

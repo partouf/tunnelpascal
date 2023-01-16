@@ -2,7 +2,7 @@
     This file is part of the Free Component Library
 
     WEBIDL definition containers
-    Copyright (c) 2018 by Michael Van Canneyt michael@freepascal.org
+    Copyright (c) 2021 by Michael Van Canneyt michael@freepascal.org
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -22,10 +22,107 @@ uses
   Classes, SysUtils, contnrs;
 
 Type
+  TWebIDLBaseType = (
+    wibtNone,
+    wibtUndefined,
+    wibtVoid,
+    wibtUnion,
+    wibtAny,
+    // boolean
+    wibtBoolean,
+    // integers
+    wibtByte,
+    wibtOctet,
+    wibtShort,
+    wibtUnsignedShort,
+    wibtLong,
+    wibtUnsignedLong,
+    wibtLongLong,
+    wibtUnsignedLongLong,
+    wibtBigInteger,
+    // floats
+    wibtFloat,             // not NaN or infinity
+    wibtUnrestrictedFloat,
+    wibtDouble,            // not NaN or infinity
+    wibtUnrestrictedDouble,
+    // strings
+    wibtDOMString, // UTF-16
+    wibtUSVString, // UTF-16 without surrogates
+    wibtByteString,
+    wibtUTF8String,
+    // objects
+    wibtRecord,
+    wibtObject,
+    wibtFunction,
+    wibtError,
+    wibtDOMException,
+    // arrays
+    wibtArrayBuffer,
+    wibtDataView,
+    wibtInt8Array,
+    wibtInt16Array,
+    wibtInt32Array,
+    wibtUint8Array,
+    wibtUint16Array,
+    wibtUint32Array,
+    wibtUint8ClampedArray,
+    wibtFloat32Array,
+    wibtFloat64Array,
+    wibtDocument,
+    wibtDocumentFragment,
+    wibtNode
+    );
+  TWebIDLBaseTypes = set of TWebIDLBaseType;
+const
+  WebIDLBaseTypeNames: array[TWebIDLBaseType] of string = (
+    '',
+    'undefined',
+    'void',
+    'union',
+    'any',
+    'boolean',
+    'byte',
+    'octet',
+    'short',
+    'unsigned short',
+    'long',
+    'unsigned long',
+    'long long',
+    'unsigned long long',
+    'BigInteger',
+    'float',
+    'unrestricted float',
+    'double',
+    'unrestricted double',
+    'DOMString',
+    'USVString',
+    'ByteString',
+    'UTF8String',
+    'record',
+    'object',
+    'Function',
+    'Error',
+    'DOMException',
+    'ArrayBuffer',
+    'DataView',
+    'Int8Array',
+    'Int16Array',
+    'Int32Array',
+    'Uint8Array',
+    'Uint16Array',
+    'Uint32Array',
+    'Uint8ClampedArray',
+    'Float32Array',
+    'Float64Array',
+    'Document',
+    'DocumentFragment',
+    'Node');
 
-  { TAttributeList }
+type
 
-  TAttributeList = Class(TPersistent)
+  { TExtAttributeList }
+
+  TExtAttributeList = Class(TPersistent)
   private
     Fattrs: TStringList;
     function GetAttrs(aIndex : Integer): UTF8String;
@@ -47,24 +144,28 @@ Type
   TIDLTypeDefDefinition = Class;
   TIDLDefinitionClass = Class of TIDLDefinition;
 
+  { TIDLBaseObject }
+
   TIDLBaseObject = Class
   Public
+    Line, Column: integer;
+    SrcFile: string;
     // The IDLBaseobject is owner of the newly created instance !
-    Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String) : TIDLDefinition; virtual; abstract;
+    Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String; const aFile: string; aLine, aCol: integer) : TIDLDefinition; virtual; abstract;
     Function AsString(Full : Boolean): UTF8String; virtual; abstract;
   end;
 
   TIDLDefinition = Class(TIDLBaseObject)
   private
-    FAttributes: TAttributeList;
+    FAttributes: TExtAttributeList;
     FData: TObject;
     FName: UTF8String;
     FParent: TIDLDefinition;
-    function GetAttributes: TAttributeList;
-    procedure SetAttributes(AValue: TAttributeList);
+    function GetAttributes: TExtAttributeList;
+    procedure SetAttributes(AValue: TExtAttributeList);
   Public
-    Constructor Create(aParent : TIDLDefinition;Const aName : UTF8String); virtual;
-    Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String) : TIDLDefinition; override;
+    Constructor Create(aParent : TIDLDefinition; Const aName : UTF8String; const aFile: string; aLine, aCol: integer); virtual;
+    Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String; const aFile: string; aLine, aCol: integer) : TIDLDefinition; override;
     Destructor Destroy; override;
     // This definition extens an existing one. It will not be in the lookup list of symbols
     Function IsExtension : Boolean; virtual;
@@ -75,7 +176,7 @@ Type
     Property Data : TObject Read FData Write FData;
     Property Parent : TIDLDefinition Read FParent Write FParent;
     // Attributes are owned by the definition. If you set it, your list will be freed by the definition
-    Property Attributes : TAttributeList Read GetAttributes Write SetAttributes;
+    Property Attributes : TExtAttributeList Read GetAttributes Write SetAttributes;
   end;
 
   { TIDLDefinitionList }
@@ -108,8 +209,9 @@ Type
     function AsString(const aSep, aStart, aEnd, aIndent: String; aFull,
       AppendSep: Boolean): UTF8String;
     Function AsString(Full : Boolean): UTF8String; override;
-    Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String) : TIDLDefinition; override;
+    Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String; const aFile: string; aLine, aCol: integer) : TIDLDefinition; override;
     Function Add(aItem : TIDLDefinition) : Integer;
+    Function Delete(aItem : TIDLDefinition) : boolean; // true if found and deleted
     function GetEnumerator: TIDLDefinitionEnumerator;
     Property Parent : TIDLDefinition Read FParent;
     Property Definitions[aIndex : Integer] : TIDLDefinition Read GetD;default;
@@ -170,7 +272,7 @@ Type
     Function GetFullMemberList(aList : TIDLDefinitionList) : Integer;
     Function HasMembers : Boolean;
     // Members are owned by this instance.
-    Property members : TIDLDefinitionList Read GetMembers;
+    Property Members : TIDLDefinitionList Read GetMembers;
     Property Member[Aindex : Integer] : TIDLDefinition Read GetMember; default;
     Function HasPartials : Boolean;
     // Partials are NOT owned by this instance
@@ -189,6 +291,8 @@ Type
   TIDLInterfaceDefinition = Class(TIDLStructuredDefinition)
   private
     FHasSerializer: Boolean;
+    FHasStringifier: Boolean;
+    FIsForward: Boolean;
     FIsInclude: Boolean;
     FIsMixin: Boolean;
     FParentInterface: TIDLInterfaceDefinition;
@@ -196,9 +300,11 @@ Type
     Function AsString (aFull : Boolean) : UTF8String; override;
     Property ParentInterface : TIDLInterfaceDefinition Read FParentInterface Write FParentInterface;
     Property HasSerializer : Boolean Read FHasSerializer Write FHasSerializer;
+    Property HasStringifier : Boolean Read FHasStringifier Write FHasStringifier;
     // is this a mixin definition?
     Property IsMixin : Boolean Read FIsMixin Write FIsMixin;
     Property IsInclude : Boolean Read FIsInclude Write FIsInclude;
+    Property IsForward: Boolean read FIsForward write FIsForward;
   end;
 
   { TIDLArgumentDefinition }
@@ -254,15 +360,15 @@ Type
   TIDLSerializerDefinition = Class(TIDLDefinition)
   private
     FKind: TSerializerKind;
-    FIdentifiers : TAttributeList;
+    FIdentifiers : TExtAttributeList;
     FSerializerFunction: TIDLFunctionDefinition;
-    procedure SetIdentifierList(AValue: TAttributeList);
+    procedure SetIdentifierList(AValue: TExtAttributeList);
     Procedure SetSerializerFunction (aValue : TIDLFunctionDefinition);
-    function GetIdentifierList: TAttributeList;
+    function GetIdentifierList: TExtAttributeList;
   Public
     Destructor Destroy; override;
     Function HasIdentifiers : Boolean;
-    Property Identifiers : TAttributeList Read GetIdentifierList Write SetIDentifierList;
+    Property Identifiers : TExtAttributeList Read GetIdentifierList Write SetIDentifierList;
     Property SerializerFunction : TIDLFunctionDefinition Read FSerializerFunction Write SetSerializerFunction;
     Property Kind : TSerializerKind Read FKind Write FKind;
   end;
@@ -302,7 +408,7 @@ Type
   private
     FValues: TStrings;
   Public
-    Constructor Create(aParent : TIDLDefinition;Const aName : UTF8String); override;
+    Constructor Create(aParent : TIDLDefinition;Const aName : UTF8String; const aFile: string; aLine, aCol: integer); override;
     Destructor Destroy; override;
     Procedure AddValue(Const aValue : String);
     Property Values : TStrings Read FValues;
@@ -335,8 +441,6 @@ Type
     property ReturnType : TIDLTypeDefDefinition Read FReturnType Write SetReturnType;
   end;
 
-  { TIDLMapLikeDefinition }
-
   { TIDLKeyValueDefinition }
 
   TIDLKeyValueDefinition = Class(TIDLTypeDefDefinition)
@@ -351,6 +455,8 @@ Type
     property KeyType : TIDLTypeDefDefinition Read FKeyType Write SetKeyType;
     property ValueType : TIDLTypeDefDefinition Read FValueType Write SetValueType;
   end;
+
+  { TIDLMapLikeDefinition }
 
   TIDLMapLikeDefinition = Class(TIDLKeyValueDefinition)
   private
@@ -401,7 +507,7 @@ Type
   private
     FUnion: TIDLDefinitionList;
   Public
-    Constructor Create(aParent : TIDLDefinition;Const aName : UTF8String); override;
+    Constructor Create(aParent : TIDLDefinition;Const aName : UTF8String; const aFile: string; aLine, aCol: integer); override;
     Destructor Destroy; override;
     Function Clone (aParent : TIDLDefinition) : TIDLTypeDefDefinition; override;
     Function AsString(Full: Boolean): UTF8String; override;
@@ -445,8 +551,17 @@ Type
     property KeyType : TIDLTypeDefDefinition Read FKeyType Write SetKeyType;
   end;
 
+function NameToWebIDLBaseType(const s: string): TWebIDLBaseType;
 
 implementation
+
+function NameToWebIDLBaseType(const s: string): TWebIDLBaseType;
+begin
+  for Result in TWebIDLBaseType do
+    if s=WebIDLBaseTypeNames[Result] then
+      exit;
+  Result:=wibtNone;
+end;
 
 { TIDLSetlikeDefinition }
 
@@ -592,7 +707,7 @@ begin
   if Not HasMembers then
     Result:=Result+' {'+sLineBreak+'}'
   else
-    Result:=Result+' '+members.AsString(true);
+    Result:=Result+' '+Members.AsString(true);
 
   if aFull and HasAttributes then
     Result:=Attributes.AsString(true)+' '+Result;
@@ -602,7 +717,7 @@ end;
 
 function TIDLTypeDefDefinition.Clone(aParent: TIDLDefinition): TIDLTypeDefDefinition;
 begin
-  Result:=TIDLTypeDefDefinitionClass(Self.ClassType).Create(aParent,Name);
+  Result:=TIDLTypeDefDefinitionClass(Self.ClassType).Create(aParent,Name,aParent.SrcFile,aParent.Line,aParent.Column);
   Result.TypeName:=Self.TypeName;
 end;
 
@@ -657,7 +772,7 @@ begin
     Kind:=skFunction;
 end;
 
-procedure TIDLSerializerDefinition.SetIdentifierList(AValue: TAttributeList);
+procedure TIDLSerializerDefinition.SetIdentifierList(AValue: TExtAttributeList);
 begin
   If (FIdentifiers=AValue) then
     exit;
@@ -665,11 +780,11 @@ begin
   FAttributes:=AValue;
 end;
 
-function TIDLSerializerDefinition.GetIdentifierList: TAttributeList;
+function TIDLSerializerDefinition.GetIdentifierList: TExtAttributeList;
 
 begin
   If FIdentifiers=Nil then
-    FIdentifiers:=TAttributeList.Create;
+    FIdentifiers:=TExtAttributeList.Create;
   Result:=FIdentifiers;
 end;
 
@@ -763,7 +878,7 @@ end;
 function TIDLArgumentDefinition.Clone(aType: TIDLTypeDefDefinition): TIDLArgumentDefinition;
 
 begin
-  Result:=TIDLArgumentDefinition.Create(Nil,Self.Name);
+  Result:=TIDLArgumentDefinition.Create(Nil,Name,SrcFile,Line,Column);
   if (AType=Nil) and Assigned(ArgumentType) then
     begin
     AType:=ArgumentType.Clone(Result);
@@ -860,7 +975,7 @@ begin
   if Not HasMembers then
     Result:=Result+' {'+sLineBreak+'}'
   else
-    Result:=Result+' '+members.AsString(true);
+    Result:=Result+' '+Members.AsString(true);
   if Full and HasAttributes then
     Result:=Attributes.AsString(True)+' '+Result
 end;
@@ -960,9 +1075,9 @@ end;
 { TIDLUnionTypeDefDefinition }
 
 constructor TIDLUnionTypeDefDefinition.Create(aParent: TIDLDefinition;
-  const aName: UTF8String);
+  const aName: UTF8String; const aFile: string; aLine, aCol: integer);
 begin
-  inherited Create(aParent, aName);
+  inherited Create(aParent, aName, aFile, aLine, aCol);
   FUnion:=TIDLDefinitionList.Create(Self,True);
 end;
 
@@ -999,9 +1114,9 @@ end;
 { TIDLEnumDefinition }
 
 constructor TIDLEnumDefinition.Create(aParent: TIDLDefinition;
-  const aName: UTF8String);
+  const aName: UTF8String; const aFile: string; aLine, aCol: integer);
 begin
-  inherited Create(aParent, aName);
+  inherited Create(aParent, aName, aFile, aLine, aCol);
   FValues:=TStringList.Create;
 end;
 
@@ -1079,41 +1194,41 @@ begin
   Result:=Assigned(FPartials) and (FPartials.Count>0);
 end;
 
-{ TAttributeList }
+{ TExtAttributeList }
 
-function TAttributeList.GetAttrs(aIndex : Integer): UTF8String;
+function TExtAttributeList.GetAttrs(aIndex : Integer): UTF8String;
 begin
   Result:=FAttrs[aIndex];
 end;
 
-function TAttributeList.GetCount: Integer;
+function TExtAttributeList.GetCount: Integer;
 begin
   Result:=FAttrs.Count;
 end;
 
-constructor TAttributeList.Create;
+constructor TExtAttributeList.Create;
 begin
   Fattrs:=TStringList.Create;
 end;
 
-destructor TAttributeList.destroy;
+destructor TExtAttributeList.destroy;
 begin
   FreeAndNil(Fattrs);
   inherited;
 end;
 
-procedure TAttributeList.Assign(aSource: TPersistent);
+procedure TExtAttributeList.Assign(aSource: TPersistent);
 begin
-  If aSource is TAttributeList then
-    Fattrs.Assign(TAttributeList(aSource).Fattrs);
+  If aSource is TExtAttributeList then
+    Fattrs.Assign(TExtAttributeList(aSource).Fattrs);
 end;
 
-procedure TAttributeList.Add(aAttribute: UTF8String);
+procedure TExtAttributeList.Add(aAttribute: UTF8String);
 begin
   FAttrs.Add(aAttribute);
 end;
 
-function TAttributeList.ToLine(ASep: String): UTF8String;
+function TExtAttributeList.ToLine(ASep: String): UTF8String;
 
 Var
   I : Integer;
@@ -1128,7 +1243,7 @@ begin
     end;
 end;
 
-function TAttributeList.AsString(Full: Boolean): UTF8String;
+function TExtAttributeList.AsString(Full: Boolean): UTF8String;
 
 begin
   Result:=ToLine(',');
@@ -1136,7 +1251,7 @@ begin
     Result:='['+Result+']';
 end;
 
-function TAttributeList.IndexOf(const aName: UTF8string): Integer;
+function TExtAttributeList.IndexOf(const aName: UTF8string): Integer;
 begin
   Result:=Fattrs.IndexOf(aName);
 end;
@@ -1206,9 +1321,9 @@ begin
 end;
 
 function TIDLDefinitionList.Add(aClass: TIDLDefinitionClass;
-  const AName: UTF8String): TIDLDefinition;
+  const AName: UTF8String; const aFile: string; aLine, aCol: integer): TIDLDefinition;
 begin
-  Result:=aClass.Create(FParent,aName);
+  Result:=aClass.Create(FParent,aName,aFile,aLine,aCol);
   FList.Add(Result);
 end;
 
@@ -1219,6 +1334,19 @@ begin
     aItem.Parent:=FParent;
 end;
 
+function TIDLDefinitionList.Delete(aItem: TIDLDefinition): boolean;
+var
+  i: Integer;
+begin
+  for i:=0 to FList.Count-1 do
+    if FList[i]=aItem then
+      begin
+      FList.Delete(i);
+      exit(true);
+      end;
+  Result:=false;
+end;
+
 function TIDLDefinitionList.GetEnumerator: TIDLDefinitionEnumerator;
 begin
   Result:=TIDLDefinitionEnumerator.Create(Self);
@@ -1226,30 +1354,34 @@ end;
 
 { TIDLDefinition }
 
-procedure TIDLDefinition.SetAttributes(AValue: TAttributeList);
+procedure TIDLDefinition.SetAttributes(AValue: TExtAttributeList);
 begin
   if FAttributes=AValue then Exit;
   FreeAndNil(FAttributes);
   FAttributes:=AValue;
 end;
 
-function TIDLDefinition.GetAttributes: TAttributeList;
+function TIDLDefinition.GetAttributes: TExtAttributeList;
 begin
   if FAttributes=Nil then
-    Fattributes:=TAttributeList.Create;
+    Fattributes:=TExtAttributeList.Create;
   Result:=Fattributes;
 end;
 
-constructor TIDLDefinition.Create(aParent : TIDLDefinition; const aName: UTF8String);
+constructor TIDLDefinition.Create(aParent: TIDLDefinition;
+  const aName: UTF8String; const aFile: string; aLine, aCol: integer);
 begin
   FName:=AName;
   FParent:=AParent;
+  SrcFile:=aFile;
+  Line:=aLine;
+  Column:=aCol;
 end;
 
-function TIDLDefinition.Add(aClass: TIDLDefinitionClass; const AName: UTF8String
-  ): TIDLDefinition;
+function TIDLDefinition.Add(aClass: TIDLDefinitionClass;
+  const AName: UTF8String; const aFile: string; aLine, aCol: integer): TIDLDefinition;
 begin
-  Result:=aClass.Create(Self,AName);
+  Result:=aClass.Create(Self,AName,aFile,aLine,aCol);
 end;
 
 destructor TIDLDefinition.Destroy;

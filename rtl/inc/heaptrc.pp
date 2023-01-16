@@ -1260,7 +1260,12 @@ type
     dli_saddr      : pointer;
   end;
 
+// *BSD isn't flagged for "weak"  support in 3.2.2
+{$if defined(BSD) and defined (VER3_2_2)}
   function _dladdr(Lib:pointer; info: Pdl_info): Longint; cdecl; external LibDL name 'dladdr';
+{$else}
+  function _dladdr(Lib:pointer; info: Pdl_info): Longint; cdecl; weakexternal LibDL name 'dladdr';
+{$endif}
 {$elseif defined(MSWINDOWS)}
   function _GetModuleFileNameA(hModule:HModule;lpFilename:PAnsiChar;nSize:cardinal):cardinal;stdcall; external 'kernel32' name 'GetModuleFileNameA';
 {$endif}
@@ -1279,11 +1284,16 @@ var
 begin
   GetModuleName:='';
 {$if defined(LINUX) or defined(BSD)}
-  res:=_dladdr(@ParamStr,@dli); { get any non-eliminated address in SO space }
-  if res<=0 then 
-    exit;
-  if Assigned(dli.dli_fname) then
-    GetModuleName:=PAnsiChar(dli.dli_fname);
+  if assigned(@_dladdr) then
+    begin
+      res:=_dladdr(@ParamStr,@dli); { get any non-eliminated address in SO space }
+      if res<=0 then
+        exit;
+      if Assigned(dli.dli_fname) then
+        GetModuleName:=PAnsiChar(dli.dli_fname);
+    end
+  else
+    GetModuleName:=ParamStr(0);
 {$elseif defined(MSWINDOWS)}
   sz:=_GetModuleFileNameA(hInstance,PChar(@buf),sizeof(buf));
   if sz>0 then

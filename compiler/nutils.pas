@@ -83,6 +83,7 @@ interface
     function load_high_value_node(vs:tparavarsym):tnode;
     function load_self_node:tnode;
     function load_result_node:tnode;
+    function load_safecallresult_node:tnode;
     function load_self_pointer_node:tnode;
     function load_vmt_pointer_node:tnode;
     function is_self_node(p:tnode):boolean;
@@ -201,6 +202,10 @@ interface
     }
     function MatchAndTransformNodesCommutative(n1,n2,n3,n4 : tnode;matchproc : TMatchProc4;transformproc : TTransformProc4;var res : tnode) : Boolean;
 
+    {
+      resets all flags so that nf_write/nf_modify information is regenerated
+    }
+    procedure node_reset_pass1_write(n: tnode);
 
 implementation
 
@@ -477,7 +482,18 @@ implementation
         hp : tnode;
       begin
         result:=false;
-        if (p1.resultdef.typ<>procvardef) or
+        if not (p1.resultdef.typ in [procvardef,objectdef]) or
+           (
+             (p1.resultdef.typ=objectdef) and
+             (
+               not is_invokable(p1.resultdef) or
+               (nf_load_procvar in p1.flags) or
+               not (
+                 is_funcref(p1.resultdef) or
+                 invokable_has_argless_invoke(tobjectdef(p1.resultdef))
+               )
+             )
+           ) or
            (tponly and
             not(m_tp_procvar in current_settings.modeswitches)) then
           exit;
@@ -564,6 +580,13 @@ implementation
     function load_result_node:tnode;
       begin
         result:=gen_load_var(get_local_or_para_sym('result'));
+        typecheckpass(result);
+      end;
+
+
+    function load_safecallresult_node: tnode;
+      begin
+        result:=gen_load_var(get_local_or_para_sym('safecallresult'));
         typecheckpass(result);
       end;
 
@@ -953,9 +976,18 @@ implementation
                     in_cos_real,
                     in_sin_real,
                     in_arctan_real,
-                    in_sqr_real,
                     in_sqrt_real,
                     in_ln_real:
+                      begin
+                        inc(result,15);
+                        if (result >= NODE_COMPLEXITY_INF) then
+                          begin
+                            result:=NODE_COMPLEXITY_INF;
+                            exit;
+                          end;
+                        p:=tunarynode(p).left;
+                      end;
+                    in_sqr_real:
                       begin
                         inc(result,2);
                         if (result >= NODE_COMPLEXITY_INF) then
@@ -1027,11 +1059,6 @@ implementation
                       end;
                   end;
 
-                end;
-              finalizetempsn:
-                begin
-                  result:=NODE_COMPLEXITY_INF;
-                  exit;
                 end;
               else
                 begin
@@ -1677,5 +1704,26 @@ implementation
         else
           result:=false;
       end;
+
+
+     function _node_reset_pass1_write(var n: tnode; arg: pointer): foreachnoderesult;
+       begin
+         Result := fen_false;
+         n.flags := n.flags - [nf_pass1_done,nf_write,nf_modify];
+         if n.nodetype = assignn then
+           begin
+             { Force re-evaluation of assignments so nf_modify and nf_write
+               flags are correctly set. }
+             n.resultdef := nil;
+             Result := fen_true;
+           end;
+       end;
+
+
+     procedure node_reset_pass1_write(n: tnode);
+       begin
+         foreachnodestatic(n,@_node_reset_pass1_write,nil);
+       end;
+
 
 end.

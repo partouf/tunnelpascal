@@ -467,7 +467,8 @@ implementation
                              ) or
                              (
                                (lt=niln) and
-                               (rd.typ in [procvardef,procdef,classrefdef]) and
+                               ((rd.typ in [procvardef,procdef,classrefdef]) or
+                                (is_dynamic_array(rd))) and
                                (treetyp in identity_operators)
                              ) or
                              (
@@ -937,7 +938,7 @@ implementation
             { exit when no overloads are found }
             if (result=0) and generror then
               begin
-                CGMessage3(parser_e_operator_not_overloaded_3,ld.typename,arraytokeninfo[optoken].str,rd.typename);
+                CGMessage3(parser_e_operator_not_overloaded_3,ld.GetTypeName,arraytokeninfo[optoken].str,rd.GetTypeName);
                 candidates.free;
                 ppn.free;
                 ppn:=nil;
@@ -1195,6 +1196,7 @@ implementation
       begin
          if not(m_nested_procvars in current_settings.modeswitches) and
             (from_def.parast.symtablelevel>normal_function_level) and
+            not (po_anonymous in from_def.procoptions) and
             (to_def.typ=procvardef) then
            CGMessage(type_e_cannot_local_proc_to_procvar);
       end;
@@ -2133,6 +2135,18 @@ implementation
               if tmpeq<>te_incompatible then
                 eq:=tmpeq;
             end;
+          objectdef :
+            begin
+              tmpeq:=te_incompatible;
+              { in tp/macpas mode proc -> funcref is allowed }
+              if ((m_tp_procvar in current_settings.modeswitches) or
+                  (m_mac_procvar in current_settings.modeswitches)) and
+                 (p.left.nodetype=calln) and
+                 is_invokable(def_to) then
+                tmpeq:=proc_to_funcref_conv(tprocdef(tcallnode(p.left).procdefinition),tobjectdef(def_to));
+              if tmpeq<>te_incompatible then
+                eq:=tmpeq;
+            end;
           arraydef :
             begin
               { an arrayconstructor of proccalls may have to be converted to
@@ -2947,38 +2961,70 @@ implementation
               { Convert tp procvars when not expecting a procvar }
              if (currpt.left.resultdef.typ=procvardef) and
                 not(def_to.typ in [procvardef,formaldef]) and
-                 { Only convert to call when there is no overload or the return type
-                   is equal to the expected type. }
-                 (
-                  (count=1) or
-                  equal_defs(tprocvardef(currpt.left.resultdef).returndef,def_to)
-                 ) and
-                 { and if it doesn't require any parameters }
-                 (tprocvardef(currpt.left.resultdef).minparacount=0)  then
-                begin
-                  releasecurrpt:=true;
-                  currpt:=tcallparanode(pt.getcopy);
-                  if maybe_call_procvar(currpt.left,true) then
-                    begin
-                      currpt.resultdef:=currpt.left.resultdef;
-                      def_from:=currpt.left.resultdef;
-                    end;
-                end;
+                { if it doesn't require any parameters }
+                (tprocvardef(currpt.left.resultdef).minparacount=0) and
+                { Only convert to call when there is no overload or the return type
+                  is compatible with the expected type. }
+                (
+                 (count=1) or
+                 (compare_defs_ext(tprocvardef(currpt.left.resultdef).returndef,def_to,nothingn,convtype,pdoper,[])>te_incompatible)
+                ) then
+               begin
+                 releasecurrpt:=true;
+                 currpt:=tcallparanode(pt.getcopy);
+                 if maybe_call_procvar(currpt.left,true) then
+                   begin
+                     currpt.resultdef:=currpt.left.resultdef;
+                     def_from:=currpt.left.resultdef;
+                   end;
+               end;
 
              { If we expect a procvar and the left is loadnode that
                returns a procdef we need to find the correct overloaded
                procdef that matches the expected procvar. The loadnode
                temporary returned the first procdef (PFV) }
-             if (def_to.typ=procvardef) and
+             if (
+                   (def_to.typ=procvardef) or
+                   is_funcref(def_to)
+                ) and
                 (currpt.left.nodetype=loadn) and
                 (currpt.left.resultdef.typ=procdef) then
                begin
-                 pdtemp:=tprocsym(Tloadnode(currpt.left).symtableentry).Find_procdef_byprocvardef(Tprocvardef(def_to));
+                 if def_to.typ=procvardef then
+                   pdtemp:=tprocsym(Tloadnode(currpt.left).symtableentry).Find_procdef_byprocvardef(Tprocvardef(def_to))
+                 else
+                   pdtemp:=tprocsym(tloadnode(currpt.left).symtableentry).find_procdef_byfuncrefdef(tobjectdef(def_to));
                  if assigned(pdtemp) then
                    begin
                      tloadnode(currpt.left).setprocdef(pdtemp);
                      currpt.resultdef:=currpt.left.resultdef;
                      def_from:=currpt.left.resultdef;
+                   end;
+               end;
+
+             { same as above, but for the case that we have a proc-2-procvar
+               conversion together with a load }
+             if (
+                   (def_to.typ=procvardef) or
+                   is_funcref(def_to)
+                ) and
+                (currpt.left.nodetype=typeconvn) and
+                (ttypeconvnode(currpt.left).convtype=tc_proc_2_procvar) and
+                (ttypeconvnode(currpt.left).totypedef=voidtype) and
+                not (nf_explicit in currpt.left.flags) and
+                (ttypeconvnode(currpt.left).left.nodetype=loadn) and
+                (ttypeconvnode(currpt.left).left.resultdef.typ=procdef) then
+               begin
+                 if def_to.typ=procvardef then
+                   pdtemp:=tprocsym(tloadnode(ttypeconvnode(currpt.left).left).symtableentry).Find_procdef_byprocvardef(Tprocvardef(def_to))
+                 else
+                   pdtemp:=tprocsym(tloadnode(ttypeconvnode(currpt.left).left).symtableentry).find_procdef_byfuncrefdef(tobjectdef(def_to));
+                 if assigned(pdtemp) then
+                   begin
+                     tloadnode(ttypeconvnode(currpt.left).left).setprocdef(pdtemp);
+                     ttypeconvnode(currpt.left).totypedef:=cprocvardef.getreusableprocaddr(pdtemp,pc_normal);
+                     ttypeconvnode(currpt.left).resultdef:=ttypeconvnode(currpt.left).totypedef;
+                     def_from:=ttypeconvnode(currpt.left).resultdef;
                    end;
                end;
 

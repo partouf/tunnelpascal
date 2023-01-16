@@ -55,8 +55,8 @@ interface
           procedure writesyms(ppufile:tcompilerppufile);
        public
           constructor create(const s:string);
-          procedure insert(sym:TSymEntry;checkdup:boolean=true);override;
-          procedure delete(sym:TSymEntry);override;
+          procedure insertsym(sym:TSymEntry;checkdup:boolean=true);override;
+          procedure deletesym(sym:TSymEntry);override;
           { load/write }
           procedure ppuload(ppufile:tcompilerppufile);virtual;
           procedure ppuwrite(ppufile:tcompilerppufile);virtual;
@@ -229,10 +229,8 @@ interface
 
        tparasymtable = class(tabstractlocalsymtable)
        public
-          readonly: boolean;
           constructor create(adefowner:tdef;level:byte);
           function checkduplicate(var hashedid:THashedIDString;sym:TSymEntry):boolean;override;
-          procedure insertdef(def:TDefEntry);override;
        end;
 
        tabstractuniTSymtable = class(tstoredsymtable)
@@ -277,7 +275,7 @@ interface
           procedure insertdef(def:TDefEntry);override;
         end;
 
-       tstt_excepTSymtable = class(TSymtable)
+       tstt_exceptsymtable = class(TSymtable)
        public
           constructor create;
        end;
@@ -291,7 +289,7 @@ interface
 
        tenumsymtable = class(tabstractsubsymtable)
        public
-          procedure insert(sym: TSymEntry; checkdup: boolean = true); override;
+          procedure insertsym(sym: TSymEntry; checkdup: boolean = true); override;
           constructor create(adefowner:tdef);
        end;
 
@@ -311,7 +309,8 @@ interface
          ssf_search_option,
          ssf_search_helper,
          ssf_has_inherited,
-         ssf_no_addsymref
+         ssf_no_addsymref,
+         ssf_unit_or_namespace_only
        );
        tsymbol_search_flags = set of tsymbol_search_flag;
 
@@ -324,7 +323,7 @@ interface
     function  FullTypeName(def,otherdef:tdef):string;
     function generate_nested_name(symtable:tsymtable;const delimiter:string):string;
     { def is the extended type of a helper }
-    function generate_objectpascal_helper_key(def:tdef):string;
+    function generate_objectpascal_helper_key(def:tdef):TSymStr;
     procedure incompatibletypes(def1,def2:tdef);
     procedure hidesym(sym:TSymEntry);
     procedure duplicatesym(var hashedid: THashedIDString; dupsym, origsym:TSymEntry; warn: boolean);
@@ -506,16 +505,16 @@ implementation
       end;
 
 
-    procedure tstoredsymtable.insert(sym:TSymEntry;checkdup:boolean=true);
+    procedure tstoredsymtable.insertsym(sym:TSymEntry;checkdup:boolean=true);
       begin
-        inherited insert(sym,checkdup);
+        inherited insertsym(sym,checkdup);
         init_final_check_done:=false;
       end;
 
 
-    procedure tstoredsymtable.delete(sym:TSymEntry);
+    procedure tstoredsymtable.deletesym(sym:TSymEntry);
       begin
-        inherited delete(sym);
+        inherited deletesym(sym);
         init_final_check_done:=false;
       end;
 
@@ -635,7 +634,7 @@ implementation
            end;
            if assigned(sym) then
              tstoredsym(sym).ppuload_subentries(ppufile);
-           Insert(sym,false);
+           InsertSym(sym,false);
          until false;
       end;
 
@@ -1885,7 +1884,7 @@ implementation
 
             { add to this record symtable, checking for duplicate names }
 //            unionst.SymList.List.List^[i].Data:=nil;
-            insert(sym);
+            insertsym(sym);
             varalign:=tfieldvarsym(sym).vardef.alignment;
             if varalign=0 then
               varalign:=size_2_align(tfieldvarsym(sym).getsize);
@@ -1987,8 +1986,10 @@ implementation
 
          { procsym and propertysym have special code
            to override values in inherited classes. For other
-           symbols check for duplicates }
-         if not(sym.typ in [procsym,propertysym]) then
+           symbols check for duplicates (but for internal symbols only in this
+           symtable, not the whole hierarchy) }
+         if not(sym.typ in [procsym,propertysym]) and
+            not (sp_internal in tsym(sym).symoptions) then
            begin
               { but private ids can be reused }
               hsym:=search_struct_member(tobjectdef(defowner),hashedid.id);
@@ -2285,7 +2286,8 @@ implementation
                 if (varcount>=variantstarts.count) then
                   internalerror(2008051005);
                 { new variant part -> use the one with the biggest alignment }
-                i:=tempsymlist.indexof(tobject(variantstarts[varcount]));
+                fieldvs:=tfieldvarsym(variantstarts[varcount]);
+                i:=tempsymlist.indexof(fieldvs);
                 lastvaroffsetprocessed:=fieldvs.fieldoffset;
                 inc(varcount);
                 if (i<0) then
@@ -2500,7 +2502,6 @@ implementation
     constructor tparasymtable.create(adefowner:tdef;level:byte);
       begin
         inherited create('');
-        readonly:=false;
         defowner:=adefowner;
         symtabletype:=parasymtable;
         symtablelevel:=level;
@@ -2522,14 +2523,6 @@ implementation
             is_object(tprocdef(defowner).struct)
            ) then
           result:=tprocdef(defowner).struct.symtable.checkduplicate(hashedid,sym);
-      end;
-
-    procedure tparasymtable.insertdef(def: TDefEntry);
-      begin
-        if readonly then
-          defowner.owner.insertdef(def)
-        else
-          inherited insertdef(def);
       end;
 
 
@@ -2635,7 +2628,7 @@ implementation
         n,ns:string;
         oldsym:TSymEntry;
       begin
-        insert(sym);
+        insertsym(sym);
         n:=sym.realname;
         p:=pos('.',n);
         ns:='';
@@ -2648,7 +2641,7 @@ implementation
             system.delete(n,1,p);
             oldsym:=findnamespace(upper(ns));
             if not assigned(oldsym) then
-              insert(cnamespacesym.create(ns));
+              insertsym(cnamespacesym.create(ns));
             p:=pos('.',n);
           end;
       end;
@@ -2825,7 +2818,7 @@ implementation
     constructor tstt_excepTSymtable.create;
       begin
         inherited create('');
-        symtabletype:=stt_excepTSymtable;
+        symtabletype:=exceptsymtable;
       end;
 
 
@@ -2847,7 +2840,7 @@ implementation
                           TEnumSymtable
 ****************************************************************************}
 
-    procedure tenumsymtable.insert(sym: TSymEntry; checkdup: boolean);
+    procedure tenumsymtable.insertsym(sym: TSymEntry; checkdup: boolean);
       var
         value: longint;
         def: tenumdef;
@@ -2877,7 +2870,7 @@ implementation
                   def.setmax(value);
               end;
           end;
-        inherited insert(sym, checkdup);
+        inherited insertsym(sym, checkdup);
       end;
 
     constructor tenumsymtable.create(adefowner: tdef);
@@ -2950,7 +2943,7 @@ implementation
       end;
 
 
-    function generate_objectpascal_helper_key(def:tdef):string;
+    function generate_objectpascal_helper_key(def:tdef):TSymStr;
       begin
         if not assigned(def) then
           internalerror(2013020501);
@@ -3314,7 +3307,7 @@ implementation
                        ) or
                        (
                         assigned(contextobjdef) and
-                        (contextobjdef.owner.symtabletype in [globalsymtable,staticsymtable,ObjectSymtable,recordsymtable]) and
+                        (contextobjdef.owner.symtabletype in [globalsymtable,staticsymtable,ObjectSymtable,recordsymtable,localsymtable]) and
                         (contextobjdef.owner.iscurrentunit) and
                         def_is_related(contextobjdef,symownerdef)
                        ) or
@@ -3358,6 +3351,15 @@ implementation
           else
             internalerror(2019050702);
         end;
+
+        if not result then
+          begin
+            { capturers have access to anything as we assume checks were done
+              before the procdef was inserted into the capturer }
+            result:=assigned(current_structdef) and
+                    (current_structdef.typ=objectdef) and
+                    (oo_is_capturer in tobjectdef(current_structdef).objectoptions);
+          end;
       end;
 
 
@@ -3406,7 +3408,12 @@ implementation
 
     function  searchsym(const s : TIDString;out srsym:tsym;out srsymtable:TSymtable):boolean;
       begin
-        result:=searchsym_maybe_with_symoption(s,srsym,srsymtable,[],sp_none);
+        case s[1] of
+          internal_macro_escape_unit_namespace_name:
+            result:=searchsym_maybe_with_symoption(copy(s,2,length(s)-1),srsym,srsymtable,[ssf_unit_or_namespace_only],sp_none)
+          else
+            result:=searchsym_maybe_with_symoption(s,srsym,srsymtable,[],sp_none);
+        end
       end;
 
 
@@ -3428,7 +3435,8 @@ implementation
         while assigned(stackitem) do
           begin
             srsymtable:=stackitem^.symtable;
-            if (srsymtable.symtabletype=objectsymtable) then
+            if not(ssf_unit_or_namespace_only in flags) and
+               (srsymtable.symtabletype=objectsymtable) then
               begin
                 { TODO : implement the search for an option in classes as well }
                 if ssf_search_option in flags then
@@ -3450,6 +3458,8 @@ implementation
                   They are visible only if they are from the current unit or
                   unit of generic of currently processed specialization. }
                 if assigned(srsym) and
+                   (not(ssf_unit_or_namespace_only in flags) or
+                    (srsym.typ in [unitsym,namespacesym])) and
                    (
                      not(srsym.typ in [unitsym,namespacesym]) or
                      srsymtable.iscurrentunit or
@@ -4309,7 +4319,7 @@ implementation
 
     function get_objectpascal_helpers(pd : tdef):TFPObjectList;
       var
-        s : string;
+        s : TSymStr;
         st : tsymtable;
       begin
         result:=nil;
@@ -4710,9 +4720,9 @@ implementation
            begin
              mac:=tmacro.create(s);
              if assigned(current_module) then
-               current_module.localmacrosymtable.insert(mac)
+               current_module.localmacrosymtable.insertsym(mac)
              else
-               initialmacrosymtable.insert(mac);
+               initialmacrosymtable.insertsym(mac);
            end;
          Message1(parser_c_macro_defined,mac.name);
          mac.defined:=true;
@@ -4732,9 +4742,9 @@ implementation
            begin
              mac:=tmacro.create(s);
              if assigned(current_module) then
-               current_module.localmacrosymtable.insert(mac)
+               current_module.localmacrosymtable.insertsym(mac)
              else
-               initialmacrosymtable.insert(mac);
+               initialmacrosymtable.insertsym(mac);
            end
          else
            begin
@@ -4764,9 +4774,9 @@ implementation
              mac:=tmacro.create(s);
              mac.is_compiler_var:=true;
              if assigned(current_module) then
-               current_module.localmacrosymtable.insert(mac)
+               current_module.localmacrosymtable.insertsym(mac)
              else
-               initialmacrosymtable.insert(mac);
+               initialmacrosymtable.insertsym(mac);
            end
          else
            begin

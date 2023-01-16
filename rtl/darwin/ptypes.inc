@@ -22,6 +22,11 @@
 {$i ctypes.inc}
 {$packrecords c}
 
+
+{$if defined(darwin) and (defined(cpuarm) or defined(cpuaarch64) or defined(iphonesim) or (defined(MAC_OS_X_VERSION_MIN_REQUIRED) and (MAC_OS_X_VERSION_MIN_REQUIRED >= 1060)))}
+  {$define darwin_new_iostructs}
+{$endif}
+
 type
     { the following type definitions are compiler dependant }
     { and system dependant                                  }
@@ -35,10 +40,10 @@ type
     pGid     = ^gid_t;
     TIOCtlRequest = cuLong;
 
-{$if not defined(cpuarm) and not defined(aarch64) and not defined(iphonesim)}
-    ino_t    = cuint32;         { used for file serial numbers }
-{$else}
+{$ifdef darwin_new_iostructs}
     ino_t    = cuint64;
+{$else}
+    ino_t    = cuint32;         { used for file serial numbers }
 {$endif}
     TIno     = ino_t;
     pIno     = ^ino_t;
@@ -119,6 +124,8 @@ CONST
 
     SIG_MAXSIG      = 32;       // highest signal version
 
+    MFSTYPENAMELEN = 16;
+
     MFSNAMELEN = 15;
     MNAMELEN   = 90;
 
@@ -159,7 +166,7 @@ type
           ftype : cuint32;
           fflags : cuint32;
           fssubtype : cuint32;
-          fstypename : array[0..(MFSNAMELEN)-1] of char;
+          fstypename : array[0..(MFSTYPENAMELEN)-1] of char;
           mountpoint : array[0..(PATH_MAX)-1] of char;
           mntfromname : array[0..(PATH_MAX)-1] of char;
           reserved: array[0..7] of cuint32;

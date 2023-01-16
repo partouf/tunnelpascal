@@ -39,7 +39,7 @@ unit nx86add;
         procedure left_must_be_reg(opdef: tdef; opsize:TCGSize;noswap:boolean);
         procedure force_left_and_right_fpureg;
         procedure prepare_x87_locations(out refnode: tnode);
-        procedure emit_op_right_left(op:TAsmOp;opsize:TCgSize);
+        procedure emit_op_right_left(op:TAsmOp;opsize:TCgSize;AllocFlags:boolean);
         procedure emit_generic_code(op:TAsmOp;opsize:TCgSize;unsigned,extra_not,mboverflow:boolean);
 
         procedure second_cmpfloatvector;
@@ -53,6 +53,7 @@ unit nx86add;
         procedure second_addfloat;override;
 {$ifndef i8086}
         procedure second_addsmallset;override;
+        procedure second_addsmallsetelement;override;
 {$endif not i8086}
         procedure second_add64bit;override;
         procedure second_cmpfloat;override;
@@ -78,10 +79,10 @@ unit nx86add;
       aasmbase,aasmdata,aasmcpu,
       symconst,symdef,
       cgobj,hlcgobj,cgx86,cga,cgutils,
-      tgobj,ncgutil,
+      tgobj,ncgutil,nutils,
       ncon,nset,ninl,ncnv,ncal,nmat,
       defutil,defcmp,constexp,
-      htypechk;
+      pass_1,pass_2,htypechk;
 
 { Range check must be disabled explicitly as the code serves
   on three different architecture sizes }
@@ -98,8 +99,12 @@ unit nx86add;
         r     : Tregister;
         href  : treference;
         overflowcheck: boolean;
+        comparison: boolean;
       begin
         overflowcheck:=needoverflowcheck;
+        comparison:=
+          (op=A_CMP) or (op=A_TEST) or (op=A_BT) or is_boolean(resultdef);
+
         { at this point, left.location.loc should be LOC_REGISTER }
         if right.location.loc=LOC_REGISTER then
          begin
@@ -120,6 +125,10 @@ unit nx86add;
                 emit_reg(A_NOT,TCGSize2Opsize[opsize],right.location.register);
               if (op=A_ADD) or (op=A_OR) or (op=A_AND) or (op=A_XOR) or (op=A_IMUL) then
                 location_swap(left.location,right.location);
+
+              if comparison then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
               emit_reg_reg(op,TCGSize2Opsize[opsize],right.location.register,left.location.register);
             end;
          end
@@ -132,6 +141,10 @@ unit nx86add;
                 cg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_NOT,opsize,left.location.register,left.location.register);
               r:=cg.getintregister(current_asmdata.CurrAsmList,opsize);
               hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,cgsize_orddef(opsize),right.location,r);
+
+              if comparison then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
               emit_reg_reg(op,TCGSize2Opsize[opsize],left.location.register,r);
               cg.a_load_reg_reg(current_asmdata.CurrAsmList,opsize,opsize,r,left.location.register);
             end
@@ -200,18 +213,13 @@ unit nx86add;
                         hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,cgsize_orddef(opsize),right.location,r);
                         emit_reg(A_NOT,TCGSize2Opsize[opsize],r);
 
-                        if mboverflow and overflowcheck then
+                        if comparison or (mboverflow and overflowcheck) then
                           cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
 
                         emit_reg_reg(A_AND,TCGSize2Opsize[opsize],r,left.location.register);
                      end
                    else
-                     begin
-                       if mboverflow and overflowcheck then
-                         cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
-
-                       emit_op_right_left(op,opsize);
-                     end;
+                     emit_op_right_left(op,opsize,comparison or (mboverflow and overflowcheck));
                  end;
             end;
          end;
@@ -229,7 +237,9 @@ unit nx86add;
                 cg.a_jmp_flags(current_asmdata.CurrAsmList,F_AE,hl4)
               else
                 cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NO,hl4);
-              cg.a_reg_dealloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
+              if not comparison then
+                cg.a_reg_dealloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
               cg.a_call_name(current_asmdata.CurrAsmList,'FPC_OVERFLOW',false);
               cg.a_label(current_asmdata.CurrAsmList,hl4);
             end;
@@ -359,7 +369,7 @@ unit nx86add;
       end;
 
 
-    procedure tx86addnode.emit_op_right_left(op:TAsmOp;opsize:TCgsize);
+    procedure tx86addnode.emit_op_right_left(op:TAsmOp;opsize:TCgsize;AllocFlags:boolean);
 {$ifdef x86_64}
       var
         tmpreg : tregister;
@@ -371,11 +381,18 @@ unit nx86add;
         case right.location.loc of
           LOC_REGISTER,
           LOC_CREGISTER :
-            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,TCGSize2Opsize[opsize],right.location.register,left.location.register));
+            begin
+              if AllocFlags then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,TCGSize2Opsize[opsize],right.location.register,left.location.register));
+            end;
           LOC_REFERENCE,
           LOC_CREFERENCE :
             begin
               tcgx86(cg).make_simple_ref(current_asmdata.CurrAsmList,right.location.reference);
+              if AllocFlags then
+                cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
               current_asmdata.CurrAsmList.concat(taicpu.op_ref_reg(op,TCGSize2Opsize[opsize],right.location.reference,left.location.register));
             end;
           LOC_CONSTANT :
@@ -387,11 +404,18 @@ unit nx86add;
                 begin
                   tmpreg:=cg.getintregister(current_asmdata.CurrAsmList,opsize);
                   cg.a_load_const_reg(current_asmdata.CurrAsmList,opsize,right.location.value,tmpreg);
+                  if AllocFlags then
+                    cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
                   current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,TCGSize2Opsize[opsize],tmpreg,left.location.register));
                 end
               else
 {$endif x86_64}
-                current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(op,TCGSize2Opsize[opsize],right.location.value,left.location.register));
+                begin
+                  if AllocFlags then
+                    cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+
+                  current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(op,TCGSize2Opsize[opsize],right.location.value,left.location.register));
+                end;
             end;
           else
             internalerror(200203232);
@@ -615,6 +639,49 @@ unit nx86add;
         if opsize<>int_cgsize(resultdef.size) then
           hlcg.location_force_reg(current_asmdata.CurrAsmList,location,opdef,cgsize_orddef(int_cgsize(resultdef.size)),false);
       end;
+
+
+    procedure tx86addnode.second_addsmallsetelement;
+      var
+        setbase, mask: aint;
+      begin
+        if resultdef.size=1 then
+          inherited second_addsmallsetelement
+        else
+          begin
+            if nodetype<>addn then
+              internalerror(2022090502);
+            { no range support for smallsets }
+            if assigned(tsetelementnode(right).right) then
+              internalerror(2022090501);
+            pass_left_right;
+            { setelementn is a special case, it must be on right }
+            if (nf_swapped in flags) and
+               (left.nodetype=setelementn) then
+              swapleftright;
+            force_reg_left_right(false,false);
+            set_result_location_reg;
+            setbase:=tsetdef(left.resultdef).setbase;
+            if (right.location.loc = LOC_CONSTANT) then
+              begin
+                mask:=aint(1 shl (right.location.value-setbase));
+                hlcg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_OR,resultdef,
+                  mask,left.location.register,location.register);
+              end
+            else
+              begin
+                hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,resultdef,true);
+                register_maybe_adjust_setbase(current_asmdata.CurrAsmList,resultdef,right.location,setbase);
+                if left.location.loc <> LOC_CONSTANT then
+                  hlcg.a_load_reg_reg(current_asmdata.CurrAsmList,left.resultdef,resultdef,
+                      left.location.register,location.register)
+                else
+                  hlcg.a_load_const_reg(current_asmdata.CurrAsmList,resultdef,
+                      left.location.value,location.register);
+                emit_reg_reg(A_BTS,TCGSize2Opsize[def_cgsize(resultdef)],right.location.register,location.register);
+              end;
+          end;
+      end;
 {$endif not i8086}
 
 
@@ -637,7 +704,7 @@ unit nx86add;
                  ((nf_swapped in flags) and (nodetype = gten)) then
                 swapleftright;
               hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,false);
-              emit_op_right_left(A_AND,opsize);
+              emit_op_right_left(A_AND,opsize,False);
               op:=A_CMP;
               { warning: ugly hack, we need a JE so change the node to equaln }
               nodetype:=equaln;
@@ -1825,6 +1892,7 @@ unit nx86add;
          checkoverflow : Boolean;
          ovloc : tlocation;
          tmpreg : TRegister;
+         indexnode : TNode;
       begin
         { determine if the comparison will be unsigned }
         unsigned:=not(is_signed(left.resultdef)) or
@@ -1875,6 +1943,161 @@ unit nx86add;
          needoverflowcheck;
 
        opsize:=def_cgsize(left.resultdef);
+
+{$ifndef i8086}
+       if (cs_opt_level2 in current_settings.optimizerswitches) then
+         begin
+           { BMI1 optimisations }
+           if (CPUX86_HAS_BMI1 in cpu_capabilities[current_settings.cputype]) then
+             begin
+               { Can we turn "x and (not y)" into an ANDN instruction instead? }
+               if (nodetype = andn) and
+                 (opsize in [OS_32, OS_S32{$ifdef x86_64}, OS_64, OS_S64{$endif x86_64}]) and
+                 ((left.nodetype = notn) or (right.nodetype = notn)) and
+                 (
+                   { With "const and (not variable)", ANDN will produce larger
+                     code once everything is moved into registers (as a side-note,
+                     "const and (not const)" and "variable and (not const)" will
+                     have been simplified earlier to remove the NOT operation). }
+                   not (cs_opt_size in current_settings.optimizerswitches) or
+                   (
+                     (left.location.loc <> LOC_CONSTANT) and
+                     (right.location.loc <> LOC_CONSTANT)
+                   )
+                 ) then
+                 begin
+                   { ANDN only supports the second operand being inverted; however,
+                     since we're dealing with ordinals, there won't be any Boolean
+                     shortcutting, so we can safely swap the parameters }
+
+                   if (right.nodetype <> notn) then
+                     swapleftright;
+
+                   secondpass(left);
+                   { Skip the not node completely }
+                   secondpass(tnotnode(right).left);
+
+                   { allocate registers }
+                   hlcg.location_force_reg(
+                     current_asmdata.CurrAsmList,
+                     tnotnode(right).left.location,
+                     tnotnode(right).left.resultdef,
+                     tnotnode(right).left.resultdef,
+                     false
+                   );
+
+                   if left.location.loc = LOC_CONSTANT then
+                     { With "const and (not variable)", we can probably still make a
+                       saving when it comes to pipeline stalls (left.location.loc
+                       will become LOC_CREGISTER). }
+                     hlcg.location_force_reg(
+                       current_asmdata.CurrAsmList,
+                       left.location,
+                       left.resultdef,
+                       left.resultdef,
+                       true
+                     );
+
+                   set_result_location_reg;
+
+                   case left.location.loc of
+                     LOC_REFERENCE,
+                     LOC_CREFERENCE:
+                       emit_ref_reg_reg(A_ANDN, TCGSize2OpSize[opsize], left.location.reference, tnotnode(right).left.location.register, location.register);
+                     LOC_REGISTER,
+                     LOC_CREGISTER:
+                       emit_reg_reg_reg(A_ANDN, TCGSize2OpSize[opsize], left.location.register, tnotnode(right).left.location.register, location.register);
+                     else
+                       InternalError(2022102110);
+                   end;
+
+                   { Overflow can't happen with and/andn }
+                   Exit;
+                 end;
+             end;
+
+           { BMI2 optimisations }
+           if (CPUX86_HAS_BMI2 in cpu_capabilities[current_settings.cputype]) then
+             begin
+               { Can we turn "x and ((1 shl y) - 1)" into a BZHI instruction instead? }
+               if (nodetype = andn) and
+                 (opsize in [OS_32, OS_S32{$ifdef x86_64}, OS_64, OS_S64{$endif x86_64}]) and
+                 (
+                   (
+                     (right.nodetype = subn) and
+                     (taddnode(right).right.nodetype = ordconstn) and
+                     (tordconstnode(taddnode(right).right).value = 1) and
+                     (taddnode(right).left.nodetype = shln) and
+                     (tshlshrnode(taddnode(right).left).left.nodetype = ordconstn) and
+                     (tordconstnode(tshlshrnode(taddnode(right).left).left).value = 1)
+                   ) or
+                   (
+                     (left.nodetype = subn) and
+                     (taddnode(left).right.nodetype = ordconstn) and
+                     (tordconstnode(taddnode(left).right).value = 1) and
+                     (taddnode(left).left.nodetype = shln) and
+                     (tshlshrnode(taddnode(left).left).left.nodetype = ordconstn) and
+                     (tordconstnode(tshlshrnode(taddnode(left).left).left).value = 1)
+                   )
+                 ) then
+                 begin
+
+                   { Put the subtract node on the right }
+                   if (right.nodetype <> subn) then
+                     swapleftright;
+
+                   secondpass(left);
+
+                   { Skip the subtract and shift nodes completely }
+
+                   { Helps avoid all the awkward typecasts }
+                   indexnode := tshlshrnode(taddnode(right).left).right;
+{$ifdef x86_64}
+                   { The code generator sometimes extends the shift result to 64-bit unnecessarily }
+                   if (indexnode.nodetype = typeconvn) and (opsize in [OS_32, OS_S32]) and
+                     (def_cgsize(TTypeConvNode(indexnode).resultdef) in [OS_64, OS_S64]) then
+                     begin
+                       { Convert to the 32-bit type }
+                       indexnode.resultdef := resultdef;
+                       node_reset_flags(indexnode,[nf_pass1_done]);
+
+                       { We should't be getting any new errors }
+                       if do_firstpass(indexnode) then
+                         InternalError(2022110201);
+
+                       { Keep things internally consistent in case indexnode changed }
+                       tshlshrnode(taddnode(right).left).right := indexnode;
+                     end;
+{$endif x86_64}
+                   secondpass(indexnode);
+
+                   { allocate registers }
+                   hlcg.location_force_reg(
+                     current_asmdata.CurrAsmList,
+                     indexnode.location,
+                     indexnode.resultdef,
+                     resultdef,
+                     false
+                   );
+
+                   set_result_location_reg;
+
+                   case left.location.loc of
+                     LOC_REFERENCE,
+                     LOC_CREFERENCE:
+                       emit_reg_ref_reg(A_BZHI, TCGSize2OpSize[opsize], indexnode.location.register, left.location.reference, location.register);
+                     LOC_REGISTER,
+                     LOC_CREGISTER:
+                       emit_reg_reg_reg(A_BZHI, TCGSize2OpSize[opsize], indexnode.location.register, left.location.register, location.register);
+                     else
+                       InternalError(2022102111);
+                   end;
+
+                   Exit;
+                 end;
+             end;
+         end;
+{$endif not i8086}
 
        pass_left_right;
 
@@ -2044,6 +2267,7 @@ unit nx86add;
 {$endif x86_64}
          then
            begin
+             cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
              emit_const_ref(A_CMP, TCGSize2Opsize[opsize], right.location.value, left.location.reference);
              location_freetemp(current_asmdata.CurrAsmList,left.location);
            end

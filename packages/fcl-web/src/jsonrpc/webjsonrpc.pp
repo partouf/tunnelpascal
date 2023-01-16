@@ -143,6 +143,12 @@ type
     Property CORS;
     Property APIRequestSources;
     Property APIRequestName;
+    Property Session;
+    Property OnNewSession;
+    Property OnSessionExpired;
+    Property Kind;
+    Property BaseURL;
+    Property AfterInitModule;
   end;
 
 implementation
@@ -356,8 +362,11 @@ Var
   R : TJSONStringType;
 
 begin
+  // We must set SessionRequest
+  Inherited HandleRequest(aRequest,aResponse);
   if CORS.HandleRequest(aRequest,aResponse,[hcDetect,hcSend]) then
     exit;
+  CheckSession(ARequest);
   If (Dispatcher=Nil) then
     Dispatcher:=CreateDispatcher;
   Disp:=Dispatcher;

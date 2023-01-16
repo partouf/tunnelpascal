@@ -26,7 +26,7 @@ unit options;
 interface
 
 uses
-  cfileutl,cclasses,
+  cfileutl,cclasses,versioncmp,
   globtype,globals,verbose,systems,cpuinfo,comprsrc;
 
 Type
@@ -80,12 +80,15 @@ Type
     MacVersionSet: boolean;
     IdfVersionSet: boolean;
     processorstr: TCmdStr;
-    function ParseMacVersionMin(out minstr, emptystr: string; const compvarname, value: string; ios: boolean): boolean;
+    function ParseMacVersionMin(out minversion, invalidateversion: tversion; const compvarname, value: string; ios: boolean): boolean;
     procedure MaybeSetDefaultMacVersionMacro;
 {$ifdef XTENSA}
     function ParseVersionStr(out ver: longint; const compvarname, value: string): boolean;
     procedure MaybeSetIdfVersionMacro;
 {$endif}
+{$ifdef llvm}
+    procedure LLVMEnableSanitizers(sanitizers: TCmdStr);
+{$endif llvm}
     procedure VerifyTargetProcessor;
   end;
 
@@ -232,6 +235,7 @@ const
   FeatureListPlaceholder = '$FEATURELIST';
   ModeSwitchListPlaceholder = '$MODESWITCHES';
   CodeGenerationBackendPlaceholder = '$CODEGENERATIONBACKEND';
+  LLVMVersionPlaceholder = '$LLVMVERSIONS';
 
   procedure SplitLine (var OrigString: TCmdStr; const Placeholder: TCmdStr;
                                                  out RemainderString: TCmdStr);
@@ -730,6 +734,51 @@ const
       WriteLn(xmloutput,'    <codegeneratorbackend>',cgbackend2str[cgbackend],'</codegeneratorbackend>');
     end;
 
+  procedure ListLLVMVersions (OrigString: TCmdStr);
+{$ifdef LLVM}
+    var
+      llvmversion : tllvmversion;
+{$endif LLVM}
+    begin
+{$ifdef LLVM}
+      SplitLine (OrigString, LLVMVersionPlaceholder, HS3);
+      for llvmversion:=low(llvmversion) to high(llvmversion) do
+       begin
+        hs1:=llvmversionstr[llvmversion];
+        if hs1<>'' then
+         begin
+          if OrigString = '' then
+           Comment (V_Normal, hs1)
+          else
+           begin
+            hs:=OrigString;
+            Replace(hs,LLVMVersionPlaceholder,hs1);
+            Comment(V_Normal,hs);
+           end;
+         end;
+       end;
+{$else LLVM}
+      Comment (V_Normal, '')
+{$endif LLVM}
+    end;
+
+  procedure ListLLVMVersionsXML;
+{$ifdef LLVM}
+    var
+      llvmversion : tllvmversion;
+{$endif LLVM}
+    begin
+{$ifdef LLVM}
+      WriteLn(xmloutput,'    <llvmversions>');
+      for llvmversion:=Low(tllvmversion) to High(tllvmversion) do
+        if llvmversionstr[llvmversion]<>'' then
+          WriteLn(xmloutput,'      <llvmversion name="',llvmversionstr[llvmversion],'"/>');
+      WriteLn(xmloutput,'    </llvmversions>');
+{$endif LLVM}
+    end;
+
+
+
 begin
   if More = '' then
    begin
@@ -761,6 +810,8 @@ begin
        ListFeatures (S)
       else if pos(CodeGenerationBackendPlaceholder,s)>0 then
        ListCodeGenerationBackend (S)
+      else if pos(LLVMVersionPlaceholder,s)>0 then
+       ListLLVMVersions (s)
       else
        Comment(V_Normal,s);
      end;
@@ -783,6 +834,7 @@ begin
       ListControllerTypesXML;
       ListFeaturesXML;
       ListCodeGenerationBackendXML;
+      ListLLVMVersionsXML;
       WriteLn(xmloutput,'  </info>');
       WriteLn(xmloutput,'</fpcoutput>');
       Close(xmloutput);
@@ -800,6 +852,9 @@ begin
         'c': ListCPUInstructionSets ('');
         'f': ListFPUInstructionSets ('');
         'i': ListAsmModes ('');
+{$ifdef LLVM}
+        'l': ListLLVMVersions ('');
+{$endif LLVM}
         'm': ListModeswitches ('');
         'o': ListOptimizations ('');
         'r': ListFeatures ('');
@@ -1040,7 +1095,7 @@ begin
 end;
 
 
-function toption.ParseMacVersionMin(out minstr, emptystr: string; const compvarname, value: string; ios: boolean): boolean;
+function toption.ParseMacVersionMin(out minversion, invalidateversion: tversion; const compvarname, value: string; ios: boolean): boolean;
 
   function subval(start,maxlen: longint; out stop: longint): string;
     var
@@ -1061,12 +1116,14 @@ function toption.ParseMacVersionMin(out minstr, emptystr: string; const compvarn
 
   var
     temp,
-    compvarvalue: string[15];
-    i: longint;
+    compvarvalue,
+    versionstr: string[15];
+    major, minor, patch: cardinal;
+    i, err: longint;
     osx_minor_two_digits: boolean;
   begin
-    minstr:=value;
-    emptystr:='';
+    invalidateversion.invalidate;
+    versionstr:=value;
     MacVersionSet:=false;
     { check whether the value is a valid version number }
     if value='' then
@@ -1083,9 +1140,15 @@ function toption.ParseMacVersionMin(out minstr, emptystr: string; const compvarn
     if (i>=length(value)) or
        (value[i]<>'.') then
       exit(false);
+    val(compvarvalue,major,err);
+    if err<>0 then
+      exit(false);
     { minor version number }
     temp:=subval(i+1,2,i);
     if temp='' then
+      exit(false);
+    val(temp,minor,err);
+    if err<>0 then
       exit(false);
     { on Mac OS X, the minor version number was originally limited to 1 digit;
       with 10.10 the format changed and two digits were also supported; on iOS,
@@ -1103,6 +1166,7 @@ function toption.ParseMacVersionMin(out minstr, emptystr: string; const compvarn
       temp:='0'+temp;
     compvarvalue:=compvarvalue+temp;
     { optional patch level }
+    patch:=0;
     if i<=length(value) then
       begin
         if value[i]<>'.' then
@@ -1133,19 +1197,23 @@ function toption.ParseMacVersionMin(out minstr, emptystr: string; const compvarn
         { must be the end }
         if i<=length(value) then
           exit(false);
+        val(temp,patch,err);
+        if err<>0 then
+          exit(false);
       end
     else if not ios and
        not osx_minor_two_digits then
       begin
         compvarvalue:=compvarvalue+'0';
-        minstr:=minstr+'.0'
+        versionstr:=versionstr+'.0'
       end
     else
       begin
         compvarvalue:=compvarvalue+'00';
         { command line versions still only use one 0 though }
-        minstr:=minstr+'.0'
+        versionstr:=versionstr+'.0'
       end;
+    minversion.init(versionstr,major,minor,patch);
     set_system_compvar(compvarname,compvarvalue);
     MacVersionSet:=true;
     result:=true;
@@ -1251,7 +1319,7 @@ begin
           begin
 {$ifdef llvm}
              { We only support libunwind as part of libsystem, which happened in Mac OS X 10.6 }
-            if CompareVersionStrings(MacOSXVersionMin,'10.6')<=0 then
+            if MacOSXVersionMin.relationto(10,6,0)<0 then
               Message1(option_invalid_macosx_deployment_target,envstr);
 {$endif}
             exit;
@@ -1270,41 +1338,59 @@ begin
   case target_info.system of
     system_powerpc_darwin:
       begin
-        set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','1030');
-        MacOSXVersionMin:='10.3.0';
+        if not ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED','10.3.0',false) then
+          internalerror(2022090910);
       end;
     system_powerpc64_darwin:
       begin
-        set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','1040');
-        MacOSXVersionMin:='10.4.0';
+        if not ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED','10.4.0',false) then
+          internalerror(2022090911);
       end;
     system_i386_darwin,
     system_x86_64_darwin:
       begin
-        set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','1080');
-        MacOSXVersionMin:='10.8.0';
+        if not ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED','10.8.0',false) then
+          internalerror(2022090912);
       end;
     system_arm_ios,
     system_i386_iphonesim:
       begin
-        set_system_compvar('IPHONE_OS_VERSION_MIN_REQUIRED','90000');
-        iPhoneOSVersionMin:='9.0.0';
+        if not ParseMacVersionMin(iPhoneOSVersionMin,MacOSXVersionMin,'IPHONE_OS_VERSION_MIN_REQUIRED','9.0.0',false) then
+          internalerror(2022090913);
       end;
     system_aarch64_ios,
     system_x86_64_iphonesim:
       begin
-        set_system_compvar('IPHONE_OS_VERSION_MIN_REQUIRED','90000');
-        iPhoneOSVersionMin:='9.0.0';
+        if not ParseMacVersionMin(iPhoneOSVersionMin,MacOSXVersionMin,'IPHONE_OS_VERSION_MIN_REQUIRED','9.0.0',false) then
+          internalerror(2022090914);
       end;
     system_aarch64_darwin:
       begin
-        set_system_compvar('MAC_OS_X_VERSION_MIN_REQUIRED','110000');
-        MacOSXVersionMin:='11.0.0';
+        if not ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED','11.0.0',false) then
+          internalerror(2022090915);
       end
     else
       internalerror(2012031001);
   end;
 end;
+
+{$ifdef llvm}
+procedure TOption.LLVMEnableSanitizers(sanitizers: TCmdStr);
+  var
+    sanitizer: TCMdStr;
+  begin
+    sanitizer:=GetToken(sanitizers,',');
+    repeat
+       case sanitizer of
+         'address':
+           include(init_settings.moduleswitches,cs_sanitize_address);
+         else
+           IllegalPara(sanitizer);
+       end;
+       sanitizer:=GetToken(sanitizers,',');
+    until sanitizer='';
+  end;
+{$endif}
 
 {$ifdef XTENSA}
 procedure TOption.MaybeSetIdfVersionMacro;
@@ -1637,7 +1723,7 @@ begin
                             case More[l] of
                               'f':
                                 begin
-                                  More:=copy(More,l+1,length(More));
+                                  delete(More,1,l);
                                   disable:=Unsetbool(More,length(More)-1,opt,false);
                                   case More of
                                     'lto':
@@ -1659,6 +1745,11 @@ begin
                                          else
                                            exclude(init_settings.globalswitches,cs_lto_nosystem);
                                        end;
+                                    else if More.StartsWith('sanitize=') then
+                                      begin
+                                        delete(More,1,length('sanitize='));
+                                        LLVMEnableSanitizers(more);
+                                      end
                                     else
                                       begin
                                         IllegalPara(opt);
@@ -1886,6 +1977,7 @@ begin
            'd' :
              begin
                l:=Pos(':=',more);
+               DefaultReplacements(more);
                if l>0 then
                  hs:=copy(more,1,l-1)
                else
@@ -2287,7 +2379,7 @@ begin
            'i' :
              begin
                if (More='') or
-                    (More [1] in ['a', 'b', 'c', 'f', 'i', 'm', 'o', 'r', 't', 'u', 'w', 'x']) then
+                    (More [1] in ['a', 'b', 'c', 'f', 'i', {$ifdef LLVM}'l',{$endif} 'm', 'o', 'r', 't', 'u', 'w', 'x']) then
                  WriteInfo (More)
                else
                  QuickInfo:=QuickInfo+More;
@@ -3869,7 +3961,7 @@ begin
     end;
 {$endif i8086_link_intern_debuginfo}
 
-  if (paratargetdbg in [dbg_dwarf2,dbg_dwarf3]) and
+  if (paratargetdbg in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4]) and
      not(target_info.system in (systems_darwin+[system_i8086_msdos,system_i8086_embedded])) then
     begin
       { smartlink creation does not yet work with DWARF
@@ -4688,7 +4780,10 @@ begin
   { default to clang }
   if (option.paratargetasm=as_none) then
     begin
-      option.paratargetasm:=as_clang_llvm;
+      if not(target_info.system in systems_darwin) then
+        option.paratargetasm:=as_clang_llvm
+      else
+        option.paratargetasm:=as_clang_llvm_darwin;
     end;
 {$endif llvm}
   { maybe override assembler }
@@ -4740,7 +4835,10 @@ begin
    begin
      Message(option_switch_bin_to_src_assembler);
 {$ifdef llvm}
-     set_target_asm(as_clang_llvm);
+     if not(target_info.system in systems_darwin) then
+       set_target_asm(as_clang_llvm)
+     else
+       set_target_asm(as_clang_llvm_darwin);
 {$else}
      set_target_asm(target_info.assemextern);
 {$endif}

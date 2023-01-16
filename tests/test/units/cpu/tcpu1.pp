@@ -4,6 +4,46 @@ uses
   cpu;
 
 begin
+  write('CMOV support: ');
+  if CMOVSupport then
+    begin
+      writeln('yes');
+      asm
+        cmove %eax,%eax
+        fldz
+        fldz
+        fcmove %st(1),%st(0)
+        fstpl %st(0)
+        fstpl %st(0)
+      end;
+    end
+  else
+    writeln('no');
+
+  write('SSE3 support: ');
+  if SSE3Support then
+    begin
+      writeln('yes');
+      asm
+        pxor %xmm0,%xmm0
+        haddpd %xmm0,%xmm0
+      end;
+    end
+  else
+    writeln('no');
+
+  write('SSSE3 support: ');
+  if SSSE3Support then
+    begin
+      writeln('yes');
+      asm
+        pxor %xmm0,%xmm0
+        phaddsw %xmm0,%xmm0
+      end;
+    end
+  else
+    writeln('no');
+
   write('AES support: ');
   if AESSupport then
     begin
@@ -15,6 +55,7 @@ begin
     end
   else
     writeln('no');
+
   write('AVX support: ');
   if AVXSupport then
     begin

@@ -40,6 +40,7 @@ Interface
     Type
       TCpuAsmOptimizer = class(TARMAsmOptimizer)
         { uses the same constructor as TAopObj }
+        function PrePeepHoleOptsCpu(var p: tai): boolean; override;
         function PeepHoleOptPass1Cpu(var p: tai): boolean; override;
         function PeepHoleOptPass2Cpu(var p: tai): boolean; override;
         function PostPeepHoleOptsCpu(var p: tai): boolean; override;
@@ -59,7 +60,9 @@ Interface
         function OptPass1FData(var p: tai): Boolean;
         function OptPass1STP(var p: tai): boolean;
         function OptPass1Mov(var p: tai): boolean;
+        function OptPass1MOVZ(var p: tai): boolean;
         function OptPass1FMov(var p: tai): Boolean;
+        function OptPass1SXTW(var p: tai): Boolean;
 
         function OptPass2LDRSTR(var p: tai): boolean;
       End;
@@ -518,6 +521,7 @@ Implementation
   function TCpuAsmOptimizer.OptPass1Mov(var p : tai): boolean;
     var
       hp1: tai;
+      so: tshifterop;
     begin
      Result:=false;
      if MatchOperand(taicpu(p).oper[0]^,taicpu(p).oper[1]^) and
@@ -528,6 +532,28 @@ Implementation
          Result:=true;
        end
 
+
+     else if (taicpu(p).ops=2) and
+       (getsubreg(taicpu(p).oper[0]^.reg)=R_SUBD) and
+       GetNextInstruction(p, hp1) and
+       { Faster to get it out of the way than go through MatchInstruction }
+       (hp1.typ=ait_instruction) and
+       (taicpu(hp1).ops=3) and
+       MatchInstruction(hp1,[A_ADD,A_SUB],[taicpu(p).condition], [PF_None,PF_S]) and
+       (getsubreg(taicpu(hp1).oper[2]^.reg)=R_SUBQ) and
+       (getsupreg(taicpu(p).oper[0]^.reg)=getsupreg(taicpu(hp1).oper[2]^.reg)) and
+       RegEndOfLife(taicpu(hp1).oper[2]^.reg,taicpu(hp1)) then
+       begin
+         DebugMsg(SPeepholeOptimization + 'MovOp2AddUtxw 1 done', p);
+         shifterop_reset(so);
+         so.shiftmode:=SM_UXTW;
+         taicpu(hp1).ops:=4;
+         taicpu(hp1).loadreg(2,taicpu(p).oper[1]^.reg);
+         taicpu(hp1).loadshifterop(3,so);
+         RemoveCurrentP(p);
+         Result:=true;
+         exit;
+       end
      {
        optimize
        mov rX, yyyy
@@ -540,8 +566,67 @@ Implementation
          else if (taicpu(p).ops = 2) and
            (tai(hp1).typ = ait_instruction) and
            RedundantMovProcess(p,hp1) then
-           Result:=true;
+           Result:=true
        end;
+    end;
+
+
+  function TCpuAsmOptimizer.OptPass1MOVZ(var p: tai): boolean;
+    var
+      hp1: tai;
+      ZeroReg: TRegister;
+    begin
+      Result := False;
+      hp1 := nil;
+      if (taicpu(p).oppostfix = PF_None) and (taicpu(p).condition = C_None) then
+        begin
+          if
+            { Check next instruction first so hp1 gets set to something, then
+              if it remains nil, we know for sure that there's no valid next
+              instruction. }
+            not GetNextInstruction(p, hp1) or
+            { MOVZ and MOVK/MOVN instructions undergo macro-fusion. }
+            not MatchInstruction(hp1, [A_MOVK, A_MOVN], [C_None], [PF_None]) or
+            (taicpu(hp1).oper[0]^.reg <> taicpu(p).oper[0]^.reg) then
+            begin
+              if (taicpu(p).oper[1]^.val = 0) then
+                begin
+                  { Change;
+                      movz reg,#0
+                      (no movk or movn)
+                    To:
+                      mov  reg,xzr (or wzr)
+
+                    Easier to perform other optimisations with registers
+                  }
+                  DebugMsg(SPeepholeOptimization + 'Movz0ToMovZeroReg', p);
+
+                  { Make sure the zero register is the correct size }
+                  ZeroReg := taicpu(p).oper[0]^.reg;
+                  setsupreg(ZeroReg, RS_XZR);
+
+                  taicpu(p).opcode := A_MOV;
+                  taicpu(p).loadreg(1, ZeroReg);
+                  Result := True;
+                  Exit;
+                end;
+            end;
+          {
+             remove the second Movz from
+
+             movz reg,...
+             movz reg,...
+          }
+          if GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) and
+            MatchInstruction(hp1,A_MOVZ,[C_None],[PF_none]) and
+            MatchOperand(taicpu(p).oper[0]^,taicpu(hp1).oper[0]^) then
+            begin
+              DebugMsg(SPeepholeOptimization + 'MovzMovz2Movz', p);
+              RemoveCurrentP(p);
+              Result:=true;
+              exit;
+            end;
+        end;
     end;
 
 
@@ -628,6 +713,67 @@ Implementation
           exit;
         end;
       }
+    end;
+
+
+  function TCpuAsmOptimizer.OptPass1SXTW(var p : tai) : Boolean;
+    var
+      hp1: tai;
+      GetNextInstructionUsingReg_hp1: Boolean;
+    begin
+      Result:=false;
+      if GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[0]^.reg) then
+        begin
+          {
+            change
+            sxtw reg2,reg1
+            str reg2,[...]
+            dealloc reg2
+            to
+            str reg1,[...]
+          }
+          if MatchInstruction(p, taicpu(p).opcode, [C_None], [PF_None]) and
+            (taicpu(p).ops=2) and
+            MatchInstruction(hp1, A_STR, [C_None], [PF_None]) and
+            (getsubreg(taicpu(hp1).oper[0]^.reg)=R_SUBD) and
+            RegEndofLife(taicpu(p).oper[0]^.reg,taicpu(hp1)) and
+            { the reference in strb might not use reg2 }
+            not(RegInRef(taicpu(p).oper[0]^.reg,taicpu(hp1).oper[1]^.ref^)) and
+            { reg1 might not be modified inbetween }
+            not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1)) then
+            begin
+              DebugMsg('Peephole SXTHStr2Str done', p);
+              taicpu(hp1).loadReg(0,taicpu(p).oper[1]^.reg);
+              result:=RemoveCurrentP(p);
+            end
+          {
+            change
+            sxtw reg2,reg1
+            sxtw reg3,reg2
+            dealloc reg2
+            to
+            sxtw reg3,reg1
+          }
+          else if MatchInstruction(p, A_SXTW, [C_None], [PF_None]) and
+            (taicpu(p).ops=2) and
+            MatchInstruction(hp1, A_SXTW, [C_None], [PF_None]) and
+            (taicpu(hp1).ops=2) and
+            MatchOperand(taicpu(hp1).oper[1]^, taicpu(p).oper[0]^.reg) and
+            RegEndofLife(taicpu(p).oper[0]^.reg,taicpu(hp1)) and
+            { reg1 might not be modified inbetween }
+            not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1)) then
+            begin
+              DebugMsg('Peephole SxtwSxtw2Sxtw done', p);
+              AllocRegBetween(taicpu(p).oper[1]^.reg,p,hp1,UsedRegs);
+              taicpu(hp1).opcode:=A_SXTW;
+              taicpu(hp1).loadReg(1,taicpu(p).oper[1]^.reg);
+              result:=RemoveCurrentP(p);
+            end
+          else if USxtOp2Op(p,hp1,SM_SXTW) then
+            Result:=true
+          else if RemoveSuperfluousMove(p, hp1, 'SxtwMov2Data') then
+            Result:=true;
+        end;
     end;
 
 
@@ -850,6 +996,7 @@ Implementation
          cb(n)z reg0,label
       }
       if MatchOpType(taicpu(p),top_reg,top_const) and
+        (taicpu(p).oper[0]^.reg<>NR_SP) and
         (taicpu(p).oper[1]^.val=0) and
         GetNextInstruction(p,hp1) and
         MatchInstruction(hp1,A_B,[PF_None]) and
@@ -877,6 +1024,22 @@ Implementation
     end;
 
 
+  function TCpuAsmOptimizer.PrePeepHoleOptsCpu(var p: tai): boolean;
+    begin
+      result := false;
+      if p.typ=ait_instruction then
+        begin
+          case taicpu(p).opcode of
+            A_SBFX,
+            A_UBFX:
+              Result:=OptPreSBFXUBFX(p);
+            else
+              ;
+          end;
+        end;
+    end;
+
+
   function TCpuAsmOptimizer.PeepHoleOptPass1Cpu(var p: tai): boolean;
     begin
       result := false;
@@ -889,6 +1052,8 @@ Implementation
               Result:=OptPass1STR(p);
             A_MOV:
               Result:=OptPass1Mov(p);
+            A_MOVZ:
+              Result:=OptPass1MOVZ(p);
             A_STP:
               Result:=OptPass1STP(p);
             A_LSR,
@@ -898,6 +1063,7 @@ Implementation
               Result:=OptPass1Shift(p);
             A_AND:
               Result:=OptPass1And(p);
+            A_NEG,
             A_CSEL,
             A_ADD,
             A_ADC,
@@ -916,6 +1082,8 @@ Implementation
               Result:=OptPass1SXTB(p);
             A_SXTH:
               Result:=OptPass1SXTH(p);
+            A_SXTW:
+              Result:=OptPass1SXTW(p);
 //            A_VLDR,
             A_FMADD,
             A_FMSUB,

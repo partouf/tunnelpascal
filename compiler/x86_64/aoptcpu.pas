@@ -130,6 +130,8 @@ uses
                   result:=OptPass1Sub(p);
                 A_SHL,A_SAL:
                   result:=OptPass1SHLSAL(p);
+                A_SHR:
+                  result:=OptPass1SHR(p);
                 A_FSTP,A_FISTP:
                   result:=OptPass1FSTP(p);
                 A_FLD:
@@ -166,7 +168,21 @@ uses
           else
             ;
         end;
+        { If this flag is set, force another run of pass 1 even if p wasn't
+          changed }
+        if aoc_ForceNewIteration in OptsToCheck then
+          begin
+            Exclude(OptsToCheck, aoc_ForceNewIteration);
 
+            if not Result then
+              begin
+                if (p.typ in SkipInstr) then
+                  UpdateUsedRegs(p);
+
+                p := tai(p.Next);
+                Result := True;
+              end;
+          end;
       end;
 
 
@@ -202,21 +218,6 @@ uses
           else
             ;
         end;
-        { If this flag is set, force another run of pass 1 even if p wasn't
-          changed }
-        if aoc_ForceNewIteration in OptsToCheck then
-          begin
-            Exclude(OptsToCheck, aoc_ForceNewIteration);
-
-            if not Result then
-              begin
-                if not (p.typ in SkipInstr) then
-                  UpdateUsedRegs(p);
-
-                p := tai(p.Next);
-                Result := True;
-              end;
-          end;
       end;
 
 

@@ -311,8 +311,15 @@ end;
 
 
 class function TStringHelper.IsNullOrWhiteSpace(const AValue: string): Boolean;
+const
+  LWhiteSpace = [#0..' '];
+var
+  I: SizeInt;
 begin
-  Result:=system.Length(SysUtils.Trim(AValue))=0;
+  for I:=1 to System.Length(AValue) do
+    if not (AValue[I] in LWhiteSpace) then
+      exit(False);
+  Result:=True;
 end;
 
 
@@ -369,25 +376,37 @@ end;
 
 class function TStringHelper.Join(const Separator: string;
   const Values: array of string; StartIndex: SizeInt; ACount: SizeInt): string;
-
 Var
-  I,L,VLen : SizeInt;
-
+  VLen,I,CountLim,NR,NSep,N : SizeInt;
+  Rp: PChar;
 begin
-  VLen:=High(Values);
-  If (ACount<0) or ((StartIndex>0) and (StartIndex>VLen)) then
+  VLen:=System.Length(Values);
+  If (ACount=0)  then
+    Exit('');
+  CountLim:=VLen-StartIndex;
+  if ACount>CountLim then
+    ACount:=CountLim;
+  If (ACount<0) or (StartIndex>VLen) or (StartIndex<0) then
     raise ERangeError.Create(SRangeError);
-  If (ACount=0) or (VLen<0) then
-    Result:=''
-  else
-    begin
-    L:=StartIndex+ACount-1;
-    if L>Vlen then
-      L:=VLen;
-    Result:=Values[StartIndex];
-    For I:=StartIndex+1 to L do
-      Result:=Result+Separator+Values[I];
-    end;
+  if ACount=1 then
+    exit(Values[StartIndex]);
+  NSep:=System.Length(Separator);
+  NR:=(ACount-1)*NSep;
+  for I:=StartIndex to StartIndex+ACount-1 do
+    NR:=NR+System.Length(Values[I]);
+  SetLength(Result,NR);
+  Rp:=@Result[1];
+  for I:=StartIndex to StartIndex+ACount-1 do
+     begin
+        if I>StartIndex then
+          begin
+            Move(separator[1],Rp^,NSep*sizeof(Char));
+            Rp:=Rp+NSep;
+          end;
+        N:=System.Length(Values[I]);
+        Move(Values[I][1],Rp^,N*sizeof(Char));
+        Rp:=Rp+N;
+     end;
 end;
 
 
@@ -484,9 +503,12 @@ begin
     end;
 end;
 
-function TStringHelper.Contains(const AValue: string): Boolean;
+function TStringHelper.Contains(const AValue: string; IgnoreCase: Boolean): Boolean;
 begin
-  Result:=Pos(AValue,Self)>0;
+  if IgnoreCase then
+    Result:=Pos(LowerCase(AValue),LowerCase(Self))>0
+  else
+    Result:=Pos(AValue,Self)>0;
 end;
 
 
@@ -557,29 +579,27 @@ end;
 function TStringHelper.EndsWith(const AValue: string; IgnoreCase: Boolean): Boolean;
 
 Var
-  L : SizeInt;
-  S : String;
-  
+  L,NS : SizeInt;
+
 begin
   L:=system.Length(AVAlue);
-  Result:=L=0;
-  if Not Result then
-    begin
-    S:=system.Copy(Self,Length-L+1,L);
-    Result:=system.Length(S)=L;
-    if Result then
-      if IgnoreCase then
-        Result:=CompareText(S,AValue)=0
-      else
-        Result:=S=AValue;
-    end;
+  NS:=System.Length(Self);
+  Result:=L<=NS;
+  if Result then
+    if IgnoreCase then
+      Result:=SameText(System.Copy(Self,NS-L+1,L),AValue)
+    else
+      Result:=CompareChar(PChar(Pointer(Self))[NS-L],PChar(Pointer(AValue))^,L)=0;
 end;
 
 
-function TStringHelper.Equals(const AValue: string): Boolean;
+function TStringHelper.Equals(const AValue: string; IgnoreCase: Boolean = False): Boolean;
 
 begin
-  Result:=(Self=AValue);
+  if IgnoreCase then
+    Result:=SameText(Self,aValue)
+  else
+    Result:=(Self=AValue);
 end;
 
 
@@ -639,12 +659,19 @@ function TStringHelper.IndexOf(AValue: Char; StartIndex: SizeInt;
   ACount: SizeInt): SizeInt;
 
 Var
-  S : String;
+  CountLim : SizeInt;
 
 begin
-  S:=System.Copy(Self,StartIndex+1,ACount);
-  Result:=Pos(AValue,S)-1;
-  if Result<>-1 then
+  if StartIndex<0 then
+    StartIndex:=0;
+  CountLim:=System.Length(Self)-StartIndex;
+  if ACount>CountLim then
+    ACount:=CountLim;
+  if ACount<=0 then
+    Exit(-1);
+  // pointer casts are to access self as 0 based index!
+  Result:=IndexChar(PChar(Pointer(self))[StartIndex],ACount,AValue);
+  if Result>=0 then
     Result:=Result+StartIndex;
 end;
 
@@ -653,13 +680,30 @@ function TStringHelper.IndexOf(const AValue: string; StartIndex: SizeInt;
   ACount: SizeInt): SizeInt;
 
 Var
-  S : String;
+  CountLim,NV,Ofs : SizeInt;
+  SP,SE : PChar;
 
 begin
-  S:=System.Copy(Self,StartIndex+1,ACount);
-  Result:=Pos(AValue,S)-1;
-  if Result<>-1 then
-    Result:=Result+StartIndex;
+  if StartIndex<0 then
+    StartIndex:=0;
+  CountLim:=System.Length(Self)-StartIndex;
+  if ACount>CountLim then
+    ACount:=CountLim;
+  NV:=System.Length(AValue);
+  if (NV>0) and (ACount>=NV) then
+    begin
+      SP:=PChar(Pointer(Self))+StartIndex;
+      SE:=SP+ACount-NV+1;
+      repeat
+        Ofs:=IndexChar(SP^,SE-SP,PChar(Pointer(AValue))[0]);
+        if Ofs<0 then
+          Break;
+        SP:=SP+Ofs+1;
+        if CompareChar(SP^,PChar(Pointer(AValue))[1],NV-1)=0 then
+          Exit(SP-PChar(Pointer(Self))-1);
+      until false;
+    end;
+  Result:=-1;
 end;
 
 function TStringHelper.IndexOfUnQuoted(const AValue: string; StartQuote,
@@ -1076,8 +1120,38 @@ end;
 
 function TStringHelper.Replace(OldChar: Char; NewChar: Char;
   ReplaceFlags: TReplaceFlags): string;
+var
+  Sp,Se,Rp : PChar;
+  Ofs : SizeInt;
 begin
-  Result:=StringReplace(Self,OldChar,NewChar,ReplaceFlags);
+  if rfIgnoreCase in ReplaceFlags then
+    exit(StringReplace(Self,OldChar,NewChar,ReplaceFlags));
+
+  Sp:=PChar(Pointer(Self));
+  Se:=Sp+System.Length(Self);
+  Ofs:=IndexChar(Sp^,Se-Sp,OldChar);
+  if Ofs<0 then
+    exit(Self);
+  SetLength(Result,Se-Sp);
+  Rp:=PChar(Pointer(Result));
+
+  repeat
+    Move(Sp^,Rp^,Ofs*sizeof(Char));
+    Sp:=Sp+Ofs+1;
+    Rp[Ofs]:=NewChar;
+    Rp:=Rp+Ofs+1;
+    if not (rfReplaceAll in ReplaceFlags) then
+      break;
+    { This loop can be removed entirely, but greatly speeds up replacing streaks of characters. }
+    while (Sp<Se) and (Sp^=OldChar) do
+      begin
+        Rp^:=NewChar;
+        Sp:=Sp+1;
+        Rp:=Rp+1;
+      end;
+    Ofs:=IndexChar(Sp^,Se-Sp,OldChar);
+  until Ofs<0;
+  Move(Sp^,Rp^,(Se-Sp)*sizeof(Char));
 end;
 
 
@@ -1180,9 +1254,6 @@ end;
 function TStringHelper.Split(const Separators: array of Char; AQuoteStart,
   AQuoteEnd: Char; ACount: SizeInt; Options: TStringSplitOptions): TStringArray;
 
-Const
-  BlockSize = 10;
-
   Function NextSep(StartIndex : SizeInt) : SizeInt;
 
   begin
@@ -1196,41 +1267,29 @@ Const
 
   begin
     if System.Length(Result)<=CurLen then
-      SetLength(Result,System.Length(Result)+BlockSize);
+      SetLength(Result,System.Length(Result)+4+SizeInt(SizeUint(System.Length(Result)) div 4));
   end;
 
 Var
   Sep,LastSep,Len : SizeInt;
-  T : String;
 
 begin
-  SetLength(Result,BlockSize);
+  Result:=nil;
   Len:=0;
   LastSep:=0;
-  Sep:=NextSep(0);
-  While (Sep<>-1) and ((ACount=0) or (Len<ACount)) do
+  While ((ACount=0) or (Len<ACount)) and (LastSep<=System.Length(Self)) do
     begin
-    T:=SubString(LastSep,Sep-LastSep);
+    Sep:=NextSep(LastSep);
+    if Sep<0 then
+      Sep:=System.Length(Self);
 //    Writeln('Examining >',T,'< at pos ',LastSep,', till pos ',Sep);
-    If (T<>'') or (not (TStringSplitOptions.ExcludeEmpty=Options)) then
+    If (Sep>LastSep) or (not (TStringSplitOptions.ExcludeEmpty=Options)) then
       begin
       MaybeGrow(Len);
-      Result[Len]:=T;
+      Result[Len]:=SubString(LastSep,Sep-LastSep);
       Inc(Len);
       end;
     LastSep:=Sep+1;
-    Sep:=NextSep(LastSep);
-    end;
-  if (LastSep<=Length) and ((ACount=0) or (Len<ACount)) then
-    begin
-    T:=SubString(LastSep);
-//    Writeln('Examining >',T,'< at pos,',LastSep,' till pos ',Sep);
-    If (T<>'') or (not (TStringSplitOptions.ExcludeEmpty=Options)) then
-      begin
-      MaybeGrow(Len);
-      Result[Len]:=T;
-      Inc(Len);
-      end;
     end;
 
   if (TStringSplitOptions.ExcludeLastEmpty=Options) then
@@ -1342,21 +1401,15 @@ function TStringHelper.StartsWith(const AValue: string; IgnoreCase: Boolean
   ): Boolean;
 Var
   L : SizeInt;
-  S : String;
-  
+
 begin
   L:=System.Length(AValue);
-  Result:=L<=0;
-  if not Result then
-    begin
-    S:=System.Copy(Self,1,L);
-    Result:=(System.Length(S)=L);
-    if Result then
-      if IgnoreCase then
-        Result:=SameText(S,aValue)
-      else
-        Result:=SameStr(S,AValue);
-    end;  
+  Result:=L<=System.Length(Self);
+  if Result then
+    if IgnoreCase then
+      Result:=SameText(System.Copy(Self,1,L),AValue)
+    else
+      Result:=CompareChar(PChar(Pointer(Self))^,PChar(Pointer(AValue))^,L)=0;
 end;
 
 

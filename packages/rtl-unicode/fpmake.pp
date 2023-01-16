@@ -10,7 +10,7 @@ procedure add_rtl_unicode(const ADirectory: string);
 Const
   // All Unices have full set of KVM+Crt in unix/ except QNX which is not
   // in workable state atm.
-  UnixLikes = AllUnixOSes -[QNX];
+  // UnixLikes = AllUnixOSes -[QNX];
 
   CollationOSes = [aix,android,darwin,emx,freebsd,go32v2,linux,netbsd,openbsd,os2,solaris,win32,win64,dragonfly,haiku,freertos,watcom,wasi];
   CPUnits       = [aix,amiga,aros,android,beos,darwin,iphonesim,ios,emx,gba,nds,freebsd,go32v2,haiku,linux,morphos,netbsd,netware,netwlibc,openbsd,os2,solaris,watcom,wii,win32,win64,wince,dragonfly,freertos,wasi];
@@ -75,11 +75,6 @@ begin
       end;
 
     T:=P.Targets.AddImplicitUnit('collation_ru.pas',CollationOSes);
-    with T.Dependencies do
-      begin
-        AddInclude('collation_ru_be.inc');
-        AddInclude('collation_ru_le.inc');
-      end;
     T:=P.Targets.AddImplicitUnit('collation_de.pas',CollationOSes);
     with T.Dependencies do
       begin

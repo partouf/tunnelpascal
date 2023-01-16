@@ -588,7 +588,7 @@ implementation
           internaltypeprefixName[itp_vardisp_calldesc]+current_module.modulename^+'$'+tostr(current_module.localsymtable.SymList.count),
           vs_const,tcb.end_anonymous_record,[vo_is_public,vo_is_typed_const]);
         calldescsym.varstate:=vs_initialised;
-        current_module.localsymtable.insert(calldescsym);
+        current_module.localsymtable.insertsym(calldescsym);
         current_asmdata.AsmLists[al_typedconsts].concatList(
           tcb.get_final_asmlist(
             current_asmdata.DefineAsmSymbol(calldescsym.mangledname,AB_GLOBAL,AT_DATA,calldescsym.vardef),
@@ -2157,7 +2157,10 @@ implementation
             else
               begin
                 loadp:=p;
-                refp:=ctemprefnode.create(ptemp)
+                refp:=ctemprefnode.create(ptemp);
+                { ensure that an invokable isn't called again }
+                if is_invokable(hdef) then
+                  include(ttemprefnode(refp).flags,nf_load_procvar);
               end;
             add_init_statement(ptemp);
             add_init_statement(cassignmentnode.create(
@@ -2761,10 +2764,10 @@ implementation
           begin
             if not(cnf_inherited in callnodeflags) then
               msgsendname:='OBJC_MSGSEND_STRET'
-{$if defined(onlymacosx10_6) or defined(arm) }
-            else if (target_info.system in systems_objc_nfabi) then
+            else if (target_info.system in systems_objc_nfabi) and
+                    (not MacOSXVersionMin.isvalid or
+                     (MacOSXVersionMin.relationto(10,6,0)>=0)) then
               msgsendname:='OBJC_MSGSENDSUPER2_STRET'
-{$endif onlymacosx10_6 or arm}
             else
               msgsendname:='OBJC_MSGSENDSUPER_STRET'
           end
@@ -2778,12 +2781,12 @@ implementation
         { default }
         else
 {$endif aarch64}
-             if not(cnf_inherited in callnodeflags) then
-          msgsendname:='OBJC_MSGSEND'
-{$if defined(onlymacosx10_6) or defined(arm) or defined(aarch64)}
-        else if (target_info.system in systems_objc_nfabi) then
+          if not(cnf_inherited in callnodeflags) then
+            msgsendname:='OBJC_MSGSEND'
+        else if (target_info.system in systems_objc_nfabi) and
+                (not MacOSXVersionMin.isvalid or
+                 (MacOSXVersionMin.relationto(10,6,0)>=0)) then
           msgsendname:='OBJC_MSGSENDSUPER2'
-{$endif onlymacosx10_6 or arm}
         else
           msgsendname:='OBJC_MSGSENDSUPER';
 
@@ -3628,6 +3631,7 @@ implementation
         statements : tstatementnode;
         converted_result_data : ttempcreatenode;
         calltype: tdispcalltype;
+        invokesym : tsym;
       begin
          result:=nil;
          candidates:=nil;
@@ -3664,7 +3668,18 @@ implementation
                 if codegenerror then
                   exit;
 
-                procdefinition:=tabstractprocdef(right.resultdef);
+                if is_invokable(right.resultdef) then
+                  begin
+                    procdefinition:=get_invoke_procdef(tobjectdef(right.resultdef));
+                    if assigned(methodpointer) then
+                      internalerror(2021041004);
+                    methodpointer:=right;
+                    { don't convert again when this is used as the self parameter }
+                    include(right.flags,nf_load_procvar);
+                    right:=nil;
+                  end
+                else
+                  procdefinition:=tabstractprocdef(right.resultdef);
 
                 { Compare parameters from right to left }
                 paraidx:=procdefinition.Paras.count-1;
@@ -4185,6 +4200,13 @@ implementation
          if assigned(call_vmt_node) then
            typecheckpass(call_vmt_node);
 
+         if assigned(current_procinfo) and
+             (procdefinition.typ=procdef) and
+             (procdefinition.parast.symtablelevel<=current_procinfo.procdef.parast.symtablelevel) and
+             (procdefinition.parast.symtablelevel>normal_function_level) and
+             (current_procinfo.procdef.parast.symtablelevel>normal_function_level) then
+           current_procinfo.add_captured_sym(tprocdef(procdefinition).procsym,fileinfo);
+
          finally
            aktcallnode:=oldcallnode;
          end;
@@ -4342,15 +4364,25 @@ implementation
     procedure tcallnode.check_stack_parameters;
       var
         hp : tcallparanode;
+       loc : pcgparalocation;
       begin
         hp:=tcallparanode(left);
         while assigned(hp) do
           begin
-             if assigned(hp.parasym) and
-                assigned(hp.parasym.paraloc[callerside].location) and
-               (hp.parasym.paraloc[callerside].location^.loc=LOC_REFERENCE) then
-               include(current_procinfo.flags,pi_has_stackparameter);
-             hp:=tcallparanode(hp.right);
+            if assigned(hp.parasym) then
+              begin
+                loc:=hp.parasym.paraloc[callerside].location;
+                while assigned(loc) do
+                  begin
+                    if loc^.loc=LOC_REFERENCE then
+                      begin
+                        include(current_procinfo.flags,pi_has_stackparameter);
+                        exit;
+                       end;
+                      loc:=loc^.next;
+                  end;
+              end;
+            hp:=tcallparanode(hp.right);
           end;
       end;
 

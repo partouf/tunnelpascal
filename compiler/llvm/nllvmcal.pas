@@ -32,6 +32,7 @@ interface
 
     type
       tllvmcallparanode = class(tcgcallparanode)
+        procedure push_formal_para; override;
       end;
 
       tllvmcallnode = class(tcgcallnode)
@@ -49,6 +50,16 @@ implementation
        verbose,
        aasmbase,aasmdata,aasmllvm,
        symconst,symdef;
+
+    procedure tllvmcallparanode.push_formal_para;
+      begin
+        if parasym.vardef<>llvm_metadatatype then
+          begin;
+            inherited;
+            exit;
+          end;
+        push_value_para;
+      end;
 
 {*****************************************************************************
                            TLLVMCALLNODE
@@ -125,12 +136,13 @@ implementation
            asmsym:=current_asmdata.RefAsmSymbol(overrideprocnamedef.mangledname,AT_FUNCTION);
            if not asmsym.declared then
              begin
-               current_asmdata.AsmLists[al_imports].Concat(taillvmdecl.createdecl(asmsym,overrideprocnamedef,nil,sec_code,overrideprocnamedef.alignment));
+               current_asmdata.AsmLists[al_imports].Concat(taillvmdecl.createdecl(asmsym,symtableprocentry,overrideprocnamedef,nil,sec_code,overrideprocnamedef.alignment));
              end;
           end;
       end;
 
 begin
+  ccallparanode:=tllvmcallparanode;
   ccallnode:=tllvmcallnode;
 end.
 

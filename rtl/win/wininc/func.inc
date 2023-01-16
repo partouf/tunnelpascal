@@ -1314,7 +1314,6 @@ function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE;
   function AttachConsole(dwProcessId:DWORD):BOOL;stdcall;external 'kernel32' name 'AttachConsole';
   function ATTACH_PARENT_PROCESS : DWORD;    
 
-
   function GetConsoleDisplayMode(lpModeFlags:LPDWORD):BOOL;stdcall;external 'kernel32' name 'GetConsoleDisplayMode';
   function SetConsoleDisplayMode(hConsoleOutput:HANDLE; dwFlags:DWORD; lpNewScreenBufferDimensions:PCOORD):BOOL;stdcall;external 'kernel32' name 'SetConsoleDisplayMode';
   function GetConsoleWindow:HWND;stdcall;external 'kernel32' name 'GetConsoleWindow';
@@ -1331,6 +1330,19 @@ function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE;
   function RealChildWindowFromPoint(Parent : HWND; Pt : TPOINT): HWND; stdcall; external 'user32.dll' name 'RealChildWindowFromPoint';
   function GetGuiResources(ProcessHandle : THANDLE; ResourceType : DWORD): DWORD; stdcall; external 'user32.dll' name 'GetGuiResources';
   function SendInput(InputsCount : UINT; InputsPtr : PINPUT; Size : WINT) : UINT; stdcall; external 'user32.dll' name 'SendInput';
+
+  // legacy threadpool
+  function QueueUserWorkItem(func: LPTHREAD_START_ROUTINE; Context: pointer; Flags: ULONG): BOOL; stdcall; external 'kernel32' name 'QueueUserWorkItem';
+  function UnregisterWaitEx(WaitHandle : THandle; CompletionEvent : THandle):WinBool; stdcall; external 'kernel32.dll' name 'UnregisterWaitEx';
+  function CreateTimerQueue : THandle; stdcall; external 'kernel32.dll' name 'CreateTimerQueue';
+  function CreateTimerQueueTimer(phNewTimer:PHandle;TimerQueue:THandle;Callback:WAITORTIMERCALLBACK;Parameter:PVOID;DueTime,Period : DWord;Flags:ULong) : THandle; stdcall; external 'kernel32.dll' name 'CreateTimerQueueTimer';
+  function ChangeTimerQueueTimer(TimerQueue:THandle;Timer:THandle;DueTime,Period : DWord) : BOOL; stdcall; external 'kernel32.dll' name 'ChangeTimerQueueTimer';
+  function DeleteTimerQueueTimer(TimerQueue:THandle;Timer:THandle;CompletionEvent: THandle) : BOOL; stdcall; external 'kernel32.dll' name 'DeleteTimerQueueTimer';
+  function DeleteTimerQueueEx(TimerQueue:THandle;CompletionEvent: THandle) : BOOL; stdcall; external 'kernel32.dll' name 'DeleteTimerQueueEx';
+
+  // only in widechar variant.
+  function GetDateFormatEx(LocaleName : pwidechar;Flags : DWORD;Date : PSYSTEMTIME; Format : pwidechar; DateBuffer : pwidechar; BufferLen  : longint; Calendar : pwidechar) : BOOL; stdcall; external 'kernel32' name 'GetDateFormatEx';
+
 {$endif read_interface}
 
 

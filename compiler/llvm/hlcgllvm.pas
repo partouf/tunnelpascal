@@ -52,6 +52,10 @@ uses
       procedure allocallcpuregisters(list: TAsmList); override;
       procedure deallocallcpuregisters(list: TAsmList); override;
 
+      procedure recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference); override;
+
+      class function def2regtyp(def: tdef): tregistertype; override;
+     public
       procedure a_bit_test_reg_reg_reg(list: TAsmList; bitnumbersize, valuesize, destsize: tdef; bitnumber, value, destreg: tregister); override;
       procedure a_bit_set_reg_reg(list: TAsmList; doset: boolean; bitnumbersize, destsize: tdef; bitnumber, dest: tregister); override;
 
@@ -226,7 +230,7 @@ implementation
         begin
           cgpara.check_simple_location;
           location^.llvmvalueloc:=true;
-          location^.llvmloc.loc:=LOC_CREFERENCE;
+          location^.llvmloc.loc:=LOC_REFERENCE;
           location^.llvmloc.sym:=initialref.symbol;
           exit;
         end;
@@ -339,15 +343,28 @@ implementation
     var
       newrefsize: tdef;
       reg: tregister;
+      tmpref: treference;
     begin
       newrefsize:=llvmgetcgparadef(para,true,callerside);
       if (refsize<>newrefsize) and
          (initialref.refaddr<>addr_full) then
         begin
-          reg:=getaddressregister(list,cpointerdef.getreusable(newrefsize));
-          a_loadaddr_ref_reg(list,refsize,cpointerdef.getreusable(newrefsize),initialref,reg);
-          reference_reset_base(newref,cpointerdef.getreusable(newrefsize),reg,0,initialref.temppos,initialref.alignment,initialref.volatility);
-          refsize:=newrefsize;
+          if refsize.size>=newrefsize.size then
+            begin
+              reg:=getaddressregister(list,cpointerdef.getreusable(newrefsize));
+              a_loadaddr_ref_reg(list,refsize,cpointerdef.getreusable(newrefsize),initialref,reg);
+              reference_reset_base(newref,cpointerdef.getreusable(newrefsize),reg,0,initialref.temppos,initialref.alignment,initialref.volatility);
+              refsize:=newrefsize;
+            end
+          else
+            begin
+              tg.gethltemp(list,newrefsize,newrefsize.size,tt_normal,newref);
+              reg:=getaddressregister(list,cpointerdef.getreusable(refsize));
+              a_loadaddr_ref_reg(list,newrefsize,cpointerdef.getreusable(refsize),newref,reg);
+              reference_reset_base(tmpref,refsize,reg,0,newref.temppos,newref.alignment,initialref.volatility);
+              g_concatcopy(list,refsize,initialref,tmpref);
+              refsize:=newrefsize;
+            end;
         end
       else
         newref:=initialref;
@@ -381,6 +398,52 @@ implementation
   procedure thlcgllvm.deallocallcpuregisters(list: TAsmList);
     begin
       { don't do anything }
+    end;
+
+
+  procedure thlcgllvm.recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference);
+    var
+      varmetapara,
+      symmetadatapara,
+      exprmetapara: tcgpara;
+      pd: tprocdef;
+    begin
+      if assigned(sym) and
+         (sym.visibility<>vis_hidden) and
+         (cs_debuginfo in current_settings.moduleswitches) then
+        begin
+          pd:=search_system_proc('llvm_dbg_addr');
+          varmetapara.init;
+          symmetadatapara.init;
+          exprmetapara.init;
+          paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,pd,1,varmetapara);
+          paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,pd,1,symmetadatapara);
+          paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,pd,1,exprmetapara);
+          { the local location of the var/para }
+          varmetapara.Location^.def:=cpointerdef.getreusable(def);
+          varmetapara.Location^.register:=ref.base;
+          { the variable/para metadata }
+          symmetadatapara.Location^.llvmloc.loc:=LOC_CREFERENCE;
+          symmetadatapara.Location^.llvmloc.localsym:=sym;
+          { dummy for the expression metadata }
+          exprmetapara.Location^.llvmloc.loc:=LOC_CONSTANT;
+          exprmetapara.Location^.llvmloc.value:=0;
+          g_call_system_proc(list,pd,[@varmetapara,@symmetadatapara,@exprmetapara],nil).resetiftemp;
+
+          varmetapara.done;
+          symmetadatapara.done;
+          exprmetapara.done;
+        end;
+    end;
+
+
+  class function thlcgllvm.def2regtyp(def: tdef): tregistertype;
+    begin
+      if (def.typ=arraydef) and
+         tarraydef(def).is_hwvector then
+        result:=R_INTREGISTER
+      else
+        result:=inherited;
     end;
 
 
@@ -475,36 +538,37 @@ implementation
         firstparaloc:=true;
         while assigned(paraloc) do
           begin
-            new(callpara);
+            new(callpara,init(paraloc^.def,std_param_align,lve_none,[]));
+            if paras[i]^.def=llvm_metadatatype then
+              include(callpara^.flags,lcp_metadata);
             callpara^.def:=paraloc^.def;
             { if the paraloc doesn't contain the value itself, it's a byval
               parameter }
             if paraloc^.retvalloc then
               begin
-                callpara^.sret:=true;
-                callpara^.byval:=false;
+                include(callpara^.flags,lcp_sret);
               end
             else
               begin
-                callpara^.sret:=false;
-                callpara^.byval:=not paraloc^.llvmvalueloc;
+                if not paraloc^.llvmvalueloc then
+                  include(callpara^.flags,lcp_byval);
               end;
             if firstparaloc and
-               callpara^.byval then
-              callpara^.alignment:=paras[i]^.Alignment
-            else
-              callpara^.alignment:=std_param_align;
+               (lcp_byval in callpara^.flags) then
+              callpara^.alignment:=paras[i]^.Alignment;
             llvmextractvalueextinfo(paras[i]^.def, callpara^.def, callpara^.valueext);
             case paraloc^.llvmloc.loc of
               LOC_CONSTANT:
                 begin
-                  callpara^.typ:=top_const;
-                  callpara^.value:=paraloc^.llvmloc.value;
+                  callpara^.loadconst(paraloc^.llvmloc.value);
+                end;
+              LOC_REFERENCE:
+                begin
+                  callpara^.loadsym(paraloc^.llvmloc.sym);
                 end;
               LOC_CREFERENCE:
                 begin
-                  callpara^.typ:=top_ref;
-                  callpara^.sym:=paraloc^.llvmloc.sym;
+                  callpara^.loadlocalsym(paraloc^.llvmloc.localsym);
                 end
               else
                 begin
@@ -515,18 +579,16 @@ implementation
                           internalerror(2014012307)
                         else
                           begin
-                            callpara^.typ:=top_reg;
                             reference_reset_base(href, cpointerdef.getreusable(callpara^.def), paraloc^.reference.index, paraloc^.reference.offset, ctempposinvalid, paraloc^.def.alignment, []);
                             res:=getregisterfordef(list, paraloc^.def);
                             load_ref_anyreg(callpara^.def, href, res);
+                            callpara^.loadreg(res);
                           end;
-                        callpara^.register:=res
                       end;
                     LOC_REGISTER,
                     LOC_FPUREGISTER,
                     LOC_MMREGISTER:
                       begin
-                        callpara^.typ:=top_reg;
                         { undo explicit value extension }
                         if callpara^.valueext<>lve_none then
                           begin
@@ -534,12 +596,12 @@ implementation
                             a_load_reg_reg(list, paraloc^.def, callpara^.def, paraloc^.register, res);
                             paraloc^.register:=res;
                           end;
-                        callpara^.register:=paraloc^.register
+                        callpara^.loadreg(paraloc^.register);
                       end;
                     { empty records }
                     LOC_VOID:
                       begin
-                        callpara^.typ:=top_undef;
+                        callpara^.loadundef;
                       end
                     else
                       internalerror(2014010605);
@@ -1208,10 +1270,9 @@ implementation
     begin
       { perform small copies directly; not larger ones, because then llvm
         will try to load the entire large datastructure into registers and
-        starts spilling like crazy; too small copies must not be done via
-        llvm.memcpy either, because then you get crashes in llvm }
+        starts spilling like crazy }
       if (size.typ in [orddef,floatdef,enumdef]) or
-         (size.size<=2*sizeof(aint)) then
+         (size.size in [1,2,4,8]) then
         begin
           a_load_ref_ref(list,size,size,source,dest);
           exit;
@@ -1436,7 +1497,8 @@ implementation
             list.concat(taillvmalias.create(asmsym,item.str,current_procinfo.procdef,asmsym.bind));
           item:=TCmdStrListItem(item.next);
         end;
-      list.concat(taillvmdecl.createdef(asmsym,current_procinfo.procdef,nil,sec_code,current_procinfo.procdef.alignment));
+      list.concat(taillvmdecl.createdef(asmsym,current_procinfo.procdef.procsym,current_procinfo.procdef,nil,sec_code,current_procinfo.procdef.alignment));
+      current_procinfo.procdef.procstarttai:=tai(list.last);
     end;
 
 
@@ -1571,7 +1633,8 @@ implementation
       hreg: tregister;
     begin
       { will insert a bitcast if necessary }
-      if fromdef<>todef then
+      if (fromdef<>todef) and
+         not(llvmflag_opaque_ptr in llvmversion_properties[current_settings.llvmversion]) then
         begin
           hreg:=getregisterfordef(list,todef);
           a_load_reg_reg(list,fromdef,todef,reg,hreg);
@@ -1584,6 +1647,16 @@ implementation
     var
       hreg: tregister;
     begin
+      { the reason for the array exception is that we sometimes generate
+          getelementptr array_element_ty, arrayref, 0, 0
+        to get a pointer to the first element of the array. That expression is
+        not valid if arrayref does not point to an array. Clang does the same.
+      }
+      if (llvmflag_opaque_ptr in llvmversion_properties[current_settings.llvmversion]) and
+         (((fromdef.typ=pointerdef) and (tpointerdef(fromdef).pointeddef.typ=arraydef)) <>
+          ((todef.typ=pointerdef) and (tpointerdef(todef).pointeddef.typ=arraydef))
+         ) then
+        exit;
       hreg:=getaddressregister(list,todef);
       a_loadaddr_ref_reg_intern(list,fromdef,todef,ref,hreg,false);
       reference_reset_base(ref,todef,hreg,0,ref.temppos,ref.alignment,ref.volatility);

@@ -143,6 +143,9 @@ interface
           ,addr_tpoff
           ,addr_tlsgd
 {$endif x86_64}
+{$ifdef wasm32}
+          ,addr_got_tls
+{$endif wasm32}
          );
 
 
@@ -459,7 +462,7 @@ interface
        mms_16,
        mms_32 : pmmshuffle;
 
-    procedure supregset_reset(var regs:tsuperregisterset;setall:boolean;
+    procedure supregset_reset(out regs:tsuperregisterset;setall:boolean;
                               maxreg:Tsuperregister);{$ifdef USEINLINE}inline;{$endif}
     procedure supregset_include(var regs:tsuperregisterset;s:tsuperregister);{$ifdef USEINLINE}inline;{$endif}
     procedure supregset_exclude(var regs:tsuperregisterset;s:tsuperregister);{$ifdef USEINLINE}inline;{$endif}
@@ -623,7 +626,7 @@ implementation
     end;
 
 
-    procedure supregset_reset(var regs:tsuperregisterset;setall:boolean;
+    procedure supregset_reset(out regs:tsuperregisterset;setall:boolean;
                               maxreg:Tsuperregister);{$ifdef USEINLINE}inline;{$endif}
 
     begin

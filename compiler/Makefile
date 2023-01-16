@@ -3907,6 +3907,9 @@ ifneq ($(filter $(CPU_TARGET),x86_64 mips mipsel mips64 mips64el riscv64 powerpc
 override FPCOPT+=-Cg
 endif
 endif
+ifneq ($(filter $(CPU_TARGET),z80),)
+override FPCOPT+=-CX -XX
+endif
 ifdef LINKSHARED
 endif
 ifdef GCCLIBDIR
@@ -5059,7 +5062,15 @@ regdatz80 : z80/z80reg.dat
 regdatwasm : wasm32/wasmreg.dat
 	    $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkwasmreg.pp
 	cd wasm32 && ..$(PATHSEP)utils$(PATHSEP)mkwasmreg$(SRCEXEEXT)
-regdat : regdatx86 regdatarm regdatsp regdatavr regdataarch64 regdatmips regdatsp64 regdatz80 regdatwasm
+regdatrv32 : riscv/rvreg.dat
+	    $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkrvreg.pp
+	cd riscv && ..$(PATHSEP)utils$(PATHSEP)mkrvreg$(SRCEXEEXT) riscv32
+		mv -f riscv/rrv32*.inc riscv32
+regdatrv64 : riscv/rvreg.dat
+	    $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkrvreg.pp
+	cd riscv && ..$(PATHSEP)utils$(PATHSEP)mkrvreg$(SRCEXEEXT) riscv64
+		mv -f riscv/rrv64*.inc riscv64
+regdat : regdatx86 regdatarm regdatsp regdatavr regdataarch64 regdatmips regdatsp64 regdatz80 regdatwasm regdatrv32 regdatrv64
 intrdatx86 : x86/x86intr.dat
 		$(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkx86inl.pp
 	cd x86 && ..$(PATHSEP)utils$(PATHSEP)mkx86inl$(SRCEXEEXT)

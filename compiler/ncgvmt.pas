@@ -695,11 +695,11 @@ implementation
            Interface tables
 **************************************}
 
-    function CreateWrapperName(_class : tobjectdef;AImplIntf : TImplementedInterface;i : longint;pd : tprocdef) : string;
+    function CreateWrapperName(_class : tobjectdef;AImplIntf : TImplementedInterface;i : longint;pd : tprocdef) : TSymStr;
       var
         realintfdef: tobjectdef;
         tmpstr : AnsiString;
-        hs : string;
+        hs : TSymStr;
         crc : DWord;
       begin
         realintfdef:=AImplIntf.IntfDef;
@@ -707,11 +707,11 @@ implementation
           realintfdef:=realintfdef.childof;
 
         tmpstr:=_class.objname^+'_$_'+make_mangledname('',realintfdef.owner,'')+'_$$_'+realintfdef.objname^+'_$_'+tostr(i)+'_$_'+pd.mangledname;
-        if length(tmpstr)>100 then
+        if length(tmpstr)>50 then
           begin
             crc:=0;
-            crc:=UpdateCrc32(crc,tmpstr[101],length(tmpstr)-100);
-            hs:=copy(tmpstr,1,100)+'$CRC'+hexstr(crc,8);
+            crc:=UpdateCrc32(crc,tmpstr[51],length(tmpstr)-50);
+            hs:=copy(tmpstr,1,50)+'$CRC'+hexstr(crc,8);
           end
         else
           hs:=tmpstr;
@@ -1083,8 +1083,9 @@ implementation
 
          { reuse the type created in nobj, so we get internal consistency
            checking for free }
-         vmttypesym:=try_search_current_module_type(internaltypeprefixName[itp_vmtdef]+_class.mangledparaname);
+         vmttypesym:=ttypesym(_class.symtable.find('vmtdef'));
          if not assigned(vmttypesym) or
+            (vmttypesym.typ<>typesym) or
             (vmttypesym.typedef.typ<>recorddef) then
            internalerror(2015071403);
          vmtdef:=trecorddef(vmttypesym.typedef);

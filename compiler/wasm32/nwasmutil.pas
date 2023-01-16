@@ -26,7 +26,8 @@ unit nwasmutil;
 interface
 
   uses
-    ngenutil;
+    ngenutil,
+    symsym;
 
   type
 
@@ -34,6 +35,7 @@ interface
 
     twasmnodeutils = class(tnodeutils)
     public
+      class procedure insertbssdata(sym : tstaticvarsym); override;
       class procedure InsertObjectInfo; override;
     end;
 
@@ -44,10 +46,26 @@ implementation
     cpubase,
     aasmbase,aasmdata,aasmtai,aasmcpu,
     hlcgobj,hlcgcpu,
-    symdef,symtype,symconst,
+    symdef,symtype,symconst,symcpu,
     fmodule;
 
   { twasmnodeutils }
+
+  class procedure twasmnodeutils.insertbssdata(sym: tstaticvarsym);
+    var
+      symcpu: tcpustaticvarsym;
+    begin
+      symcpu:=tcpustaticvarsym(sym);
+      if symcpu.is_wasm_global then
+        begin
+          if sym.globalasmsym then
+            current_asmdata.asmlists[al_start].Concat(tai_globaltype.create_global(symcpu.mangledname,symcpu.get_wasm_global_vardef_type,false,symcpu.vardef))
+          else
+            current_asmdata.asmlists[al_start].Concat(tai_globaltype.create_local(symcpu.mangledname,symcpu.get_wasm_global_vardef_type,false,symcpu.vardef));
+        end
+      else
+        inherited;
+    end;
 
   class procedure twasmnodeutils.InsertObjectInfo;
 
@@ -97,6 +115,13 @@ implementation
       list:=current_asmdata.asmlists[al_start];
 
       list.Concat(tai_globaltype.create(STACK_POINTER_SYM,wbt_i32,false));
+
+      if ts_wasm_threads in current_settings.targetswitches then
+        begin
+          list.Concat(tai_globaltype.create(TLS_SIZE_SYM,wbt_i32,true));
+          list.Concat(tai_globaltype.create(TLS_ALIGN_SYM,wbt_i32,true));
+          list.Concat(tai_globaltype.create(TLS_BASE_SYM,wbt_i32,false));
+        end;
 
       if ts_wasm_native_exceptions in current_settings.targetswitches then
         begin

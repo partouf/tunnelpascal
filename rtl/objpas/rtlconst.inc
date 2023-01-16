@@ -87,6 +87,9 @@ ResourceString
   SConvUnknownDescriptionWithPrefix = '[%s%.8x]';
   SConvUnknownFamily            = 'Unknown conversion family: "%s"';
   SConvUnknownType              = 'Unknown conversion type: "%s"';
+  SConvTooManyConvFamilies      = 'Cannot register more than %d conversion families';
+  SConvTooManyConvTypes         = 'Cannot register more than %d conversion types';
+  SConvEmptyDescription         = 'A description cannot be empty or consist of only spaces';
   SCustomColors                 = 'Custom colors';
   SDateEncodeError              = 'Invalid argument for date encode.';
   SDdeConvErr                   = 'DDE error - conversion was not performed ($0%x)';
@@ -305,7 +308,7 @@ ResourceString
   SInvalidUnicodeCodePointSequence = 'Invalid unicode code point sequence';
   SClassCantBeConstructed       = 'Class %s can not be constructed';
   SErrStatusCallBackRequired    = 'Thread status report handler cannot be empty.';
-  SErrFindNeedsSortedList       = 'Cannot use find on unsorted list';
+  SErrFindNeedsSortedList       = 'Cannot use method "Find" on unsorted list';
   SParamIsNegative              = 'Parameter "%s" cannot be negative.';
   SErrCannotWriteToProperty     = 'Cannot write to property "%s".';
   SErrCannotReadProperty        = 'Cannot read property "%s".';

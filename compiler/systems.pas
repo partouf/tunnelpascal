@@ -84,9 +84,9 @@ interface
        pasminfo = ^tasminfo;
        tasminfo = record
           id          : tasm;
-          idtxt       : string[12];
+          idtxt       : string[17];
           asmbin      : string[16];
-          asmcmd      : string[113];
+          asmcmd      : string[121];
           supported_targets : set of tsystem;
           flags        : set of tasmflags;
           labelprefix : string[3];
@@ -289,11 +289,11 @@ interface
 
        { all darwin systems }
        systems_ios = [system_arm_ios,system_aarch64_ios];
-       systems_iphonesym = [system_i386_iphonesim,system_x86_64_iphonesim];
+       systems_iphonesim = [system_i386_iphonesim,system_x86_64_iphonesim];
        systems_macosx = [system_powerpc_darwin,system_i386_darwin,
                          system_powerpc64_darwin,system_x86_64_darwin,
                          system_aarch64_darwin];
-       systems_darwin = systems_ios + systems_iphonesym + systems_macosx;
+       systems_darwin = systems_ios + systems_iphonesim + systems_macosx;
 
        { all WebAssembly systems }
        systems_wasm = [system_wasm32_embedded,system_wasm32_wasi];
@@ -318,7 +318,7 @@ interface
        systems_freertos = [system_xtensa_freertos,system_arm_freertos];
 
        { all systems that allow section directive }
-       systems_allow_section = systems_embedded+systems_freertos;
+       systems_allow_section = systems_embedded+systems_freertos+systems_wasm+[system_powerpc_morphos];
 
        { systems that uses dotted function names as descriptors }
        systems_dotted_function_names = [system_powerpc64_linux]+systems_aix;
@@ -386,7 +386,7 @@ interface
                                             system_aarch64_win64];
 
        { all systems for which weak linking has been tested/is supported }
-       systems_weak_linking = systems_darwin + systems_solaris + systems_linux + systems_android + systems_openbsd + systems_freebsd +
+       systems_weak_linking = systems_darwin + systems_solaris + systems_linux + systems_android + systems_bsd +
                               [system_m68k_sinclairql];
 
        systems_internal_sysinit = [system_i386_win32,system_x86_64_win64,
@@ -685,14 +685,12 @@ function set_target_dbg(t:tdbg):boolean;
 begin
   result:=false;
 { no debugging support for llvm yet }
-{$ifndef llvm}
   if assigned(dbginfos[t]) then
    begin
      target_dbg:=dbginfos[t]^;
      result:=true;
      exit;
    end;
-{$endif}
 end;
 
 

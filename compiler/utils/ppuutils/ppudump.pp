@@ -1416,7 +1416,7 @@ begin
          write('Nil');
        deref_symid :
          begin
-           idx:=pdata[i] shl 24 or pdata[i+1] shl 16 or pdata[i+2] shl 8 or pdata[i+3];
+           idx:=BEtoN(unaligned(PInt32(@pdata[i{..i+3}])^));
            inc(i,4);
            write(['SymId ',idx]);
            if Ref <> nil then
@@ -1424,7 +1424,7 @@ begin
          end;
        deref_defid :
          begin
-           idx:=pdata[i] shl 24 or pdata[i+1] shl 16 or pdata[i+2] shl 8 or pdata[i+3];
+           idx:=BEtoN(unaligned(PInt32(@pdata[i{..i+3}])^));
            inc(i,4);
            write(['DefId ',idx]);
            if Ref <> nil then
@@ -1432,7 +1432,7 @@ begin
          end;
        deref_unit :
          begin
-           idx:=pdata[i] shl 8 or pdata[i+1];
+           idx:=BEtoN(unaligned(PUint16(@pdata[i{..i+1}])^));
            inc(i,2);
            write(['Unit ',idx]);
            if Ref <> nil then
@@ -1606,7 +1606,7 @@ procedure readprocinfooptions(space : string);
 type
   tprocinfoopt=record
     mask : tprocinfoflag;
-    str  : string[81];
+    str  : string[82];
   end;
 const
   procinfoopts=ord(high(tprocinfoflag)) - ord(low(tprocinfoflag));
@@ -1705,20 +1705,21 @@ const
   symopts=ord(high(tsymoption)) - ord(low(tsymoption));
   { sp_none = 0 corresponds to nothing }
   symopt : array[1..symopts] of tsymopt=(
-     (mask:sp_static;             str:'Static'),
-     (mask:sp_hint_deprecated;    str:'Hint Deprecated'),
-     (mask:sp_hint_platform;      str:'Hint Platform'),
-     (mask:sp_hint_library;       str:'Hint Library'),
-     (mask:sp_hint_unimplemented; str:'Hint Unimplemented'),
-     (mask:sp_hint_experimental;  str:'Hint Experimental'),
-     (mask:sp_has_overloaded;     str:'Has overloaded'),
-     (mask:sp_internal;           str:'Internal'),
-     (mask:sp_implicitrename;     str:'Implicit Rename'),
-     (mask:sp_generic_para;       str:'Generic Parameter'),
-     (mask:sp_has_deprecated_msg; str:'Has Deprecated Message'),
-     (mask:sp_generic_dummy;      str:'Generic Dummy'),
-     (mask:sp_explicitrename;     str:'Explicit Rename'),
-     (mask:sp_generic_const;      str:'Generic Constant Parameter')
+     (mask:sp_static;              str:'Static'),
+     (mask:sp_hint_deprecated;     str:'Hint Deprecated'),
+     (mask:sp_hint_platform;       str:'Hint Platform'),
+     (mask:sp_hint_library;        str:'Hint Library'),
+     (mask:sp_hint_unimplemented;  str:'Hint Unimplemented'),
+     (mask:sp_hint_experimental;   str:'Hint Experimental'),
+     (mask:sp_has_overloaded;      str:'Has overloaded'),
+     (mask:sp_internal;            str:'Internal'),
+     (mask:sp_implicitrename;      str:'Implicit Rename'),
+     (mask:sp_generic_para;        str:'Generic Parameter'),
+     (mask:sp_has_deprecated_msg;  str:'Has Deprecated Message'),
+     (mask:sp_generic_dummy;       str:'Generic Dummy'),
+     (mask:sp_explicitrename;      str:'Explicit Rename'),
+     (mask:sp_generic_const;       str:'Generic Constant Parameter'),
+     (mask:sp_generic_unnamed_type;str:'Generic Unnamed Type')
   );
 var
   symoptions : tsymoptions;
@@ -2203,7 +2204,7 @@ var
        end; *)
 
 const
-    targetswitchname : array[ttargetswitch] of string[30] =
+    targetswitchname : array[ttargetswitch] of string[37] =
        { global target-specific switches }
        ('Target None', {ts_none}
          { generate code that results in smaller TOCs than normal (AIX) }
@@ -2248,14 +2249,14 @@ const
         'No exception support', {ts_wasm_no_exceptions}
         'Branchful exceptions support', {ts_wasm_bf_exceptions}
         'JavaScript-based exception support', {ts_wasm_js_exceptions}
-        'Native WebAssembly exceptions support' {ts_wasm_native_exceptions}
+        'Native WebAssembly exceptions support', {ts_wasm_native_exceptions}
+        'WebAssembly threads support' {ts_wasm_threads}
        );
     moduleswitchname : array[tmoduleswitch] of string[40] =
        ('Module None', {cs_modulenone,}
          { parser }
         'Floating Point Emulation',{ cs_fp_emulation}
         'Extended syntax', {cs_extsyntax}
-        'Open string', {cs_openstring}
          { support }
         'Goto allowed', {cs_support_goto}
         'Macro support', {cs_support_macro}
@@ -2283,8 +2284,9 @@ const
          { Record usage of checkpointer experimental feature }
         'CheckPointer used', {cs_checkpointer_called}
         'Supports LLVM Link-Time Optimization' {cs_lto}
+        ,'Enable LLVM Address Sanitizer'
        );
-    globalswitchname : array[tglobalswitch] of string[50] =
+    globalswitchname : array[tglobalswitch] of string[73] =
        ('Global None',{cs_globalnone}
          { parameter switches }
         'Check unit name', {cs_check_unit_name}
@@ -2372,6 +2374,7 @@ const
         'Use var property setter', {cs_varpropsetter}
         'Use scoped enums',{cs_scopedenums}
         'Use pointer math', {cs_pointermath}
+        'Open string', {cs_openstring}
          { macpas specific}
         'MACPAS exteranl variable', {cs_external_var}
         'MACPAS externally visible', {cs_externally_visible}
@@ -2435,12 +2438,13 @@ const
          'm_array2dynarray',      { regular arrays can be implicitly converted to dynamic arrays }
          'm_prefixed_attributes', { enable attributes that are defined before the type they belong to }
          'm_underscoreisseparator',{ _ can be used as separator to group digits in numbers }
-         'm_implicit_function_specialization' { attempt to specialize generic function by inferring types from parameters }
+         'm_implicit_function_specialization', { attempt to specialize generic function by inferring types from parameters }
+         'm_function_references', { enable Delphi-style function references }
+         'm_anonymous_functions'  { enable Delphi-style anonymous functions }
        );
        { optimizer }
        optimizerswitchname : array[toptimizerswitch] of string[50] =
-        ('cs_opt_none',
-         'cs_opt_level1',
+        ('cs_opt_level1',
          'cs_opt_level2',
          'cs_opt_level3',
          'cs_opt_level4',
@@ -3029,7 +3033,8 @@ const
      (mask:po_is_auto_setter;  str: 'Automatically generated setter'),
      (mask:po_noinline;        str: 'Never inline'),
      (mask:po_variadic;        str: 'C VarArgs with array-of-const para'),
-     (mask:po_objc_related_result_type; str: 'Objective-C related result type')
+     (mask:po_objc_related_result_type; str: 'Objective-C related result type'),
+     (mask:po_anonymous;       str: 'Anonymous')
   );
 var
   proctypeoption  : tproctypeoption;
@@ -3132,7 +3137,8 @@ const
      (mask:vo_force_finalize;  str:'ForceFinalize'),
      (mask:vo_is_default_var;  str:'DefaultIntrinsicVar'),
      (mask:vo_is_far;          str:'IsFar'),
-     (mask:vo_has_global_ref;  str:'HasGlobalRef')
+     (mask:vo_has_global_ref;  str:'HasGlobalRef'),
+     (mask:vo_is_internal;     str:'IsInternal')
   );
 type
   tvaraccessdesc=record
@@ -3236,7 +3242,10 @@ const
      (mask:oo_has_class_constructor; str:'HasClassConstructor'),
      (mask:oo_has_class_destructor; str:'HasClassDestructor'),
      (mask:oo_is_enum_class;      str:'JvmEnumClass'),
-     (mask:oo_has_new_destructor; str:'HasNewDestructor')
+     (mask:oo_has_new_destructor; str:'HasNewDestructor'),
+     (mask:oo_is_funcref;         str:'IsFuncRef'),
+     (mask:oo_is_invokable;       str:'IsInvokable'),
+     (mask:oo_is_capturer;        str:'IsCapturer')
   );
 var
   i      : longint;

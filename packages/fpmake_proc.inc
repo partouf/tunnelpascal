@@ -250,6 +250,12 @@ begin
 {$include gmp/fpmake.pp}
 end;
 
+procedure add_libnettle(const ADirectory: string);
+begin
+  with Installer do
+{$include libnettle/fpmake.pp}
+end;
+
 procedure add_gnome1(const ADirectory: string);
 begin
   with Installer do
@@ -843,6 +849,12 @@ procedure add_wasmtime(const ADirectory: string);
 begin
   with Installer do
 {$include wasmtime/fpmake.pp}
+end;
+
+procedure add_gstreamer(const ADirectory: string);
+begin
+  with Installer do
+{$include gstreamer/fpmake.pp}
 end;
 
 {$include ide/fpmake.pp}

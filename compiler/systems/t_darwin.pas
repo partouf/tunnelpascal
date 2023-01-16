@@ -34,7 +34,7 @@ implementation
     sysutils,
     cutils,cfileutl,cclasses,
     verbose,systems,globtype,globals,
-    symconst,cscript,
+    symconst,cscript,triplet,
     fmodule,aasmbase,aasmtai,aasmdata,aasmcpu,cpubase,symsym,symdef,
     import,export,link,comprsrc,rescmn,i_darwin,expunix,
     cgutils,cgbase,cgobj,cpuinfo,ogbase;
@@ -60,6 +60,7 @@ implementation
       function GetSysroot: TCmdStr;
       function GetLibSearchPath: TCmdStr;
       function GetLibraries: TCmdStr;
+
     public
       constructor Create;override;
       procedure SetDefaultInfo;override;
@@ -128,16 +129,16 @@ implementation
              programs with problems that require Valgrind will have more
              than 60KB of data (first 4KB of address space is always invalid)
            }
-           ExeCmd[1]:='ld $PRTOBJ $TARGET $OPT $STATIC $GCSECTIONS $STRIP $MAP $LTO $ORDERSYMS -L. -o $EXE $ARCH $VERSION $SYSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES';
+           ExeCmd[1]:='ld $PRTOBJ $TARGET $OPT $STATIC $GCSECTIONS $STRIP $MAP $LTO $ORDERSYMS $RPATH -L. -o $EXE $ARCH $VERSION $SYSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES';
            if not(cs_gdb_valgrind in current_settings.globalswitches) then
              ExeCmd[1]:=ExeCmd[1]+' -pagezero_size 0x10000';
   {$else ndef cpu64bitaddr}
-           ExeCmd[1]:='ld $PRTOBJ $TARGET $OPT $STATIC $GCSECTIONS $STRIP $MAP $LTO $ORDERSYMS -L. -o $EXE $ARCH $VERSION $SYSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES';
+           ExeCmd[1]:='ld $PRTOBJ $TARGET $OPT $STATIC $GCSECTIONS $STRIP $MAP $LTO $ORDERSYMS $RPATH -L. -o $EXE $ARCH $VERSION $SYSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES';
   {$endif ndef cpu64bitaddr}
            if (apptype<>app_bundle) then
-             DllCmd[1]:='ld $PRTOBJ $TARGET $OPT $GCSECTIONS $MAP $LTO $ORDERSYMS -dynamic -dylib -L. -o $EXE $ARCH $VERSION $SYSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES'
+             DllCmd[1]:='ld $PRTOBJ $TARGET $OPT $GCSECTIONS $MAP $LTO $ORDERSYMS $RPATH -dynamic -dylib -L. -o $EXE $ARCH $VERSION $SYSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES'
            else
-             DllCmd[1]:='ld $PRTOBJ $TARGET $OPT $GCSECTIONS $MAP $LTO $ORDERSYMS -dynamic -bundle -L. -o $EXE $ARCH $VERSION $SYRSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES';
+             DllCmd[1]:='ld $PRTOBJ $TARGET $OPT $GCSECTIONS $MAP $LTO $ORDERSYMS $RPATH -dynamic -bundle -L. -o $EXE $ARCH $VERSION $SYRSROOT $LIBSEARCHPATH $FILELIST $LIBRARIES';
            DllCmd[2]:='strip -x $EXE';
            DynamicLinker:='';
          end;
@@ -172,14 +173,14 @@ implementation
                   system_x86_64_darwin:
                     begin
                       { 10.8 and later: no crt1.* }
-                      if CompareVersionStrings(MacOSXVersionMin,'10.8')>=0 then
+                      if MacOSXVersionMin.relationto(10,8,0)>=0 then
                         exit('');
                       { x86: crt1.10.6.o -> crt1.10.5.o -> crt1.o }
                       { others: crt1.10.5 -> crt1.o }
                       if (target_info.system in [system_i386_darwin,system_x86_64_darwin]) and
-                         (CompareVersionStrings(MacOSXVersionMin,'10.6')>=0) then
+                         (MacOSXVersionMin.relationto(10,6,0)>=0) then
                         exit('crt1.10.6.o');
-                      if CompareVersionStrings(MacOSXVersionMin,'10.5')>=0 then
+                      if MacOSXVersionMin.relationto(10,5,0)>=0 then
                         exit('crt1.10.5.o');
                     end;
                   system_arm_ios:
@@ -189,9 +190,9 @@ implementation
                           iOS 3.1 - 5.x: crt1.3.1.o
                           pre-iOS 3.1: crt1.o
                       }
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'6.0')>=0) then
+                      if iPhoneOSVersionMin.relationto(6,0,0)>=0 then
                         exit('');
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'3.1')>=0) then
+                      if iPhoneOSVersionMin.relationto(3,1,0)>=0 then
                         exit('crt1.3.1.o');
                     end;
                   system_i386_iphonesim,
@@ -201,7 +202,7 @@ implementation
                         What those recent versions could be, is anyone's guess. It
                         still seems to work with 8.1 and no longer with 8.3, so use
                         8.1 as a cut-off point }
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'8.1')>0) then
+                      if iPhoneOSVersionMin.relationto(8,1,0)>0 then
                         exit('');
                     end;
                   system_aarch64_ios,
@@ -219,7 +220,7 @@ implementation
                 result:='gcrt1.o';
                 { 10.8 and later: tell the linker to use 'start' instead of "_main"
                   as entry point }
-                if CompareVersionStrings(MacOSXVersionMin,'10.8')>=0 then
+                if MacOSXVersionMin.relationto(10,8,0)>=0 then
                   Info.ExeCmd[1]:=Info.ExeCmd[1]+' -no_new_main';
               end;
           end
@@ -235,7 +236,7 @@ implementation
                     begin
                       { < 10.6: bundle1.o
                         >= 10.6: nothing }
-                      if CompareVersionStrings(MacOSXVersionMin,'10.6')>=0 then
+                      if MacOSXVersionMin.relationto(10,6,0)>=0 then
                         exit('');
                     end;
                   system_arm_ios,
@@ -243,14 +244,14 @@ implementation
                     begin
                       { iOS: < 3.1: bundle1.o
                              >= 3.1: nothing }
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'3.1')>=0) then
+                      if iPhoneOSVersionMin.relationto(3,1,0)>=0 then
                         exit('');
                     end;
                   system_i386_iphonesim,
                   system_x86_64_iphonesim:
                     begin
                       { see rule for crt1.o }
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'8.1')>0) then
+                      if iPhoneOSVersionMin.relationto(8,1,0)>0 then
                         exit('');
                     end;
                   system_aarch64_darwin:
@@ -272,9 +273,9 @@ implementation
                         = 10.5: dylib1.10.5.o
                         < 10.5: dylib1.o
                       }
-                      if CompareVersionStrings(MacOSXVersionMin,'10.6')>=0 then
+                      if MacOSXVersionMin.relationto(10,6,0)>=0 then
                         exit('');
-                      if CompareVersionStrings(MacOSXVersionMin,'10.5')>=0 then
+                      if MacOSXVersionMin.relationto(10,5,0)>=0 then
                         exit('dylib1.10.5.o');
                     end;
                   system_arm_ios,
@@ -282,14 +283,14 @@ implementation
                     begin
                       { iOS: < 3.1: dylib1.o
                              >= 3.1: nothing }
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'3.1')>=0) then
+                      if iPhoneOSVersionMin.relationto(3,1,0)>=0 then
                         exit('');
                     end;
                   system_i386_iphonesim,
                   system_x86_64_iphonesim:
                     begin
                       { see rule for crt1.o }
-                      if (CompareVersionStrings(iPhoneOSVersionMin,'8.1')>0) then
+                      if iPhoneOSVersionMin.relationto(8,1,0)>0 then
                         exit('');
                     end;
                   system_aarch64_darwin:
@@ -347,20 +348,20 @@ implementation
 
     function tlinkerdarwin.GetLinkVersion: TCmdStr;
       begin
-        if MacOSXVersionMin<>'' then
+        if MacOSXVersionMin.isvalid then
           begin
-            result:='-macosx_version_min '+MacOSXVersionMin;
+            result:='-macosx_version_min '+MacOSXVersionMin.str;
           end
-        else if iPhoneOSVersionMin<>'' then
+        else if iPhoneOSVersionMin.isvalid then
           begin
             if target_info.system in [system_i386_iphonesim,system_x86_64_iphonesim] then
-              result:='-ios_simulator_version_min '+iPhoneOSVersionMin
+              result:='-ios_simulator_version_min '+iPhoneOSVersionMin.str
             else
-              result:='-iphoneos_version_min '+iPhoneOSVersionMin;
+              result:='-iphoneos_version_min '+iPhoneOSVersionMin.str;
           end
         else
           begin
-            result:='';
+            internalerror(2022090920)
           end;
       end;
 
@@ -441,7 +442,7 @@ implementation
       end;
 
 
-    Function tlinkerdarwin.WriteFileList: TCmdStr;
+    function tlinkerdarwin.WriteFileList: TCmdStr;
     Var
       FilesList    : TScript;
       s            : TCmdStr;
@@ -481,11 +482,13 @@ implementation
       extdbgbinstr,
       extdbgcmdstr,
       ltostr,
+      asanstr,
       ordersymfile,
       linkfiles: TCmdStr;
       GCSectionsStr,
       StaticStr,
-      StripStr   : TCmdStr;
+      StripStr,
+      sanitizerLibraryDir: TCmdStr;
       success : boolean;
     begin
       if not(cs_link_nolink in current_settings.globalswitches) then
@@ -514,13 +517,10 @@ implementation
       if (cs_lto in current_settings.moduleswitches) and
          not(cs_link_on_target in current_settings.globalswitches) and
          (utilsdirectory<>'') and
-         FileExists(utilsdirectory+'/../lib/libLTO.dylib',true) then
+         FileExists(utilsdirectory+'/../lib/libLTO.dylib',false) then
         begin
           ltostr:='-lto_library '+maybequoted(utilsdirectory+'/../lib/libLTO.dylib');
         end;
-
-      { Write list of files to link }
-      linkfiles:=WriteFileList;
 
       { Write symbol order file }
       ordersymfile:=WriteSymbolOrderFile;
@@ -538,6 +538,20 @@ implementation
       else
         Replace(cmdstr,'$ORDERSYMS','');
 
+      if AddSanitizerLibrariesAndGetSearchDir('darwin',sanitizerLibraryDir) then
+        begin
+          { also add the executable path as search path in case the asan
+            library gets copied into the application bundle }
+          Replace(cmdstr,'$RPATH','-rpath @executable_path -rpath '+maybequoted(sanitizerLibraryDir))
+        end
+      else
+        begin
+          Replace(cmdstr,'$RPATH','');
+        end;
+
+      { Write list of files to link }
+      linkfiles:=WriteFileList;
+
       Replace(cmdstr,'$STATIC',StaticStr);
       Replace(cmdstr,'$STRIP',StripStr);
       Replace(cmdstr,'$GCSECTIONS',GCSectionsStr);
@@ -553,7 +567,7 @@ implementation
       { create dsym file? }
       extdbgbinstr:='';
       extdbgcmdstr:='';
-      if (target_dbg.id in [dbg_dwarf2,dbg_dwarf3]) and
+      if (target_dbg.id in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4]) and
          (cs_link_separate_dbg_file in current_settings.globalswitches) then
         begin
           extdbgbinstr:=FindUtil(utilsprefix+'dsymutil');
@@ -575,14 +589,14 @@ implementation
        end;
 
      { Post process }
-     if success then
+     if success and not(cs_link_nolink in current_settings.globalswitches) then
        success:=PostProcessExecutable(current_module.exefilename,false);
 
       MakeExecutable:=success;   { otherwise a recursive call to link method }
     end;
 
 
-    Function tlinkerdarwin.MakeSharedLibrary:boolean;
+  function tlinkerdarwin.MakeSharedLibrary: boolean;
     var
       InitStr,
       FiniStr,
@@ -595,7 +609,8 @@ implementation
       extdbgbinstr,
       extdbgcmdstr,
       linkfiles,
-      GCSectionsStr : TCmdStr;
+      GCSectionsStr,
+      sanitizerLibraryDir: TCmdStr;
       exportedsyms: text;
       success : boolean;
     begin
@@ -605,9 +620,6 @@ implementation
       ltostr:='';
       if not(cs_link_nolink in current_settings.globalswitches) then
        Message1(exec_i_linking,current_module.sharedlibfilename);
-
-      { Write list of files to link }
-      linkfiles:=WriteFileList;
 
       { Write symbol order file }
       ordersymfile:=WriteSymbolOrderFile;
@@ -622,7 +634,7 @@ implementation
       if (cs_lto in current_settings.moduleswitches) and
          not(cs_link_on_target in current_settings.globalswitches) and
          (utilsdirectory<>'') and
-         FileExists(utilsdirectory+'/../lib/libLTO.dylib',true) then
+         FileExists(utilsdirectory+'/../lib/libLTO.dylib',false) then
         begin
           ltostr:='-lto_library '+maybequoted(utilsdirectory+'/../lib/libLTO.dylib');
         end;
@@ -647,6 +659,21 @@ implementation
         Replace(cmdstr,'$ORDERSYMS','-order_file '+maybequoted(ordersymfile))
       else
         Replace(cmdstr,'$ORDERSYMS','');
+      { add asan library if known }
+      if AddSanitizerLibrariesAndGetSearchDir('darwin',sanitizerLibraryDir) then
+        begin
+          { also add the executable path as search path in case the asan
+            library gets copied into the application bundle }
+          Replace(cmdstr,'$RPATH','-rpath @executable_path -rpath '+maybequoted(sanitizerLibraryDir))
+        end
+      else
+        begin
+          Replace(cmdstr,'$RPATH','');
+        end;
+
+      { Write list of files to link }
+      linkfiles:=WriteFileList;
+
       Replace(cmdstr,'$PRTOBJ',GetDarwinPrtobjName(true));
       Replace(cmdstr,'$ARCH', GetLinkArch);
       Replace(cmdstr,'$VERSION',GetLinkVersion);
@@ -659,7 +686,7 @@ implementation
       { create dsym file? }
       extdbgbinstr:='';
       extdbgcmdstr:='';
-      if (target_dbg.id in [dbg_dwarf2,dbg_dwarf3]) and
+      if (target_dbg.id in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4]) and
          (cs_link_separate_dbg_file in current_settings.globalswitches) then
         begin
           extdbgbinstr:=FindUtil(utilsprefix+'dsymutil');

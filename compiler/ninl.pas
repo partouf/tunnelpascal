@@ -468,7 +468,7 @@ implementation
                 begin
                   { no valid default variable found, so create it }
                   srsym:=clocalvarsym.create(defaultname,vs_const,def,[]);
-                  srsymtable.insert(srsym);
+                  srsymtable.insertsym(srsym);
                   { mark the staticvarsym as typedconst }
                   include(tabstractvarsym(srsym).varoptions,vo_is_typed_const);
                   include(tabstractvarsym(srsym).varoptions,vo_is_default_var);
@@ -801,7 +801,30 @@ implementation
               enumdef:
                 begin
                   name:=procprefixes[do_read]+'enum';
-                  readfunctype:=s32inttype;
+                  if do_read then
+                    { read is done with a var parameter so we need the correct
+                      size for that }
+                    case para.left.resultdef.size of
+                      1:
+                        begin
+                          name:=name+'_shortint';
+                          readfunctype:=s8inttype;
+                        end;
+                      2:
+                        begin
+                          name:=name+'_smallint';
+                          readfunctype:=s16inttype;
+                        end;
+                      4:
+                        begin
+                          name:=name+'_longint';
+                          readfunctype:=s32inttype;
+                        end;
+                      else
+                        internalerror(2022082601);
+                    end
+                  else
+                    readfunctype:=s32inttype;
                 end;
               orddef :
                 begin
@@ -1008,7 +1031,7 @@ implementation
                         Crttinode.create(Tenumdef(para.left.resultdef),fullrtti,rdt_str2ord)
                       ),nil);
                       {Insert a type conversion to to convert the enum to longint.}
-                      para.left:=Ctypeconvnode.create_internal(para.left,s32inttype);
+                      para.left:=Ctypeconvnode.create_internal(para.left,readfunctype);
                       typecheckpass(para.left);
                     end;
                   { special handling of reading small numbers, because the helpers  }
@@ -1327,6 +1350,15 @@ implementation
               end
             else
               filepara := nil;
+          end;
+
+        if assigned(filepara) and
+            assigned(filepara.right) and
+            (cpf_is_colon_para in tcallparanode(filepara.right).callparaflags) then
+          begin
+            CGMessagePos(filepara.fileinfo,parser_e_illegal_colon_qualifier);
+            { for recovery we can simply continue, because the compiler will
+              simply treat the next parameters as normal parameters }
           end;
 
         { create a blocknode in which the successive write/read statements will be  }
@@ -4190,7 +4222,9 @@ implementation
             end;
 
           in_slice_x:
-            internalerror(2005101502);
+            { slice can be used only in calls for open array parameters, so it has to be converted appropriatly before
+              if we get here, the array could not be passed to an open array parameter so it is an error }
+            CGMessagePos(left.fileinfo,type_e_mismatch);
 
           in_ord_x,
           in_chr_byte:
@@ -4535,6 +4569,7 @@ implementation
         temp_pnode^ := nil;
       end;
 
+
      function tinlinenode.first_abs_long : tnode;
       begin
         expectloc:=LOC_REGISTER;
@@ -4590,8 +4625,6 @@ implementation
            end;
 
          resultnode := hp.getcopy;
-         { get varstates right }
-         node_reset_flags(resultnode,[nf_pass1_done,nf_modify]);
 
          { avoid type errors from the addn/subn }
          if not is_integer(resultnode.resultdef) then
@@ -4643,15 +4676,13 @@ implementation
          { avoid any possible warnings }
          inserttypeconv_internal(hpp,resultnode.resultdef);
 
-         { get varstates right }
-         node_reset_flags(hpp,[nf_pass1_done,nf_modify,nf_write]);
+         { force pass 1, so copied trees get first pass'ed as well and flags like
+           nf_call_unique get set right }
+         node_reset_pass1_write(hpp);
          do_typecheckpass(hpp);
 
          addstatement(newstatement,cassignmentnode.create(resultnode,hpp));
 
-         { force pass 1, so copied trees get first pass'ed as well and flags like nf_write, nf_call_unique
-           get set right }
-         node_reset_flags(newstatement.statement,[nf_pass1_done]);
          { firstpass it }
          firstpass(tnode(newstatement.left));
 

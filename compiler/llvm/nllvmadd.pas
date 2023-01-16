@@ -41,6 +41,7 @@ interface
         procedure second_cmp64bit; override;
         procedure second_addfloat; override;
         procedure second_cmpfloat; override;
+        procedure second_opvector; override;
       end;
 
 
@@ -129,15 +130,15 @@ implementation
       { comparison with pointer -> no immediate, as icmp can't handle pointer
         immediates (except for nil as "null", but we don't generate that) }
       if (nodetype in [equaln,unequaln,gtn,gten,ltn,lten]) and
-         ((left.nodetype in [pointerconstn,niln]) or
-          (right.nodetype in [pointerconstn,niln])) then
+         (is_address(left.resultdef) or
+          is_address(right.resultdef)) then
         allow_constant:=false;
       inherited;
-      { pointer - pointer = integer -> make all defs pointer since we can't
+      { pointer - pointer = integer -> make all defs integer since we can't
         subtract pointers }
       if (nodetype=subn) and
-         (left.resultdef.typ=pointerdef) and
-         (right.resultdef.typ=pointerdef) then
+         is_address(left.resultdef) and
+         is_address(right.resultdef) then
         begin
           hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,resultdef,true);
           hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,resultdef,true);
@@ -145,13 +146,13 @@ implementation
       { pointer +/- integer -> make defs the same since a_op_* only gets a
         single type as argument }
       else if (nodetype in [addn,subn]) and
-              ((left.resultdef.typ=pointerdef)<>(right.resultdef.typ=pointerdef)) then
+              (is_address(left.resultdef)<>is_address(right.resultdef)) then
         begin
           { the result is a pointerdef -> typecast both arguments to pointer;
             a_op_*_reg will convert them back to integer as needed }
-          if left.resultdef.typ<>pointerdef then
+          if not is_address(left.resultdef) then
             hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,resultdef,true);
-          if right.resultdef.typ<>pointerdef then
+          if not is_address(right.resultdef) then
             hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,resultdef,true);
         end;
     end;
@@ -354,6 +355,77 @@ implementation
   procedure tllvmaddnode.second_cmpfloat;
     begin
       second_addfloat;
+    end;
+
+  procedure tllvmaddnode.second_opvector;
+
+    var
+      lv, rv: tdef;
+      hreg: tregister;
+      tempref: treference;
+      op: tllvmop;
+      isfloat: boolean;
+    begin
+      if not is_vector(left.resultdef) or
+         not is_vector(right.resultdef) or
+         not is_vector(resultdef) or
+         not tarraydef(resultdef).is_hwvector then
+        internalerror(2022090710);
+
+      pass_left_right;
+      if (nf_swapped in flags) then
+        swapleftright;
+
+      isfloat:=tarraydef(left.resultdef).elementdef.typ=floatdef;
+      case nodetype of
+        addn :
+          if isfloat then
+            op:=la_fadd
+          else
+            op:=la_add;
+        muln :
+          if isfloat then
+            op:=la_fmul
+          else
+            op:=la_mul;
+        subn :
+          if isfloat then
+            op:=la_fsub
+          else
+            op:=la_sub;
+        slashn :
+          if isfloat then
+            op:=la_fdiv
+          else if is_signed(tarraydef(left.resultdef).elementdef) then
+            op:=la_sdiv
+          else
+            op:=la_udiv;
+        xorn:
+          if not isfloat then
+            op:=la_xor
+          else
+            internalerror(2022090711);
+        orn:
+          if not isfloat then
+            op:=la_or
+          else
+            internalerror(2022090712);
+        andn:
+          if not isfloat then
+            op:=la_and
+          else
+            internalerror(2022090712);
+        else
+          internalerror(200610073);
+      end;
+
+      location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+      lv:=to_hwvectordef(tarraydef(left.resultdef),false);
+      rv:=to_hwvectordef(tarraydef(right.resultdef),false);
+      hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,lv,false);
+      hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,rv,false);
+      location.register:=hlcg.getregisterfordef(current_asmdata.CurrAsmList,resultdef);
+      current_asmdata.CurrAsmList.concat(taillvm.op_reg_size_reg_reg(op,location.register,lv,left.location.register,right.location.register));
     end;
 
 

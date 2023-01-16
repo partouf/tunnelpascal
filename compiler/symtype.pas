@@ -51,6 +51,7 @@ interface
 ************************************************}
 
       tgetsymtable = (gs_none,gs_record,gs_local,gs_para);
+      tpublishproperty = (pp_ignore, pp_error, pp_publish);
 
       tdef = class(TDefEntry)
         protected
@@ -98,7 +99,7 @@ interface
          function  getvardef:longint;virtual;abstract;
          function  getparentdef:tdef;virtual;
          function  getsymtable(t:tgetsymtable):TSymtable;virtual;
-         function  is_publishable:boolean;virtual;abstract;
+         function  is_publishable:tpublishproperty;virtual;abstract;
          function  needs_inittable:boolean;virtual;abstract;
          { contains a (managed) child that is not initialized to 0/Nil }
          function  has_non_trivial_init_child(check_parent:boolean):boolean;virtual;abstract;
@@ -122,9 +123,6 @@ interface
 ************************************************}
 
       { this object is the base for all symbol objects }
-
-      { tsym }
-
       tsym = class(TSymEntry)
       protected
        function registered : boolean;
@@ -146,6 +144,7 @@ interface
          procedure buildderef;virtual;
          procedure deref;virtual;
          procedure ChangeOwner(st:TSymtable);
+         procedure ChangeOwnerAndName(st:TSymtable;const aname:tsymstr);
          procedure IncRefCount;
          procedure IncRefCountBy(AValue : longint);
          procedure MaybeCreateRefList;
@@ -264,6 +263,7 @@ implementation
                 result:=st;
                 exit;
               end;
+            exceptsymtable,
             recordsymtable,
             enumsymtable,
             arraysymtable,
@@ -513,8 +513,8 @@ implementation
 
     procedure tdef.ChangeOwner(st:TSymtable);
       begin
-//        if assigned(Owner) then
-//          Owner.DefList.List[i]:=nil;
+        if assigned(Owner) and owner.deflist.OwnsObjects then
+          Owner.DefList.extract(self);
         Owner:=st;
         Owner.DefList.Add(self);
       end;
@@ -529,12 +529,12 @@ implementation
           won't be saved to the ppu and as a result we can get unreachable
           defs when reloading the derived ones from the ppu }
         origowner:=owner;
-        while not(origowner.symtabletype in [localsymtable,staticsymtable,globalsymtable,stt_excepTSymtable]) do
+        while not(origowner.symtabletype in [localsymtable,staticsymtable,globalsymtable,exceptsymtable]) do
           origowner:=origowner.defowner.owner;
         { if the def is in an exceptionsymtable, we can't create a reusable
           def because the original one will be freed when the (always
           temprary) exceptionsymtable is freed }
-        if origowner.symtabletype=stt_excepTSymtable then
+        if origowner.symtabletype=exceptsymtable then
           internalerror(2015111701)
         else if origowner.symtabletype=localsymtable then
           result:=origowner
@@ -683,8 +683,19 @@ implementation
 
     procedure tsym.ChangeOwner(st:TSymtable);
       begin
+        if assigned(owner) and owner.SymList.OwnsObjects then
+          owner.symlist.extract(self);
         Owner:=st;
         inherited ChangeOwner(Owner.SymList);
+      end;
+
+
+    procedure tsym.ChangeOwnerAndName(st:TSymtable;const aname:tsymstr);
+      begin
+        if assigned(owner) and owner.SymList.OwnsObjects then
+          owner.symlist.extract(self);
+        Owner:=st;
+        inherited ChangeOwnerAndName(Owner.SymList,aname);
       end;
 
 
@@ -924,26 +935,19 @@ implementation
                { register that the unit is needed for resolving }
                data[len]:=ord(deref_unit);
                idx:=current_module.derefidx_unit(st.moduleid);
-               data[len+1]:=idx shr 8 and $ff;
-               data[len+2]:=idx and $ff;
+               unaligned(PUint16(@data[len+1{..len+2}])^):=NtoBE(uint16(idx));
                inc(len,3);
              end;
            if s is tsym then
              begin
                data[len]:=ord(deref_symid);
-               data[len+1]:=tsym(s).symid shr 24 and $ff;
-               data[len+2]:=tsym(s).symid shr 16 and $ff;
-               data[len+3]:=tsym(s).symid shr 8 and $ff;
-               data[len+4]:=tsym(s).symid and $ff;
+               unaligned(PInt32(@data[len+1{..len+4}])^):=NtoBE(int32(tsym(s).symid));
                inc(len,5);
              end
            else
              begin
                data[len]:=ord(deref_defid);
-               data[len+1]:=tdef(s).defid shr 24 and $ff;
-               data[len+2]:=tdef(s).defid shr 16 and $ff;
-               data[len+3]:=tdef(s).defid shr 8 and $ff;
-               data[len+4]:=tdef(s).defid and $ff;
+               unaligned(PInt32(@data[len+1{..len+4}])^):=NtoBE(int32(tdef(s).defid));
                inc(len,5);
              end;
          end
@@ -995,19 +999,19 @@ implementation
             case typ of
               deref_unit :
                 begin
-                  idx:=(data[i] shl 8) or data[i+1];
+                  idx:=BEtoN(unaligned(PUint16(@data[i{..i+1}])^));
                   inc(i,2);
                   pm:=current_module.resolve_unit(idx);
                 end;
               deref_defid :
                 begin
-                  idx:=longint((data[i] shl 24) or (data[i+1] shl 16) or (data[i+2] shl 8) or data[i+3]);
+                  idx:=BEtoN(unaligned(PInt32(@data[i{..i+3}])^));
                   inc(i,4);
                   result:=tdef(pm.deflist[idx]);
                 end;
               deref_symid :
                 begin
-                  idx:=longint((data[i] shl 24) or (data[i+1] shl 16) or (data[i+2] shl 8) or data[i+3]);
+                  idx:=BEtoN(unaligned(PInt32(@data[i{..i+3}])^));
                   inc(i,4);
                   result:=tsym(pm.symlist[idx]);
                 end;

@@ -339,25 +339,22 @@ unit rgobj;
         begin
           if header.count<2 then
             exit;
-          p:=1;
-          while 2*cardinal(p)<header.count do
-            p:=2*p;
-          while p<>0 do
-            begin
-              for h:=p to header.count-1 do
-                begin
-                  i:=h;
-                  t:=data[i];
-                  repeat
-                    if data[i-p].id<=t.id then
-                      break;
-                    data[i]:=data[i-p];
-                    dec(i,p);
-                  until i<p;
-                  data[i]:=t;
-                end;
-              p:=p shr 1;
-            end;
+          p:=longword(1) shl BsrDWord(header.count-1);
+          repeat
+            for h:=p to header.count-1 do
+              begin
+                i:=h;
+                t:=data[i];
+                repeat
+                  if data[i-p].id<=t.id then
+                    break;
+                  data[i]:=data[i-p];
+                  dec(i,p);
+                until i<p;
+                data[i]:=t;
+              end;
+            p:=p shr 1;
+          until p=0;
           header.sorted_until:=header.count-1;
         end;
     end;
@@ -1013,33 +1010,30 @@ unit rgobj;
         begin
           if length<2 then
             exit;
-          p:=1;
-          while 2*p<length do
-            p:=2*p;
-          while p<>0 do
-            begin
-              for h:=p to length-1 do
-                begin
-                  i:=h;
-                  t:=buf^[i];
-                  adjt:=reginfo[buf^[i]].adjlist;
-                  lent:=0;
-                  if adjt<>nil then
-                    lent:=adjt^.length;
-                  repeat
-                    adji:=reginfo[buf^[i-p]].adjlist;
-                    leni:=0;
-                    if adji<>nil then
-                      leni:=adji^.length;
-                    if leni>=lent then
-                      break;
-                    buf^[i]:=buf^[i-p];
-                    dec(i,p)
-                  until i<p;
-                  buf^[i]:=t;
-                end;
-              p:=p shr 1;
-            end;
+          p:=longword(1) shl BsrDWord(length-1);
+          repeat
+            for h:=p to length-1 do
+              begin
+                i:=h;
+                t:=buf^[i];
+                adjt:=reginfo[buf^[i]].adjlist;
+                lent:=0;
+                if adjt<>nil then
+                  lent:=adjt^.length;
+                repeat
+                  adji:=reginfo[buf^[i-p]].adjlist;
+                  leni:=0;
+                  if adji<>nil then
+                    leni:=adji^.length;
+                  if leni>=lent then
+                    break;
+                  buf^[i]:=buf^[i-p];
+                  dec(i,p)
+                until i<p;
+                buf^[i]:=t;
+              end;
+            p:=p shr 1;
+          until p=0;
         end;
     end;
 
@@ -1055,33 +1049,30 @@ unit rgobj;
           begin
             if length<2 then
               exit;
-            p:=1;
-            while 2*p<length do
-              p:=2*p;
-            while p<>0 do
-              begin
-                for h:=p to length-1 do
-                  begin
-                    i:=h;
-                    t:=buf^[i];
-                    adjt:=reginfo[buf^[i]].adjlist;
-                    lent:=0;
-                    if adjt<>nil then
-                      lent:=adjt^.length;
-                    repeat
-                      adji:=reginfo[buf^[i-p]].adjlist;
-                      leni:=0;
-                      if adji<>nil then
-                        leni:=adji^.length;
-                      if leni<=lent then
-                        break;
-                      buf^[i]:=buf^[i-p];
-                      dec(i,p)
-                    until i<p;
-                    buf^[i]:=t;
-                  end;
-                p:=p shr 1;
-              end;
+            p:=longword(1) shl BsrDWord(length-1);
+            repeat
+              for h:=p to length-1 do
+                begin
+                  i:=h;
+                  t:=buf^[i];
+                  adjt:=reginfo[buf^[i]].adjlist;
+                  lent:=0;
+                  if adjt<>nil then
+                    lent:=adjt^.length;
+                  repeat
+                    adji:=reginfo[buf^[i-p]].adjlist;
+                    leni:=0;
+                    if adji<>nil then
+                      leni:=adji^.length;
+                    if leni<=lent then
+                      break;
+                    buf^[i]:=buf^[i-p];
+                    dec(i,p)
+                  until i<p;
+                  buf^[i]:=t;
+                end;
+              p:=p shr 1;
+            until p=0;
           end;
       end;
 
@@ -1336,7 +1327,7 @@ unit rgobj;
     procedure trgobj.combine(u,v:Tsuperregister);
 
     var adj : Psuperregisterworklist;
-        i,n,p,q:cardinal;
+        original_u_count, i,n,p,q:cardinal;
         t : tsuperregister;
         searched:Tmoveins;
         found : boolean;
@@ -1374,6 +1365,7 @@ unit rgobj;
               sort_movelist(reginfo[u].movelist);
           if assigned(reginfo[v].movelist) then
             begin
+              original_u_count:=reginfo[u].movelist^.header.count;
               for n:=0 to reginfo[v].movelist^.header.count-1 do
                 begin
                   {Binary search the sorted part of the list.}
@@ -1394,7 +1386,9 @@ unit rgobj;
                       begin
                         {Linear search the unsorted part of the list.}
                         found:=false;
-                        for i:=header.sorted_until+1 to header.count-1 do
+                        { no need to search the instructions we've already added
+                          from v, we know we won't find a match there }
+                        for i:=header.sorted_until+1 to original_u_count-1 do
                           if searched.id=data[i].id then
                             begin
                               found:=true;

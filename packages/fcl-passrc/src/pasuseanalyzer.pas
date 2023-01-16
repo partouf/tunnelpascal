@@ -660,11 +660,7 @@ end;
 procedure TPAOverrideList.SetElement(AValue: TPasElement);
 begin
   if FElement=AValue then Exit;
-  if FElement<>nil then
-    FElement.Release{$IFDEF CheckPasTreeRefCount}('TPAOverrideList.Element'){$ENDIF};
   FElement:=AValue;
-  if FElement<>nil then
-    FElement.AddRef{$IFDEF CheckPasTreeRefCount}('TPAOverrideList.Element'){$ENDIF};
 end;
 
 constructor TPAOverrideList.Create;
@@ -673,11 +669,7 @@ begin
 end;
 
 destructor TPAOverrideList.Destroy;
-var
-  i: Integer;
 begin
-  for i:=0 to FOverrides.Count-1 do
-    TPasElement(FOverrides[i]).Release{$IFDEF CheckPasTreeRefCount}('TPAOverrideList.Overrides'){$ENDIF};
   FreeAndNil(FOverrides);
   Element:=nil;
   inherited Destroy;
@@ -686,7 +678,6 @@ end;
 procedure TPAOverrideList.Add(OverrideEl: TPasElement);
 begin
   FOverrides.Add(OverrideEl);
-  OverrideEl.AddRef{$IFDEF CheckPasTreeRefCount}('TPAOverrideList.Overrides'){$ENDIF};
 end;
 
 function TPAOverrideList.Count: integer;
@@ -699,11 +690,7 @@ end;
 procedure TPAElement.SetElement(AValue: TPasElement);
 begin
   if FElement=AValue then Exit;
-  if FElement<>nil then
-    FElement.Release{$IFDEF CheckPasTreeRefCount}('TPAElement.Element'){$ENDIF};
   FElement:=AValue;
-  if FElement<>nil then
-    FElement.AddRef{$IFDEF CheckPasTreeRefCount}('TPAElement.Element'){$ENDIF};
 end;
 
 destructor TPAElement.Destroy;
@@ -1480,7 +1467,10 @@ begin
       UseProcedure(TPasProcedure(Decl))
       end
     else if C.InheritsFrom(TPasType) then
-      UseType(TPasType(Decl),Mode)
+      begin
+      if OnlyExports then continue;
+      UseType(TPasType(Decl),Mode);
+      end
     else if C.InheritsFrom(TPasVariable) then
       begin
       if OnlyExports and ([vmExport,vmPublic]*TPasVariable(Decl).VarModifiers=[]) then
@@ -1544,8 +1534,8 @@ begin
   else if C=TPasImplAssign then
     // a:=b
     begin
-    UseExpr(TPasImplAssign(El).left);
-    UseExpr(TPasImplAssign(El).right);
+    UseExpr(TPasImplAssign(El).Left);
+    UseExpr(TPasImplAssign(El).Right);
     end
   else if C=TPasImplAsmStatement then
     // asm..end
@@ -1776,13 +1766,13 @@ begin
         end;
       if (Decl is TPasVariable)
           and (El.Parent is TBinaryExpr)
-          and (TBinaryExpr(El.Parent).right=El) then
+          and (TBinaryExpr(El.Parent).Right=El) then
         begin
         if ((Decl.Parent is TPasRecordType)
               or (Decl.Parent is TPasVariant)) then
           begin
           // a record member was accessed -> access the record with same Access
-          UseExprRef(El.Parent,TBinaryExpr(El.Parent).left,Access,false);
+          UseExprRef(El.Parent,TBinaryExpr(El.Parent).Left,Access,false);
           end;
         end;
       end;
@@ -1817,8 +1807,8 @@ begin
       end;
 
     end;
-  UseExpr(El.format1);
-  UseExpr(El.format2);
+  UseExpr(El.Format1);
+  UseExpr(El.Format2);
   C:=El.ClassType;
   if (C=TPrimitiveExpr)
       or (C=TBoolConstExpr)
@@ -1835,19 +1825,19 @@ begin
         begin
         Bin:=TBinaryExpr(Left);
         if Bin.OpCode<>eopAdd then break;
-        Left:=Bin.left;
+        Left:=Bin.Left;
         end;
       UseExpr(Left);
       repeat
         Bin:=TBinaryExpr(Left.Parent);
-        UseExpr(Bin.right);
+        UseExpr(Bin.Right);
         Left:=Bin;
       until Left=El;
       end
     else
       begin
-      UseExpr(Bin.left);
-      UseExpr(Bin.right);
+      UseExpr(Bin.Left);
+      UseExpr(Bin.Right);
       end;
     end
   else if C=TUnaryExpr then
@@ -1895,7 +1885,7 @@ begin
     begin
     Bin:=TBinaryExpr(Expr);
     if Bin.OpCode in [eopSubIdent,eopNone] then
-      UseExprRef(El,Bin.right,Access,UseFull);
+      UseExprRef(El,Bin.Right,Access,UseFull);
     end
   else if C=TParamsExpr then
     begin
@@ -2900,6 +2890,12 @@ begin
 end;
 
 procedure TPasAnalyzer.EmitTypeHints(El: TPasType);
+
+  function IsRightStr(const s, right: string): boolean;
+  begin
+    Result:=(right<>'') and (RightStr(s,length(right))=right);
+  end;
+
 var
   C: TClass;
   Usage: TPAElement;
@@ -2916,6 +2912,7 @@ begin
   if Usage=nil then
     begin
     // the whole type was never used
+
     if IsSpecializedGenericType(El) then
       exit; // no hints for not used specializations
     if (El.CustomData is TPasGenericScope) then
@@ -2931,6 +2928,9 @@ begin
           end;
       end;
 
+    if IsRightStr(El.Name,Resolver.AnonymousElTypePostfix) then
+      exit; // anonymous type
+
     if (El.Visibility in [visPrivate,visStrictPrivate]) then
       EmitMessage(20170312000020,mtHint,nPAPrivateTypeXNeverUsed,
         sPAPrivateTypeXNeverUsed,[El.FullName],El)
@@ -2942,6 +2942,7 @@ begin
       EmitMessage(20170312000025,mtHint,nPALocalXYNotUsed,
         sPALocalXYNotUsed,[El.ElementTypeName,GetElementNameAndParams(El)],El);
       end;
+
     exit;
     end;
   // emit hints for sub elements

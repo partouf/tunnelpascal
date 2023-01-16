@@ -38,7 +38,8 @@ Type
        cpu_rv32imac,
        cpu_rv32ima,
        cpu_rv32im,
-       cpu_rv32i
+       cpu_rv32i,
+       cpu_rv32e
       );
 
    tfputype =
@@ -69,7 +70,16 @@ Type
       ct_gd32vf103t8,
       ct_gd32vf103tb,
       ct_gd32vf103v8,
-      ct_gd32vf103vb
+      ct_gd32vf103vb,
+      ct_ch32v303cb,
+      ct_ch32v303rb,
+      ct_ch32v303rc,
+      ct_ch32v303vc,
+      ct_ch32v305fb,
+      ct_ch32v305rb,
+      ct_ch32v307rc,
+      ct_ch32v307wc,
+      ct_ch32V307vc      
      );
 
    tcontrollerdatatype = record
@@ -111,13 +121,23 @@ Const
       (controllertypestr:'GD32VF103T8' ; controllerunitstr:'GD32VF103XX'; cputype:cpu_rv32imac; fputype:fpu_none; flashbase:$08000000; flashsize:$00010000; srambase:$20000000; sramsize:$00005000),
       (controllertypestr:'GD32VF103TB' ; controllerunitstr:'GD32VF103XX'; cputype:cpu_rv32imac; fputype:fpu_none; flashbase:$08000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000),
       (controllertypestr:'GD32VF103V8' ; controllerunitstr:'GD32VF103XX'; cputype:cpu_rv32imac; fputype:fpu_none; flashbase:$08000000; flashsize:$00010000; srambase:$20000000; sramsize:$00005000),
-      (controllertypestr:'GD32VF103VB' ; controllerunitstr:'GD32VF103XX'; cputype:cpu_rv32imac; fputype:fpu_none; flashbase:$08000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000)
+      (controllertypestr:'GD32VF103VB' ; controllerunitstr:'GD32VF103XX'; cputype:cpu_rv32imac; fputype:fpu_none; flashbase:$08000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000),
+      (controllertypestr:'CH32V303CB'; controllerunitstr:'CH32V303';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000),
+      (controllertypestr:'CH32V303RB'; controllerunitstr:'CH32V303';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000),
+      (controllertypestr:'CH32V303RC'; controllerunitstr:'CH32V303';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00040000; srambase:$20000000; sramsize:$00010000),
+      (controllertypestr:'CH32V303VC'; controllerunitstr:'CH32V303';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00040000; srambase:$20000000; sramsize:$00010000),
+      (controllertypestr:'CH32V305FB'; controllerunitstr:'CH32V307';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000),
+      (controllertypestr:'CH32V305RB'; controllerunitstr:'CH32V307';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00020000; srambase:$20000000; sramsize:$00008000),
+      (controllertypestr:'CH32V307RC'; controllerunitstr:'CH32V307';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00040000; srambase:$20000000; sramsize:$00010000),
+      (controllertypestr:'CH32V307WC'; controllerunitstr:'CH32V307';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00040000; srambase:$20000000; sramsize:$00010000),
+      (controllertypestr:'CH32V307VC'; controllerunitstr:'CH32V307';    cputype:cpu_rv32imac; fputype:fpu_fd; flashbase:$00000000; flashsize:$00040000; srambase:$20000000; sramsize:$00010000)
    );
    {$POP}
 
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
+     pocall_safecall,
      pocall_stdcall,
      { the difference to stdcall is only the name mangling }
      pocall_cdecl,
@@ -131,7 +151,8 @@ Const
      'RV32IMAC',
      'RV32IMA',
      'RV32IM',
-     'RV32I'
+     'RV32I',
+     'RV32E'
    );
 
    fputypestr : array[tfputype] of string[8] = (         
@@ -160,7 +181,8 @@ Const
    tcpuflags =
       (CPURV_HAS_MUL,
        CPURV_HAS_ATOMIC,
-       CPURV_HAS_COMPACT
+       CPURV_HAS_COMPACT,
+       CPURV_HAS_16REGISTERS
       );
 
  const
@@ -169,7 +191,8 @@ Const
        { cpu_rv32imac  } [CPURV_HAS_MUL,CPURV_HAS_ATOMIC,CPURV_HAS_COMPACT],
        { cpu_rv32ima   } [CPURV_HAS_MUL,CPURV_HAS_ATOMIC],
        { cpu_rv32im    } [CPURV_HAS_MUL],
-       { cpu_rv32i     } []     
+       { cpu_rv32i     } [],
+       { cpu_rv32e     } [CPURV_HAS_16REGISTERS]
      );
 
 Implementation

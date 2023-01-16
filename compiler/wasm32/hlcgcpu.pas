@@ -439,8 +439,24 @@ implementation
       tmpref:=ref;
       tmpref.base:=NR_NO;
       tmpref.index:=NR_NO;
-      list.Concat(taicpu.op_ref(a_i32_const, tmpref));
-      incstack(list, 1);
+      if tmpref.refaddr=addr_got_tls then
+        begin
+          tmpref.offset:=0;
+          list.Concat(taicpu.op_ref(a_global_get, tmpref));
+          incstack(list, 1);
+          if ref.offset<>0 then
+            begin
+              list.Concat(taicpu.op_const(a_i32_const,ref.offset));
+              incstack(list, 1);
+              list.Concat(taicpu.op_none(a_i32_add));
+              decstack(list, 1);
+            end;
+        end
+      else
+        begin
+          list.Concat(taicpu.op_ref(a_i32_const, tmpref));
+          incstack(list, 1);
+        end;
       if ref.base<>NR_NO then
         begin
           list.Concat(taicpu.op_reg(a_local_get,ref.base));
@@ -578,9 +594,6 @@ implementation
           end;
         OS_64,OS_S64:
           begin
-            { unsigned 64 bit division must be done via a helper }
-            if op=OP_DIV then
-              internalerror(2010120530);
             { boolean not: =0? for boolean }
             if (op=OP_NOT) and is_pasbool(size) then
               begin
@@ -1027,6 +1040,8 @@ implementation
 
 
   function thlcgwasm.prepare_stack_for_ref(list: TAsmList; var ref: treference; dup: boolean): longint;
+    var
+      tmpref: treference;
     begin
       result:=0;
       { fake location that indicates the value is already on the stack? }
@@ -1039,8 +1054,35 @@ implementation
           ref.index:=NR_NO;
         end;
 
-      // setting up memory offset
-      if assigned(ref.symbol) and (ref.base=NR_NO) and (ref.index=NR_NO) then
+      if assigned(ref.symbol) and (ref.symbol.typ=AT_WASM_GLOBAL) then
+        begin
+          if ref.base<>NR_NO then
+            internalerror(2022072601);
+          if ref.index<>NR_NO then
+            internalerror(2022072602);
+          if ref.offset<>0 then
+            internalerror(2022072603);
+        end
+      else if ref.refaddr=addr_got_tls then
+        begin
+          if not assigned(ref.symbol) then
+            internalerror(2022071405);
+          if ref.base<>NR_NO then
+            internalerror(2022071406);
+          if ref.index<>NR_NO then
+            internalerror(2022071407);
+          tmpref:=ref;
+          tmpref.offset:=0;
+          list.Concat(taicpu.op_ref(a_global_get,tmpref));
+          incstack(list,1);
+          if dup then
+            begin
+              list.Concat(taicpu.op_ref(a_global_get,tmpref));
+              incstack(list,1);
+            end;
+          result:=1;
+        end
+      else if assigned(ref.symbol) and (ref.base=NR_NO) and (ref.index=NR_NO) then
         begin
           list.Concat(taicpu.op_const(a_i32_const,ref.offset));
           incstack(list,1);
@@ -1734,9 +1776,11 @@ implementation
               current_asmdata.getjumplabel(lab);
               { can be optimized by removing duplicate xor'ing to convert dst from
                 signed to unsigned quadrant }
+              list.concat(taicpu.op_none(a_block));
               a_cmp_reg_reg_label(list,size,OC_B,dst,src1,lab);
               a_cmp_reg_reg_label(list,size,OC_B,dst,src2,lab);
               a_op_const_stack(list,OP_XOR,s32inttype,1);
+              list.concat(taicpu.op_none(a_end_block));
               a_label(list,lab);
             end;
           a_load_stack_reg(list,s32inttype,ovloc.register);
@@ -1789,7 +1833,12 @@ implementation
       else if l=current_procinfo.CurrExitLabel then
         list.concat(taicpu.op_sym(a_br,l))
       else
-        Internalerror(2019091806); // unexpected jump
+        begin
+{$ifndef EXTDEBUG}
+          Internalerror(2019091806); // unexpected jump
+{$endif EXTDEBUG}
+          list.concat(tai_comment.create(strpnew('Unable to find destination of label '+l.name)));
+        end;
     end;
 
   procedure thlcgwasm.a_loadfpu_ref_ref(list: TAsmList; fromsize, tosize: tdef; const ref1, ref2: treference);
@@ -2139,12 +2188,10 @@ implementation
       else
         a_load_const_stack(list,maxdef,tcgint(int64(hto-lto)),R_INTREGISTER);
 
-      a_reg_alloc(list, NR_DEFAULTFLAGS);
       a_cmp_stack_stack(list,maxdef,OC_A);
 
       current_asmdata.CurrAsmList.concat(taicpu.op_none(a_if));
       thlcgwasm(hlcg).decstack(current_asmdata.CurrAsmList,1);
-      a_reg_dealloc(list, NR_DEFAULTFLAGS);
 
       g_call_system_proc(list,'fpc_rangeerror',[],nil).resetiftemp;
 
@@ -2164,8 +2211,11 @@ implementation
       if not(cs_check_overflow in current_settings.localswitches) then
         exit;
       current_asmdata.getjumplabel(hl);
+      list.concat(taicpu.op_none(a_block));
       a_cmp_const_loc_label(list,s32inttype,OC_EQ,0,ovloc,hl);
       g_call_system_proc(list,'fpc_overflow',[],nil);
+      hlcg.g_maybe_checkforexceptions(current_asmdata.CurrAsmList);
+      list.concat(taicpu.op_none(a_end_block));
       a_label(list,hl);
     end;
 
@@ -2291,7 +2341,10 @@ implementation
         exit;
       opc:=loadstoreopcref(size,false,ref,finishandval);
 
-      list.concat(taicpu.op_ref(opc,ref));
+      if ref.refaddr=addr_got_tls then
+        list.concat(taicpu.op_const(opc,ref.offset))
+      else
+        list.concat(taicpu.op_ref(opc,ref));
       { avoid problems with getting the size of an open array etc }
       if wasmAlwayInMem(size) then
         size:=ptruinttype;
@@ -2314,7 +2367,10 @@ implementation
         exit;
       opc:=loadstoreopcref(size,true,ref,finishandval);
 
-      list.concat(taicpu.op_ref(opc,ref));
+      if ref.refaddr=addr_got_tls then
+        list.concat(taicpu.op_const(opc,ref.offset))
+      else
+        list.concat(taicpu.op_ref(opc,ref));
 
       { avoid problems with getting the size of an open array etc }
       if wasmAlwayInMem(size) then
@@ -2347,7 +2403,15 @@ implementation
       getputmemf32 : array [boolean] of TAsmOp = (a_f32_store, a_f32_load);
       getputmemf64 : array [boolean] of TAsmOp = (a_f64_store, a_f64_load);
     begin
-      if (ref.base<>NR_LOCAL_STACK_POINTER_REG) or assigned(ref.symbol) then
+      if assigned(ref.symbol) and (ref.symbol.typ=AT_WASM_GLOBAL) then
+        begin
+          if isload then
+            result:=a_global_get
+          else
+            result:=a_global_set;
+          finishandval:=-1;
+        end
+      else if (ref.base<>NR_LOCAL_STACK_POINTER_REG) or assigned(ref.symbol) then
         begin
           { -> either a global (static) field, or a regular field. If a regular
             field, then ref.base contains the self pointer, otherwise

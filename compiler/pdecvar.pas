@@ -60,7 +60,7 @@ implementation
 {$if defined(i386) or defined(i8086)}
        symcpu,
 {$endif}
-       fmodule,htypechk,
+       fmodule,htypechk,procdefutil,
        { pass 1 }
        node,pass_1,aasmbase,aasmdata,
        ncon,nset,ncnv,nld,nutils,
@@ -265,7 +265,7 @@ implementation
               else
                 handle_calling_convention(pd,hcc_default_actions_intf_struct);
               sym:=cprocsym.create(prefix+lower(p.realname));
-              symtablestack.top.insert(sym);
+              symtablestack.top.insertsym(sym);
               pd.procsym:=sym;
               include(pd.procoptions,po_dispid);
               include(pd.procoptions,po_global);
@@ -326,7 +326,7 @@ implementation
                   { add an extra parameter, a placeholder of the value to set }
                   inc(paranr);
                   hparavs:=cparavarsym.create('$value',10*paranr,vs_value,p.propdef,[]);
-                  writepd.parast.insert(hparavs);
+                  writepd.parast.insertsym(hparavs);
 
                   writepd.proctypeoption:=potype_propsetter;
                   writepd.dispid:=hdispid;
@@ -384,7 +384,7 @@ implementation
          p.default:=longint($80000000);
          if is_classproperty then
            include(p.symoptions, sp_static);
-         symtablestack.top.insert(p);
+         symtablestack.top.insertsym(p);
          consume(_ID);
          { property parameters ? }
          if try_to_consume(_LECKKLAMMER) then
@@ -411,7 +411,7 @@ implementation
                 repeat
                   inc(paranr);
                   hreadparavs:=cparavarsym.create(orgpattern,10*paranr,varspez,generrordef,[]);
-                  p.parast.insert(hreadparavs);
+                  p.parast.insertsym(hreadparavs);
                   sc.add(hreadparavs);
                   consume(_ID);
                 until not try_to_consume(_COMMA);
@@ -515,15 +515,22 @@ implementation
                   message(parser_e_no_property_found_to_override);
                 end;
            end;
-         { ignore is_publishable for interfaces (related to $M+ directive).
-           $M has effect on visibility of default section for classes. 
-           Interface has always only public section (fix for problem in tb0631.pp) }
-         if ((p.visibility=vis_published) or is_dispinterface(astruct)) and
-            ((not(p.propdef.is_publishable) and not is_interface(astruct)) or
-             (sp_static in p.symoptions)) then
+         if ((p.visibility=vis_published) or is_dispinterface(astruct)) then
            begin
-             Message(parser_e_cant_publish_that_property);
-             p.visibility:=vis_public;
+             { ignore is_publishable for interfaces (related to $M+ directive).
+               $M has effect on visibility of default section for classes.
+               Interface has always only public section (fix for problem in tb0631.pp) }
+             if (sp_static in p.symoptions) or ((p.propdef.is_publishable=pp_error) and not is_interface(astruct)) then
+               begin
+                 Message(parser_e_cant_publish_that_property);
+                 p.visibility:=vis_public;
+               end
+             else
+             if (p.propdef.is_publishable=pp_ignore) and not is_interface(astruct) then
+               begin
+                 Message(parser_w_ignoring_published_property);
+                 p.visibility:=vis_public;
+               end;
            end;
 
          if not(is_dispinterface(astruct)) then
@@ -566,7 +573,7 @@ implementation
                         writeprocdef.returndef:=voidtype;
                         inc(paranr);
                         hparavs:=cparavarsym.create('$value',10*paranr,vs_value,p.propdef,[]);
-                        writeprocdef.parast.insert(hparavs);
+                        writeprocdef.parast.insertsym(hparavs);
                         { Insert hidden parameters }
                         if not assigned(astruct) then
                           handle_calling_convention(writeprocdef,hcc_default_actions_intf)
@@ -647,7 +654,7 @@ implementation
                             procsym :
                               begin
                                  { Create a temporary procvardef to handle parameters }
-                                 storedprocdef:=cprocvardef.create(normal_function_level);
+                                 storedprocdef:=cprocvardef.create(normal_function_level,true);
                                  include(storedprocdef.procoptions,po_methodpointer);
                                  { Return type must be boolean }
                                  storedprocdef.returndef:=pasbool1type;
@@ -655,7 +662,7 @@ implementation
                                  if ppo_indexed in p.propoptions then
                                    begin
                                      hparavs:=cparavarsym.create('$index',10,vs_value,p.indexdef,[]);
-                                     storedprocdef.parast.insert(hparavs);
+                                     storedprocdef.parast.insertsym(hparavs);
                                    end;
 
                                  { Insert hidden parameters }
@@ -886,20 +893,17 @@ implementation
 
 
      function maybe_parse_proc_directives(def:tdef):boolean;
-       var
-         newtype : ttypesym;
        begin
          result:=false;
          { Process procvar directives before = and ; }
-         if (def.typ=procvardef) and
+         if (
+              (def.typ=procvardef) or
+              is_funcref(def)
+            ) and
             (def.typesym=nil) and
             check_proc_directive(true) then
            begin
-              newtype:=ctypesym.create('unnamed',def);
-              parse_var_proc_directives(tsym(newtype));
-              newtype.typedef:=nil;
-              def.typesym:=nil;
-              newtype.free;
+              parse_proctype_directives(def);
               result:=true;
            end;
        end;
@@ -1135,7 +1139,7 @@ implementation
               begin
                 tcsym:=cstaticvarsym.create('$default'+vs.realname,vs_const,vs.vardef,[]);
                 include(tcsym.symoptions,sp_internal);
-                symtablestack.top.insert(tcsym);
+                symtablestack.top.insertsym(tcsym);
                 templist:=tasmlist.create;
                 read_typed_const(templist,tcsym,false);
                 { in case of a generic routine, this initialisation value is not
@@ -1337,8 +1341,8 @@ implementation
           if assigned(abssym) then
             begin
               st:=vs.owner;
-              vs.owner.Delete(vs);
-              st.insert(abssym);
+              vs.owner.Deletesym(vs);
+              st.insertsym(abssym);
               sc[0]:=abssym;
             end;
         end;
@@ -1348,6 +1352,7 @@ implementation
          vs   : tabstractvarsym;
          hdef : tdef;
          i    : longint;
+         flags : thccflags;
          first,
          isgeneric,
          semicoloneaten,
@@ -1357,6 +1362,7 @@ implementation
          deprecatedmsg   : pshortstring;
          old_block_type  : tblock_type;
          sectionname : ansistring;
+         typepos,
          tmp_filepos,
          old_current_filepos     : tfileposinfo;
       begin
@@ -1424,11 +1430,11 @@ implementation
                        { ensure correct error position }
                        old_current_filepos:=current_filepos;
                        current_filepos:=tmp_filepos;
-                       symtablestack.top.insert(vs);
+                       symtablestack.top.insertsym(vs);
                        current_filepos:=old_current_filepos;
                      end
                    else
-                     symtablestack.top.insert(vs);
+                     symtablestack.top.insertsym(vs);
                  end;
              until not try_to_consume(_COMMA);
 
@@ -1438,6 +1444,7 @@ implementation
              { read variable type def }
              block_type:=bt_var_type;
              consume(_COLON);
+             typepos:=current_tokenpos;
 
 {$ifdef gpc_mode}
              if (m_gpc in current_settings.modeswitches) and
@@ -1494,9 +1501,32 @@ implementation
                 (symtablestack.top.symtabletype<>parasymtable) then
                begin
                  { Add calling convention for procvar }
-                 if (hdef.typ=procvardef) and
+                 if (
+                      (hdef.typ=procvardef) or
+                      is_funcref(hdef)
+                    ) and
                     (hdef.typesym=nil) then
-                   handle_calling_convention(tprocvardef(hdef),hcc_default_actions_intf);
+                   begin
+                     if po_is_function_ref in tprocvardef(hdef).procoptions then
+                       begin
+                         if not (m_function_references in current_settings.modeswitches) and
+                             not (po_is_block in tprocvardef(hdef).procoptions) then
+                           messagepos(typepos,sym_e_error_in_type_def)
+                         else
+                           begin
+                             if adjust_funcref(hdef,nil,nil) then
+                               { the def was changed, so update it }
+                               for i:=0 to sc.count-1 do
+                                 begin
+                                   vs:=tabstractvarsym(sc[i]);
+                                   vs.vardef:=hdef;
+                                 end;
+                             if current_scanner.replay_stack_depth=0 then
+                               hdef.register_def;
+                           end;
+                       end;
+                     handle_calling_convention(hdef,hcc_default_actions_intf);
+                   end;
                  read_default_value(sc);
                  hasdefaultvalue:=true;
                end
@@ -1508,13 +1538,38 @@ implementation
 
              { Support calling convention for procvars after semicolon }
              if not(hasdefaultvalue) and
-                (hdef.typ=procvardef) and
+                (
+                  (hdef.typ=procvardef) or
+                  is_funcref(hdef)
+                ) and
                 (hdef.typesym=nil) then
                begin
                  { Parse procvar directives after ; }
                  maybe_parse_proc_directives(hdef);
+                 if (hdef.typ=procvardef) and (po_is_function_ref in tprocvardef(hdef).procoptions) then
+                   begin
+                     if not (m_function_references in current_settings.modeswitches) and
+                         not (po_is_block in tprocvardef(hdef).procoptions) then
+                       messagepos(typepos,sym_e_error_in_type_def)
+                     else
+                       begin
+                         if adjust_funcref(hdef,nil,nil) then
+                           { the def was changed, so update it }
+                           for i:=0 to sc.count-1 do
+                             begin
+                               vs:=tabstractvarsym(sc[i]);
+                               vs.vardef:=hdef;
+                             end;
+                         if current_scanner.replay_stack_depth=0 then
+                           hdef.register_def;
+                       end;
+                   end;
                  { Add calling convention for procvar }
-                 handle_calling_convention(tprocvardef(hdef),hcc_default_actions_intf);
+                 if hdef.typ=procvardef then
+                   flags:=hcc_default_actions_intf
+                 else
+                   flags:=hcc_default_actions_intf_struct;
+                 handle_calling_convention(hdef,flags);
                  { Handling of Delphi typed const = initialized vars }
                  if (token=_EQ) and
                     not(m_tp7 in current_settings.modeswitches) and
@@ -1631,7 +1686,7 @@ implementation
          hdef,casetype : tdef;
          { maxsize contains the max. size of a variant }
          { startvarrec contains the start of the variant part of a record }
-         maxsize, startvarrecsize : longint;
+         maxsize, startvarrecsize : asizeint;
          usedalign,
          maxalignment,startvarrecalign,
          maxpadalign, startpadalign: shortint;
@@ -1656,6 +1711,7 @@ implementation
          is_first_type: boolean;
 {$endif powerpc or powerpc64}
          old_block_type: tblock_type;
+         typepos : tfileposinfo;
       begin
          old_block_type:=block_type;
          block_type:=bt_var;
@@ -1705,7 +1761,7 @@ implementation
                  begin
                    vs.register_sym;
                    sc.add(vs);
-                   recst.insert(vs);
+                   recst.insertsym(vs);
                    had_generic:=false;
                  end
                else
@@ -1718,6 +1774,7 @@ implementation
              if had_generic and (sc.count=0) then
                break;
              consume(_COLON);
+             typepos:=current_filepos;
 
              read_anon_type(hdef,false);
              maybe_guarantee_record_typesym(hdef,symtablestack.top);
@@ -1774,10 +1831,7 @@ implementation
                classes are allowed }
              if (variantrecordlevel>0) then
                if is_managed_type(hdef) then
-                 Message(parser_e_cant_use_inittable_here)
-               else
-               if hdef.typ=undefineddef then
-                 Message(parser_e_cant_use_type_parameters_here);
+                 Message(parser_e_cant_use_inittable_here);
 
              { try to parse the hint directives }
              hintsymoptions:=[];
@@ -1806,9 +1860,31 @@ implementation
              maybe_parse_proc_directives(hdef);
 
              { Add calling convention for procvar }
-             if (hdef.typ=procvardef) and
-                (hdef.typesym=nil) then
-               handle_calling_convention(tprocvardef(hdef),hcc_default_actions_intf);
+             if (
+                 (hdef.typ=procvardef) or
+                 is_funcref(hdef)
+               ) and (hdef.typesym=nil) then
+               begin
+                 if (hdef.typ=procvardef) and (po_is_function_ref in tprocvardef(hdef).procoptions) then
+                   begin
+                     if not (m_function_references in current_settings.modeswitches) and
+                         not (po_is_block in tprocvardef(hdef).procoptions) then
+                       messagepos(typepos,sym_e_error_in_type_def)
+                     else
+                       begin
+                         if adjust_funcref(hdef,nil,nil) then
+                           { the def was changed, so update it }
+                           for i:=0 to sc.count-1 do
+                             begin
+                               fieldvs:=tfieldvarsym(sc[i]);
+                               fieldvs.vardef:=hdef;
+                             end;
+                         if current_scanner.replay_stack_depth=0 then
+                           hdef.register_def;
+                       end;
+                   end;
+                 handle_calling_convention(hdef,hcc_default_actions_intf);
+               end;
 
              if (vd_object in options) then
                begin
@@ -1910,7 +1986,7 @@ implementation
                   consume(_COLON);
                   fieldvs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
                   variantdesc^^.variantselector:=fieldvs;
-                  symtablestack.top.insert(fieldvs);
+                  symtablestack.top.insertsym(fieldvs);
                 end;
               read_anon_type(casetype,true);
               block_type:=bt_var;

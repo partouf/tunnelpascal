@@ -86,7 +86,7 @@ implementation
        nset,ncnv,ncon,nld,
        { parser }
        scanner,
-       pbase,pexpr,pdecsub,pdecvar,pdecobj,pdecl,pgenutil,pparautl
+       pbase,pexpr,pdecsub,pdecvar,pdecobj,pdecl,pgenutil,pparautl,procdefutil
 {$ifdef jvm}
        ,pjvm
 {$endif}
@@ -244,7 +244,7 @@ implementation
       end;
 
 
-    procedure id_type(var def : tdef;isforwarddef,checkcurrentrecdef,allowgenericsyms,allowunitsym:boolean;out srsym:tsym;out srsymtable:tsymtable;out is_specialize:boolean); forward;
+    procedure id_type(var def : tdef;isforwarddef,checkcurrentrecdef,allowgenericsyms,allowunitsym:boolean;out srsym:tsym;out srsymtable:tsymtable;out is_specialize,is_unit_specific:boolean); forward;
 
 
     { def is the outermost type in which other types have to be searched
@@ -264,7 +264,8 @@ implementation
         srsym: tsym;
         srsymtable: tsymtable;
         oldsymtablestack: TSymtablestack;
-        isspecialize : boolean;
+        isspecialize,
+        isunitspecific : boolean;
       begin
         if assigned(currentstructstack) then
           structstackindex:=currentstructstack.count-1
@@ -292,7 +293,7 @@ implementation
                      symtablestack:=TSymtablestack.create;
                      symtablestack.push(tabstractrecorddef(def).symtable);
                      t2:=generrordef;
-                     id_type(t2,isforwarddef,false,false,false,srsym,srsymtable,isspecialize);
+                     id_type(t2,isforwarddef,false,false,false,srsym,srsymtable,isspecialize,isunitspecific);
                      symtablestack.pop(tabstractrecorddef(def).symtable);
                      symtablestack.free;
                      symtablestack:=oldsymtablestack;
@@ -300,7 +301,7 @@ implementation
                        begin
                          if not allowspecialization then
                            Message(parser_e_no_local_para_def);
-                         generate_specialization(t2,false,'');
+                         generate_specialization(t2,isunitspecific,false,'');
                        end;
                      def:=t2;
                    end;
@@ -346,12 +347,12 @@ implementation
          result:=false;
       end;
 
-    procedure id_type(var def : tdef;isforwarddef,checkcurrentrecdef,allowgenericsyms,allowunitsym:boolean;out srsym:tsym;out srsymtable:tsymtable;out is_specialize:boolean);
+    procedure id_type(var def : tdef;isforwarddef,checkcurrentrecdef,allowgenericsyms,allowunitsym:boolean;out srsym:tsym;out srsymtable:tsymtable;out is_specialize,is_unit_specific:boolean);
     { reads a type definition }
     { to a appropriating tdef, s gets the name of   }
     { the type to allow name mangling          }
       var
-        is_unit_specific,not_a_type : boolean;
+        not_a_type : boolean;
         pos : tfileposinfo;
         s,sorg : TIDString;
         t : ttoken;
@@ -359,6 +360,7 @@ implementation
          srsym:=nil;
          srsymtable:=nil;
          is_specialize:=false;
+         is_unit_specific:=false;
          s:=pattern;
          sorg:=orgpattern;
          pos:=current_tokenpos;
@@ -753,6 +755,7 @@ implementation
 
        var
          t2 : tdef;
+         isunitspecific,
          isspecialize,
          dospecialize,
          again : boolean;
@@ -760,6 +763,7 @@ implementation
          srsymtable : tsymtable;
        begin
          dospecialize:=false;
+         isunitspecific:=false;
          srsym:=nil;
          repeat
            again:=false;
@@ -823,7 +827,7 @@ implementation
                      end
                    else
                      begin
-                       id_type(def,stoIsForwardDef in options,true,true,not dospecialize or ([stoAllowSpecialization,stoAllowTypeDef]*options=[]),srsym,srsymtable,isspecialize);
+                       id_type(def,stoIsForwardDef in options,true,true,not dospecialize or ([stoAllowSpecialization,stoAllowTypeDef]*options=[]),srsym,srsymtable,isspecialize,isunitspecific);
                        if isspecialize and dospecialize then
                          internalerror(2015021301);
                        if isspecialize then
@@ -862,7 +866,7 @@ implementation
           begin
             if def.typ=forwarddef then
               def:=ttypesym(srsym).typedef;
-            generate_specialization(def,stoParseClassParent in options,'');
+            generate_specialization(def,isunitspecific,stoParseClassParent in options,'');
             parse_nested_types(def,stoIsForwardDef in options,[stoAllowSpecialization,stoAllowTypeDef]*options<>[],nil);
           end
         else
@@ -1361,7 +1365,10 @@ implementation
            begin
              consume(_ID);
              alignment:=get_intconst.svalue;
-             if not(alignment in [1,2,4,8,16,32,64]) then
+             { "(alignment and not $7F) = 0" means it's between 0 and 127, and
+               PopCnt = 1 for powers of 2 }
+             if ((alignment and not $7F) <> 0) or (PopCnt(Byte(alignment))<>1) then
+               message(scanner_e_illegal_alignment_directive)
              else
                recst.recordalignment:=shortint(alignment);
            end;
@@ -1515,7 +1522,7 @@ implementation
                      end;
                    if dospecialize then
                      begin
-                       generate_specialization(def,false,name);
+                       generate_specialization(def,false,false,name);
                        { handle nested types }
                        if assigned(def) then
                          post_comp_expr_gendef(def);
@@ -1584,11 +1591,11 @@ implementation
         function procvar_dec(genericdef:tstoreddef;genericlist:tfphashobjectlist):tdef;
           var
             is_func:boolean;
-            pd:tabstractprocdef;
-            newtype:ttypesym;
+            pd:tprocvardef;
             old_current_genericdef,
             old_current_specializedef: tstoreddef;
             old_parse_generic: boolean;
+            olddef : tdef;
           begin
             old_current_genericdef:=current_genericdef;
             old_current_specializedef:=current_specializedef;
@@ -1596,10 +1603,18 @@ implementation
 
             current_genericdef:=nil;
             current_specializedef:=nil;
+            olddef:=nil;
 
             is_func:=(token=_FUNCTION);
             consume(token);
-            pd:=cprocvardef.create(normal_function_level);
+            pd:=cprocvardef.create(normal_function_level,doregister);
+
+            if assigned(sym) then
+              begin
+                pd.typesym:=sym;
+                olddef:=ttypesym(sym).typedef;
+                ttypesym(sym).typedef:=pd;
+              end;
 
             { usage of specialized type inside its generic template }
             if assigned(genericdef) then
@@ -1620,16 +1635,17 @@ implementation
             parse_generic:=(df_generic in pd.defoptions);
             if parse_generic and not assigned(current_genericdef) then
               current_genericdef:=old_current_genericdef;
-            { don't allow to add defs to the symtable - use it for type param search only }
-            tparasymtable(pd.parast).readonly:=true;
 
             if token=_LKLAMMER then
               parse_parameter_dec(pd);
             if is_func then
               begin
                 consume(_COLON);
+                pd.proctypeoption:=potype_function;
                 pd.returndef:=result_type([stoAllowSpecialization]);
-              end;
+              end
+            else
+              pd.proctypeoption:=potype_procedure;
             if try_to_consume(_OF) then
               begin
                 consume(_OBJECT);
@@ -1643,19 +1659,11 @@ implementation
                 pd.check_mark_as_nested;
               end;
             symtablestack.pop(pd.parast);
-            tparasymtable(pd.parast).readonly:=false;
-            result:=pd;
             { possible proc directives }
             if parseprocvardir then
               begin
                 if check_proc_directive(true) then
-                  begin
-                    newtype:=ctypesym.create('unnamed',result);
-                    parse_var_proc_directives(tsym(newtype));
-                    newtype.typedef:=nil;
-                    result.typesym:=nil;
-                    newtype.free;
-                  end;
+                  parse_proctype_directives(pd);
                 { Add implicit hidden parameters and function result }
                 handle_calling_convention(pd,hcc_default_actions_intf);
               end;
@@ -1663,6 +1671,14 @@ implementation
             parse_generic:=old_parse_generic;
             current_genericdef:=old_current_genericdef;
             current_specializedef:=old_current_specializedef;
+
+            if assigned(sym) then
+              begin
+                pd.typesym:=nil;
+                ttypesym(sym).typedef:=olddef;
+              end;
+
+            result:=pd;
           end;
 
       const
@@ -1780,9 +1796,9 @@ implementation
                           Message(parser_w_enumeration_out_of_range)
                         else
                           Message(parser_e_enumeration_out_of_range);
-                      tenumsymtable(aktenumdef.symtable).insert(cenumsym.create(s,aktenumdef,longint(l.svalue)));
+                      tenumsymtable(aktenumdef.symtable).insertsym(cenumsym.create(s,aktenumdef,longint(l.svalue)));
                       if not (cs_scopedenums in current_settings.localswitches) then
-                        tstoredsymtable(aktenumdef.owner).insert(cenumsym.create(s,aktenumdef,longint(l.svalue)));
+                        tstoredsymtable(aktenumdef.owner).insertsym(cenumsym.create(s,aktenumdef,longint(l.svalue)));
                       current_tokenpos:=storepos;
                     end;
                 until not try_to_consume(_COMMA);
@@ -1974,7 +1990,7 @@ implementation
             _PROCEDURE,
             _FUNCTION:
               begin
-                def:=procvar_dec(genericdef,genericlist);
+                def:=procvar_dec(genericdef,genericlist,nil,true);
 {$ifdef jvm}
                 jvm_create_procvar_class(name,def);
 {$endif}
@@ -1998,15 +2014,19 @@ implementation
                     end;
                   _REFERENCE:
                     begin
-                      if m_blocks in current_settings.modeswitches then
+                      if current_settings.modeswitches*[m_blocks,m_function_references]<>[] then
                         begin
                           consume(_REFERENCE);
                           consume(_TO);
-                          def:=procvar_dec(genericdef,genericlist);
+                          { don't register the def as a non-cblock function
+                            reference will be converted to an interface }
+                          def:=procvar_dec(genericdef,genericlist,newsym,false);
                           { could be errordef in case of a syntax error }
                           if assigned(def) and
                              (def.typ=procvardef) then
-                            include(tprocvardef(def).procoptions,po_is_function_ref);
+                            begin
+                              include(tprocvardef(def).procoptions,po_is_function_ref);
+                            end;
                         end
                       else
                         expr_type;

@@ -147,7 +147,7 @@ uses
         tcb.maybe_end_aggregate(resstrdef);
         current_asmdata.asmlists[al_resourcestrings].concatList(
           tcb.get_final_asmlist_vectorized_dead_strip(
-            resstrdef,'RESSTR','',current_module.localsymtable,sizeof(pint)
+            nil,resstrdef,'RESSTR','',current_module.localsymtable,sizeof(pint)
           )
         );
         tcb.free;
@@ -176,14 +176,14 @@ uses
                    end;
             }
             tcb.maybe_begin_aggregate(resstrdef);
-            tcb.emit_string_offset(namelab,length(current_module.localsymtable.name^),st_ansistring,false,charpointertype);
+            tcb.emit_string_offset(namelab,length(R.name),st_ansistring,false,charpointertype);
             tcb.emit_string_offset(valuelab,R.Len,st_ansistring,false,charpointertype);
             tcb.emit_string_offset(valuelab,R.Len,st_ansistring,false,charpointertype);
             tcb.emit_ord_const(R.hash,u32inttype);
             tcb.maybe_end_aggregate(resstrdef);
             current_asmdata.asmlists[al_resourcestrings].concatList(
               tcb.get_final_asmlist_vectorized_dead_strip(
-                resstrdef,'RESSTR',R.Sym.Name,R.Sym.Owner,sizeof(pint))
+                R.Sym,resstrdef,'RESSTR',R.Sym.Name,R.Sym.Owner,sizeof(pint))
             );
             R:=TResourceStringItem(R.Next);
             tcb.free;
@@ -194,7 +194,7 @@ uses
           targetinfos[target_info.system]^.alignment.recordalignmin);
         current_asmdata.AsmLists[al_resourcestrings].concatList(
           tcb.get_final_asmlist_vectorized_dead_strip(
-            tcb.end_anonymous_record,'RESSTR','',current_module.localsymtable,sizeof(pint)
+            nil,tcb.end_anonymous_record,'RESSTR','',current_module.localsymtable,sizeof(pint)
           )
         );
         tcb.free;

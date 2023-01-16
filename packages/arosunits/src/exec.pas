@@ -85,6 +85,32 @@ const
   LTrue : LongInt = 1;
   LFalse: LongInt = 0;
 
+// spinlock
+{$ifndef AROS_ABIv11}
+{$ifdef AROS_ABIv1}
+{$ifdef AROSPLATFORM_SMP}
+type
+  TSpinLock =
+  record
+    case byte of
+    0: (slock:
+    bitpacked record  // ensure bits are packed. this is a volatile structure
+      readcount: 0..$FFFFFF;
+      _pad2: 0..$7;
+      &write: 0..$1;
+      _pad1: 0..$7;
+      updating: 0..$1;
+    end);
+    1: (block: packed array[0..3] of byte; lock: uint32);      // both fields are volatile
+       // The field s_Owner is set either to task owning the lock,
+       // or NULL if the lock is free/read mode or was acquired in interrupt/supervisor mode
+    2: (_skip: packed array[0..7] of byte; s_Owner: Pointer);  // skip block and lock because that occupies most space
+    3: (pad_align: packed array[0..128-1] of byte);            // ensure 128 byte record size
+  end;
+{$endif}
+{$endif}
+{$endif}
+
 type
 // List Node Structure.  Each member in a list starts with a Node
   PNode = ^TNode;
@@ -616,6 +642,21 @@ type
     mp_SigBit: Byte;     { signal bit number    }
     mp_SigTask: Pointer;   { task to be signalled (TaskPtr) }
     mp_MsgList: TList;     { message linked list  }
+{$ifndef AROS_ABIv11}
+{$ifdef AROS_ABIv1}
+{$ifdef AROSPLATFORM_SMP}
+{$ifdef AROSEXEC_SMP}
+    mp_SpinLock: TSpinLock;
+{$else}
+    mp_Pad: TSpinlock;
+{$endif}
+{$endif}
+{$endif}
+{$else}
+{$ifndef CPUM68K}
+    mp_Private: array[0..1] of IPTR; // Private extension field
+{$endif}
+{$endif}
   end;
 
 //****** Message *****************************************************
@@ -765,7 +806,9 @@ type
     et_Result1: ULONG;     // First result
     et_Result2: APTR;      // Result data pointer (AllocVec)
     et_TaskMsgPort: TMsgPort;
+{$IFDEF AROS_ABIv0}
     et_Compatibility: array[0..3] of APTR;   // Reserve this space for compiled software to access iet_startup and iet_acpd
+{$ENDIF}
     et_MemPool: Pointer;              // Task's private memory pool
 {$ifdef aros}
     et_Reserved: array[0..0] of IPTR; // MorphOS Private
@@ -837,6 +880,17 @@ type
   TSemaphoreRequest = record
     sr_Link: TMinNode;
     sr_Waiter: PTask;
+{$ifndef AROS_ABIv11}
+{$ifdef AROS_ABIv1}
+{$ifdef AROSPLATFORM_SMP}
+{$ifdef AROSEXEC_SMP}
+    sr_SpinLock: TSpinLock;
+{$else}
+    sr_pad: TSpinLock;
+{$endif}
+{$endif}
+{$endif}
+{$endif}
   end;
 
 // The actual semaphore itself
@@ -996,11 +1050,17 @@ const
 type
   PArosSupportBase = ^TArosSupportBase;
   TArosSupportBase = record
+{$IFDEF AROS_ABIv0}
     StdOut: Pointer;
+{$ELSE}
+    _pad: IPTR;
+{$ENDIF}
     kPrintfPtr: Pointer;
     rkPrintfPtr: Pointer;
     vkPrintfPtr: Pointer;
+{$IFDEF AROS_ABIv0}
     DebugConfig: Pointer;
+{$ENDIF}
   end;
 
   PExecBase = ^TExecBase;
@@ -1242,12 +1302,12 @@ function SetIntVector(IntNumber: LongInt; const Interrupt_: PInterrupt): PInterr
 procedure AddIntServer(IntNumber: ULONG; Interrupt_: PInterrupt); syscall AOS_ExecBase 28;
 procedure RemIntServer(IntNumber: ULONG; Interrupt_: PInterrupt); syscall AOS_ExecBase 29;
 procedure Cause(Interrupt_: PInterrupt); syscall AOS_ExecBase 30;
-function Allocate(FreeList: PMemHeader; ByteSize: ULONG): PMemHeader; syscall AOS_ExecBase 31;
-procedure Deallocate(FreeList: PMemHeader; MemoryBlock: APTR; ByteSize: ULONG); syscall AOS_ExecBase 32;
-function ExecAllocMem(ByteSize: ULONG; Requirements: ULONG): APTR; syscall AOS_ExecBase 33;
-function AllocAbs(ByteSize: ULONG; Location: APTR): APTR; syscall AOS_ExecBase 34;
-procedure ExecFreeMem(MemoryBlock: APTR; ByteSize: ULONG); syscall AOS_ExecBase 35;
-function AvailMem(Requirements: ULONG): ULONG; syscall AOS_ExecBase 36;
+function Allocate(FreeList: PMemHeader; ByteSize: IPTR): PMemHeader; syscall AOS_ExecBase 31;
+procedure Deallocate(FreeList: PMemHeader; MemoryBlock: APTR; ByteSize: IPTR); syscall AOS_ExecBase 32;
+function ExecAllocMem(ByteSize: IPTR; Requirements: ULONG): APTR; syscall AOS_ExecBase 33;
+function AllocAbs(ByteSize: IPTR; Location: APTR): APTR; syscall AOS_ExecBase 34;
+procedure ExecFreeMem(MemoryBlock: APTR; ByteSize: IPTR); syscall AOS_ExecBase 35;
+function AvailMem(Requirements: ULONG): IPTR; syscall AOS_ExecBase 36;
 function AllocEntry(Entry: PMemList): PMemList; syscall AOS_ExecBase 37;
 procedure FreeEntry(Entry: PMemList); syscall AOS_ExecBase 38;
 procedure ExecInsert(List: PList; Node: PNode; Pred: PNode); syscall AOS_ExecBase 39;
@@ -1314,9 +1374,9 @@ function FindSemaphore(const SigSem: STRPTR): PSignalSemaphore; syscall AOS_Exec
 procedure AddSemaphore(SigSem: PSignalSemaphore); syscall AOS_ExecBase 100;
 procedure RemSemaphore(SigSem: PSignalSemaphore); syscall AOS_ExecBase 101;
 procedure SumKickData; syscall AOS_ExecBase 102;
-procedure AddMemList(Size: ULONG; Attributes: ULONG; Pri: LongInt; Base: APTR; const Name: STRPTR); syscall AOS_ExecBase 103;
-procedure CopyMem(const Source: APTR; Dest: APTR; Size: ULONG); syscall AOS_ExecBase 104;
-procedure CopyMemQuick(const Source: APTR; Dest: APTR; Size: ULONG); syscall AOS_ExecBase 105;
+procedure AddMemList(Size: IPTR; Attributes: ULONG; Pri: LongInt; Base: APTR; const Name: STRPTR); syscall AOS_ExecBase 103;
+procedure CopyMem(const Source: APTR; Dest: APTR; Size: IPTR); syscall AOS_ExecBase 104;
+procedure CopyMemQuick(const Source: APTR; Dest: APTR; Size: IPTR); syscall AOS_ExecBase 105;
 procedure CacheClearU;syscall AOS_ExecBase 106;
 procedure CacheClearE(Address: APTR; Length: ULONG; Caches: ULONG); syscall AOS_ExecBase 107;
 function CacheControl(CacheBits: ULONG; CacheMask: ULONG): ULONG; syscall AOS_ExecBase 108;
@@ -1325,12 +1385,12 @@ procedure DeleteIORequest(IORequest: APTR); syscall AOS_ExecBase 110;
 function CreateMsgPort: PMsgPort; syscall AOS_ExecBase 111;
 procedure DeleteMsgPort(Port: PMsgPort); syscall AOS_ExecBase 112;
 procedure ObtainSemaphoreShared(SigSem: PSignalSemaphore); syscall AOS_ExecBase 113;
-function AllocVec(ByteSize: ULONG; Requirements: ULONG): APTR; syscall AOS_ExecBase 114;
+function AllocVec(ByteSize: IPTR; Requirements: ULONG): APTR; syscall AOS_ExecBase 114;
 procedure FreeVec(MemoryBlock: APTR); syscall AOS_ExecBase 115;
-function CreatePool(Requirements: ULONG; PuddleSize: ULONG; ThreshSize: ULONG): APTR; syscall AOS_ExecBase 116;
+function CreatePool(Requirements: ULONG; PuddleSize: IPTR; ThreshSize: IPTR): APTR; syscall AOS_ExecBase 116;
 procedure DeletePool(PoolHeader: APTR); syscall AOS_ExecBase 117;
-function AllocPooled(PoolHeader: APTR; MemSize: ULONG): APTR; syscall AOS_ExecBase 118;
-procedure FreePooled(PoolHeader: APTR; Memory: APTR; MemSize: ULONG); syscall AOS_ExecBase 119;
+function AllocPooled(PoolHeader: APTR; MemSize: IPTR): APTR; syscall AOS_ExecBase 118;
+procedure FreePooled(PoolHeader: APTR; Memory: APTR; MemSize: IPTR); syscall AOS_ExecBase 119;
 function AttemptSemaphoreShared(SigSem: PSignalSemaphore): ULONG; syscall AOS_ExecBase 120;
 procedure ColdReboot; syscall AOS_ExecBase 121;
 procedure StackSwap(NewStack: PStackSwapStruct); syscall AOS_ExecBase 122; deprecated;
@@ -1368,7 +1428,7 @@ function AVL_FindNextNodeByKey(Node: PAVLNode; Key: AVLKey; func: PAVLKeyComp): 
 function AVL_FindFirstNode(Root: PAVLNode): PAVLNode; syscall AOS_ExecBase 147;
 function AVL_FindLastNode(Root: PAVLNode): PAVLNode; syscall AOS_ExecBase 148;
 function NewAddTaskA(Task: PTask; InitialPC: APTR; FinalPC: APTR; TagList: PTagItem): APTR; syscall AOS_ExecBase 152;
-function AllocVecPooled(Pool: APTR; Size: ULONG): APTR; syscall AOS_ExecBase 149;
+function AllocVecPooled(Pool: APTR; Size: IPTR): APTR; syscall AOS_ExecBase 149;
 procedure FreeVecPooled(Pool: APTR; Memory: APTR); syscall AOS_ExecBase 150;
 function NewAllocEntry(Entry: PMemList; var Return_Entry: PMemList; var Return_Flags: ULONG): LongBool; syscall AOS_ExecBase 151;
 {$endif}
@@ -1386,7 +1446,7 @@ function AVL_FindNextNodeByKey(Node: PAVLNode; Key: AVLKey; func: PAVLKeyComp): 
 function AVL_FindFirstNode(Root: PAVLNode): PAVLNode; syscall AOS_ExecBase 150;
 function AVL_FindLastNode(Root: PAVLNode): PAVLNode; syscall AOS_ExecBase 151;
 function FindTaskByPID(ProcessID: LongWord): PTask; syscall AOS_ExecBase 166;
-function AllocVecPooled(Pool: APTR; Size: ULONG): APTR; syscall AOS_ExecBase 169;
+function AllocVecPooled(Pool: APTR; Size: IPTR): APTR; syscall AOS_ExecBase 169;
 procedure FreeVecPooled(Pool: APTR; Memory: APTR); syscall AOS_ExecBase 170;
 function NewAllocEntry(Entry: PMemList; var Return_Entry: PMemList; var Return_Flags: ULONG): LongBool; syscall AOS_ExecBase 174;
 function NewAddTaskA(Task: PTask; InitialPC: APTR; FinalPC: APTR; TagList: PTagItem): APTR; syscall AOS_ExecBase 176;

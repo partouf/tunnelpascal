@@ -79,6 +79,8 @@ interface
         procedure appendsym_const(list:TAsmList;sym:tconstsym);override;
         procedure appendsym_absolute(list:TAsmList;sym:tabsolutevarsym);override;
 
+        procedure afterappenddef(list: TAsmList; def: tdef); override;
+
         procedure enum_membersyms_callback(p:TObject;arg:pointer);
 
         procedure collect_llvmins_info(deftypelist: tasmlist; p: taillvm);
@@ -89,7 +91,7 @@ interface
         procedure insert_typedconst_typeconversion(toplevellist: tasmlist; p: tai_abstracttypedconst);
         procedure insert_tai_typeconversions(toplevellist: tasmlist; p: tai);
         procedure insert_asmlist_typeconversions(toplevellist, list: tasmlist);
-        procedure maybe_insert_extern_sym_decl(toplevellist: tasmlist; sym: tasmsymbol; def: tdef);
+        procedure maybe_insert_extern_sym_decl(toplevellist: tasmlist; asmsym: tasmsymbol; def: tdef);
         procedure update_asmlist_alias_types(list: tasmlist);
 
       public
@@ -101,12 +103,12 @@ interface
 implementation
 
     uses
-      sysutils,cutils,cfileutl,constexp,
+      cutils,cfileutl,constexp,
       version,globals,verbose,systems,
       cpubase,cgbase,paramgr,
       fmodule,nobj,
       defutil,defcmp,symconst,symtable,
-      llvmbase,llvmdef
+      llvminfo,llvmbase,llvmdef
       ;
 
 {****************************************************************************
@@ -133,6 +135,14 @@ implementation
         def1str, def2str: TSymStr;
       begin
         if def1=def2 then
+          exit(true);
+        { this function is only used to the pointees of pointer types, to know
+          whether the pointer types are equal. With opaque pointers, all
+          pointers are represented by "ptr" and hence by definition equal,
+          regardless of what they point to (there is one exception related to
+          arrays, but that is already handled during code generation in
+          thlcgllvm.g_ptrtypecast_ref) }
+        if (llvmflag_opaque_ptr in llvmversion_properties[current_settings.llvmversion]) then
           exit(true);
         def1str:=llvmencodetypename(def1);
         def2str:=llvmencodetypename(def2);
@@ -273,8 +283,8 @@ implementation
                 begin
                   callpara:=pllvmcallpara(p.oper[opidx]^.paras[paraidx]);
                   record_def(callpara^.def);
-                  if callpara^.typ=top_tai then
-                    collect_tai_info(deftypelist,callpara^.ai);
+                  if callpara^.val.typ=top_tai then
+                    collect_tai_info(deftypelist,callpara^.val.ai);
                 end;
             else
               ;
@@ -370,16 +380,15 @@ implementation
                       for paraidx:=0 to p.oper[i]^.paras.count-1 do
                         begin
                           callpara:=pllvmcallpara(p.oper[i]^.paras[paraidx]);
-                          case callpara^.typ of
+                          case callpara^.val.typ of
                             top_tai:
-                              insert_tai_typeconversions(toplevellist,callpara^.ai);
+                              insert_tai_typeconversions(toplevellist,callpara^.val.ai);
                             top_ref:
                               begin
-                                cnv:=check_insert_bitcast(toplevellist,callpara^.sym,callpara^.def);
+                                cnv:=check_insert_bitcast(toplevellist,callpara^.val.sym,callpara^.def);
                                 if assigned(cnv) then
                                   begin
-                                    callpara^.typ:=top_tai;
-                                    callpara^.ai:=cnv;
+                                    callpara^.loadtai(cnv);
                                   end;
                               end;
                             else
@@ -499,7 +508,7 @@ implementation
       end;
 
 
-    procedure TLLVMTypeInfo.maybe_insert_extern_sym_decl(toplevellist: tasmlist; sym: tasmsymbol; def: tdef);
+    procedure TLLVMTypeInfo.maybe_insert_extern_sym_decl(toplevellist: tasmlist; asmsym: tasmsymbol; def: tdef);
       var
         sec: tasmsectiontype;
         i: longint;
@@ -512,14 +521,14 @@ implementation
           We also do it for all other external symbol references (e.g.
           references to symbols declared in other units), because then this
           handling is centralised in one place. }
-        if not(sym.declared) then
+        if not(asmsym.declared) then
           begin
             if def.typ=procdef then
               sec:=sec_code
             else
               sec:=sec_data;
-            toplevellist.Concat(taillvmdecl.createdecl(sym,def,nil,sec,def.alignment));
-            record_asmsym_def(sym,def,true);
+            toplevellist.Concat(taillvmdecl.createdecl(asmsym,nil,def,nil,sec,def.alignment));
+            record_asmsym_def(asmsym,def,true);
           end;
       end;
 
@@ -561,7 +570,6 @@ implementation
 
     procedure TLLVMTypeInfo.appenddef_array(list:TAsmList;def:tarraydef);
       begin
-        record_def(def);
         appenddef(list,def.elementdef);
       end;
 
@@ -571,7 +579,6 @@ implementation
         symdeflist: tfpobjectlist;
         i: longint;
       begin
-        record_def(def);
         symdeflist:=tabstractrecordsymtable(def.symtable).llvmst.symdeflist;
         for i:=0 to symdeflist.Count-1 do
           record_def(tllvmshadowsymtableentry(symdeflist[i]).def);
@@ -587,7 +594,6 @@ implementation
 
     procedure TLLVMTypeInfo.appenddef_pointer(list:TAsmList;def:tpointerdef);
       begin
-        record_def(def);
         appenddef(list,def.pointeddef);
       end;
 
@@ -596,7 +602,6 @@ implementation
       var
         i: longint;
       begin
-        record_def(def);
         { todo: handle mantis #25551; there is no way to create a symbolic
           la_type for a procvardef (unless it's a procedure of object/record),
           which means that recursive references should become plain "procedure"
@@ -663,6 +668,12 @@ implementation
       begin
         appenddef(list,sym.vardef);
       end;
+
+    procedure TLLVMTypeInfo.afterappenddef(list: TAsmList; def: tdef);
+    begin
+      record_def(def);
+      inherited;
+    end;
 
 
     procedure TLLVMTypeInfo.inserttypeinfo;
@@ -771,7 +782,6 @@ implementation
       begin
         if is_interface(def) then
           begin
-            record_def(def);
             record_def(def.vmt_def);
           end
         else
@@ -781,7 +791,6 @@ implementation
 
     procedure TLLVMTypeInfo.appenddef_classref(list: TAsmList; def: tclassrefdef);
       begin
-        record_def(def);
         { can also be an objcclass, which doesn't have a vmt }
         if is_class(tclassrefdef(def).pointeddef) then
           record_def(tobjectdef(tclassrefdef(def).pointeddef).vmt_def);
@@ -790,14 +799,12 @@ implementation
 
     procedure TLLVMTypeInfo.appenddef_variant(list:TAsmList;def: tvariantdef);
       begin
-        record_def(def);
         appenddef(list,tabstractrecorddef(search_system_type('TVARDATA').typedef));
       end;
 
 
-    procedure TLLVMTypeInfo.appenddef_file(list:TAsmList;def:tfiledef);
+    procedure TLLVMTypeInfo.appenddef_file(list: TasmList; def: tfiledef);
       begin
-        record_def(def);
         case tfiledef(def).filetyp of
           ft_text    :
             appenddef(list,tabstractrecorddef(search_system_type('TEXTREC').typedef));

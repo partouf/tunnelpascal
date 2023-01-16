@@ -638,6 +638,11 @@ unit hlcgobj;
           procedure gen_load_para_value(list:TAsmList);virtual;
           { helpers called by gen_load_para_value }
           procedure g_copyvalueparas(p:TObject;arg:pointer);virtual;
+
+          { allocate a local temp to serve as storage for a para/localsym }
+          procedure getlocal(list: TAsmList; sym: tsym; size: asizeint; alignment: shortint; def: tdef; out ref : treference);
+          { the symbol is stored at this location from now on }
+          procedure recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference); virtual;
          protected
           procedure gen_loadfpu_loc_cgpara(list: TAsmList; size: tdef; const l: tlocation;const cgpara: tcgpara;locintsize: longint);virtual;
           procedure init_paras(p:TObject;arg:pointer);
@@ -851,7 +856,9 @@ implementation
           formaldef:
             result:=R_ADDRESSREGISTER;
           arraydef:
-            if tstoreddef(def).is_intregable then
+            if tarraydef(def).is_hwvector then
+              result:=R_MMREGISTER
+            else if tstoreddef(def).is_intregable then
               result:=R_INTREGISTER
             else
               result:=R_ADDRESSREGISTER;
@@ -4262,6 +4269,7 @@ implementation
     var
       r : treference;
       forcesize: aint;
+      hregister: TRegister;
     begin
       case l.loc of
         LOC_FPUREGISTER,
@@ -4283,6 +4291,18 @@ implementation
             location_reset_ref(l,LOC_REFERENCE,l.size,size.alignment,[]);
             l.reference:=r;
           end;
+{$ifdef cpuflags}
+        LOC_FLAGS :
+          begin
+            hregister:=getregisterfordef(list,size);
+            g_flags2reg(list,size,l.resflags,hregister);
+            cg.a_reg_dealloc(list,NR_DEFAULTFLAGS);
+            tg.gethltemp(list,size,size.size,tt_normal,r);
+            a_load_reg_ref(list,size,size,hregister,r);
+            location_reset_ref(l,LOC_REFERENCE,l.size,size.alignment,[]);
+            l.reference:=r;
+          end;
+{$endif cpuflags}
         LOC_CONSTANT,
         LOC_REGISTER,
         LOC_CREGISTER,
@@ -4433,6 +4453,9 @@ implementation
                    LOC_CREGISTER,LOC_REGISTER,LOC_CREFERENCE,LOC_REFERENCE :
                      begin
                        a_cmp_const_loc_label(list,p.resultdef,OC_NE,0,p.location,truelabel);
+{$ifdef x86} { x86 always uses the flags in some way for conditional jumps }
+                       a_reg_dealloc(list,NR_DEFAULTFLAGS);
+{$endif x86}
                        a_jmp_always(list,falselabel);
                      end;
                    LOC_JUMP:
@@ -5203,7 +5226,7 @@ implementation
               l:=tparavarsym(p).getsize;
               localcopyloc.loc:=LOC_REFERENCE;
               localcopyloc.size:=int_cgsize(l);
-              tg.GetLocal(list,l,tparavarsym(p).vardef,localcopyloc.reference);
+              getlocal(list,tparavarsym(p),l,tparavarsym(p).vardef.alignment,tparavarsym(p).vardef,localcopyloc.reference);
               { Copy data }
               if is_shortstring(tparavarsym(p).vardef) then
                 begin
@@ -5233,6 +5256,19 @@ implementation
             end;
         end;
     end;
+
+
+  procedure thlcgobj.getlocal(list: TAsmList; sym: tsym; size: asizeint; alignment: shortint; def: tdef; out ref: treference);
+    begin
+      tg.getlocal(list,size,alignment,def,ref);
+      recordnewsymloc(list,sym,def,ref);
+    end;
+
+  procedure thlcgobj.recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference);
+    begin
+      // do nothing
+    end;
+
 
   procedure thlcgobj.gen_loadfpu_loc_cgpara(list: TAsmList; size: tdef; const l: tlocation; const cgpara: tcgpara; locintsize: longint);
     var

@@ -1509,6 +1509,7 @@ begin
   FFiles.FreeItems;
   FreeAndNil(FDirectoryCache);
   FreeAndNil(FFiles);
+  FreeAndNil(FResourcePaths);
   FreeAndNil(FIncludePaths);
   FreeAndNil(FForeignUnitPaths);
   FreeAndNil(FUnitPaths);
@@ -1886,6 +1887,7 @@ function TPas2jsFilesCache.FindIncludeFileName(const aFilename, SrcDir,
       i: Integer;
       CurFile: String;
     begin
+      Result:=false;
       Dir:=IncludeTrailingPathDelimiter(Dir);
       for i:=0 to length(SearchedDir)-1 do
         if SearchedDir[i]=Dir then exit;

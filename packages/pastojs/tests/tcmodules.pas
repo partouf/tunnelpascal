@@ -387,6 +387,7 @@ type
     Procedure TestProc_ConstOrder;
     Procedure TestProc_DuplicateConst;
     Procedure TestProc_LocalVarAbsolute;
+    Procedure TestProc_ResultAbsolute;
     Procedure TestProc_LocalVarInit;
     Procedure TestProc_ReservedWords;
     Procedure TestProc_ConstRefWord;
@@ -496,8 +497,11 @@ type
     Procedure TestArray_ArrayOfCharAssignString;
     Procedure TestArray_ConstRef;
     Procedure TestArray_Concat;
+    Procedure TestArray_Concat_Append;
+    Procedure TestArray_Concat_Append_Var;
     Procedure TestArray_Copy;
     Procedure TestArray_InsertDelete;
+    Procedure TestArray_Add_Append;
     Procedure TestArray_DynArrayConstObjFPC;
     Procedure TestArray_DynArrayConstDelphi;
     Procedure TestArray_ArrayLitAsParam;
@@ -635,6 +639,7 @@ type
     Procedure TestNestedClass_Alias;
     Procedure TestNestedClass_Record;
     Procedure TestNestedClass_Class;
+    Procedure TestNestedClass_CallInherited;
 
     // external class
     Procedure TestExternalClass_Var;
@@ -694,20 +699,21 @@ type
 
     // class interfaces
     Procedure TestClassInterface_Corba;
-    Procedure TestClassInterface_ProcExternalFail;
-    Procedure TestClassInterface_Overloads;
-    Procedure TestClassInterface_DuplicateGUIInIntfListFail;
-    Procedure TestClassInterface_DuplicateGUIInAncestorFail;
-    Procedure TestClassInterface_AncestorImpl;
-    Procedure TestClassInterface_ImplReintroduce;
-    Procedure TestClassInterface_MethodResolution;
-    Procedure TestClassInterface_AncestorMoreInterfaces;
-    Procedure TestClassInterface_MethodOverride;
+    Procedure TestClassInterface_Corba_ProcExternalFail;
+    Procedure TestClassInterface_Corba_Overloads;
+    Procedure TestClassInterface_Corba_DuplicateGUIInIntfListFail;
+    Procedure TestClassInterface_Corba_DuplicateGUIInAncestorFail;
+    Procedure TestClassInterface_Corba_AncestorImpl;
+    Procedure TestClassInterface_Corba_ImplReintroduce;
+    Procedure TestClassInterface_Corba_MethodResolution;
+    Procedure TestClassInterface_COM_AncestorMoreInterfaces;
+    Procedure TestClassInterface_Corba_MethodOverride;
     Procedure TestClassInterface_Corba_Delegation;
     Procedure TestClassInterface_Corba_DelegationStatic;
     Procedure TestClassInterface_Corba_Operators;
     Procedure TestClassInterface_Corba_Args;
     Procedure TestClassInterface_Corba_ForIn;
+    Procedure TestClassInterface_Corba_ArrayOfIntf;
     Procedure TestClassInterface_COM_AssignVar;
     Procedure TestClassInterface_COM_AssignArg;
     Procedure TestClassInterface_COM_FunctionResult;
@@ -721,11 +727,12 @@ type
     Procedure TestClassInterface_COM_Delegation;
     Procedure TestClassInterface_COM_With;
     Procedure TestClassInterface_COM_ForIn;
+    Procedure TestClassInterface_COM_ArrayOfIntf;
     Procedure TestClassInterface_COM_ArrayOfIntfFail;
     Procedure TestClassInterface_COM_RecordIntfFail;
     Procedure TestClassInterface_COM_UnitInitialization;
-    Procedure TestClassInterface_GUID;
-    Procedure TestClassInterface_GUIDProperty;
+    Procedure TestClassInterface_Corba_GUID;
+    Procedure TestClassInterface_Corba_GUIDProperty;
 
     // helpers
     Procedure TestClassHelper_ClassVar;
@@ -1643,10 +1650,7 @@ begin
       CurModule:=TTestEnginePasResolver(FResolvers[i]).Module;
       if CurModule=nil then continue;
       //writeln('TCustomTestModule.TearDown ReleaseUsedUnits ',CurModule.Name,' ',CurModule.RefCount,' ',CurModule.RefIds.Text);
-      CurModule.ReleaseUsedUnits;
       end;
-    if FModule<>nil then
-      FModule.ReleaseUsedUnits;
     for i:=0 to FResolvers.Count-1 do
       begin
       CurModule:=TTestEnginePasResolver(FResolvers[i]).Module;
@@ -1654,7 +1658,7 @@ begin
       //writeln('TCustomTestModule.TearDown UsesReleased ',CurModule.Name,' ',CurModule.RefCount,' ',CurModule.RefIds.Text);
       end;
     FreeAndNil(FResolvers);
-    ReleaseAndNil(TPasElement(FModule){$IFDEF CheckPasTreeRefCount},'CreateElement'{$ENDIF});
+    FModule:=nil;
     FEngine:=nil;
     end;
   FreeAndNil(FHub);
@@ -5521,6 +5525,59 @@ begin
     '  if (p.Index === p.Index) p.Index = p.Index;',
     '};'
     ]),
+    LinesToStr([
+    ]));
+end;
+
+procedure TTestModule.TestProc_ResultAbsolute;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TObject = class',
+  '    Index: longint;',
+  '    function DoAbs: pointer;',
+  '  end;',
+  'function TObject.DoAbs: pointer;',
+  'var',
+  '  o: TObject absolute Result;',
+  'begin',
+  '  if o.Index<o.Index then o.Index:=o.Index;',
+  'end;',
+  'function DoIt: jsvalue;',
+  'var',
+  '  d: double absolute Result;',
+  '  s: string absolute Result;',
+  '  o: TObject absolute Result;',
+  'begin',
+  '  if d=d then d:=d;',
+  '  if s=s then s:=s;',
+  '  if o.Index<o.Index then o.Index:=o.Index;',
+  'end;',
+  'begin']);
+  ConvertProgram;
+  CheckSource('TestProc_ResultAbsolute',
+    LinesToStr([ // statements
+    'rtl.createClass(this, "TObject", null, function () {',
+    '  this.$init = function () {',
+    '    this.Index = 0;',
+    '  };',
+    '  this.$final = function () {',
+    '  };',
+    '  this.DoAbs = function () {',
+    '    var Result = null;',
+    '    if (Result.Index < Result.Index) Result.Index = Result.Index;',
+    '    return Result;',
+    '  };',
+    '});',
+    'this.DoIt = function () {',
+    '  var Result = undefined;',
+    '  if (Result === Result) Result = Result;',
+    '  if (Result === Result) Result = Result;',
+    '  if (Result.Index < Result.Index) Result.Index = Result.Index;',
+    '  return Result;',
+    '};',
+    '']),
     LinesToStr([
     ]));
 end;
@@ -11233,31 +11290,123 @@ begin
   '  TArrSet = array of TFlags;',
   '  TArrJSValue = array of jsvalue;',
   'var',
+  '  ArrInt1, ArrInt2: tarrint;',
+  '  ArrRec1, ArrRec2: tarrrec;',
+  '  ArrFlag1, ArrFlag2: tarrflag;',
+  '  ArrSet1, ArrSet2: tarrset;',
+  '  ArrJSValue1, ArrJSValue2: tarrjsvalue;',
+  'begin',
+  '  arrint1:=concat(arrint2);',
+  '  arrint1:=concat(arrint2,arrint2);',
+  '  arrint1:=concat(arrint2,arrint2,arrint2);',
+  '  arrrec1:=concat(arrrec2);',
+  '  arrrec1:=concat(arrrec2,arrrec2);',
+  '  arrrec1:=concat(arrrec2,arrrec2,arrrec2);',
+  '  arrset1:=concat(arrset2);',
+  '  arrset1:=concat(arrset2,arrset2);',
+  '  arrset1:=concat(arrset2,arrset2,arrset2);',
+  '  arrjsvalue1:=concat(arrjsvalue2);',
+  '  arrjsvalue1:=concat(arrjsvalue2,arrjsvalue2);',
+  '  arrjsvalue1:=concat(arrjsvalue2,arrjsvalue2,arrjsvalue2);',
+  '  arrint1:=concat([1],arrint2);',
+  '  arrflag1:=concat([big]);',
+  '  arrflag1:=concat([big],arrflag2);',
+  '  arrflag1:=concat(arrflag2,[small]);',
+  '']);
+  ConvertProgram;
+  CheckSource('TestArray_Concat',
+    LinesToStr([ // statements
+    'this.TFlag = {',
+    '  "0": "big",',
+    '  big: 0,',
+    '  "1": "small",',
+    '  small: 1',
+    '};',
+    'rtl.recNewT(this, "TRec", function () {',
+    '  this.i = 0;',
+    '  this.$eq = function (b) {',
+    '    return this.i === b.i;',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.i = s.i;',
+    '    return this;',
+    '  };',
+    '});',
+    'this.ArrInt1 = [];',
+    'this.ArrInt2 = [];',
+    'this.ArrRec1 = [];',
+    'this.ArrRec2 = [];',
+    'this.ArrFlag1 = [];',
+    'this.ArrFlag2 = [];',
+    'this.ArrSet1 = [];',
+    'this.ArrSet2 = [];',
+    'this.ArrJSValue1 = [];',
+    'this.ArrJSValue2 = [];',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.ArrInt1 = rtl.arrayRef($mod.ArrInt2);',
+    '$mod.ArrInt1 = rtl.arrayConcatN($mod.ArrInt2, $mod.ArrInt2);',
+    '$mod.ArrInt1 = rtl.arrayConcatN($mod.ArrInt2, $mod.ArrInt2, $mod.ArrInt2);',
+    '$mod.ArrRec1 = rtl.arrayRef($mod.ArrRec2);',
+    '$mod.ArrRec1 = rtl.arrayConcat($mod.TRec, $mod.ArrRec2, $mod.ArrRec2);',
+    '$mod.ArrRec1 = rtl.arrayConcat($mod.TRec, $mod.ArrRec2, $mod.ArrRec2, $mod.ArrRec2);',
+    '$mod.ArrSet1 = rtl.arrayRef($mod.ArrSet2);',
+    '$mod.ArrSet1 = rtl.arrayConcat("refSet", $mod.ArrSet2, $mod.ArrSet2);',
+    '$mod.ArrSet1 = rtl.arrayConcat("refSet", $mod.ArrSet2, $mod.ArrSet2, $mod.ArrSet2);',
+    '$mod.ArrJSValue1 = rtl.arrayRef($mod.ArrJSValue2);',
+    '$mod.ArrJSValue1 = rtl.arrayConcatN($mod.ArrJSValue2, $mod.ArrJSValue2);',
+    '$mod.ArrJSValue1 = rtl.arrayConcatN($mod.ArrJSValue2, $mod.ArrJSValue2, $mod.ArrJSValue2);',
+    '$mod.ArrInt1 = rtl.arrayConcatN([1], $mod.ArrInt2);',
+    '$mod.ArrFlag1 = [$mod.TFlag.big];',
+    '$mod.ArrFlag1 = rtl.arrayConcatN([$mod.TFlag.big], $mod.ArrFlag2);',
+    '$mod.ArrFlag1 = rtl.arrayConcatN($mod.ArrFlag2, [$mod.TFlag.small]);',
+    '']));
+end;
+
+procedure TTestModule.TestArray_Concat_Append;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  integer = longint;',
+  '  TFlag = (big,small);',
+  '  TFlags = set of TFlag;',
+  '  TRec = record',
+  '    i: integer;',
+  '  end;',
+  '  TArrInt = array of integer;',
+  '  TArrRec = array of TRec;',
+  '  TArrFlag = array of TFlag;',
+  '  TArrSet = array of TFlags;',
+  '  TArrJSValue = array of jsvalue;',
+  'var',
   '  ArrInt: tarrint;',
   '  ArrRec: tarrrec;',
   '  ArrFlag: tarrflag;',
   '  ArrSet: tarrset;',
   '  ArrJSValue: tarrjsvalue;',
+  '  r: TRec;',
+  '  f: TFlags;',
   'begin',
+  '  // append',
   '  arrint:=concat(arrint);',
-  '  arrint:=concat(arrint,arrint);',
-  '  arrint:=concat(arrint,arrint,arrint);',
+  '  arrint:=concat(arrint,[2]);',
+  '  arrint:=concat(arrint,[3,4]);',
   '  arrrec:=concat(arrrec);',
-  '  arrrec:=concat(arrrec,arrrec);',
-  '  arrrec:=concat(arrrec,arrrec,arrrec);',
+  '  arrrec:=concat(arrrec,[r]);',
+  '  arrrec:=concat(arrrec,[r,r]);',
   '  arrset:=concat(arrset);',
-  '  arrset:=concat(arrset,arrset);',
-  '  arrset:=concat(arrset,arrset,arrset);',
+  '  arrset:=concat(arrset,[f]);',
+  '  arrset:=concat(arrset,[f,f]);',
   '  arrjsvalue:=concat(arrjsvalue);',
-  '  arrjsvalue:=concat(arrjsvalue,arrjsvalue);',
-  '  arrjsvalue:=concat(arrjsvalue,arrjsvalue,arrjsvalue);',
-  '  arrint:=concat([1],arrint);',
-  '  arrflag:=concat([big]);',
-  '  arrflag:=concat([big],arrflag);',
+  '  arrjsvalue:=concat(arrjsvalue,[11]);',
+  '  arrjsvalue:=concat(arrjsvalue,[12,13]);',
+  '  arrflag:=concat(arrflag);',
   '  arrflag:=concat(arrflag,[small]);',
+  '  arrflag:=concat(arrflag,[small,big]);',
   '']);
   ConvertProgram;
-  CheckSource('TestArray_Concat',
+  CheckSource('TestArray_Concat_Append',
     LinesToStr([ // statements
     'this.TFlag = {',
     '  "0": "big",',
@@ -11280,24 +11429,64 @@ begin
     'this.ArrFlag = [];',
     'this.ArrSet = [];',
     'this.ArrJSValue = [];',
+    'this.r = this.TRec.$new();',
+    'this.f = {};',
     '']),
     LinesToStr([ // $mod.$main
-    '$mod.ArrInt = rtl.arrayRef($mod.ArrInt);',
-    '$mod.ArrInt = rtl.arrayConcatN($mod.ArrInt, $mod.ArrInt);',
-    '$mod.ArrInt = rtl.arrayConcatN($mod.ArrInt, $mod.ArrInt, $mod.ArrInt);',
-    '$mod.ArrRec = rtl.arrayRef($mod.ArrRec);',
-    '$mod.ArrRec = rtl.arrayConcat($mod.TRec, $mod.ArrRec, $mod.ArrRec);',
-    '$mod.ArrRec = rtl.arrayConcat($mod.TRec, $mod.ArrRec, $mod.ArrRec, $mod.ArrRec);',
-    '$mod.ArrSet = rtl.arrayRef($mod.ArrSet);',
-    '$mod.ArrSet = rtl.arrayConcat("refSet", $mod.ArrSet, $mod.ArrSet);',
-    '$mod.ArrSet = rtl.arrayConcat("refSet", $mod.ArrSet, $mod.ArrSet, $mod.ArrSet);',
-    '$mod.ArrJSValue = rtl.arrayRef($mod.ArrJSValue);',
-    '$mod.ArrJSValue = rtl.arrayConcatN($mod.ArrJSValue, $mod.ArrJSValue);',
-    '$mod.ArrJSValue = rtl.arrayConcatN($mod.ArrJSValue, $mod.ArrJSValue, $mod.ArrJSValue);',
-    '$mod.ArrInt = rtl.arrayConcatN([1], $mod.ArrInt);',
-    '$mod.ArrFlag = [$mod.TFlag.big];',
-    '$mod.ArrFlag = rtl.arrayConcatN([$mod.TFlag.big], $mod.ArrFlag);',
-    '$mod.ArrFlag = rtl.arrayConcatN($mod.ArrFlag, [$mod.TFlag.small]);',
+    '$mod.ArrInt = $mod.ArrInt;',
+    '$mod.ArrInt = rtl.arrayPushN($mod.ArrInt, 2);',
+    '$mod.ArrInt = rtl.arrayPushN($mod.ArrInt, 3, 4);',
+    '$mod.ArrRec = $mod.ArrRec;',
+    '$mod.ArrRec = rtl.arrayPush($mod.TRec, $mod.ArrRec, $mod.r);',
+    '$mod.ArrRec = rtl.arrayPush($mod.TRec, $mod.ArrRec, $mod.r, $mod.r);',
+    '$mod.ArrSet = $mod.ArrSet;',
+    '$mod.ArrSet = rtl.arrayPush("refSet", $mod.ArrSet, $mod.f);',
+    '$mod.ArrSet = rtl.arrayPush("refSet", $mod.ArrSet, $mod.f, $mod.f);',
+    '$mod.ArrJSValue = $mod.ArrJSValue;',
+    '$mod.ArrJSValue = rtl.arrayPushN($mod.ArrJSValue, 11);',
+    '$mod.ArrJSValue = rtl.arrayPushN($mod.ArrJSValue, 12, 13);',
+    '$mod.ArrFlag = $mod.ArrFlag;',
+    '$mod.ArrFlag = rtl.arrayPushN($mod.ArrFlag, $mod.TFlag.small);',
+    '$mod.ArrFlag = rtl.arrayPushN($mod.ArrFlag, $mod.TFlag.small, $mod.TFlag.big);',
+    '']));
+end;
+
+procedure TTestModule.TestArray_Concat_Append_Var;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TArrInt = array of word;',
+  '',
+  'procedure Fly(a: TArrInt; var b: TArrInt);',
+  'begin',
+  '  a:=concat(a,[2]);',
+  '  b:=concat(b,[2]);',
+  'end;',
+  'var',
+  '  ArrInt: tarrint;',
+  'begin',
+  '  Fly(ArrInt,ArrInt);',
+  '']);
+  ConvertProgram;
+  CheckSource('TestArray_Concat_Append_Var',
+    LinesToStr([ // statements
+    'this.Fly = function (a, b) {',
+    '  a = rtl.arrayPushN(a, 2);',
+    '  b.set(rtl.arrayPushN(b.get(), 2));',
+    '};',
+    'this.ArrInt = [];',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.Fly(rtl.arrayRef($mod.ArrInt), {',
+    '  p: $mod,',
+    '  get: function () {',
+    '      return this.p.ArrInt;',
+    '    },',
+    '  set: function (v) {',
+    '      this.p.ArrInt = v;',
+    '    }',
+    '});',
     '']));
 end;
 
@@ -11451,6 +11640,85 @@ begin
     '']));
 end;
 
+procedure TTestModule.TestArray_Add_Append;
+begin
+  StartProgram(false);
+  Add([
+  '{$modeswitch arrayoperators}',
+  'type',
+  '  integer = longint;',
+  '  TFlag = (big,small);',
+  '  TFlags = set of TFlag;',
+  '  TRec = record',
+  '    i: integer;',
+  '  end;',
+  '  TArrInt = array of integer;',
+  '  TArrRec = array of TRec;',
+  '  TArrFlag = array of TFlag;',
+  '  TArrSet = array of TFlags;',
+  '  TArrJSValue = array of jsvalue;',
+  'var',
+  '  ArrInt: tarrint;',
+  '  ArrRec: tarrrec;',
+  '  ArrFlag: tarrflag;',
+  '  ArrSet: tarrset;',
+  '  ArrJSValue: tarrjsvalue;',
+  '  r: TRec;',
+  '  f: TFlags;',
+  'begin',
+  '  // append',
+  '  arrint:=arrint+[2];',
+  '  arrint:=arrint+[3,4];',
+  '  arrrec:=arrrec+[r];',
+  '  arrrec:=arrrec+[r,r];',
+  '  arrset:=arrset+[f];',
+  '  arrset:=arrset+[f,f];',
+  '  arrjsvalue:=arrjsvalue+[11];',
+  '  arrjsvalue:=arrjsvalue+[12,13];',
+  '  arrflag:=arrflag+[small];',
+  '  arrflag:=arrflag+[small,big];',
+  '']);
+  ConvertProgram;
+  CheckSource('TestArray_Add_Append',
+    LinesToStr([ // statements
+    'this.TFlag = {',
+    '  "0": "big",',
+    '  big: 0,',
+    '  "1": "small",',
+    '  small: 1',
+    '};',
+    'rtl.recNewT(this, "TRec", function () {',
+    '  this.i = 0;',
+    '  this.$eq = function (b) {',
+    '    return this.i === b.i;',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.i = s.i;',
+    '    return this;',
+    '  };',
+    '});',
+    'this.ArrInt = [];',
+    'this.ArrRec = [];',
+    'this.ArrFlag = [];',
+    'this.ArrSet = [];',
+    'this.ArrJSValue = [];',
+    'this.r = this.TRec.$new();',
+    'this.f = {};',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.ArrInt = rtl.arrayPushN($mod.ArrInt, 2);',
+    '$mod.ArrInt = rtl.arrayPushN($mod.ArrInt, 3, 4);',
+    '$mod.ArrRec = rtl.arrayPush($mod.TRec, $mod.ArrRec, $mod.r);',
+    '$mod.ArrRec = rtl.arrayPush($mod.TRec, $mod.ArrRec, $mod.r, $mod.r);',
+    '$mod.ArrSet = rtl.arrayPush("refSet", $mod.ArrSet, $mod.f);',
+    '$mod.ArrSet = rtl.arrayPush("refSet", $mod.ArrSet, $mod.f, $mod.f);',
+    '$mod.ArrJSValue = rtl.arrayPushN($mod.ArrJSValue, 11);',
+    '$mod.ArrJSValue = rtl.arrayPushN($mod.ArrJSValue, 12, 13);',
+    '$mod.ArrFlag = rtl.arrayPushN($mod.ArrFlag, $mod.TFlag.small);',
+    '$mod.ArrFlag = rtl.arrayPushN($mod.ArrFlag, $mod.TFlag.small, $mod.TFlag.big);',
+    '']));
+end;
+
 procedure TTestModule.TestArray_DynArrayConstObjFPC;
 begin
   Parser.Options:=Parser.Options+[po_cassignments];
@@ -11500,9 +11768,9 @@ begin
     '$mod.Ints = rtl.arrayConcatN([1], [2]);',
     '$mod.Ints = [2];',
     '$mod.Ints = rtl.arrayConcatN([], $mod.Ints);',
-    '$mod.Ints = rtl.arrayConcatN($mod.Ints, []);',
+    '$mod.Ints = $mod.Ints;',
     '$mod.Ints = rtl.arrayConcatN($mod.Ints, $mod.OneInt);',
-    '$mod.Ints = rtl.arrayConcatN($mod.Ints, [1, 1]);',
+    '$mod.Ints = rtl.arrayPushN($mod.Ints, 1, 1);',
     '$mod.Ints = rtl.arrayConcatN([$mod.i, $mod.i], $mod.Ints);',
     '$mod.Ints = rtl.arrayConcatN(rtl.arrayConcatN([1], [$mod.i]), [3]);',
     '']));
@@ -11684,7 +11952,7 @@ begin
     LinesToStr([ // $mod.$main
     '$mod.a = [[1]];',
     '$mod.a = [$mod.i];',
-    '$mod.a = rtl.arrayConcatN($mod.a, [$mod.i]);',
+    '$mod.a = rtl.arrayPushN($mod.a, $mod.i);',
     '$mod.a = rtl.arrayConcatN([$mod.i], $mod.a);',
     '$mod.a = [rtl.arrayConcatN([1], $mod.i)];',
     '$mod.a = [rtl.arrayConcatN([1], [2])];',
@@ -11726,8 +11994,8 @@ begin
   CheckSource('TestArray_ArrayLitStaticAsParam',
     LinesToStr([ // statements
     'this.DoInt = function (a) {',
-    '  $mod.DoInt(rtl.arrayConcatN(a, [[1, 2]]));',
-    '  $mod.DoInt(rtl.arrayConcatN([[1, 2]], a));',
+    '  $mod.DoInt(rtl.arrayConcat("slice", a, [[1, 2]]));',
+    '  $mod.DoInt(rtl.arrayConcat("slice", [[1, 2]], a));',
     '  $mod.DoInt(a);',
     '};',
     'this.i = rtl.arraySetLength(null, 0, 2);',
@@ -11736,8 +12004,8 @@ begin
     LinesToStr([ // $mod.$main
     '$mod.a = [[1, 1]];',
     '$mod.a = [$mod.i.slice(0)];',
-    '$mod.a = rtl.arrayConcatN($mod.a, [$mod.i.slice(0)]);',
-    '$mod.a = rtl.arrayConcatN([$mod.i.slice(0)], $mod.a);',
+    '$mod.a = rtl.arrayPush("slice", $mod.a, $mod.i);',
+    '$mod.a = rtl.arrayConcat("slice", [$mod.i.slice(0)], $mod.a);',
     '$mod.DoInt([[1, 1]]);',
     '$mod.DoInt([[1, 2], [3, 4]]);',
     '']));
@@ -17402,10 +17670,10 @@ begin
   StartProgram(false);
   Add([
   'type',
+  '  {$DispatchField DispInt}',
+  '  {$DispatchStrField DispStr}',
   '  TObject = class',
-  '    {$DispatchField DispInt}',
   '    procedure Dispatch(var Msg); virtual; abstract;',
-  '    {$DispatchStrField DispStr}',
   '    procedure DispatchStr(var Msg); virtual; abstract;',
   '  end;',
   '  THopMsg = record',
@@ -17427,6 +17695,7 @@ begin
   'begin',
   '']);
   ConvertProgram;
+  CheckResolverUnexpectedHints(true);
   CheckSource('TestClass_Message',
     LinesToStr([ // statements
     'rtl.createClass(this, "TObject", null, function () {',
@@ -17493,7 +17762,6 @@ begin
   Add([
   'type',
   '  TObject = class',
-  '    {$dispatchfield Msg}',
   '    procedure Dispatch(var Msg); virtual; abstract;',
   '  end;',
   '  TFlyMsg = record',
@@ -18168,7 +18436,6 @@ end;
 
 procedure TTestModule.TestNestedClass_Class;
 begin
-  WithTypeInfo:=true;
   StartProgram(false);
   Add([
   'type',
@@ -18251,6 +18518,72 @@ begin
     '$mod.b.Create();',
     '$mod.b = $mod.TBird.TLeg.$create("Create");',
     '$mod.b = $mod.b.Create$1(3);',
+    '']));
+end;
+
+procedure TTestModule.TestNestedClass_CallInherited;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TObject = class end;',
+  '  TBird = class',
+  '  type',
+  '    TWing = class',
+  '      function Fly(w: word = 17): word; virtual;',
+  '    end;',
+  '  end;',
+  '  TEagle = class(TBird)',
+  '  type',
+  '    TEagleWing = class(TWing)',
+  '      function Fly(w: word): word; override;',
+  '    end;',
+  '  end;',
+  'function TBird.TWing.Fly(w: word): word;',
+  'begin',
+  'end;',
+  'function TEagle.TEagleWing.Fly(w: word): word;',
+  'begin',
+  '  inherited;',
+  '  inherited Fly;',
+  '  inherited Fly(3);',
+  '  Result:=inherited Fly;',
+  '  Result:=inherited Fly(4);',
+  'end;',
+  'begin',
+  '']);
+  ConvertProgram;
+  CheckSource('TestNestedClass_CallInherited',
+    LinesToStr([ // statements
+    'rtl.createClass(this, "TObject", null, function () {',
+    '  this.$init = function () {',
+    '  };',
+    '  this.$final = function () {',
+    '  };',
+    '});',
+    'rtl.createClass(this, "TBird", this.TObject, function () {',
+    '  rtl.createClass(this, "TWing", $mod.TObject, function () {',
+    '    this.Fly = function (w) {',
+    '      var Result = 0;',
+    '      return Result;',
+    '    };',
+    '  }, "TBird.TWing");',
+    '});',
+    'rtl.createClass(this, "TEagle", this.TBird, function () {',
+    '  rtl.createClass(this, "TEagleWing", this.TWing, function () {',
+    '    this.Fly = function (w) {',
+    '      var Result = 0;',
+    '      $mod.TBird.TWing.Fly.apply(this, arguments);',
+    '      $mod.TBird.TWing.Fly.call(this, 17);',
+    '      $mod.TBird.TWing.Fly.call(this, 3);',
+    '      Result = $mod.TBird.TWing.Fly.call(this, 17);',
+    '      Result = $mod.TBird.TWing.Fly.call(this, 4);',
+    '      return Result;',
+    '    };',
+    '  }, "TEagle.TEagleWing");',
+    '});',
+    '']),
+    LinesToStr([ // $mod.$main
     '']));
 end;
 
@@ -20536,7 +20869,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_ProcExternalFail;
+procedure TTestModule.TestClassInterface_Corba_ProcExternalFail;
 begin
   StartProgram(false);
   Add([
@@ -20552,7 +20885,7 @@ begin
   ConvertProgram;
 end;
 
-procedure TTestModule.TestClassInterface_Overloads;
+procedure TTestModule.TestClassInterface_Corba_Overloads;
 begin
   StartProgram(false);
   Add([
@@ -20619,7 +20952,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_DuplicateGUIInIntfListFail;
+procedure TTestModule.TestClassInterface_Corba_DuplicateGUIInIntfListFail;
 begin
   StartProgram(false);
   Add([
@@ -20639,7 +20972,7 @@ begin
   ConvertProgram;
 end;
 
-procedure TTestModule.TestClassInterface_DuplicateGUIInAncestorFail;
+procedure TTestModule.TestClassInterface_Corba_DuplicateGUIInAncestorFail;
 begin
   StartProgram(false);
   Add([
@@ -20659,7 +20992,7 @@ begin
   ConvertProgram;
 end;
 
-procedure TTestModule.TestClassInterface_AncestorImpl;
+procedure TTestModule.TestClassInterface_Corba_AncestorImpl;
 begin
   StartProgram(false);
   Add([
@@ -20683,7 +21016,7 @@ begin
   'begin',
   '']);
   ConvertProgram;
-  CheckSource('TestClassInterface_AncestorIntf',
+  CheckSource('TestClassInterface_Corba_AncestorImpl',
     LinesToStr([ // statements
     'rtl.createInterface(this, "IUnknown", "{B92D5841-758A-322B-BDC4-8A2800000000}", ["DoIt"], null);',
     'rtl.createInterface(this, "IBird", "{B92D5841-6264-3AE3-BF20-000000000000}", ["Fly"], null);',
@@ -20707,7 +21040,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_ImplReintroduce;
+procedure TTestModule.TestClassInterface_Corba_ImplReintroduce;
 begin
   StartProgram(false);
   Add([
@@ -20728,7 +21061,7 @@ begin
   'begin',
   '']);
   ConvertProgram;
-  CheckSource('TestClassInterface_ImplReintroduce',
+  CheckSource('TestClassInterface_Corba_ImplReintroduce',
     LinesToStr([ // statements
     'rtl.createInterface(this, "IBird", "{B92D5841-6264-3AE2-8594-000000000000}", ["DoIt"], null);',
     'rtl.createClass(this, "TObject", null, function () {',
@@ -20751,7 +21084,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_MethodResolution;
+procedure TTestModule.TestClassInterface_Corba_MethodResolution;
 begin
   StartProgram(false);
   Add([
@@ -20784,7 +21117,7 @@ begin
   '  BirdIntf.Fly(''abc'');',
   '']);
   ConvertProgram;
-  CheckSource('TestClassInterface_MethodResolution',
+  CheckSource('TestClassInterface_Corba_MethodResolution',
     LinesToStr([ // statements
     'rtl.createInterface(this, "IUnknown", "{B92D5841-758A-322B-BDD7-23D600000000}", ["Walk"], null);',
     'rtl.createInterface(this, "IBird", "{CF8A4986-80F6-396E-AE88-000B86AAE208}", ["Walk$1", "Fly"], this.IUnknown);',
@@ -20816,7 +21149,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_AncestorMoreInterfaces;
+procedure TTestModule.TestClassInterface_COM_AncestorMoreInterfaces;
 begin
   StartProgram(false);
   Add([
@@ -20837,7 +21170,7 @@ begin
   'begin',
   '']);
   ConvertProgram;
-  CheckSource('TestClassInterface_COM_AncestorLess',
+  CheckSource('TestClassInterface_COM_AncestorMoreInterfaces',
     LinesToStr([ // statements
     'rtl.createInterface(this, "IUnknown", "{8F2D5841-758A-322B-BDDF-21CD521DD723}", ["_AddRef", "Walk"], null);',
     'rtl.createInterface(this, "IBird", "{CCE11D4C-6504-3AEE-AE88-000B86AAE675}", [], this.IUnknown);',
@@ -20860,7 +21193,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_MethodOverride;
+procedure TTestModule.TestClassInterface_Corba_MethodOverride;
 begin
   StartProgram(false);
   Add([
@@ -20888,7 +21221,7 @@ begin
   'begin',
   '']);
   ConvertProgram;
-  CheckSource('TestClassInterface_MethodOverride',
+  CheckSource('TestClassInterface_Corba_MethodOverride',
     LinesToStr([ // statements
     'rtl.createInterface(this, "IUnknown", "{D6D98E5B-8A10-4FEC-856A-7BFC847FE74B}", ["Go"], null);',
     'rtl.createClass(this, "TObject", null, function () {',
@@ -21319,6 +21652,45 @@ begin
     'while ($in.MoveNext()) {',
     '  $mod.o = $in.GetCurrent();',
     '  $mod.o.Id = 3;',
+    '};',
+    '']));
+end;
+
+procedure TTestModule.TestClassInterface_Corba_ArrayOfIntf;
+begin
+  StartProgram(false);
+  Add([
+  '{$interfaces corba}',
+  'type',
+  '  IUnknown = interface end;',
+  '  IBird = interface(IUnknown)',
+  '    function Fly(w: word): word;',
+  '  end;',
+  '  TBirdArray = array of IBird;',
+  'var',
+  '  i: IBird;',
+  '  a: TBirdArray;',
+  'begin',
+  '  SetLength(a,3);',
+  '  i:=a[1];',
+  '  a[2]:=i;',
+  '  for i in a do i.fly(3);',
+  '']);
+  ConvertProgram;
+  CheckSource('TestClassInterface_Corba_ArrayOfIntf',
+    LinesToStr([ // statements
+    'rtl.createInterface(this, "IUnknown", "{B92D5841-758A-322B-B800-000000000000}", [], null);',
+    'rtl.createInterface(this, "IBird", "{478D080B-C0F6-396E-AE88-000B87785B07}", ["Fly"], this.IUnknown);',
+    'this.i = null;',
+    'this.a = [];',
+    '']),
+    LinesToStr([ // $mod.$main
+    '$mod.a = rtl.arraySetLength($mod.a, null, 3);',
+    '$mod.i = $mod.a[1];',
+    '$mod.a[2] = $mod.i;',
+    'for (var $in = $mod.a, $l = 0, $end = rtl.length($in) - 1; $l <= $end; $l++) {',
+    '  $mod.i = $in[$l];',
+    '  $mod.i.Fly(3);',
     '};',
     '']));
 end;
@@ -22277,6 +22649,61 @@ begin
     '']));
 end;
 
+procedure TTestModule.TestClassInterface_COM_ArrayOfIntf;
+begin
+  {$IFNDEF EnableCOMArrayOfIntf}
+  exit;
+  {$ENDIF}
+  StartProgram(false);
+  Add([
+  '{$interfaces com}',
+  'type',
+  '  IUnknown = interface end;',
+  '  IBird = interface(IUnknown)',
+  '    function Fly(w: word): word;',
+  '  end;',
+  '  TBirdArray = array of IBird;',
+  'procedure Run;',
+  'var',
+  '  i: IBird;',
+  '  a,b: TBirdArray;',
+  'begin',
+  //'  SetLength(a,3);',
+  '  a:=b;',
+  '  i:=a[1];',
+  '  a[2]:=i;',
+  //'  for i in a do i.fly(3);',
+  // a:=copy(b,1,2);
+  // a:=concat(b,a);
+  // insert(i,b,1);
+  // a:=[i,i];
+  'end;',
+  // ToDo: pass TBirdArray as arg
+  'begin',
+  '']);
+  ConvertProgram;
+  CheckSource('TestClassInterface_COM_ArrayOfIntf',
+    LinesToStr([ // statements
+    'rtl.createInterface(this, "IUnknown", "{B92D5841-758A-322B-B800-000000000000}", [], null);',
+    'rtl.createInterface(this, "IBird", "{478D080B-C0F6-396E-AE88-000B87785B07}", ["Fly"], this.IUnknown);',
+    'this.Run = function () {',
+    '  var i = null;',
+    '  var a = [];',
+    '  var b = [];',
+    '  try {',
+    '    a = rtl.arrayRef(b);',
+    '    i = rtl.setIntfL(i, a[1]);',
+    '    rtl.setIntfP(a, 2, i);',
+    '  } finally {',
+    '    rtl._Release(i);',
+    '    rtl._ReleaseArray(a,1);',
+    '  };',
+    '};',
+    '']),
+    LinesToStr([ // $mod.$main
+    '']));
+end;
+
 procedure TTestModule.TestClassInterface_COM_ArrayOfIntfFail;
 begin
   StartProgram(false);
@@ -22373,7 +22800,7 @@ begin
     );
 end;
 
-procedure TTestModule.TestClassInterface_GUID;
+procedure TTestModule.TestClassInterface_Corba_GUID;
 begin
   StartProgram(false);
   Add([
@@ -22425,7 +22852,7 @@ begin
   '  if g=s then ;',
   '']);
   ConvertProgram;
-  CheckSource('TestClassInterface_GUID',
+  CheckSource('TestClassInterface_Corba_GUID',
     LinesToStr([ // statements
     'rtl.createInterface(this, "IUnknown", "{F31DB68F-3010-D355-4EBA-CDD4EF4A737C}", [], null);',
     'rtl.createClass(this, "TObject", null, function () {',
@@ -22517,7 +22944,7 @@ begin
     '']));
 end;
 
-procedure TTestModule.TestClassInterface_GUIDProperty;
+procedure TTestModule.TestClassInterface_Corba_GUIDProperty;
 begin
   StartProgram(false);
   Add([
@@ -26942,6 +27369,7 @@ begin
   '  Self[1]:=true;',
   '  Self[2]:=not Self[3];',
   '  SetLength(Self,4);',
+  '  Self:=Concat(Self,[true]);',
   'end;',
   'var',
   '  b: TArrOfBool;',
@@ -26958,6 +27386,7 @@ begin
     '    this.get()[1] = true;',
     '    this.get()[2] = !this.get()[3];',
     '    this.set(rtl.arraySetLength(this.get(), false, 4));',
+    '    this.set(rtl.arrayPushN(this.get(), true));',
     '  };',
     '});',
     'this.b = [];',

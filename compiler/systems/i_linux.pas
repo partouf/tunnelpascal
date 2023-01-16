@@ -77,7 +77,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_dwarf2;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -89,9 +89,9 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 64;
                 varalignmin     : 0;
-                varalignmax     : 16;
+                varalignmax     : 64;
                 localalignmin   : 4;
                 localalignmax   : 8;
                 recordalignmin  : 0;
@@ -215,7 +215,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_stabs;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_big;
             alignment    :
@@ -428,7 +428,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_dwarf2;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -440,7 +440,7 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 64;
                 varalignmin     : 0;
                 varalignmax     : 64;
                 localalignmin   : 4;
@@ -568,7 +568,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_dwarf2;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_big;
             alignment    :
@@ -656,9 +656,9 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 32;
                 varalignmin     : 0;
-                varalignmax     : 16;
+                varalignmax     : 32;
                 localalignmin   : 4;
                 localalignmax   : 8;
                 recordalignmin  : 0;
@@ -729,9 +729,9 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 32;
                 varalignmin     : 0;
-                varalignmax     : 16;
+                varalignmax     : 32;
                 localalignmin   : 4;
                 localalignmax   : 8;
                 recordalignmin  : 0;
@@ -799,9 +799,9 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 32;
                 varalignmin     : 0;
-                varalignmax     : 16;
+                varalignmax     : 32;
                 localalignmin   : 4;
                 localalignmax   : 8;
                 recordalignmin  : 0;
@@ -867,9 +867,9 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 32;
                 varalignmin     : 0;
-                varalignmax     : 16;
+                varalignmax     : 32;
                 localalignmin   : 4;
                 localalignmax   : 4;
                 recordalignmin  : 0;
@@ -946,9 +946,9 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 16;
+                constalignmax   : 64;
                 varalignmin     : 0;
-                varalignmax     : 16;
+                varalignmax     : 64;
                 localalignmin   : 4;
                 localalignmax   : 16;
                 recordalignmin  : 0;
@@ -1074,7 +1074,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_stabs;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -1214,7 +1214,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_dwarf4;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -1250,6 +1250,7 @@ unit i_linux;
             flags        : [tf_needs_symbol_size,tf_smartlink_sections,tf_needs_dwarf_cfi,
                             tf_needs_symbol_type,tf_files_case_sensitive,
                             tf_requires_proper_alignment,tf_has_winlike_resources,
+                            tf_safecall_exceptions,
                             tf_supports_hidden_symbols];
             cpu          : cpu_riscv32;
             unit_env     : 'LINUXUNITS';
@@ -1320,6 +1321,7 @@ unit i_linux;
             flags        : [tf_needs_symbol_size,tf_library_needs_pic,tf_smartlink_sections,tf_needs_dwarf_cfi,
                             tf_needs_symbol_type,tf_files_case_sensitive,
                             tf_requires_proper_alignment,tf_has_winlike_resources,
+                            tf_safecall_exceptions,
                             tf_supports_hidden_symbols
                             ];
             cpu          : cpu_riscv64;

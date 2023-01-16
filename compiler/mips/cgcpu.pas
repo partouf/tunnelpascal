@@ -456,10 +456,10 @@ begin
       list.concat(taicpu.op_reg_const(A_LUI, reg, aint(a) shr 48));
       if ((a shr 32) and aint($FFFF))<>0 then
         list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,(a shr 32) and aint($FFFF)));
-      list.concat(taicpu.op_reg_const(A_SLL, reg, 16));
+      list.concat(taicpu.op_reg_reg_const(A_SLL, reg, reg, 16));
       if ((a shr 16) and aint($FFFF))<>0 then
         list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,(a shr 16) and aint($FFFF)));
-      list.concat(taicpu.op_reg_const(A_SLL, reg, 16));
+      list.concat(taicpu.op_reg_reg_const(A_SLL, reg, reg, 16));
       if (a and aint($FFFF))<>0 then
         list.concat(taicpu.op_reg_reg_const(A_ORI,reg,reg,a  and aint($FFFF)));
 {$endif mips64}
@@ -519,7 +519,7 @@ begin
   if (TCGSize2Size[fromsize] >= TCGSize2Size[tosize]) then
     fromsize := tosize;
   if (ref.alignment<>0) and
-     (ref.alignment<tcgsize2size[fromsize]) then
+     (ref.alignment<min(tcgsize2size[fromsize],sizeof(aint))) then
      begin
        a_load_ref_reg_unaligned(list,FromSize,ToSize,ref,reg);
        exit;
@@ -937,6 +937,10 @@ begin
             inc(a,32-tcgsize2size[size]*8);
             src:=dst;
           end
+{$ifdef MIPS64}
+        else if (size in [OS_64,OS_S64]) then
+          list.concat(taicpu.op_reg_reg_const(A_DSRA,dst,src,a))
+{$endif MIPS64}
         else if not (size in [OS_32,OS_S32]) then
           InternalError(2013070303);
         list.concat(taicpu.op_reg_reg_const(A_SRA,dst,src,a));
@@ -1584,83 +1588,86 @@ begin
      assigned(current_procinfo) and
      (pi_do_call in current_procinfo.flags) then
     g_concatcopy_move(list, Source, dest, len)
+  else if ((source.alignment<>0) and (source.alignment<4)) or
+    ((dest.alignment<>0) and (dest.alignment<4)) then
+    g_concatcopy_unaligned(list, Source, dest, len)
   else
-  begin
-    Count := len div 4;
-    if (count<=4) and reference_is_reusable(source) then
-      src:=source
-    else
-      begin
-        reference_reset(src,sizeof(aint),source.volatility);
-        { load the address of source into src.base }
-        src.base := GetAddressRegister(list);
-        a_loadaddr_ref_reg(list, Source, src.base);
-      end;
-    if (count<=4) and reference_is_reusable(dest) then
-      dst:=dest
-    else
-      begin
-        reference_reset(dst,sizeof(aint),dest.volatility);
-        { load the address of dest into dst.base }
-        dst.base := GetAddressRegister(list);
-        a_loadaddr_ref_reg(list, dest, dst.base);
-      end;
-    { generate a loop }
-    if Count > 4 then
     begin
-      countreg := GetIntRegister(list, OS_INT);
-      tmpreg1  := GetIntRegister(list, OS_INT);
-      a_load_const_reg(list, OS_INT, Count, countreg);
-      current_asmdata.getjumplabel(lab);
-      a_label(list, lab);
-      list.concat(taicpu.op_reg_ref(A_LW, tmpreg1, src));
-      list.concat(taicpu.op_reg_ref(A_SW, tmpreg1, dst));
-      list.concat(taicpu.op_reg_reg_const(A_ADDIU, src.base, src.base, 4));
-      list.concat(taicpu.op_reg_reg_const(A_ADDIU, dst.base, dst.base, 4));
-      list.concat(taicpu.op_reg_reg_const(A_ADDIU, countreg, countreg, -1));
-      a_cmp_reg_reg_label(list,OS_INT,OC_GT,NR_R0,countreg,lab);
-      len := len mod 4;
-    end;
-    { unrolled loop }
-    Count := len div 4;
-    if Count > 0 then
-    begin
-      tmpreg1 := GetIntRegister(list, OS_INT);
-      count2:=1;
-      while count2 <= Count do
+      Count := len div 4;
+      if (count<=4) and reference_is_reusable(source) then
+        src:=source
+      else
+        begin
+          reference_reset(src,sizeof(aint),source.volatility);
+          { load the address of source into src.base }
+          src.base := GetAddressRegister(list);
+          a_loadaddr_ref_reg(list, Source, src.base);
+        end;
+      if (count<=4) and reference_is_reusable(dest) then
+        dst:=dest
+      else
+        begin
+          reference_reset(dst,sizeof(aint),dest.volatility);
+          { load the address of dest into dst.base }
+          dst.base := GetAddressRegister(list);
+          a_loadaddr_ref_reg(list, dest, dst.base);
+        end;
+      { generate a loop }
+      if Count > 4 then
       begin
+        countreg := GetIntRegister(list, OS_INT);
+        tmpreg1  := GetIntRegister(list, OS_INT);
+        a_load_const_reg(list, OS_INT, Count, countreg);
+        current_asmdata.getjumplabel(lab);
+        a_label(list, lab);
         list.concat(taicpu.op_reg_ref(A_LW, tmpreg1, src));
         list.concat(taicpu.op_reg_ref(A_SW, tmpreg1, dst));
+        list.concat(taicpu.op_reg_reg_const(A_ADDIU, src.base, src.base, 4));
+        list.concat(taicpu.op_reg_reg_const(A_ADDIU, dst.base, dst.base, 4));
+        list.concat(taicpu.op_reg_reg_const(A_ADDIU, countreg, countreg, -1));
+        a_cmp_reg_reg_label(list,OS_INT,OC_GT,NR_R0,countreg,lab);
+        len := len mod 4;
+      end;
+      { unrolled loop }
+      Count := len div 4;
+      if Count > 0 then
+      begin
+        tmpreg1 := GetIntRegister(list, OS_INT);
+        count2:=1;
+        while count2 <= Count do
+        begin
+          list.concat(taicpu.op_reg_ref(A_LW, tmpreg1, src));
+          list.concat(taicpu.op_reg_ref(A_SW, tmpreg1, dst));
+          Inc(src.offset, 4);
+          Inc(dst.offset, 4);
+          Inc(count2);
+        end;
+        len := len mod 4;
+      end;
+      if (len and 4) <> 0 then
+      begin
+        hreg := GetIntRegister(list, OS_INT);
+        a_load_ref_reg(list, OS_32, OS_32, src, hreg);
+        a_load_reg_ref(list, OS_32, OS_32, hreg, dst);
         Inc(src.offset, 4);
         Inc(dst.offset, 4);
-        Inc(count2);
       end;
-      len := len mod 4;
+      { copy the leftovers }
+      if (len and 2) <> 0 then
+      begin
+        hreg := GetIntRegister(list, OS_INT);
+        a_load_ref_reg(list, OS_16, OS_16, src, hreg);
+        a_load_reg_ref(list, OS_16, OS_16, hreg, dst);
+        Inc(src.offset, 2);
+        Inc(dst.offset, 2);
+      end;
+      if (len and 1) <> 0 then
+      begin
+        hreg := GetIntRegister(list, OS_INT);
+        a_load_ref_reg(list, OS_8, OS_8, src, hreg);
+        a_load_reg_ref(list, OS_8, OS_8, hreg, dst);
+      end;
     end;
-    if (len and 4) <> 0 then
-    begin
-      hreg := GetIntRegister(list, OS_INT);
-      a_load_ref_reg(list, OS_32, OS_32, src, hreg);
-      a_load_reg_ref(list, OS_32, OS_32, hreg, dst);
-      Inc(src.offset, 4);
-      Inc(dst.offset, 4);
-    end;
-    { copy the leftovers }
-    if (len and 2) <> 0 then
-    begin
-      hreg := GetIntRegister(list, OS_INT);
-      a_load_ref_reg(list, OS_16, OS_16, src, hreg);
-      a_load_reg_ref(list, OS_16, OS_16, hreg, dst);
-      Inc(src.offset, 2);
-      Inc(dst.offset, 2);
-    end;
-    if (len and 1) <> 0 then
-    begin
-      hreg := GetIntRegister(list, OS_INT);
-      a_load_ref_reg(list, OS_8, OS_8, src, hreg);
-      a_load_reg_ref(list, OS_8, OS_8, hreg, dst);
-    end;
-  end;
 end;
 
 
@@ -1752,18 +1759,54 @@ procedure TCg64MPSel.a_load64_reg_ref(list: tasmlist; reg: tregister64; const re
 var
   tmpref: treference;
   tmpreg: tregister;
+  incr: shortint;
 begin
-  if target_info.endian = endian_big then
-    begin
-      tmpreg := reg.reglo;
-      reg.reglo := reg.reghi;
-      reg.reghi := tmpreg;
-    end;
   tmpref := ref;
   tcgmips(cg).make_simple_ref(list,tmpref);
-  list.concat(taicpu.op_reg_ref(A_SW,reg.reglo,tmpref));
-  Inc(tmpref.offset, 4);
-  list.concat(taicpu.op_reg_ref(A_SW,reg.reghi,tmpref));
+  if (ref.alignment <4) then
+    begin
+      if target_info.endian = endian_little then
+        begin
+          inc(tmpref.offset,7);
+	  incr:=-1;
+	end
+      else
+        incr:=1;
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reghi,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SRL,reg.reghi,reg.reghi,8));
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reghi,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SRL,reg.reghi,reg.reghi,8));
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reghi,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SRL,reg.reghi,reg.reghi,8));
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reghi,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reglo,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SRL,reg.reglo,reg.reglo,8));
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reglo,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SRL,reg.reglo,reg.reglo,8));
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reglo,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SRL,reg.reglo,reg.reglo,8));
+      list.concat(taicpu.op_reg_ref(A_SB,reg.reglo,tmpref));
+      Inc(tmpref.offset,incr);
+    end
+  else
+    begin
+      if target_info.endian = endian_big then
+        begin
+          tmpreg := reg.reglo;
+          reg.reglo := reg.reghi;
+          reg.reghi := tmpreg;
+        end;
+      list.concat(taicpu.op_reg_ref(A_SW,reg.reglo,tmpref));
+      Inc(tmpref.offset, 4);
+      list.concat(taicpu.op_reg_ref(A_SW,reg.reghi,tmpref));
+    end;
 end;
 
 
@@ -1771,18 +1814,61 @@ procedure TCg64MPSel.a_load64_ref_reg(list: tasmlist; const ref: treference; reg
 var
   tmpref: treference;
   tmpreg: tregister;
+  incr: shortint;
 begin
-  if target_info.endian = endian_big then
-    begin
-      tmpreg := reg.reglo;
-      reg.reglo := reg.reghi;
-      reg.reghi := tmpreg;
-    end;
   tmpref := ref;
   tcgmips(cg).make_simple_ref(list,tmpref);
-  list.concat(taicpu.op_reg_ref(A_LW,reg.reglo,tmpref));
-  Inc(tmpref.offset, 4);
-  list.concat(taicpu.op_reg_ref(A_LW,reg.reghi,tmpref));
+  if (ref.alignment <4) then
+    begin
+      tmpreg:=cg.getintregister(list,OS_INT);
+      if target_info.endian = endian_little then
+        begin
+          inc(tmpref.offset,7);
+	  incr:=-1;
+	end
+      else
+        incr:=1;
+      list.concat(taicpu.op_reg_ref(A_LBU,reg.reghi,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SLL,reg.reghi,reg.reghi,8));
+      list.concat(taicpu.op_reg_ref(A_LBU,tmpreg,tmpref));
+      list.concat(taicpu.op_reg_reg_reg(A_ADDU,reg.reghi,reg.reghi,tmpreg));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SLL,reg.reghi,reg.reghi,8));
+      list.concat(taicpu.op_reg_ref(A_LBU,tmpreg,tmpref));
+      list.concat(taicpu.op_reg_reg_reg(A_ADDU,reg.reghi,reg.reghi,tmpreg));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SLL,reg.reghi,reg.reghi,8));
+      list.concat(taicpu.op_reg_ref(A_LBU,tmpreg,tmpref));
+      list.concat(taicpu.op_reg_reg_reg(A_ADDU,reg.reghi,reg.reghi,tmpreg));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_ref(A_LBU,reg.reglo,tmpref));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SLL,reg.reglo,reg.reglo,8));
+      list.concat(taicpu.op_reg_ref(A_LBU,tmpreg,tmpref));
+      list.concat(taicpu.op_reg_reg_reg(A_ADDU,reg.reglo,reg.reglo,tmpreg));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SLL,reg.reglo,reg.reglo,8));
+      list.concat(taicpu.op_reg_ref(A_LBU,tmpreg,tmpref));
+      list.concat(taicpu.op_reg_reg_reg(A_ADDU,reg.reglo,reg.reglo,tmpreg));
+      Inc(tmpref.offset,incr);
+      list.concat(taicpu.op_reg_reg_const(A_SLL,reg.reglo,reg.reglo,8));
+      list.concat(taicpu.op_reg_ref(A_LBU,tmpreg,tmpref));
+      list.concat(taicpu.op_reg_reg_reg(A_ADDU,reg.reglo,reg.reglo,tmpreg));
+      Inc(tmpref.offset,incr);
+    end
+  else
+    begin
+      if target_info.endian = endian_big then
+        begin
+          tmpreg := reg.reglo;
+          reg.reglo := reg.reghi;
+          reg.reghi := tmpreg;
+        end;
+      list.concat(taicpu.op_reg_ref(A_LW,reg.reglo,tmpref));
+      Inc(tmpref.offset, 4);
+      list.concat(taicpu.op_reg_ref(A_LW,reg.reghi,tmpref));
+    end;
 end;
 
 
@@ -1986,7 +2072,9 @@ end;
     procedure create_codegen;
       begin
         cg:=TCGMIPS.Create;
-{$ifndef mips64}
+{$ifdef mips64}
+        cg128:=tcg128.create;
+{$else mips64}
         cg64:=TCg64MPSel.Create;
 {$endif mips64}
       end;

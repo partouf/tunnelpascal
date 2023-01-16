@@ -1131,6 +1131,7 @@ implementation
                                   listtoinsert.Concat(hp2);
                                   taicpu(curtai).oper[curop]^.ref^.symboldata:=hp;
                                   taicpu(curtai).oper[curop]^.ref^.symbol:=l;
+                                  l.increfs;
                                   curdatatai:=hp;
                                 end;
 
@@ -1172,10 +1173,13 @@ implementation
                                                 begin
                                                   with taicpu(curtai).oper[curop]^.ref^ do
                                                     begin
+                                                      symbol.decrefs;
                                                       symboldata:=hp2.previous;
                                                       symbol:=tai_label(hp2.previous).labsym;
+                                                      symbol.increfs;
                                                     end;
-                                                  removeref:=true;
+                                                  if not tai_label(curdatatai).labsym.is_used then
+                                                    removeref:=true;
                                                   break;
                                                 end;
                                               hp2:=tai(hp2.next);

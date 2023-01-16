@@ -163,6 +163,7 @@ interface
          { parser }
          cs_typed_addresses,cs_strict_var_strings,cs_refcountedstrings,
          cs_bitpacking,cs_varpropsetter,cs_scopedenums,cs_pointermath,
+         cs_openstring,
          { macpas specific}
          cs_external_var, cs_externally_visible,
          { jvm specific }
@@ -179,7 +180,7 @@ interface
        { Switches which can be changed only at the beginning of a new module }
        tmoduleswitch = (cs_modulenone,
          { parser }
-         cs_fp_emulation,cs_extsyntax,cs_openstring,
+         cs_fp_emulation,cs_extsyntax,
          { support }
          cs_support_goto,cs_support_macro,
          cs_support_c_operators,
@@ -199,7 +200,9 @@ interface
          { Record usage of checkpointer experimental feature }
          cs_checkpointer_called,
          { enable link time optimisation (both unit code generation and optimising the whole program/library) }
-         cs_lto
+         cs_lto,
+         { LLVM sanitizers }
+         cs_sanitize_address
        );
        tmoduleswitches = set of tmoduleswitch;
 
@@ -320,7 +323,10 @@ interface
          ts_wasm_js_exceptions,
          { native WebAssembly exceptions support:
            https://github.com/WebAssembly/exception-handling/blob/master/proposals/exception-handling/Exceptions.md }
-         ts_wasm_native_exceptions
+         ts_wasm_native_exceptions,
+         { support multithreading via the WebAssembly threading proposal:
+           https://github.com/WebAssembly/threads/blob/master/proposals/threads/Overview.md }
+         ts_wasm_threads
        );
        ttargetswitches = set of ttargetswitch;
 
@@ -339,7 +345,7 @@ interface
 
      type
        { optimizer }
-       toptimizerswitch = (cs_opt_none,
+       toptimizerswitch = (
          cs_opt_level1,cs_opt_level2,cs_opt_level3,cs_opt_level4,
          cs_opt_regvar,cs_opt_uncertain,cs_opt_size,cs_opt_stackframe,
          cs_opt_peephole,cs_opt_loopunroll,cs_opt_tailrecursion,cs_opt_nodecse,
@@ -374,7 +380,10 @@ interface
 
        { platform triplet style }
        ttripletstyle = (
-         triplet_llvm
+         { llvm toolchain parameters }
+         triplet_llvm,
+         { llvm run time library file names }
+         triplet_llvmrt
          { , triple_gnu }
        );
 
@@ -407,7 +416,9 @@ interface
          mf_wasm_no_exceptions,       { unit was compiled in WebAssembly 'no exceptions' mode }
          mf_wasm_bf_exceptions,       { unit was compiled in WebAssembly 'branchful' exceptions mode }
          mf_wasm_js_exceptions,       { unit was compiled in WebAssembly JavaScript-based exceptions mode }
-         mf_wasm_native_exceptions    { unit was compiled in WebAssembly native exceptions mode }
+         mf_wasm_native_exceptions,   { unit was compiled in WebAssembly native exceptions mode }
+         mf_wasm_threads,             { unit was compiled with WebAssembly multithreading support turned on }
+         mf_system_unit               { unit was compiled as a System unit }
        );
        tmoduleflags = set of tmoduleflag;
 
@@ -422,7 +433,7 @@ interface
        end;
 
     const
-       OptimizerSwitchStr : array[toptimizerswitch] of string[18] = ('',
+       OptimizerSwitchStr : array[toptimizerswitch] of string[18] = (
          'LEVEL1','LEVEL2','LEVEL3','LEVEL4',
          'REGVAR','UNCERTAIN','SIZE','STACKFRAME',
          'PEEPHOLE','LOOPUNROLL','TAILREC','CSE',
@@ -454,7 +465,8 @@ interface
          (name: 'NOEXCEPTIONS';        hasvalue: false; isglobal: true ; define: 'FPC_WASM_NO_EXCEPTIONS'),
          (name: 'BFEXCEPTIONS';        hasvalue: false; isglobal: true ; define: 'FPC_WASM_BRANCHFUL_EXCEPTIONS'),
          (name: 'JSEXCEPTIONS';        hasvalue: false; isglobal: true ; define: 'FPC_WASM_JS_EXCEPTIONS'),
-         (name: 'WASMEXCEPTIONS';      hasvalue: false; isglobal: true ; define: 'FPC_WASM_NATIVE_EXCEPTIONS')
+         (name: 'WASMEXCEPTIONS';      hasvalue: false; isglobal: true ; define: 'FPC_WASM_NATIVE_EXCEPTIONS'),
+         (name: 'WASMTHREADS';         hasvalue: false; isglobal: true ; define: 'FPC_WASM_THREADS')
        );
 
        { switches being applied to all CPUs at the given level }
@@ -529,7 +541,9 @@ interface
          m_array2dynarray,      { regular arrays can be implicitly converted to dynamic arrays }
          m_prefixed_attributes, { enable attributes that are defined before the type they belong to }
          m_underscoreisseparator,{ _ can be used as separator to group digits in numbers }
-         m_implicit_function_specialization    { attempt to specialize generic function by inferring types from parameters }
+         m_implicit_function_specialization,    { attempt to specialize generic function by inferring types from parameters }
+         m_function_references, { enable Delphi-style function references }
+         m_anonymous_functions  { enable Delphi-style anonymous functions }
        );
        tmodeswitches = set of tmodeswitch;
 
@@ -723,7 +737,9 @@ interface
          'ARRAYTODYNARRAY',
          'PREFIXEDATTRIBUTES',
          'UNDERSCOREISSEPARATOR',
-         'IMPLICITFUNCTIONSPECIALIZATION'
+         'IMPLICITFUNCTIONSPECIALIZATION',
+         'FUNCTIONREFERENCES',
+         'ANONYMOUSFUNCTIONS'
          );
 
 
@@ -837,13 +853,17 @@ interface
       plongint   = ^longint;
       plongintarray = plongint;
 
+      tfileposline = longint;
+      tfileposcolumn = word;
+      tfileposfileindex = word;
+      tfileposmoduleindex = word;
       pfileposinfo = ^tfileposinfo;
       tfileposinfo = record
         { if types of column or fileindex are changed, modify tcompilerppufile.putposinfo }
-        line      : longint;
-        column    : word;
-        fileindex : word;
-        moduleindex : word;
+        line      : tfileposline;
+        column    : tfileposcolumn;
+        fileindex : tfileposfileindex;
+        moduleindex : tfileposmoduleindex;
       end;
 
   {$ifndef xFPC}

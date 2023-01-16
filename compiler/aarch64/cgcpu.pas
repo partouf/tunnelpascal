@@ -184,7 +184,7 @@ implementation
               preferred_newbasereg:=getaddressregister(list);
             { load the (GOT) page }
             reference_reset_symbol(href,ref.symbol,0,8,[]);
-            if ((ref.symbol.typ in [AT_FUNCTION,AT_LABEL]) and
+            if ((ref.symbol.typ in [AT_FUNCTION,AT_LABEL,AT_DATA]) and
                 (ref.symbol.bind in [AB_LOCAL,AB_GLOBAL])) or
                ((ref.symbol.typ=AT_DATA) and
                 (ref.symbol.bind=AB_LOCAL)) or
@@ -198,7 +198,7 @@ implementation
             href.symbol:=ref.symbol;
             { code symbols defined in the current compilation unit do not
               have to be accessed via the GOT }
-            if ((ref.symbol.typ in [AT_FUNCTION,AT_LABEL]) and
+            if ((ref.symbol.typ in [AT_FUNCTION,AT_LABEL,AT_DATA]) and
                 (ref.symbol.bind in [AB_LOCAL,AB_GLOBAL])) or
                ((ref.symbol.typ=AT_DATA) and
                 (ref.symbol.bind=AB_LOCAL)) or
@@ -1238,7 +1238,7 @@ implementation
            r:=makeregsize(intreg,fromsize)
          else
            r:=intreg;
-         list.concat(taicpu.op_reg_indexedreg(A_UMOV,r,mmreg,0));
+         list.concat(taicpu.op_reg_reg(A_FMOV,r,mmreg));
        end;
 
 

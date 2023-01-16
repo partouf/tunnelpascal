@@ -1146,8 +1146,8 @@ implementation
                           l:=UnicodeToUtf8(nil,0,PUnicodeChar(pw^.data),len);
                           if l<>len then
                             ReAllocMem(value_str,l);
+                          UnicodeToUtf8(value_str,l,PUnicodeChar(pw^.data),len);
                           len:=l-1;
-                          UnicodeToUtf8(value_str,PUnicodeChar(pw^.data),l);
                           donewidestring(pw);
                         end
                       else
@@ -1420,13 +1420,7 @@ implementation
               end
             else
               begin
-                setval:=aint(swapendian(Pcardinal(value_set)^));
-                setval:=aint(
-                                   reverse_byte (setval         and $ff)         or
-                                  (reverse_byte((setval shr  8) and $ff) shl  8) or
-                                  (reverse_byte((setval shr 16) and $ff) shl 16) or
-                                  (reverse_byte((setval shr 24) and $ff) shl 24)
-                                );
+                setval:=aint(reverse_longword(Pcardinal(value_set)^));
               end;
             if (target_info.endian=endian_big) then
               setval:=setval shr (32-resultdef.size*8);

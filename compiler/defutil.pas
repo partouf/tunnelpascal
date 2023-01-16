@@ -217,6 +217,9 @@ interface
     {# Returns true if p is any pointer def }
     function is_pointer(p : tdef) : boolean;
 
+    {# Returns true p is an address: pointer, classref, ansistring, ... }
+    function is_address(p : tdef) : boolean;
+
     {# Returns true if p is a pchar def }
     function is_pchar(p : tdef) : boolean;
 
@@ -225,6 +228,9 @@ interface
 
     {# Returns true if p is a voidpointer def }
     function is_voidpointer(p : tdef) : boolean;
+
+    {# Returns true if p is a cyclic reference (refers to itself at some point via pointer or array) }
+    function is_cyclic(p : tdef): Boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     {# Returns true, if definition is a float }
     function is_fpu(def : tdef) : boolean;
@@ -327,8 +333,11 @@ interface
     { Returns the range type of an ordinal type in the sense of ISO-10206 }
     function get_iso_range_type(def: tdef): tdef;
 
-    { type being a vector? }
+    { is the type a vector, or can it be transparently used as one? }
     function is_vector(p : tdef) : boolean;
+
+    { return a real/hardware vectordef representing this def }
+    function to_hwvectordef(p: tdef; nil_on_error: boolean): tdef;
 
     { some type helper routines for MMX support }
     function is_mmx_able_array(p : tdef) : boolean;
@@ -382,16 +391,30 @@ interface
     { returns true of def is a methodpointer }
     function is_methodpointer(def : tdef) : boolean;
 
+    { returns true if def is a function reference }
+    function is_funcref(def:tdef):boolean;
+
+    { returns true if def is an invokable interface }
+    function is_invokable(def:tdef):boolean;
+
     { returns true if def is a C "block" }
     function is_block(def: tdef): boolean;
 
     { returns the TTypeKind value of the def }
     function get_typekind(def: tdef): byte;
 
+    { returns the Invoke procdef of a function reference interface }
+    function get_invoke_procdef(def:tobjectdef):tprocdef;
+
+    { returns whether the invokable has an Invoke overload that can be called
+      without arguments }
+    function invokable_has_argless_invoke(def:tobjectdef):boolean;
+
 implementation
 
     uses
        verbose,cutils,
+       symsym,
        cpuinfo;
 
     { returns true, if def uses FPU }
@@ -968,6 +991,20 @@ implementation
         is_pointer:=(p.typ=pointerdef);
       end;
 
+    function is_address(p: tdef): boolean;
+      begin
+        is_address:=
+          (p.typ in [classrefdef,formaldef,undefineddef,procdef]) or
+          is_pointer(p) or
+          is_implicit_array_pointer(p) or
+          is_implicit_pointer_object_type(p) or
+          ((p.typ=procvardef) and
+           (tprocvardef(p).is_addressonly or
+            is_block(p)
+           )
+          )
+      end;
+
     { true if p is a pchar def }
     function is_pchar(p : tdef) : boolean;
       begin
@@ -995,6 +1032,49 @@ implementation
                         (torddef(tpointerdef(p).pointeddef).ordtype=uvoid);
       end;
 
+
+    type
+      PDefListItem = ^TDefListItem;
+      TDefListItem = record
+        Next: PDefListItem;
+        Def: tdef;
+      end;
+
+    { See "is_cyclic" below }
+    function is_cyclic_internal(const def: tdef; const first: PDefListItem): Boolean;
+      var
+        thisdef: TDefListItem;
+        curitem: PDefListItem;
+      begin
+        if not (def.typ in [arraydef, pointerdef]) then
+          Exit(False);
+
+        curitem := first;
+        while assigned(curitem) do
+          begin
+            if curitem^.Def = def then
+              Exit(True);
+            curitem := curitem^.Next;
+          end;
+
+        thisdef.Next := first;
+        thisdef.Def := def;
+
+        case def.typ of
+          arraydef:
+            Result := is_cyclic_internal(tarraydef(def).elementdef, @thisdef);
+          pointerdef:
+            Result := is_cyclic_internal(tabstractpointerdef(def).pointeddef, @thisdef);
+          else
+            InternalError(2022120301);
+        end;
+      end;
+
+    { true, if p is a cyclic reference (refers to itself at some point via pointer or array) }
+    function is_cyclic(p : tdef): Boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      begin
+        Result := is_cyclic_internal(p, nil);
+      end;
 
     { true, if def is a 8 bit int type }
     function is_8bitint(def : tdef) : boolean;
@@ -1393,10 +1473,13 @@ implementation
     function is_vector(p : tdef) : boolean;
       begin
         result:=(p.typ=arraydef) and
-                not(is_special_array(p)) and
-                (tarraydef(p).elementdef.typ in [floatdef,orddef]) {and
-                (tarraydef(p).elementdef.typ=floatdef) and
-                (tfloatdef(tarraydef(p).elementdef).floattype in [s32real,s64real])};
+                (tarraydef(p).is_hwvector or
+                 (not(is_special_array(p)) and
+                  (tarraydef(p).elementdef.typ in [floatdef,orddef]) {and
+                  (tarraydef(p).elementdef.typ=floatdef) and
+                  (tfloatdef(tarraydef(p).elementdef).floattype in [s32real,s64real])}
+                 )
+                );
       end;
 
 
@@ -1470,6 +1553,23 @@ implementation
 {$else x86}
         result:=false;
 {$endif x86}
+      end;
+
+
+    function to_hwvectordef(p: tdef; nil_on_error: boolean): tdef;
+      begin
+        result:=nil;
+        if p.typ=arraydef then
+          begin
+            if tarraydef(p).is_hwvector then
+              result:=p
+            else if fits_in_mm_register(p) then
+              result:=carraydef.getreusable_vector(tarraydef(p).elementdef,tarraydef(p).elecount)
+            else if not nil_on_error then
+              internalerror(2022090811);
+          end
+        else if not nil_on_error then
+          internalerror(2022090810);
       end;
 
 
@@ -1894,6 +1994,18 @@ implementation
       end;
 
 
+    function is_funcref(def:tdef):boolean;
+      begin
+        result:=(def.typ=objectdef) and (oo_is_funcref in tobjectdef(def).objectoptions);
+      end;
+
+
+    function is_invokable(def:tdef):boolean;
+      begin
+        result:=(def.typ=objectdef) and (oo_is_invokable in tobjectdef(def).objectoptions);
+      end;
+
+
     function is_block(def: tdef): boolean;
       begin
         result:=(def.typ=procvardef) and (po_is_block in tprocvardef(def).procoptions)
@@ -1996,6 +2108,74 @@ implementation
           else
             result:=tkUnknown;
         end;
+      end;
+
+
+    function get_invoke_procdef(def:tobjectdef):tprocdef;
+      var
+        sym : tsym;
+      begin
+        repeat
+          if not is_invokable(def) then
+            internalerror(2022011701);
+          sym:=tsym(def.symtable.find(method_name_funcref_invoke_find));
+          if assigned(sym) and (sym.typ<>procsym) then
+            sym:=nil;
+          def:=def.childof;
+        until assigned(sym) or not assigned(def);
+        if not assigned(sym) then
+          internalerror(2021041001);
+        if sym.typ<>procsym then
+          internalerror(2021041002);
+        if tprocsym(sym).procdeflist.count=0 then
+          internalerror(2021041003);
+        result:=tprocdef(tprocsym(sym).procdeflist[0]);
+      end;
+
+
+    function invokable_has_argless_invoke(def:tobjectdef):boolean;
+      var
+        i,j : longint;
+        sym : tsym;
+        pd : tprocdef;
+        para : tparavarsym;
+        allok : boolean;
+      begin
+        result:=false;
+        repeat
+          if not is_invokable(def) then
+            internalerror(2022020701);
+          sym:=tsym(def.symtable.find(method_name_funcref_invoke_find));
+          if assigned(sym) and (sym.typ=procsym) then
+            begin
+              for i:=0 to tprocsym(sym).procdeflist.count-1 do
+                begin
+                  pd:=tprocdef(tprocsym(sym).procdeflist[i]);
+                  if (pd.paras.count=0) or
+                      (
+                        (pd.paras.count=1) and
+                        (vo_is_result in tparavarsym(pd.paras[0]).varoptions)
+                      ) then
+                    exit(true);
+                  allok:=true;
+                  for j:=0 to pd.paras.count-1 do
+                    begin
+                      para:=tparavarsym(pd.paras[j]);
+                      if vo_is_hidden_para in para.varoptions then
+                        continue;
+                      if assigned(para.defaultconstsym) then
+                        continue;
+                      allok:=false;
+                      break;
+                    end;
+                  if allok then
+                    exit(true);
+                end;
+              if not (sp_has_overloaded in sym.symoptions) then
+                break;
+            end;
+          def:=def.childof;
+        until not assigned(def);
       end;
 
 end.

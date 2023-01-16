@@ -355,6 +355,12 @@ var
               Message(unit_u_ppu_invalid_wasm_exceptions_mode,@queuecomment);
               exit;
             end;
+          if (mf_wasm_threads in moduleflags) <>
+             (ts_wasm_threads in current_settings.targetswitches) then
+            begin
+              Message(unit_u_ppu_wasm_threads_mismatch,@queuecomment);
+              exit;
+            end;
 {$endif}
           if {$ifdef symansistr}not{$endif}(mf_symansistr in moduleflags) then
             begin
@@ -799,26 +805,16 @@ var
     procedure tppumodule.writesourcefiles;
       var
         hp  : tinputfile;
-        i,j : longint;
+        ifile : sizeint;
       begin
       { second write the used source files }
         ppufile.do_crc:=false;
-        hp:=sourcefiles.files;
       { write source files directly in good order }
-        j:=0;
-        while assigned(hp) do
+        for ifile:=0 to sourcefiles.nfiles-1 do
           begin
-            inc(j);
-            hp:=hp.ref_next;
-          end;
-        while j>0 do
-          begin
-            hp:=sourcefiles.files;
-            for i:=1 to j-1 do
-              hp:=hp.ref_next;
+            hp:=sourcefiles.files[ifile];
             ppufile.putstring(hp.inc_path+hp.name);
             ppufile.putlongint(hp.getfiletime);
-            dec(j);
          end;
         ppufile.writeentry(ibsourcefiles);
         ppufile.do_crc:=true;
@@ -1032,6 +1028,8 @@ var
           include(moduleflags,mf_local_symtable);
         if cs_checkpointer_called in current_settings.moduleswitches then
           include(moduleflags,mf_checkpointer_called);
+        if cs_compilesystem in current_settings.moduleswitches then
+          include(moduleflags,mf_system_unit);
 {$ifdef i8086}
         if current_settings.x86memorymodel in [mm_medium,mm_large,mm_huge] then
           include(moduleflags,mf_i8086_far_code);
@@ -1053,6 +1051,8 @@ var
           include(moduleflags,mf_wasm_js_exceptions);
         if ts_wasm_bf_exceptions in current_settings.targetswitches then
           include(moduleflags,mf_wasm_bf_exceptions);
+        if ts_wasm_threads in current_settings.targetswitches then
+          include(moduleflags,mf_wasm_threads);
 {$endif wasm}
 {$ifdef llvm}
         include(moduleflags,mf_llvm);

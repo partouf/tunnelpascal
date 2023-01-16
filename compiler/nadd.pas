@@ -256,6 +256,9 @@ implementation
                  hp:=ttypeconvnode(hp).left;
                  realdef:=hp.resultdef;
                end;
+             { could become an errordef in case of errors }
+             if realdef.typ<>orddef then
+               exit;
              if is_constintnode(left) then
                with torddef(realdef) do
                  case nodetype of
@@ -460,11 +463,16 @@ implementation
       function TransformLengthZero(n1,n2 : tnode) : tnode;
         var
           len : Tconstexprint;
+          lentype : tdef;
         begin
           if is_dynamic_array(tinlinenode(n1).left.resultdef) then
             len:=-1
           else
             len:=0;
+          if is_widestring(tinlinenode(n1).left.resultdef) and (tf_winlikewidestring in target_info.flags) then
+            lentype:=u32inttype
+          else
+            lentype:=sizesinttype;
           result:=caddnode.create_internal(orn,
             caddnode.create_internal(equaln,ctypeconvnode.create_internal(tinlinenode(n1).left.getcopy,voidpointertype),
                 cpointerconstnode.create(0,voidpointertype)),
@@ -472,10 +480,10 @@ implementation
                 ctypeconvnode.create_internal(
                   cderefnode.create(
                     caddnode.create_internal(subn,ctypeconvnode.create_internal(tinlinenode(n1).left.getcopy,voidpointertype),
-                      cordconstnode.create(sizesinttype.size,sizesinttype,false))
-                  ),sizesinttype
+                      cordconstnode.create(lentype.size,lentype,false))
+                  ),lentype
                 ),
-              cordconstnode.create(len,sizesinttype,false))
+              cordconstnode.create(len,lentype,false))
             );
         end;
 
@@ -809,7 +817,7 @@ implementation
           end;
 
         { Add,Sub,Mul,Or,Xor,Andn with constant 0, 1 or -1?  }
-       if is_constintnode(right) and (is_integer(left.resultdef) or is_pointer(left.resultdef)) then
+        if is_constintnode(right) and (is_integer(left.resultdef) or is_pointer(left.resultdef)) then
           begin
             if (tordconstnode(right).value = 0) and (nodetype in [addn,subn,orn,xorn,andn,muln]) then
               begin
@@ -950,6 +958,17 @@ implementation
               exit;
           end;
 
+        { convert n - n mod const into n div const*const }
+        if (nodetype=subn) and (right.nodetype=modn) and is_constintnode(tmoddivnode(right).right) and
+          (left.isequal(tmoddivnode(right).left)) and not(might_have_sideeffects(left)) { and
+	  not(cs_check_overflow in localswitches) } then
+          begin
+            result:=caddnode.create(muln,cmoddivnode.create(divn,left,tmoddivnode(right).right.getcopy),tmoddivnode(right).right);
+            left:=nil;
+            tmoddivnode(right).right:=nil;
+            exit;
+          end;
+
       { both real constants ? }
         if (lt=realconstn) and (rt=realconstn) then
           begin
@@ -1054,8 +1073,12 @@ implementation
                         case nodetype of
                           addn:
                             begin
-                              result:=right.getcopy;
-                              exit;
+                              { -0.0+(+0.0)=+0.0 so we cannot carry out this optimization if no fastmath is passed }
+                              if not(cs_opt_fastmath in current_settings.optimizerswitches) then
+                                begin
+                                  result:=right.getcopy;
+                                  exit;
+                                end;
                             end;
                           slashn,
                           muln:
@@ -1122,7 +1145,7 @@ implementation
               end;
           end;
 
-{$if not defined(FPC_SOFT_FPUX80)}
+{$if sizeof(bestrealrec) = sizeof(bestreal)}
         { replace .../const by a multiplication, but only if fastmath is enabled or
           the division is done by a power of 2, do not mess with special floating point values like Inf etc.
 
@@ -1169,7 +1192,7 @@ implementation
             else
               ;
           end;
-{$endif not defined(FPC_SOFT_FPUX80)}
+{$endif sizeof(bestrealrec) = sizeof(bestreal)}
 
         { first, we handle widestrings, so we can check later for }
         { stringconstn only                                       }
@@ -1406,13 +1429,14 @@ implementation
         righttarget:=actualtargetnode(@right)^;
         if (nodetype in [equaln,unequaln]) and (lefttarget.nodetype=inlinen) and (righttarget.nodetype=inlinen) and
           (tinlinenode(lefttarget).inlinenumber=in_typeinfo_x) and (tinlinenode(righttarget).inlinenumber=in_typeinfo_x) and
-          (tinlinenode(lefttarget).left.nodetype=typen) and (tinlinenode(righttarget).left.nodetype=typen) then
+          not (tinlinenode(lefttarget).left.resultdef.typ in [undefineddef,errordef]) and
+          not (tinlinenode(righttarget).left.resultdef.typ in [undefineddef,errordef]) then
           begin
             case nodetype of
               equaln:
-                result:=cordconstnode.create(ord(ttypenode(tinlinenode(lefttarget).left).resultdef=ttypenode(tinlinenode(righttarget).left).resultdef),bool8type,false);
+                result:=cordconstnode.create(ord(tinlinenode(lefttarget).left.resultdef=tinlinenode(righttarget).left.resultdef),bool8type,false);
               unequaln:
-                result:=cordconstnode.create(ord(ttypenode(tinlinenode(lefttarget).left).resultdef<>ttypenode(tinlinenode(righttarget).left).resultdef),bool8type,false);
+                result:=cordconstnode.create(ord(tinlinenode(lefttarget).left.resultdef<>tinlinenode(righttarget).left.resultdef),bool8type,false);
               else
                 Internalerror(2020092901);
             end;
@@ -1449,8 +1473,32 @@ implementation
         { slow simplifications and/or more sophisticated transformations which might make debugging harder }
         if cs_opt_level2 in current_settings.optimizerswitches then
           begin
-            if nodetype in [addn,muln] then
+            if nodetype in [addn,muln,subn] then
               begin
+                { convert a+const1-const2 into a+const1+(-const2) so it is folded later on }
+                if (left.nodetype=addn) and
+                  (nodetype=subn) and
+                  (cs_opt_fastmath in current_settings.optimizerswitches) and (rt=realconstn) and (taddnode(left).right.nodetype=realconstn) and
+                  (compare_defs(resultdef,left.resultdef,nothingn)=te_exact) then
+                  begin
+                    Result:=getcopy;
+                    Result.nodetype:=addn;
+                    taddnode(result).right:=cunaryminusnode.create(taddnode(result).right);
+                    exit;
+                  end;
+
+                { convert a-const1+const2 into a+(-const1)+const2 so it is folded later on }
+                if (left.nodetype=subn) and
+                  (nodetype=addn) and
+                  (cs_opt_fastmath in current_settings.optimizerswitches) and (rt=realconstn) and (taddnode(left).right.nodetype=realconstn) and
+                  (compare_defs(resultdef,left.resultdef,nothingn)=te_exact) then
+                  begin
+                    Result:=getcopy;
+                    taddnode(Result).left.nodetype:=addn;
+                    taddnode(taddnode(Result).left).right:=cunaryminusnode.create(taddnode(taddnode(Result).left).right);
+                    exit;
+                  end;
+
                 { try to fold
                             op
                            /  \
@@ -1462,11 +1510,27 @@ implementation
                 }
                 if (left.nodetype=nodetype) and
                   (((nodetype=addn) and ((rt=stringconstn) or is_constcharnode(right)) and ((taddnode(left).right.nodetype=stringconstn) or is_constcharnode(taddnode(left).right))) or
-                   ((nodetype in [addn,muln]) and (cs_opt_fastmath in current_settings.optimizerswitches) and (rt=realconstn) and (taddnode(left).right.nodetype=realconstn))
+                   ((nodetype in [addn,muln,subn]) and (cs_opt_fastmath in current_settings.optimizerswitches) and (rt=realconstn) and (taddnode(left).right.nodetype=realconstn))
                   ) and
                   (compare_defs(resultdef,left.resultdef,nothingn)=te_exact) then
                   begin
+                    { SwapRightWithLeftLeft moves the nodes around in way that we need to insert a minus
+                      on left.right: a-b-c becomes b-c-a so we
+                      need
+                      1) insert a minus bevor b
+                      2) make the current node an add node, see below
+                    }
+                    if nodetype=subn then
+                      begin
+                        taddnode(left).right:=cunaryminusnode.create(taddnode(left).right);
+                        do_typecheckpass(taddnode(left).right);
+                      end;
                     Result:=SwapRightWithLeftLeft;
+                    if nodetype=subn then
+                      begin
+                        Result.nodetype:=addn;
+                        do_typecheckpass(Result);
+                      end;
                     exit;
                   end;
 
@@ -2963,13 +3027,29 @@ implementation
          { <dyn. array>+<dyn. array> ? }
          else if (nodetype=addn) and (is_dynamic_array(ld) or is_dynamic_array(rd)) then
            begin
-              result:=maybe_convert_to_insert;
-              if assigned(result) then
-                exit;
-              if not(is_dynamic_array(ld)) then
-                inserttypeconv(left,rd);
-              if not(is_dynamic_array(rd)) then
-                inserttypeconv(right,ld);
+              { empty array to add? }
+              if (right.nodetype=arrayconstructorn) and (tarrayconstructornode(right).left=nil) then
+                begin
+                  result:=left;
+                  left:=nil;
+                  exit;
+                end
+              else if (left.nodetype=arrayconstructorn) and (tarrayconstructornode(left).left=nil) then
+                begin
+                  result:=right;
+                  right:=nil;
+                  exit;
+                end
+              else
+                begin
+                  result:=maybe_convert_to_insert;
+                  if assigned(result) then
+                    exit;
+                  if not(is_dynamic_array(ld)) then
+                    inserttypeconv(left,rd);
+                  if not(is_dynamic_array(rd)) then
+                    inserttypeconv(right,ld);
+                end;
            end
 
         { support dynamicarray=nil,dynamicarray<>nil }
@@ -3008,14 +3088,14 @@ implementation
          { vector support, this must be before the zero based array
            check }
          else if (cs_support_vectors in current_settings.globalswitches) and
-                 is_vector(ld) and
-                 is_vector(rd) and
+                 fits_in_mm_register(ld) and
+                 fits_in_mm_register(rd) and
                  equal_defs(ld,rd) then
             begin
               if not(nodetype in [addn,subn,xorn,orn,andn,muln,slashn]) then
                 CGMessage3(type_e_operator_not_supported_for_types,node2opstr(nodetype),ld.typename,rd.typename);
               { both defs must be equal, so taking left or right as resultdef doesn't matter }
-              resultdef:=left.resultdef;
+              resultdef:=to_hwvectordef(left.resultdef,false);
             end
 
          { this is a little bit dangerous, also the left type }
@@ -3285,7 +3365,7 @@ implementation
       var
         p: tnode;
         newstatement : tstatementnode;
-        tempnode (*,tempnode2*) : ttempcreatenode;
+        tempnode : ttempcreatenode;
         cmpfuncname: string;
         para: tcallparanode;
       begin
@@ -3314,7 +3394,13 @@ implementation
               { create the call to the concat routine both strings as arguments }
               if assigned(aktassignmentnode) and
                   (aktassignmentnode.right=self) and
-                  (aktassignmentnode.left.resultdef=resultdef) and
+                  (
+                    (aktassignmentnode.left.resultdef=resultdef) or
+                    (
+                      is_shortstring(aktassignmentnode.left.resultdef) and
+                      is_shortstring(resultdef)
+                    )
+                  ) and
                   valid_for_var(aktassignmentnode.left,false) then
                 begin
                   para:=ccallparanode.create(
@@ -3394,8 +3480,6 @@ implementation
               { generate better code for comparison with empty string, we
                 only need to compare the length with 0 }
               if (nodetype in [equaln,unequaln,gtn,gten,ltn,lten]) and
-                { windows widestrings are too complicated to be handled optimized }
-                not(is_widestring(left.resultdef) and (target_info.system in systems_windows)) and
                  (((left.nodetype=stringconstn) and (tstringconstnode(left).len=0)) or
                   ((right.nodetype=stringconstn) and (tstringconstnode(right).len=0))) then
                 begin
@@ -3414,40 +3498,18 @@ implementation
                     result := caddnode.create(nodetype,
                       cinlinenode.create(in_length_x,false,left),
                       cordconstnode.create(0,s8inttype,false))
-                  else
+                  else { nodetype in [equaln,unequaln] }
                     begin
-                      (*
-                      if is_widestring(left.resultdef) and
-                        (target_info.system in system_windows) then
+                      if is_widestring(left.resultdef) and (tf_winlikewidestring in target_info.flags) then
                         begin
                           { windows like widestrings requires that we also check the length }
-                          result:=internalstatements(newstatement);
-                          tempnode:=ctempcreatenode.create(voidpointertype,voidpointertype.size,tt_persistent,true);
-                          tempnode2:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
-                          addstatement(newstatement,tempnode);
-                          addstatement(newstatement,tempnode2);
-                          { poor man's cse }
-                          addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(tempnode),
-                            ctypeconvnode.create_internal(left,voidpointertype))
-                          );
-                          addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(tempnode2),
-                            caddnode.create(orn,
-                              caddnode.create(nodetype,
-                                ctemprefnode.create(tempnode),
-                                cpointerconstnode.create(0,voidpointertype)
-                              ),
-                              caddnode.create(nodetype,
-                                ctypeconvnode.create_internal(cderefnode.create(ctemprefnode.create(tempnode)),s32inttype),
-                                cordconstnode.create(0,s32inttype,false)
-                              )
-                            )
-                          ));
-                          addstatement(newstatement,ctempdeletenode.create_normal_temp(tempnode));
-                          addstatement(newstatement,ctempdeletenode.create_normal_temp(tempnode2));
-                          addstatement(newstatement,ctemprefnode.create(tempnode2));
+                          result:=cinlinenode.create(in_length_x,false,left);
+                          { and compare its result with 0 }
+                          result:=caddnode.create(equaln,result,cordconstnode.create(0,s8inttype,false));
+                          if nodetype=unequaln then
+                            result:=cnotnode.create(result);
                         end
                       else
-                      *)
                         begin
                           { compare the pointer with nil (for ansistrings etc), }
                           { faster than getting the length (JM)                 }
@@ -3955,32 +4017,38 @@ implementation
               end
             else if (left.nodetype=inlinen) and (tinlinenode(left).inlinenumber=in_sqr_real) then
               begin
-                if nodetype=subn then
-                  result:=cinlinenode.create(inlinennr,false,ccallparanode.create(cunaryminusnode.create(right),
-                    ccallparanode.create(tinlinenode(left).left.getcopy,
-                    ccallparanode.create(tinlinenode(left).left.getcopy,nil
-                    ))))
-                else
-                  result:=cinlinenode.create(inlinennr,false,ccallparanode.create(right,
-                    ccallparanode.create(tinlinenode(left).left.getcopy,
-                    ccallparanode.create(tinlinenode(left).left.getcopy,nil
-                    ))));
-                right:=nil;
+                if node_complexity(tinlinenode(left).left)=0 then
+                  begin
+                    if nodetype=subn then
+                      result:=cinlinenode.create(inlinennr,false,ccallparanode.create(cunaryminusnode.create(right),
+                        ccallparanode.create(tinlinenode(left).left.getcopy,
+                        ccallparanode.create(tinlinenode(left).left.getcopy,nil
+                        ))))
+                    else
+                      result:=cinlinenode.create(inlinennr,false,ccallparanode.create(right,
+                        ccallparanode.create(tinlinenode(left).left.getcopy,
+                        ccallparanode.create(tinlinenode(left).left.getcopy,nil
+                        ))));
+                    right:=nil;
+                  end;
               end
             { we get here only if right is a sqr node }
             else if (right.nodetype=inlinen) and (tinlinenode(right).inlinenumber=in_sqr_real) then
               begin
-                if nodetype=subn then
-                  result:=cinlinenode.create(inlinennr,false,ccallparanode.create(left,
-                    ccallparanode.create(cunaryminusnode.create(tinlinenode(right).left.getcopy),
-                    ccallparanode.create(tinlinenode(right).left.getcopy,nil
-                    ))))
-                else
-                  result:=cinlinenode.create(inlinennr,false,ccallparanode.create(left,
-                    ccallparanode.create(tinlinenode(right).left.getcopy,
-                    ccallparanode.create(tinlinenode(right).left.getcopy,nil
-                    ))));
-                left:=nil;
+                if node_complexity(tinlinenode(right).left)=0 then
+                  begin
+                    if nodetype=subn then
+                      result:=cinlinenode.create(inlinennr,false,ccallparanode.create(left,
+                        ccallparanode.create(cunaryminusnode.create(tinlinenode(right).left.getcopy),
+                        ccallparanode.create(tinlinenode(right).left.getcopy,nil
+                        ))))
+                    else
+                      result:=cinlinenode.create(inlinennr,false,ccallparanode.create(left,
+                        ccallparanode.create(tinlinenode(right).left.getcopy,
+                        ccallparanode.create(tinlinenode(right).left.getcopy,nil
+                        ))));
+                    left:=nil;
+                  end;
               end;
           end;
       end;
@@ -4531,22 +4599,22 @@ implementation
             begin
               if is_widestring(ld) then
                 begin
-                   { this is only for add, the comparisaion is handled later }
+                   { this is only for add, the comparison is handled later }
                    expectloc:=LOC_REGISTER;
                 end
               else if is_unicodestring(ld) then
                 begin
-                   { this is only for add, the comparisaion is handled later }
+                   { this is only for add, the comparison is handled later }
                    expectloc:=LOC_REGISTER;
                 end
               else if is_ansistring(ld) then
                 begin
-                   { this is only for add, the comparisaion is handled later }
+                   { this is only for add, the comparison is handled later }
                    expectloc:=LOC_REGISTER;
                 end
               else if is_longstring(ld) then
                 begin
-                   { this is only for add, the comparisaion is handled later }
+                   { this is only for add, the comparison is handled later }
                    expectloc:=LOC_REFERENCE;
                 end
               else
