@@ -1789,7 +1789,7 @@ implementation
               def:=ttypesym(st.SymList[i]).typedef
             else
               def:=nil;
-            if is_objectpascal_helper(def) then
+            if is_objectpascal_helper(def) and not(df_generic in tobjectdef(def).defoptions) then
               begin
                 s:=generate_objectpascal_helper_key(tobjectdef(def).extendeddef);
                 Message1(sym_d_adding_helper_for,s);

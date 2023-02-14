@@ -716,13 +716,17 @@ implementation
     procedure parse_extended_type(helpertype:thelpertype);
 
       procedure validate_extendeddef_typehelper(var def:tdef);
+        var
+          valid_types: set of tdeftyp;
         begin
-          if (def.typ in [undefineddef,procvardef,procdef,
-              filedef,classrefdef,abstractdef,forwarddef,formaldef]) or
-              (
-                (def.typ=objectdef) and
-                not (tobjectdef(def).objecttype in objecttypes_with_helpers)
-              ) then
+          valid_types:=[procvardef,procdef,filedef,classrefdef,abstractdef,forwarddef,formaldef];
+          { generic helpers allow extending undefined types }
+          if (df_generic in current_objectdef.defoptions) or (df_specialization in current_objectdef.defoptions) then
+            valid_types:=valid_types+[undefineddef];
+
+          if (def.typ in valid_types) or (
+              (def.typ=objectdef) and not (tobjectdef(def).objecttype in objecttypes_with_helpers)
+             ) then
             begin
               Message1(type_e_type_not_allowed_for_type_helper,def.typename);
               def:=generrordef;
@@ -763,7 +767,18 @@ implementation
           Internalerror(2011021103);
 
         consume(_FOR);
-        single_type(hdef,[stoParseClassParent]);
+
+        { generic helpers support additional extended types }
+        if (df_generic in current_objectdef.defoptions) or (df_specialization in current_objectdef.defoptions) then
+          begin
+            if helpertype=ht_type then
+              single_type(hdef,[stoAllowSpecialization,stoAllowArray,stoAllowSet,stoParseClassParent])
+            else
+              single_type(hdef,[stoAllowSpecialization,stoParseClassParent]);
+          end
+        else
+          single_type(hdef,[stoParseClassParent]);
+
         if not assigned(hdef) or (hdef.typ=errordef) then
           begin
             case helpertype of
@@ -777,7 +792,7 @@ implementation
                 internalerror(2019050532);
             end;
           end
-        else
+        else if not(df_generic in current_objectdef.defoptions) then
           begin
             case helpertype of
               ht_class:
@@ -1729,18 +1744,19 @@ implementation
               st:=st.defowner.owner;
             if st.symtabletype in [staticsymtable,globalsymtable] then
               begin
-                if current_objectdef.extendeddef.typ in [recorddef,objectdef] then
-                  s:=make_mangledname('',tabstractrecorddef(current_objectdef.extendeddef).symtable,'')
-                else
-                  s:=make_mangledname('',current_objectdef.extendeddef.owner,current_objectdef.extendeddef.typesym.name);
-                Message1(sym_d_adding_helper_for,s);
-                list:=TFPObjectList(current_module.extendeddefs.Find(s));
-                if not assigned(list) then
+                s:=generate_objectpascal_helper_key(current_objectdef.extendeddef);
+                { don't add generic helpers to extended defs }
+                if not(df_generic in current_structdef.defoptions) and not(df_specialization in current_structdef.defoptions) then
                   begin
-                    list:=TFPObjectList.Create(false);
-                    current_module.extendeddefs.Add(s, list);
+                    Message1(sym_d_adding_helper_for,s);
+                    list:=TFPObjectList(current_module.extendeddefs.Find(s));
+                    if not assigned(list) then
+                      begin
+                        list:=TFPObjectList.Create(false);
+                        current_module.extendeddefs.Add(s, list);
+                      end;
+                    list.add(current_structdef);
                   end;
-                list.add(current_structdef);
               end;
           end;
         tabstractrecordsymtable(current_objectdef.symtable).addalignmentpadding;
