@@ -89,10 +89,16 @@ type
   packed
 {$endif USE_PACKED}
   record
-    Initialize: TRTTIRecVarOp;
-    Finalize: TRTTIRecVarOp;
-    AddRef: TRTTIRecVarOp;
-    Copy: TRTTIRecCopyOp;
+  case cardinal of
+    0: (
+      Initialize: TRTTIRecVarOp;
+      Finalize: TRTTIRecVarOp;
+      AddRef: TRTTIRecVarOp;
+      Copy: TRTTIRecCopyOp;
+    );
+    1: (
+      Ops: array[rotInitialize .. rotCopy] of CodePointer;
+    );
   end;
 
   TRTTIRecordOpOffsetEntry =

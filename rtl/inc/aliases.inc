@@ -34,6 +34,7 @@ procedure int_AddRefArray(data,typeinfo : pointer;count : SizeInt); [external na
 {$if defined(FPC_HAS_FEATURE_RTTI) and not defined(cpujvm)}
 type
   TRTTIProc=procedure(Data,TypeInfo:Pointer);
+  TRTTIArrayProc=procedure(Data,TypeInfo:Pointer;Count:SizeInt);
 
 procedure RecordRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc); forward;
 {$endif FPC_HAS_FEATURE_RTTI and not cpujvm}

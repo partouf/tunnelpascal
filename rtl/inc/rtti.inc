@@ -144,9 +144,9 @@ end;
 
 
 { if you modify this procedure, fpc_copy must be probably modified as well }
-procedure ArrayRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
+procedure BatchArraysRTTI(Data,TypeInfo:Pointer;arrayscount:SizeInt;rttiproc:TRTTIArrayProc);
 var
-  i,Count,ElSize: SizeInt;
+  Count: SizeInt;
   Info: Pointer;
 begin
 {$ifdef VER3_0}
@@ -155,15 +155,63 @@ begin
   typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
 {$endif VER3_0}
   Count:=PArrayInfo(typeInfo)^.ElCount;
-  { no elements to process => exit }
-  if Count = 0 then
-    Exit;
-  ElSize:=PArrayInfo(typeInfo)^.Size div Count;
   Info:=PArrayInfo(typeInfo)^.ElInfo{$ifndef VER3_0}^{$endif};
-  { Process elements }
-  for I:=0 to Count-1 do
-    rttiproc(Data+(I*ElSize),Info);
+  rttiproc(Data,Info,Count*arrayscount);
 end;
+
+
+{ if you modify this procedure, fpc_copy must be probably modified as well }
+{ To be used from *Array functions. TypeInfo is System.TypeInfo(), not 'initrtti' as in single RecordRTTI. }
+procedure BatchRecordsRTTI(Data,TypeInfo:Pointer;recordscount:SizeInt;rttiproc:TRTTIProc
+{$ifndef VER3_0}
+  ; managementOp:TRTTIRecOpType
+{$endif}
+);
+var
+  size : SizeInt;
+  firstField,curField,endField : PRecordElement;
+{$ifndef VER3_0}
+  ri : PRecordInfoInit;
+  managementProc : TRTTIRecVarOp;
+{$endif}
+begin
+{$ifndef VER3_0}
+  { if possible try to use more optimal initrtti }
+  ri:=RTTIRecordOp(typeinfo, typeinfo);
+  size:=ri^.Size;
+  managementProc:=nil;
+  if Assigned(ri^.recordop) then
+    managementProc:=TRTTIRecVarOp(ri^.recordop^.Ops[managementOp]);
+  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+{$else VER3_0}
+  size:=RTTIRecordSize(typeinfo);
+  typeinfo:=RTTIRecordRttiInfoToInitInfo(typeinfo);
+  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+{$endif VER3_0}
+  { Get element info, hacky, but what else can we do? }
+  firstField:=AlignTypeData(Pointer(@PRecordInfoInit(typeInfo)^.Count)+SizeOf(PRecordInfoInit(typeInfo)^.Count));
+  endField:=firstField+PRecordInfoInit(typeInfo)^.Count;
+  while recordscount>0 do
+    begin
+{$ifndef VER3_0}
+      if Assigned(managementProc) and (managementOp=rotFinalize) then
+        managementProc(data);
+{$endif}
+      curField:=firstField;
+      while curField<endField do
+        begin
+          rttiproc(Data+curField^.Offset,curField^.TypeInfo{$ifndef VER3_0}^{$endif});
+          inc(curField);
+        end;
+{$ifndef VER3_0}
+      if Assigned(managementProc) and (managementOp<>rotFinalize) then
+        managementProc(data);
+{$endif}
+      inc(data,size);
+      dec(recordscount);
+    end;
+end;
+
 
 Procedure fpc_Initialize (Data,TypeInfo : pointer);[Public,Alias : 'FPC_INITIALIZE'];  compilerproc;
 begin
@@ -180,7 +228,7 @@ begin
     tkInterface:
       PPAnsiChar(Data)^:=Nil;
     tkArray:
-      arrayrtti(data,typeinfo,@int_initialize);
+      batcharraysrtti(data,typeinfo,1,@int_initializearray);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -223,7 +271,7 @@ begin
   {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
-      arrayrtti(data,typeinfo,@int_finalize);
+      batcharraysrtti(data,typeinfo,1,@int_finalizearray);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -274,7 +322,7 @@ begin
       fpc_UnicodeStr_Incr_Ref(PPointer(Data)^);
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
-      arrayrtti(data,typeinfo,@int_addref);
+      batcharraysrtti(data,typeinfo,1,@int_addrefarray);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkobject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -439,56 +487,123 @@ end;
 
 
 procedure fpc_initialize_array(data,typeinfo : pointer;count : SizeInt); [public,alias:'FPC_INITIALIZE_ARRAY']; compilerproc;
-  var
-    i, size : SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotInitialize, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_initialize(data+size*i,typeinfo);
+    case PTypeKind(typeinfo)^ of
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+      tkDynArray,
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+      tkAstring,
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+      tkWstring,tkUString,
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+      tkInterface:
+        FillChar(data^,count*sizeof(pointer),0);
+      tkArray:
+        batcharraysrtti(data,typeinfo,count,@int_initializearray);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+      tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+      tkRecord:
+        BatchRecordsRTTI(data,typeinfo,count,@int_initialize{$ifndef VER3_0},rotInitialize{$endif});
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+      tkVariant:
+        FillChar(data^,count*sizeof(tvardata),0); { See variant.inc:fpc_variant_init. }
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    end;
   end;
 
 
 procedure fpc_finalize_array(data,typeinfo : pointer;count : SizeInt); [Public,Alias:'FPC_FINALIZE_ARRAY'];  compilerproc;
   var
-     i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    i : SizeInt;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotFinalize, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_finalize(data+size*i,typeinfo);
+    case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+      tkAstring :
+        for i:=0 to count-1 do
+          fpc_AnsiStr_Decr_Ref(PPointer(Data)[i]);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+      tkUstring :
+        for i:=0 to count-1 do
+          fpc_UnicodeStr_Decr_Ref(PPointer(Data)[i]);
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+      tkWstring :
+        for i:=0 to count-1 do
+          fpc_WideStr_Decr_Ref(PPointer(Data)[i]);
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+      tkArray :
+        batcharraysrtti(data,typeinfo,count,@int_finalizearray);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+      tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+      tkRecord:
+        BatchRecordsRTTI(data,typeinfo,count,@int_finalize{$ifndef VER3_0},rotFinalize{$endif});
+{$ifdef FPC_HAS_FEATURE_CLASSES}
+      tkInterface:
+        for i:=0 to count-1 do
+          Intf_Decr_Ref(PPointer(Data)[i]);
+{$endif FPC_HAS_FEATURE_CLASSES}
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+      tkDynArray:
+        for i:=0 to count-1 do
+          fpc_dynarray_clear(PPointer(Data)[i],TypeInfo);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+      tkVariant:
+        for i:=0 to count-1 do
+          variant_clear(PVarData(Data)[i]);
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    end;
   end;
 
 
 procedure fpc_addref_array(data,typeinfo: pointer; count: SizeInt); [public,alias:'FPC_ADDREF_ARRAY']; compilerproc;
   var
-    i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    i : SizeInt;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotAddRef, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_addref(data+size*i,typeinfo);
+    case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+      tkAstring :
+        for i:=0 to count-1 do
+          fpc_AnsiStr_Incr_Ref(PPointer(Data)[i]);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+      tkWstring :
+        for i:=0 to count-1 do
+          fpc_WideStr_Incr_Ref(PPointer(Data)[i]);
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+      tkUstring :
+        for i:=0 to count-1 do
+          fpc_UnicodeStr_Incr_Ref(PPointer(Data)[i]);
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+      tkArray :
+        batcharraysrtti(data,typeinfo,count,@int_addrefarray);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+      tkobject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+      tkrecord :
+        BatchRecordsRTTI(data,typeinfo,count,@int_addref{$ifndef VER3_0},rotAddRef{$endif});
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+      tkDynArray:
+        for i:=0 to count-1 do
+          fpc_dynarray_incr_ref(PPointer(Data)[i]);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_CLASSES}
+      tkInterface:
+        for i:=0 to count-1 do
+          Intf_Incr_Ref(PPointer(Data)[i]);
+{$endif FPC_HAS_FEATURE_CLASSES}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+      tkVariant:
+        for i:=0 to count-1 do
+          variant_addref(PVarData(Data)[i]);
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    end;
   end;
 
 { The following two procedures are now obsolete, needed only for bootstrapping }
