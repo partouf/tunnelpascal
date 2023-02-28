@@ -34,10 +34,13 @@ procedure int_AddRefArray(data,typeinfo : pointer;count : SizeInt); [external na
 {$if defined(FPC_HAS_FEATURE_RTTI) and not defined(cpujvm)}
 type
   TRTTIProc=procedure(Data,TypeInfo:Pointer);
-  TRTTIArrayProc=procedure(Data,TypeInfo:Pointer;Count:SizeInt);
+  TRTTIBatchProc=procedure(Data,TypeInfo:Pointer;Count,Stride:SizeInt);
 
 procedure RecordRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc); forward;
 {$ifndef VER3_0}
 function NeedsInitializationBeyondZeroing(typeInfo: Pointer): Boolean; forward;
 {$endif}
+procedure BatchInitialize(data,typeinfo : pointer;count,stride : SizeInt); forward;
+procedure BatchFinalize(data,typeinfo : pointer;count,stride : SizeInt); forward;
+procedure BatchAddRef(data,typeinfo : pointer;count,stride : SizeInt); forward;
 {$endif FPC_HAS_FEATURE_RTTI and not cpujvm}
