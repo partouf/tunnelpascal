@@ -37,4 +37,7 @@ type
   TRTTIArrayProc=procedure(Data,TypeInfo:Pointer;Count:SizeInt);
 
 procedure RecordRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc); forward;
+{$ifndef VER3_0}
+function NeedsInitializationBeyondZeroing(typeInfo: Pointer): Boolean; forward;
+{$endif}
 {$endif FPC_HAS_FEATURE_RTTI and not cpujvm}

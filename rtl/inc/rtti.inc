@@ -140,6 +140,37 @@ begin
   ti:=aligntoqword(ti+2+PByte(ti)[1]);
   Result:=PRecordInfoInit(ti)^.InitRecordOpTable;
 end;
+
+
+function NeedsInitializationBeyondZeroing(typeInfo: Pointer): Boolean;
+
+  function RecordNeedsInitializationBeyondZeroing(typeInfo: Pointer): Boolean;
+  var
+    ri : PRecordInfoInit;
+    i,Count : SizeInt;
+  begin
+    ri:=RTTIRecordOp(typeInfo,typeInfo);
+    if Assigned(ri^.recordop) and Assigned(ri^.recordop^.Initialize) then
+      exit(true);
+    typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+    Count:=PRecordInfoInit(typeInfo)^.Count;
+    typeInfo:=AlignTypeData(Pointer(@PRecordInfoInit(typeInfo)^.Count)+SizeOf(PRecordInfoInit(typeInfo)^.Count));
+    for i:=0 to Count-1 do
+      if NeedsInitializationBeyondZeroing(PRecordElement(typeInfo)[i].TypeInfo^) then
+        exit(true);
+    result:=false;
+  end;
+
+begin
+  result:=false;
+  case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+    tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+    tkRecord: result:=RecordNeedsInitializationBeyondZeroing(typeInfo);
+    tkArray: result:=NeedsInitializationBeyondZeroing(PArrayInfo(aligntoqword(typeInfo+2+PByte(typeInfo)[1]))^.ElInfo^);
+  end;
+end;
 {$endif VER3_0}
 
 
