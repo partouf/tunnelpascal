@@ -1660,7 +1660,7 @@ implementation
           prefix:='$'+prefix;
         until false;
         { symtable must now be static or global }
-        if not(st.symtabletype in [staticsymtable,globalsymtable]) then
+        if not(st.symtabletype in [staticsymtable,globalsymtable,withsymtable]) then
           internalerror(200204175);
 
         { The mangled name is made out of at most 4 parts:
@@ -1681,6 +1681,8 @@ implementation
         if (TSymtable(main_module.localsymtable)=st) and
            (not main_module.is_unit) then
           result:=result+'P$'+st.name^
+        else if Assigned(st.defowner) and (st.defowner.typ=objectdef) then
+          result:=result+tnode(twithsymtable(st).withrefnode).resultdef.typesym.Name           
         else
           result:=result+st.name^;
         if prefix<>'' then
