@@ -1659,7 +1659,7 @@ implementation
             break;
           prefix:='$'+prefix;
         until false;
-        { symtable must now be static or global }
+        { symtable must now be static, global or from an with-object-statement }
         if not(st.symtabletype in [staticsymtable,globalsymtable,withsymtable]) then
           internalerror(200204175);
 
