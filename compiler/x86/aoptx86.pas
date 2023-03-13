@@ -17609,6 +17609,11 @@ unit aoptx86;
                         RegPairModifiedBetween(taicpu(hp1).oper[0]^.ref^.base, taicpu(hp1).oper[0]^.ref^.index, hp1, p)
                       )
                     )
+                  ) and
+                  not (
+                    { Don't convert "mov const,%reg1; ...; mov const,%reg2" into "mov const,%reg1; ...; mov %reg1,%reg2" }
+                    (taicpu(p).opcode = A_MOV) and
+                    (taicpu(p).oper[0]^.typ = top_const)
                   ) then
                   begin
                     DebugSWMsg(SSlidingWindow + 'Successfully converted partial match to register-to-register MOV', p);
