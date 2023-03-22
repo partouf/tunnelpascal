@@ -403,7 +403,7 @@ Procedure FillChar(var x;count:SizeInt;value:byte);assembler;nostackframe;
 
 {$ifndef FPC_SYSTEM_HAS_INDEXBYTE}
 {$define FPC_SYSTEM_HAS_INDEXBYTE}
-function IndexByte(Const buf;len:SizeInt;b:byte):SizeInt; assembler; nostackframe;
+function IndexByte_SSE2(Const buf;len:SizeInt;b:byte):SizeInt; assembler; nostackframe;
 { win64: rcx buf, rdx len, r8b word
   linux: rdi buf, rsi len, rdx word }
 asm
@@ -454,11 +454,75 @@ asm
     cmp    %rax, %rdx                  { check against the buffer length }
     jbe    .Lnotfound
 end;
+
+function IndexByte_AVX2(const buf;len:SizeInt;b:byte):SizeInt; assembler; nostackframe;
+asm
+    test   len, len
+    jz     .Lnotfound                  { exit if len=0 }
+    vmovd  {$ifdef win64} %r8d {$else} %edx {$endif}, %xmm1
+{$ifdef win64}
+    mov    %rcx, %r8                   { r8 = original ptr, rcx = buf + 32 for aligning & shifts. }
+    add    $32, %rcx
+{$else}
+    lea    32(%rdi), %rcx              { rdi = original ptr, rcx = buf + 32 for aligning & shifts. }
+{$endif}
+    vpbroadcastb %xmm1, %ymm1
+    and    $-32, %rcx                  { first aligned address after buf }
+    vpcmpeqb -32(%rcx), %ymm1, %ymm0   { compare first 32 bytes (up to 31 bytes before target) with pattern and get bitmask }
+    vpmovmskb %ymm0, %eax
+    sub    {$ifdef win64} %r8 {$else} %rdi {$endif}, %rcx { rcx=number of valid bytes, r8/rdi=original ptr }
+
+    shl    %cl, %rax                   { shift valid bits into high dword }
+    shr    $32, %rax                   { clear low dword containing invalid bits }
+    shl    $32, %rax
+    shr    %cl, %rax                   { shift back }
+    jz    .Lcontinue
+.Lmatch:
+    vzeroupper
+    tzcnt  %eax, %eax
+    lea    -32(%rcx,%rax), %rax
+    cmp    %rax, len                   { check against the buffer length }
+    jbe    .Lnotfound
+    ret
+
+    .balign 16
+.Lloop:
+    vpcmpeqb  ({$ifdef win64} %r8 {$else} %rdi {$endif},%rcx), %ymm1, %ymm0 { r8 and rcx may have any values, }
+    vpmovmskb %ymm0, %eax              { but their sum is evenly divisible by 32. }
+    add       $32, %rcx
+    test   %eax, %eax
+    jnz    .Lmatch
+.Lcontinue:
+    cmp    %rcx, len
+    ja     .Lloop
+    vzeroupper
+.Lnotfound:
+    or     $-1, %rax
+end;
+
+function IndexByte_Dispatch(const buf;len:SizeInt;b:byte):SizeInt; forward;
+
+var
+  IndexByte_Impl: function(const buf;len:SizeInt;b:byte):SizeInt = @IndexByte_Dispatch;
+
+function IndexByte_Dispatch(const buf;len:SizeInt;b:byte):SizeInt;
+begin
+  if has_avx2_support then
+    IndexByte_Impl:=@IndexByte_AVX2
+  else
+    IndexByte_Impl:=@IndexByte_SSE2;
+  result:=IndexByte_Impl(buf,len,b);
+end;
+
+function IndexByte(const buf;len:SizeInt;b:byte):SizeInt;
+begin
+  result:=IndexByte_Impl(buf,len,b);
+end;
 {$endif FPC_SYSTEM_HAS_INDEXBYTE}
 
 {$ifndef FPC_SYSTEM_HAS_INDEXWORD}
 {$define FPC_SYSTEM_HAS_INDEXWORD}
-function IndexWord(Const buf;len:SizeInt;b:word):SizeInt; assembler; nostackframe;
+function IndexWord_SSE2(Const buf;len:SizeInt;b:word):SizeInt; assembler; nostackframe;
 { win64: rcx buf, rdx len, r8b word
   linux: rdi buf, rsi len, rdx word }
 asm
@@ -560,11 +624,129 @@ asm
     jbe    .Lnotfound_u                { if match is after the specified length, ignore it }
     sar    $1, %rax                    { in words }
 end;
+
+function IndexWord_AVX2(const buf;len:SizeInt;b:word):SizeInt; assembler; nostackframe;
+asm
+    test   len, len
+    jz     .Lnotfound                  { exit if len=0 }
+    vmovd  {$ifdef win64} %r8d {$else} %edx {$endif}, %xmm1
+{$ifdef win64}
+    mov    %rcx, %r8                   { r8 = original ptr, rcx = buf + 32 for aligning & shifts. }
+    add    $32, %rcx
+{$else}
+    lea    32(%rdi), %rcx              { rdi = original ptr, rcx = buf + 32 for aligning & shifts. }
+{$endif}
+    vpbroadcastw %xmm1, %ymm1
+    and    $-32, %rcx
+    vmovdqa -32(%rcx), %ymm0           { Fetch first 32 bytes (up to 31 bytes before target) }
+    sub    {$ifdef win64} %r8 {$else} %rdi {$endif}, %rcx { rcx=number of valid bytes }
+
+    test   $1, {$ifdef win64} %r8b {$else} %dil {$endif} { if buffer isn't aligned to word boundary, }
+    jnz    .Lunaligned                 { use a different algorithm }
+
+    vpcmpeqw  %ymm1, %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+
+    shl    %cl, %rax
+    shr    $32, %rax
+    shl    $32, %rax
+    shr    %cl, %rax
+    shr    $1, %ecx                    { bytes->words }
+    test   %eax, %eax
+    jz    .Lcontinue
+.Lmatch:
+    vzeroupper
+    tzcnt  %eax, %eax
+    shr    $1, %eax                    { in words }
+    lea    -16(%rcx,%rax), %rax
+    cmp    %rax, len
+    jbe    .Lnotfound                  { if match is after the specified length, ignore it }
+    ret
+
+    .balign 16
+.Lloop:
+    vpcmpeqw  ({$ifdef win64} %r8 {$else} %rdi {$endif},%rcx,2), %ymm1, %ymm0
+    vpmovmskb %ymm0, %eax
+    add       $16, %rcx
+    test   %eax, %eax
+    jnz    .Lmatch
+.Lcontinue:
+    cmp    %rcx, len
+    ja     .Lloop
+    vzeroupper
+.Lnotfound:
+    or    $-1, %rax
+    retq
+
+.Lunaligned:
+    vpsrlw  $8, %ymm1, %ymm2           { (mis)align the pattern (in this particular case: }
+    vpsllw  $8, %ymm1, %ymm1           {   swap bytes of each word of pattern) }
+    vpor    %ymm2, %ymm1, %ymm1
+
+    vpcmpeqb  %ymm1, %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+
+    shl    %cl, %rax
+    shr    $32, %rax
+    shl    $32, %rax
+    shr    %cl, %rax
+
+    add    len, len                    { length words -> bytes }
+    xor    %r10d, %r10d                { nothing to merge yet }
+    jmp    .Lcontinue_u
+
+    .balign 16
+.Lloop_u:
+    vpcmpeqb  ({$ifdef win64} %r8 {$else} %rdi {$endif},%rcx), %ymm1, %ymm0 { compare by bytes }
+    vpmovmskb %ymm0, %eax
+    add       $32, %rcx
+    shr       $32, %r10                { bit 32 shifts into 0 }
+.Lcontinue_u:
+    shl    $1, %rax                    { 31:0 -> 32:1 }
+    or     %r10, %rax                  { merge bit 0 from previous round }
+    mov    %rax, %r10
+    shr    $1, %eax                    { now AND together adjacent pairs of bits }
+    and    %r10d, %eax
+    and    $0x55555555, %eax           { also reset odd bits }
+    jnz    .Lmatch_u
+    cmpq   %rcx, len
+    ja     .Lloop_u
+    vzeroupper
+.Lnotfound_u:
+    or     $-1, %rax
+    retq
+.Lmatch_u:
+    vzeroupper
+    tzcnt  %eax, %eax
+    lea    -32(%rcx,%rax), %rax
+    cmp    %rax, len
+    jbe    .Lnotfound_u                { if match is after the specified length, ignore it }
+    sar    $1, %rax                    { in words }
+end;
+
+function IndexWord_Dispatch(const buf;len:SizeInt;b:word):SizeInt; forward;
+
+var
+  IndexWord_Impl: function(const buf;len:SizeInt;b:word):SizeInt = @IndexWord_Dispatch;
+
+function IndexWord_Dispatch(const buf;len:SizeInt;b:word):SizeInt;
+begin
+  if has_avx2_support then
+    IndexWord_Impl:=@IndexWord_AVX2
+  else
+    IndexWord_Impl:=@IndexWord_SSE2;
+  result:=IndexWord_Impl(buf,len,b);
+end;
+
+function IndexWord(const buf;len:SizeInt;b:word):SizeInt;
+begin
+  result:=IndexWord_Impl(buf,len,b);
+end;
 {$endif FPC_SYSTEM_HAS_INDEXWORD}
 
 {$ifndef FPC_SYSTEM_HAS_INDEXDWORD}
 {$define FPC_SYSTEM_HAS_INDEXDWORD}
-function IndexDWord(Const buf;len:SizeInt;b:dword):SizeInt; assembler; nostackframe;
+function IndexDWord_SSE2(Const buf;len:SizeInt;b:dword):SizeInt; assembler; nostackframe;
 asm
 {$ifdef win64}
     mov      %rcx, %rax
@@ -616,29 +798,235 @@ asm
     sub      {$ifdef win64} %rcx {$else} %rdi {$endif}, %rax
     shr      $2, %rax
 end;
+
+function IndexDWord_AVX2(const buf;len:SizeInt;b:DWord):SizeInt; assembler; nostackframe;
+asm
+    test   len, len
+    jz     .Lnotfound                  { exit if len=0 }
+
+    test     $3, buf                   { If 'buf' is aligned on a DWord boundary, use IndexByte algorithm scaled to DWords. }
+    jnz      .LUnaligned               { Dubious optimization as unaligned branch is universal and often even processes 1 YMM less, }
+                                       { but aligned branch is more compact, completely avoids bad cross-page cases, and vectorizes unbounded searches. }
+    vmovd  {$ifdef win64} %r8d {$else} %edx {$endif}, %xmm1
+{$ifdef win64}
+    mov    %rcx, %r8                   { r8 = original ptr, rcx = buf + 32 for aligning & shifts. }
+    add    $32, %rcx
+{$else}
+    lea    32(%rdi), %rcx              { rdi = original ptr, rcx = buf + 32 for aligning & shifts. }
+{$endif}
+    vpbroadcastd %xmm1, %ymm1
+    and    $-32, %rcx                  { first aligned address after buf }
+    vpcmpeqd -32(%rcx), %ymm1, %ymm0   { compare first 32 bytes (up to 31 bytes before target) with pattern and get bitmask }
+    vpmovmskb %ymm0, %eax
+    sub    {$ifdef win64} %r8 {$else} %rdi {$endif}, %rcx { rcx=number of valid bytes, r8/rdi=original ptr }
+
+    shl    %cl, %rax                   { shift valid bits into high dword }
+    shr    $32, %rax                   { clear low dword containing invalid bits }
+    shl    $32, %rax
+    shr    %cl, %rax                   { shift back }
+    shr    $2, %ecx                    { rcx = dword count from now on. }
+    test   %eax, %eax
+    jz     .Lcontinue
+.Lmatch:
+    vzeroupper
+    tzcnt  %eax, %eax
+    shr    $2, %eax
+    lea    -8(%rcx,%rax), %rax
+    cmp    %rax, len                   { check against the buffer length }
+    jbe    .Lnotfound
+    ret
+
+    .balign 16
+.Lloop:
+    vpcmpeqd  ({$ifdef win64} %r8 {$else} %rdi {$endif},%rcx,4), %ymm1, %ymm0 { r8 and rcx may have any values, }
+    vpmovmskb %ymm0, %eax              { but their sum is evenly divisible by 32. }
+    add       $8, %rcx
+    test   %eax, %eax
+    jnz    .Lmatch
+.Lcontinue:
+    cmp    %rcx, len
+    ja     .Lloop
+    vzeroupper
+.Lnotfound:
+    or     $-1, %rax
+    ret
+
+.LUnaligned:
+{$ifndef win64}
+    mov      %rdx, %r8
+    mov      %rsi, %rdx
+    mov      %rdi, %rcx
+{$endif}
+    mov      %rcx, %r9
+    cmp      $2, %rdx
+    jle      .LDwordwise_Prepare
+    cmp      $8, %rdx
+    jge      .LVecOrMore
+
+    lea      31(%rcx), %eax
+    xor      %ecx, %eax
+    cmp      $4095, %eax
+    ja       .LDwordwise_Prepare
+
+    vmovd    %r8d, %xmm1
+    vpbroadcastd %xmm1, %ymm1
+    vpcmpeqd (%rcx), %ymm1, %ymm0
+    vpmovmskb %ymm0, %eax
+    shl      $2, %edx
+    { bzhi     %edx, %eax, %edx } { Ignore garbage beyond 'len'. }
+    .byte    0xC4,0xE2,0x68,0xF5,0xD0 { Bootstrap compiler doesn't know "bzhi". }
+    jnz      .L8x_Found
+    vzeroupper
+    or       $-1, %rax
+    ret
+
+.balign 16
+.LDwordwise_Body:
+    cmp      (%rcx), %r8d
+    je       .LFoundAtRcx
+    add      $4, %rcx
+.LDwordwise_Prepare:
+    sub      $1, %rdx
+    jae      .LDwordwise_Body
+    or       $-1, %rax
+    ret
+
+.L8x_Found:
+    vzeroupper
+    tzcnt    %eax, %eax
+    add      %rax, %rcx
+.LFoundAtRcx:
+    mov      %rcx, %rax
+    sub      %r9, %rax
+    shr      $2, %rax
+    ret
+
+.balign 16
+.LVecOrMore:
+    vmovd    %r8d, %xmm1
+    vpbroadcastd %xmm1, %ymm1
+    sub      $8, %rdx
+    jle      .LLastVec
+.balign 16
+.L8x_Body:
+    vpcmpeqd (%rcx), %ymm1, %ymm0
+    vpmovmskb %ymm0, %eax
+    test     %eax, %eax
+    jnz      .L8x_Found
+    add      $32, %rcx
+    sub      $8, %rdx
+    jg       .L8x_Body
+.LLastVec:
+    lea      (%rcx,%rdx,4), %rcx
+    vpcmpeqd (%rcx), %ymm1, %ymm0
+    vpmovmskb %ymm0, %eax
+    test     %eax, %eax
+    jnz      .L8x_Found
+    vzeroupper
+    or       $-1, %rax
+end;
+
+function IndexDWord_Dispatch(const buf;len:SizeInt;b:DWord):SizeInt; forward;
+
+var
+  IndexDWord_Impl: function(const buf;len:SizeInt;b:DWord):SizeInt = @IndexDWord_Dispatch;
+
+function IndexDWord_Dispatch(const buf;len:SizeInt;b:DWord):SizeInt;
+begin
+  if has_avx2_support then
+    IndexDWord_Impl:=@IndexDWord_AVX2
+  else
+    IndexDWord_Impl:=@IndexDWord_SSE2;
+  result:=IndexDWord_Impl(buf,len,b);
+end;
+
+function IndexDWord(const buf;len:SizeInt;b:DWord):SizeInt;
+begin
+  result:=IndexDWord_Impl(buf,len,b);
+end;
 {$endif FPC_SYSTEM_HAS_INDEXDWORD}
 
 {$ifndef FPC_SYSTEM_HAS_INDEXQWORD}
 {$define FPC_SYSTEM_HAS_INDEXQWORD}
-function IndexQWord(Const buf;len:SizeInt;b:QWord):SizeInt; assembler; nostackframe;
+label
+  IndexQWord_Qwordwise;
+
+function IndexQWord_Plain(Const buf;len:SizeInt;b:QWord):SizeInt; assembler; nostackframe;
 { win64: rcx=buf, rdx=len, r8=b
   else:  rdi=buf, rsi=len, rdx=b }
 asm
-    mov      {$ifdef win64} %rcx {$else} %rdi {$endif}, %rax
+    mov      buf, %rax
     sub      $8, %rax
 .balign 16
 .LQwordwise_Next:
     add      $8, %rax
-    sub      $1, {$ifdef win64} %rdx {$else} %rsi {$endif}
+IndexQWord_Qwordwise:
+    sub      $1, len
     jb       .LNothing
-    cmp      {$ifdef win64} %r8 {$else} %rdx {$endif}, (%rax)
+    cmpq     b, (%rax)
     jne      .LQwordwise_Next
-    sub      {$ifdef win64} %rcx {$else} %rdi {$endif}, %rax
+    sub      buf, %rax
     shr      $3, %rax
     ret
 
 .LNothing:
     mov      $-1, %rax
+end;
+
+function IndexQWord_AVX2(const buf;len:SizeInt;b:QWord):SizeInt; assembler; nostackframe;
+{ win64: rcx=buf, rdx=len, r8=b
+  else:  rdi=buf, rsi=len, rdx=b }
+asm
+    mov      buf, %rax
+    cmp      $3, len
+    jle      IndexQWord_Qwordwise
+    sub      $4, len
+    vmovq    b, %xmm1
+    vpbroadcastq %xmm1, %ymm1
+.balign 16
+.L4x_Body:
+    vpcmpeqq (%rax), %ymm1, %ymm0
+    vpmovmskb %ymm0, %r8d
+    test     %r8d, %r8d
+    jnz      .LFoundAtMask
+    add      $32, %rax
+    sub      $4, len
+    jg       .L4x_Body
+.LLastVec:
+    lea      (%rax,{$ifdef win64} %rdx {$else} %rsi {$endif},8), %rax
+    vpcmpeqq (%rax), %ymm1, %ymm0
+    vpmovmskb %ymm0, %r8d
+    test     %r8d, %r8d
+    jnz      .LFoundAtMask
+    vzeroupper
+    or       $-1, %rax
+    ret
+
+.LFoundAtMask:
+    vzeroupper
+    tzcnt    %r8d, %r8d
+    add      %r8, %rax
+    sub      buf, %rax
+    shr      $3, %rax
+end;
+
+function IndexQWord_Dispatch(const buf;len:SizeInt;b:QWord):SizeInt; forward;
+
+var
+  IndexQWord_Impl: function(const buf;len:SizeInt;b:QWord):SizeInt = @IndexQWord_Dispatch;
+
+function IndexQWord_Dispatch(const buf;len:SizeInt;b:QWord):SizeInt;
+begin
+  if has_avx2_support then
+    IndexQWord_Impl:=@IndexQWord_AVX2
+  else
+    IndexQWord_Impl:=@IndexQWord_Plain;
+  result:=IndexQWord_Impl(buf,len,b);
+end;
+
+function IndexQWord(const buf;len:SizeInt;b:QWord):SizeInt;
+begin
+  result:=IndexQWord_Impl(buf,len,b);
 end;
 {$endif FPC_SYSTEM_HAS_INDEXQWORD}
 
@@ -646,7 +1034,10 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_COMPAREBYTE}
 {$define FPC_SYSTEM_HAS_COMPAREBYTE}
-function CompareByte(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
+label
+  CompareByte_1OrLess, CompareByte_CantOverReadBoth_AVX2;
+
+function CompareByte_SSE2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 { win64: rcx buf, rdx buf, r8 len
   linux: rdi buf, rsi buf, rdx len }
 asm
@@ -657,7 +1048,7 @@ asm
 {$endif win64}
     { rcx = buf1, rdx = buf2, r8 = len }
     cmp      $1, %r8
-    jle      .L1OrLess
+    jle      CompareByte_1OrLess
 
     cmp      $16, %r8
     jae      .LVecOrMore
@@ -776,6 +1167,9 @@ asm
     sub      %rdx, %rax
     ret
 
+CompareByte_CantOverReadBoth_AVX2:
+    cmp      $16, %r8d
+    jae      .LVecOrMore { Reuse XMM branch, at the cost of 1 more jump it will perform at "sub r8, 32; jbe .LLastVec". :) }
 .LCantOverReadBoth:
     cmp      $8, %r8d
     ja       .L9to15
@@ -824,7 +1218,7 @@ asm
     sub      %rcx, %rax
     ret
 
-.L1OrLess:
+CompareByte_1OrLess:
     jl       .LUnbounded_Prepare
     movzbl   (%rcx), %eax
     movzbl   (%rdx), %edx
@@ -848,12 +1242,151 @@ asm
     sbb      %rax, %rax
     or       $1, %rax
 end;
+
+function CompareByte_AVX2(const buf1, buf2; len: SizeInt): SizeInt; assembler; nostackframe;
+asm
+{$ifndef win64}
+    mov      %rdx, %r8
+    mov      %rsi, %rdx
+    mov      %rdi, %rcx
+{$endif win64}
+    { rcx = buf1, rdx = buf2, r8 = len }
+    cmp      $1, %r8
+    jle      CompareByte_1OrLess
+
+    cmp      $32, %r8
+    jae      .LVecOrMore
+
+    { 2 to 31 bytes: check for page cross. Pessimistic variant that has false positives, but is faster. }
+    mov      %ecx, %eax
+    or       %edx, %eax
+    and      $4095, %eax
+    cmp      $4064, %eax
+    ja       CompareByte_CantOverReadBoth_AVX2
+
+    { Over-read both as YMMs. }
+    vmovdqu  (%rcx), %ymm0
+    vpcmpeqb (%rdx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    { bzhi     %r8d, %eax, %r8d } { Ignore garbage beyond 'len'. }
+    .byte    0xC4,0x62,0x38,0xF5,0xC0 { Bootstrap compiler doesn't know "bzhi". }
+    jnz      .LVec0Differs
+    vzeroupper
+    xor      %eax, %eax
+    ret
+
+.LAligned64xLoop_TwoVectorsDiffer:
+    add      %rcx, %rdx { restore rdx = buf2 }
+    vpmovmskb %ymm0, %r8d { Is there a difference in the first vector? }
+    inc      %r8d
+    jz       .LVec1Differs { No difference in the first vector, ymm0 is all ones, eax = vpmovmskb(vpcmpeqb(buf1 + 32, buf2 + 32)) from the loop body. }
+    mov      %r8d, %eax
+.LVec0Differs:
+    vzeroupper
+    tzcnt    %eax, %eax
+    movzbl   (%rdx,%rax), %edx
+    movzbl   (%rcx,%rax), %eax
+    sub      %rdx, %rax
+    ret
+
+.balign 16
+    .byte    0x0f,0x1f,0x00 { Turn .balign 16 before .LAligned64xLoop_Body into a no-op. }
+.LVecOrMore:
+    { Compare first vectors. }
+    vmovdqu  (%rcx), %ymm0
+    vpcmpeqb (%rdx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVec0Differs
+
+    sub      $64, %r8
+    jbe      .LLastVec
+
+    { Compare second vectors. }
+    vmovdqu  32(%rcx), %ymm0
+    vpcmpeqb 32(%rdx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVec1Differs
+
+    cmp      $64, %r8
+    jbe      .LLastTwoVectors
+
+    { More than four vectors: aligned loop. }
+    lea      -64(%rcx,%r8), %r8 { buffer end - last two vectors handled separately - first two vectors already analyzed (by the fact rcx was still len - 64). }
+    sub      %rcx, %rdx { rdx = buf2 - buf1 }
+    and      $-32, %rcx { Align buf1. First two vectors already analyzed are skipped by +32 on the first loop iteration. }
+    sub      %rcx, %r8 { r8 = count to be handled with loop }
+.balign 16
+.LAligned64xLoop_Body:
+    add      $64, %rcx
+    { Compare two YMMs, reduce the result with 'and'. }
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqb (%rcx), %ymm0, %ymm0 { ymm0 = vpcmpeqb(buf1, buf2) }
+    vmovdqu  32(%rdx,%rcx), %ymm1
+    vpcmpeqb 32(%rcx), %ymm1, %ymm1
+    vpand    %ymm0, %ymm1, %ymm1 { ymm1 = ymm0 and vpcmpeqb(buf1 + 32, buf2 + 32) }
+    vpmovmskb %ymm1, %eax
+    inc      %eax
+    jnz      .LAligned64xLoop_TwoVectorsDiffer
+    sub      $64, %r8
+    ja       .LAligned64xLoop_Body
+    add      %rcx, %rdx { restore rdx = buf2 }
+    add      $64, %r8
+.LLastTwoVectors:
+    vmovdqu  (%rcx,%r8), %ymm0
+    vpcmpeqb (%rdx,%r8), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVecEm2Differs
+.LLastVec:
+    vmovdqu  32(%rcx,%r8), %ymm0
+    vpcmpeqb 32(%rdx,%r8), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVecEm1Differs
+    vzeroupper
+    xor      %eax, %eax
+    ret
+
+.LVec1Differs:
+    xor      %r8d, %r8d
+.LVecEm1Differs:
+    add      $32, %r8
+.LVecEm2Differs:
+    vzeroupper
+    tzcnt    %eax, %eax
+    add      %r8, %rax
+    movzbl   (%rdx,%rax), %edx
+    movzbl   (%rcx,%rax), %eax
+    sub      %rdx, %rax
+end;
+
+function CompareByte_Dispatch(const buf1, buf2; len: SizeInt): SizeInt; forward;
+
+var
+  CompareByte_Impl: function(const buf1, buf2; len: SizeInt): SizeInt = @CompareByte_Dispatch;
+
+function CompareByte_Dispatch(const buf1, buf2; len: SizeInt): SizeInt;
+begin
+  if has_avx2_support then
+    CompareByte_Impl:=@CompareByte_AVX2
+  else
+    CompareByte_Impl:=@CompareByte_SSE2;
+  result:=CompareByte_Impl(buf1, buf2, len);
+end;
+
+function CompareByte(const buf1, buf2; len: SizeInt): SizeInt;
+begin
+  result:=CompareByte_Impl(buf1, buf2, len);
+end;
 {$endif FPC_SYSTEM_HAS_COMPAREBYTE}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPAREWORD}
 {$define FPC_SYSTEM_HAS_COMPAREWORD}
-function CompareWord(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
+function CompareWord_SSE2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
 {$ifndef win64}
     mov      %rdx, %r8
@@ -962,12 +1495,181 @@ asm
     movzwl   (%rcx), %eax
     sub      %rdx, %rax
 end;
+
+function CompareWord_AVX2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
+asm
+{$ifndef win64}
+    mov      %rdx, %r8
+    mov      %rsi, %rdx
+    mov      %rdi, %rcx
+{$endif win64}
+    sub      %rcx, %rdx { rdx = buf2 - buf1 }
+    cmp      $3, %r8
+    jle      .LWordwise_Prepare
+    mov      %r8, %rax
+    shr      $62, %rax
+    jnz      .LWordwise_Prepare
+    shl      $1, %r8 { convert to bytes }
+    cmp      $32, %r8
+    jge      .LVecOrMore
+
+    lea      (%rdx,%rcx), %eax
+    or       %ecx, %eax
+    and      $4095, %eax
+    cmp      $4064, %eax
+    ja       .LCantOverReadBoth
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqw (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    { bzhi     %r8d, %eax, %r8d } { Ignore garbage beyond 'len'. }
+    .byte    0xC4,0x62,0x38,0xF5,0xC0 { Bootstrap compiler doesn't know "bzhi". }
+    jnz      .LVec0Differs_ZeroUpper
+    vzeroupper
+    xor      %eax, %eax
+    ret
+
+.balign 16
+.LWordwise_Body:
+    movzwl   (%rdx,%rcx), %eax
+    cmp      %ax, (%rcx)
+    jne      .LDoSbb
+    add      $2, %rcx
+.LWordwise_Prepare:
+    sub      $1, %r8
+    jae      .LWordwise_Body
+    xor      %eax, %eax
+    ret
+
+.LCantOverReadBoth:
+    { 4 to 16 words. }
+    add     %rcx, %rdx { recover rdx = buf2 }
+    mov     (%rdx), %r9
+    mov     (%rcx), %rax
+    cmp     %r9, %rax
+    jne     .L4xDiffer
+    cmp     $16, %r8
+    jle     .LLast4
+    mov     8(%rdx), %r9
+    mov     8(%rcx), %rax
+    cmp     %r9, %rax
+    jne     .L4xDiffer
+    mov     -16(%rdx,%r8), %r9
+    mov     -16(%rcx,%r8), %rax
+    cmp     %r9, %rax
+    jne     .L4xDiffer
+.LLast4:
+    mov     -8(%rdx,%r8), %r9
+    mov     -8(%rcx,%r8), %rax
+    cmp     %r9, %rax
+    jne     .L4xDiffer
+    xor     %eax, %eax
+    ret
+
+.L4xDiffer:
+    { Swap words of r9 and rax and compare. }
+    movabs  $0xFF00FF00FF00FF00, %r8
+    bswap   %r9
+    mov     %r9, %rdx
+    and     %r8, %rdx
+    shr     $8, %rdx
+    shl     $8, %r9
+    and     %r8, %r9
+    or      %r9, %rdx
+    bswap   %rax
+    mov     %rax, %rcx
+    and     %r8, %rcx
+    shr     $8, %rcx
+    shl     $8, %rax
+    and     %r8, %rax
+    or      %rax, %rcx
+    cmp     %rdx, %rcx
+.LDoSbb:
+    sbb     %rax, %rax
+    or      $1, %rax
+    ret
+
+.LVec0Differs_ZeroUpper:
+    vzeroupper
+    tzcnt    %eax, %eax
+    add      %rcx, %rdx { recover rdx = buf2 }
+    movzwl   (%rdx,%rax), %edx
+    movzwl   (%rcx,%rax), %eax
+    sub      %rdx, %rax
+    ret
+
+.LVecOrMore:
+    vmovdqu  (%rdx,%rcx), %ymm0 { Compare first vectors. }
+    vpcmpeqw (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVec0Differs_ZeroUpper
+
+    sub      $64, %r8 { first 32 bytes already analyzed + last 32 bytes analyzed separately }
+    jle      .LLastVec
+
+    mov      %rcx, %r9 { save original buf1 to recover word position if byte mismatch found (aligned loop works in bytes to support misaligned buf1). }
+    add      %rcx, %r8
+    and      $-32, %rcx { align buf1; +32 is performed by the loop. }
+    sub      %rcx, %r8
+
+.balign 16
+.LAligned16xLoop_Body:
+    add      $32, %rcx
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqb (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LAligned16xLoop_VecDiffers
+    sub      $32, %r8
+    ja       .LAligned16xLoop_Body
+.LLastVec:
+    lea      32(%rcx,%r8), %rcx { point to the last 32 bytes }
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqw (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVec0Differs_ZeroUpper
+    vzeroupper
+    xor      %eax, %eax
+    ret
+
+.LAligned16xLoop_VecDiffers:
+    vzeroupper
+    tzcnt    %eax, %eax
+    add      %rax, %rcx
+    sub      %r9, %rcx
+    and      $-2, %rcx
+    add      %r9, %rcx
+    movzwl   (%rdx,%rcx), %edx
+    movzwl   (%rcx), %eax
+    sub      %rdx, %rax
+end;
+
+function CompareWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt; forward;
+
+var
+  CompareWord_Impl: function(const buf1, buf2; len: SizeInt): SizeInt = @CompareWord_Dispatch;
+
+function CompareWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt;
+begin
+  if has_avx2_support then
+    CompareWord_Impl:=@CompareWord_AVX2
+  else
+    CompareWord_Impl:=@CompareWord_SSE2;
+  result:=CompareWord_Impl(buf1, buf2, len);
+end;
+
+function CompareWord(const buf1, buf2; len: SizeInt): SizeInt;
+begin
+  result:=CompareWord_Impl(buf1, buf2, len);
+end;
 {$endif FPC_SYSTEM_HAS_COMPAREWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPAREDWORD}
 {$define FPC_SYSTEM_HAS_COMPAREDWORD}
-function CompareDWord(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
+function CompareDWord_SSE2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
 {$ifndef win64}
     mov      %rdx, %r8
@@ -1050,6 +1752,131 @@ asm
     sub     $1, %r8
     jae     .LDwordwise_Body
     xor     %eax, %eax
+end;
+
+function CompareDWord_AVX2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
+asm
+{$ifndef win64}
+    mov      %rdx, %r8
+    mov      %rsi, %rdx
+    mov      %rdi, %rcx
+{$endif win64}
+    sub      %rcx, %rdx { rdx = buf2 - buf1 }
+    cmp      $2, %r8
+    jle      .LDwordwise_Prepare
+    mov      %r8, %rax
+    shr      $61, %rax
+    jnz      .LDwordwise_Prepare
+    cmp      $8, %r8
+    jge      .LVecOrMore
+
+    lea      (%rdx,%rcx), %eax
+    or       %ecx, %eax
+    and      $4095, %eax
+    cmp      $4064, %eax
+    ja       .LDwordwise_Prepare
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqd (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    shl      $2, %r8 { convert to bytes }
+    { bzhi     %r8d, %eax, %r8d } { Ignore garbage beyond 'len'. }
+    .byte    0xC4,0x62,0x38,0xF5,0xC0 { Bootstrap compiler doesn't know "bzhi". }
+    jnz      .LVec0Differs
+    vzeroupper
+    xor      %eax, %eax
+    ret
+
+.balign 16
+.LDwordwise_Body:
+    mov     (%rdx,%rcx), %eax
+    cmp     %eax, (%rcx)
+    jne     .LDoSbb
+    add     $4, %rcx
+.LDwordwise_Prepare:
+    sub     $1, %r8
+    jae     .LDwordwise_Body
+    xor     %eax, %eax
+    ret
+
+.LVec0Differs:
+    vzeroupper
+    tzcnt    %eax, %eax
+    add      %rcx, %rdx { recover rdx = buf2 }
+    mov      (%rdx,%rax), %edx
+    cmp      %edx, (%rcx,%rax)
+.LDoSbb:
+    sbb      %rax, %rax
+    or       $1, %rax
+    ret
+
+.LVecOrMore:
+    vmovdqu  (%rdx,%rcx), %ymm0 { Compare first vectors. }
+    vpcmpeqd (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVec0Differs
+
+    shl      $2, %r8 { convert to bytes }
+    sub      $64, %r8 { first 32 bytes already analyzed + last 32 bytes analyzed separately }
+    jle      .LLastVec
+
+    mov      %rcx, %r9 { save original buf1 to recover word position if byte mismatch found (aligned loop works in bytes to support misaligned buf1). }
+    add      %rcx, %r8
+    and      $-32, %rcx { align buf1; +32 is performed by the loop. }
+    sub      %rcx, %r8
+
+.balign 16
+.LAligned8xLoop_Body:
+    add      $32, %rcx
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqb (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LAligned8xLoop_VecDiffers
+    sub      $32, %r8
+    ja       .LAligned8xLoop_Body
+.LLastVec:
+    lea      32(%rcx,%r8), %rcx { point to the last 32 bytes }
+    vmovdqu  (%rdx,%rcx), %ymm0
+    vpcmpeqd (%rcx), %ymm0, %ymm0
+    vpmovmskb %ymm0, %eax
+    inc      %eax
+    jnz      .LVec0Differs
+    vzeroupper
+    xor      %eax, %eax
+    ret
+
+.LAligned8xLoop_VecDiffers:
+    vzeroupper
+    tzcnt    %eax, %eax
+    add      %rax, %rcx
+    sub      %r9, %rcx
+    and      $-4, %rcx
+    add      %r9, %rcx
+    mov      (%rdx,%rcx), %eax
+    cmp      %eax, (%rcx)
+    sbb      %rax, %rax
+    or       $1, %rax
+end;
+
+function CompareDWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt; forward;
+
+var
+  CompareDWord_Impl: function(const buf1, buf2; len: SizeInt): SizeInt = @CompareDWord_Dispatch;
+
+function CompareDWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt;
+begin
+  if has_avx2_support then
+    CompareDWord_Impl:=@CompareDWord_AVX2
+  else
+    CompareDWord_Impl:=@CompareDWord_SSE2;
+  result:=CompareDWord_Impl(buf1, buf2, len);
+end;
+
+function CompareDWord(const buf1, buf2; len: SizeInt): SizeInt;
+begin
+  result:=CompareDWord_Impl(buf1, buf2, len);
 end;
 {$endif FPC_SYSTEM_HAS_COMPAREDWORD}
 
