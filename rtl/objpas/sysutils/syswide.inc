@@ -94,7 +94,6 @@ function WideSameText(const s1, s2 : WideString) : Boolean;{$ifdef SYSUTILSINLIN
 
 { we've no templates, but with includes we can simulate this :) }
 {$macro on}
-{$define INWIDEFORMAT}
 {$define TFormatString:=widestring}
 {$define TFormatChar:=widechar}
 
@@ -103,7 +102,6 @@ Function WideFormat (Const Fmt : WideString; const Args : Array of const; Const 
 
 {$undef TFormatString}
 {$undef TFormatChar}
-{$undef INWIDEFORMAT}
 {$macro off}
 
 Function WideFormat (Const Fmt : WideString; const Args : Array of const) : WideString;

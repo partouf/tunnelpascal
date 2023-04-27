@@ -1156,7 +1156,6 @@ end;
 { we've no templates, but with includes we can simulate this :) }
 
 {$macro on}
-{$define INFORMAT}
 {$define TFormatString:=ansistring}
 {$define TFormatChar:=AnsiChar}
 
@@ -1165,7 +1164,6 @@ Function Format (Const Fmt : AnsiString; const Args : Array of const; const Form
 
 {$undef TFormatString}
 {$undef TFormatChar}
-{$undef INFORMAT}
 {$macro off}
 
 Function Format (Const Fmt : AnsiString; const Args : Array of const) : AnsiString;
