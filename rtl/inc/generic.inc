@@ -2475,45 +2475,65 @@ procedure inclocked(var l:int64);
                                  Str()
 ****************************************************************************}
 
+{$if (
+    not defined(FPC_SYSTEM_HAS_INT_STR_INT64)
+    or not defined(FPC_SYSTEM_HAS_INT_STR_QWORD)
+  ) and not defined(EXCLUDE_COMPLEX_PROCS)}
+{$define need_int_str_buf_uint64}
+{$endif}
+
+{$if defined(need_int_str_buf_uint64)}
+{ These arrays are also used to divide the number by 10^d if it does not fit into string.
+  In the edge case where ns = 0 and <decimal digits in x> = max_pow + 1, this division will ask for 10^(max_pow + 1), buts its result will be discarded.
+  To not check this case explicitly, arrays contain 1 extra element at the end; it must not be zero and is otherwise unimportant. }
+const
+  log10_limits: array[0 .. 19] of uint64 = (10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000 {uint32 max},
+    10000000000, 100000000000, 1000000000000, 10000000000000, 100000000000000, 1000000000000000, 10000000000000000, 100000000000000000, 1000000000000000000, 10000000000000000000, 1);
+{$elseif not defined(FPC_SYSTEM_HAS_INT_STR_LONGINT)
+  or not defined(FPC_SYSTEM_HAS_INT_STR_LONGWORD)}
+const
+  log10_limits: array[0 .. 9] of uint32 = (10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000, 1);
+{$endif need log10 table}
+
+{$if not defined(FPC_SYSTEM_HAS_INT_STR_LONGINT)
+  or not defined(FPC_SYSTEM_HAS_INT_STR_LONGWORD)}
+function int_str_buf(x:uint32;s:PAnsiChar;ns:sizeint):sizeint;
+var
+  sp : sizeint;
+  x1 : uint32;
+begin
+  result:=(9*BsrDWord(x or 1)) shr 5;
+  result:=result+1+ord(x>=uint32(log10_limits[result]));
+  if result>ns then
+    begin
+      x:=x div uint32(log10_limits[result-ns-1]);
+      result:=ns;
+    end;
+  sp:=result;
+  while sp>0 do
+    begin
+      dec(sp);
+      x1:=x div 10;
+      s[sp]:=AnsiChar(x-(x1*10)+byte('0'));
+      x:=x1;
+    end;
+end;
+{$endif need int_str_buf(uint32)}
+
 {$ifndef FPC_SYSTEM_HAS_INT_STR_LONGINT}
 
 procedure int_str(l:longint;out s:shortstring);
 var
-  m,m1 : longword;
-  pcstart,
-  pc2start,
-  pc,pc2 : PAnsiChar;
-  hs : string[32];
-  overflow : longint;
+  start : SizeInt;
 begin
-  pc2start:=@s[1];
-  pc2:=pc2start;
+  start:=0;
   if (l<0) then
     begin
-      pc2^:='-';
-      inc(pc2);
-      m:=longword(-l);
-    end
-  else
-    m:=longword(l);
-  pcstart:=PAnsiChar(@hs[0]);
-  pc:=pcstart;
-  repeat
-    m1:=m div 10;
-    inc(pc);
-    pc^:=AnsiChar(m-(m1*10)+byte('0'));
-    m:=m1;
-  until m=0;
-  overflow:=(pc-pcstart)+(pc2-pc2start)-high(s);
-  if overflow>0 then
-    inc(pcstart,overflow);
-  while (pc>pcstart) do
-    begin
-      pc2^:=pc^;
-      inc(pc2);
-      dec(pc);
+      s[1]:='-';
+      start:=1;
+      l:=-l; {$ifopt q+} {$error Assumes overflow checking disabled. } {$endif}
     end;
-  s[0]:=AnsiChar(pc2-pc2start);
+  s[0]:=AnsiChar(start+int_str_buf(longword(l),@s[1+start],High(s)-start));
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_INT_STR_LONGINT}
@@ -2521,37 +2541,62 @@ end;
 {$ifndef FPC_SYSTEM_HAS_INT_STR_LONGWORD}
 
 procedure int_str_unsigned(l:longword;out s:shortstring);
-var
-  m1 : longword;
-  pcstart,
-  pc2start,
-  pc,pc2 : PAnsiChar;
-  hs : string[32];
-  overflow : longint;
 begin
-  pc2start:=@s[1];
-  pc2:=pc2start;
-  pcstart:=PAnsiChar(@hs[0]);
-  pc:=pcstart;
-  repeat
-    inc(pc);
-    m1:=l div 10;
-    pc^:=AnsiChar(l-(m1*10)+byte('0'));
-    l:=m1;
-  until l=0;
-  overflow:=(pc-pcstart)-high(s);
-  if overflow>0 then
-    inc(pcstart,overflow);
-  while (pc>pcstart) do
-    begin
-      pc2^:=pc^;
-      inc(pc2);
-      dec(pc);
-    end;
-  s[0]:=AnsiChar(pc2-pc2start);
+  s[0]:=AnsiChar(int_str_buf(l,@s[1],High(s)));
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_INT_STR_LONGWORD}
+
+{$ifdef need_int_str_buf_uint64}
+function int_str_buf(x:uint64;s:PAnsiChar;ns:sizeint):sizeint;
+var
+  sp : sizeint;
+  x1 : uint64;
+{$if sizeof(pointer)<sizeof(uint64)}
+  remspe : sizeint;
+  rem,rem1 : uint32;
+{$endif}
+begin
+  result:=(19*BsrQWord(x or 1)) shr 6;
+  result:=result+1+ord(x>=log10_limits[result]);
+  if result>ns then
+    begin
+      x:=x div log10_limits[result-ns-1];
+      result:=ns;
+    end;
+  sp:=result;
+  while sp>0 do
+    begin
+{$if sizeof(pointer)<sizeof(uint64)}
+      { Avoid 64-bit divisions by working in 1 000 000 000s that fit into uint32. }
+      if Hi(x)<>0 then
+        begin
+          remspe:=sp-9;
+          x1:=x div 1000000000;
+          rem:=x-x1*1000000000;
+          x:=x1;
+        end
+      else
+        begin
+          remspe:=0;
+          rem:=x;
+        end;
+      repeat
+        dec(sp);
+        rem1:=rem div 10;
+        s[sp]:=AnsiChar(rem-(rem1*10)+byte('0'));
+        rem:=rem1;
+      until sp=remspe;
+{$else}
+      dec(sp);
+      x1:=x div 10;
+      s[sp]:=AnsiChar(x-(x1*10)+byte('0'));
+      x:=x1;
+{$endif}
+    end;
+end;
+{$undef need_int_str_buf_uint64}
+{$endif need int_str_buf(uint64)}
 
 {$ifndef FPC_SYSTEM_HAS_INT_STR_INT64}
 
@@ -2562,41 +2607,16 @@ begin
 end;
 {$else EXCLUDE_COMPLEX_PROCS}
 var
-  m,m1 : qword;
-  pcstart,
-  pc2start,
-  pc,pc2 : PAnsiChar;
-  hs : string[32];
-  overflow : longint;
+  start : SizeInt;
 begin
-  pc2start:=@s[1];
-  pc2:=pc2start;
+  start:=0;
   if (l<0) then
     begin
-      pc2^:='-';
-      inc(pc2);
-      m:=qword(-l);
-    end
-  else
-    m:=qword(l);
-  pcstart:=PAnsiChar(@hs[0]);
-  pc:=pcstart;
-  repeat
-    m1:=m div 10;
-    inc(pc);
-    pc^:=AnsiChar(m-(m1*10)+byte('0'));
-    m:=m1;
-  until m=0;
-  overflow:=(pc-pcstart)+(pc2-pc2start)-high(s);
-  if overflow>0 then
-    inc(pcstart,overflow);
-  while (pc>pcstart) do
-    begin
-      pc2^:=pc^;
-      inc(pc2);
-      dec(pc);
+      s[1]:='-';
+      start:=1;
+      l:=-l; {$ifopt q+} {$error Assumes overflow checking disabled. } {$endif}
     end;
-  s[0]:=AnsiChar(pc2-pc2start);
+  s[0]:=AnsiChar(start+int_str_buf(qword(l),@s[1+start],High(s)-start));
 end;
 {$endif EXCLUDE_COMPLEX_PROCS}
 
@@ -2610,34 +2630,8 @@ begin
   runerror(217);
 end;
 {$else EXCLUDE_COMPLEX_PROCS}
-var
-  m1 : qword;
-  pcstart,
-  pc2start,
-  pc,pc2 : PAnsiChar;
-  hs : string[64];
-  overflow : longint;
 begin
-  pc2start:=@s[1];
-  pc2:=pc2start;
-  pcstart:=PAnsiChar(@hs[0]);
-  pc:=pcstart;
-  repeat
-    inc(pc);
-    m1:=l div 10;
-    pc^:=AnsiChar(l-(m1*10)+byte('0'));
-    l:=m1;
-  until l=0;
-  overflow:=(pc-pcstart)-high(s);
-  if overflow>0 then
-    inc(pcstart,overflow);
-  while (pc>pcstart) do
-    begin
-      pc2^:=pc^;
-      inc(pc2);
-      dec(pc);
-    end;
-  s[0]:=AnsiChar(pc2-pc2start);
+  s[0]:=AnsiChar(int_str_buf(l,@s[1],High(s)));
 end;
 {$endif EXCLUDE_COMPLEX_PROCS}
 
