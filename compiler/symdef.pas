@@ -1607,6 +1607,9 @@ implementation
       end;
 
     function make_mangledname(const typeprefix:TSymStr;st:TSymtable;const suffix:TSymStr):TSymStr;
+      const
+        with_nr:integer=0;  // use for prevent of double ID-error of assembler
+                            // when bilding name for anonymous mthods within a with-statement
       var
         s,
         prefix : TSymStr;
@@ -1682,7 +1685,11 @@ implementation
            (not main_module.is_unit) then
           result:=result+'P$'+st.name^
         else if Assigned(st.defowner) and (st.defowner.typ=objectdef) then
-          result:=result+tnode(twithsymtable(st).withrefnode).resultdef.typesym.Name           
+          begin
+            result:=result+tnode(twithsymtable(st).withrefnode).resultdef.typesym.Name+
+                    '_'+with_nr.ToString;   // see below
+            with_nr:=succ(with_nr);
+          end         
         else
           result:=result+st.name^;
         if prefix<>'' then
