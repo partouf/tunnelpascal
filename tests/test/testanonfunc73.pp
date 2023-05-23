@@ -1,7 +1,7 @@
 {$mode objfpc}
 {$modeswitch anonymousfunctions}
 {$modeswitch functionreferences}
-program TestAnonFunc73;
+program testanonfunc73;
 
 type
   TProcWithArgs = reference to procedure(AArg:Integer);
@@ -95,7 +95,7 @@ begin
       inc(indent);
 
       P(AInt); // 6
-    
+
       // inline, nested
       With TCaller.Create do
         Execute(procedure(AInt:Integer)
@@ -150,20 +150,25 @@ begin
         begin
           SetValue('Prefix 2 ');
           With TCaller.Create do
-            Execute(P); // 15
+            Execute(            procedure(AInt:Integer)
+            begin
+              Writeln(' ':indent + 1, 'nesting depth ',indent,': Count(', Count, ')+AInt(', AInt, ')=', Count+AInt);
+              Inc(Count, AInt);
+            end); // 15
           TCaller.Create.Execute(procedure(AInt:Integer)
           begin
             inc(indent);
             P(AInt + 1); // 17
+
             dec(indent);
           end);
-        end;        
+        end;
         dec(indent);
       end);
     dec(indent);
   end;
 
-  With TCaller.Create do 
+  With TCaller.Create do
     Execute(procedure(AInt:integer)
     begin
       inc(indent);
@@ -183,10 +188,10 @@ begin
   begin
     With TSomeObject.Create do execute(procedure
     begin
-      inc(indent);    
+      inc(indent);
       With TSomeObject.Create do SetValue('Prefix 4 ');
-      inc(indent);  
-      TSomeObject.Create.SetValue('Prefix 5 ');      
+      inc(indent);
+      TSomeObject.Create.SetValue('Prefix 5 ');
       dec(indent, 2);
     end);
     TSomeObject.Create.SetValue('Prefix 6 ');
@@ -196,13 +201,15 @@ begin
   Result:=Count;
 end;
 
-Var 
+Var
   RetValue:Integer;
 begin
   RetValue:=AnonymousTest;
-  if (RetValue <> 20) then 
+  Readln;
+  if (RetValue <> 20) then
   Begin
     Writeln('Expected result 20, got ', RetValue);
     Halt(1);
   End;
 end.
+
