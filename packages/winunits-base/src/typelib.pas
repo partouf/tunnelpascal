@@ -477,7 +477,7 @@ var
   bPropHasParam,bIsFunction,bParamByRef:boolean;
   VD: lpVARDESC;
   aPropertyDefs:array of TPropertyDef;
-  Propertycnt,iType:integer;
+  Propertycnt,iType,usedProps:integer;
   Modifier: string;
 
   function findProperty(ireqdispid:integer):integer;
@@ -747,16 +747,25 @@ begin
         begin
         if not MakeValidId(BstrName,sMethodName) then
           AddToHeader('//  Warning: renamed property ''%s'' in %s to ''%s''',[BstrName,iname,sMethodName]);
-        bPropHasParam:=(((FD^.invkind=INVOKE_PROPERTYGET) and (FD^.cParams>0)) or (FD^.cParams>1))
-            and ((FD^.lprgelemdescParam[0].paramdesc.wParamFlags and PARAMFLAG_FIN) = PARAMFLAG_FIN) ;
-        if (FD^.memid=0) and  bPropHasParam then sl:=' default;' else sl:='';
+        usedProps:=FD^.cParams;
+        if (not bIsDispatch) // ignore the last parameter of interface property ([in] for PUT and PUTREF / [retval] for GET)
+          or not (FD^.invkind=INVOKE_PROPERTYGET) then // ignore the last parameter of dispinterface PUT and PUTREF property
+          usedProps:=usedProps-1;
+        bPropHasParam:=usedProps>0;
+        if (FD^.memid=0) and bPropHasParam then
+          sl:=' default;'
+        else
+          sl:=''; // default depends only on DISP_ID = 0
         sPropParam:='';
         sPropParam2:='';
         if bPropHasParam then
+          for k:=0 to usedProps-1 do // property can have any number of parameters
           begin
-          if not MakeValidId(GetName(1),sPropParam) then
-            AddToHeader('//  Warning: renamed property index  ''%s'' in %s.%s to ''%s''',[GetName(1),iname,sMethodName,sPropParam]);
-          sPropParam:=sPropParam+':'+TypeToString(TI,FD^.lprgelemdescParam[0].tdesc);
+            if not MakeValidId(GetName(k+1),sVarName) then
+              AddToHeader('//  Warning: renamed property parameter ''%s'' in %s.%s to ''%s''',[GetName(k+1),iname,sMethodName,sVarName]);
+            sPropParam:=sPropParam+sVarName+': '+TypeToString(TI,FD^.lprgelemdescParam[k].tdesc);
+            if k<usedProps-1 then
+              sPropParam:=sPropParam+'; ' // finish parameter now, more to come
           end;
         if bIsDispatch then
           begin
