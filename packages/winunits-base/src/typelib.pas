@@ -171,6 +171,9 @@ Type
 
 implementation
 
+uses
+  variants, strutils;
+
 Resourcestring
   SErrInvalidUnitName = 'Invalid unit name : %s';
 
@@ -466,7 +469,7 @@ var
   RTIT: HREFTYPE;
   TIref: ITypeInfo;
   BstrName,BstrNameRef,BstrDocString : WideString;
-  s,sl,sPropDispIntfc,sType,sConv,sFunc,sPar,sVarName,sMethodName,
+  s,sl,sPropDispIntfc,sType,sConv,sFunc,sPar,sVarName,sMethodName,sTypeName,
   sPropParam,sPropParam2,sPropParam3,tmp: string;
   sEventSignatures,sEventFunctions,sEventProperties,sEventImplementations:string;
   i,j,k:integer;
@@ -518,6 +521,31 @@ var
       result:=BL[i];
     if result='' then //No name ?
       result:='Param'+inttostr(i);
+  end;
+
+  function ParamIsPointer(p: ELEMDESC): Boolean;
+  begin
+    Result := p.tdesc.vt in [VT_DISPATCH, VT_UNKNOWN, VT_VOID, VT_PTR, VT_SAFEARRAY, VT_CARRAY, VT_LPSTR, VT_LPWSTR];
+  end;
+
+  function DefaultValueToStr(p: ELEMDESC; typeName:string): string;
+  var
+    defVal:Variant;
+    defStr:string;
+  begin
+    defVal:=Variant(p.paramdesc.pparamdescex^.varDefaultValue);
+    if VarIsStr(defVal) then
+      defStr:=QuotedStr(VarToWideStr(defVal))
+    else if ParamIsPointer(p) then
+      defStr:='nil'
+    else if VarIsFloat(defVal) then
+      defStr:=StringReplace(FloatToStrF(double(VarAsType(defVal,varDouble)),ffGeneral,8,0),',','.',[])
+    else
+      defStr:=StringReplace(VarToWideStr(defVal),',','.',[]);
+    if AnsiEndsText('OleVariant',typeName) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant. remember the desired default value
+      Result:=format(' {= %s}',[defStr])
+    else
+      Result:=format(' = %s',[defStr]);
   end;
 
 begin
@@ -663,7 +691,17 @@ begin
             end;
           if not MakeValidId(GetName(k+1),sVarName) then
             AddToHeader('//  Warning: renamed parameter ''%s'' in %s.%s to ''%s''',[GetName(k+1),iname,sMethodName,sVarName],True);
-          sPar:=sPar+format('%s:%s;',[sVarName,sl]);
+          sPar:=sPar+format('%s: %s',[sVarName,sl]); // do not finish parameter yet because it can have attribute "optional" or "defaultvalue"
+          if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then // parameter with default value
+          begin
+            sPar:=sPar+DefaultValueToStr(FD^.lprgelemdescParam[k],sl);
+          end
+          else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
+            and AnsiEndsText('OleVariant',sl) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+          begin
+            sPar:=sPar+' {= EmptyParam}'; // remember the desired default value
+          end;
+          sPar:=sPar+'; '; // finish parameter now
           sFunc:=sFunc+sPar;
           if bCreateEvents then
             begin
@@ -720,7 +758,8 @@ begin
               sEventImplementations:=sEventImplementations+format(' OleVariant(Params.rgvarg[%d]),',[FD^.cParams-1-k]);
             end;
           end;
-        // finish interface and dispinterface
+        // finish method
+        sFunc := TrimRight(sFunc);
         if sFunc[length(sFunc)]=';' then
           sFunc[length(sFunc)]:=')'
         else  // no params
@@ -754,9 +793,20 @@ begin
         sPropParam2:='';
         if bPropHasParam then
           begin
+          k:=0;
           if not MakeValidId(GetName(1),sPropParam) then
             AddToHeader('//  Warning: renamed property index  ''%s'' in %s.%s to ''%s''',[GetName(1),iname,sMethodName,sPropParam]);
-          sPropParam:=sPropParam+':'+TypeToString(TI,FD^.lprgelemdescParam[0].tdesc);
+          sTypeName:=TypeToString(TI,FD^.lprgelemdescParam[k].tdesc);
+          sPropParam:=sPropParam+':'+sTypeName;
+            if (not bIsDispatch) and ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FHASDEFAULT) <> 0) then
+            begin
+              sPropParam:=sPropParam+DefaultValueToStr(FD^.lprgelemdescParam[k],sTypeName);
+            end
+            else if ((FD^.lprgelemdescParam[k].paramdesc.wParamFlags and PARAMFLAG_FOPT) <> 0)
+              and AnsiEndsText('OleVariant',sTypeName) then // param is VT_VARIANT or was non-automatable and got converted into OleVariant
+            begin
+              sPropParam:=sPropParam+' {= EmptyParam}'; // remember the desired default value
+            end;
           end;
         if bIsDispatch then
           begin
