@@ -1137,7 +1137,8 @@ type
       consttyp:=conststring;
       len:=length(s);
       getmem(sp,len+1);
-      move(s[1],sp^,len+1);
+      move(s[1],sp^,len);
+      sp[len]:=#0;
       value.valueptr:=sp;
       value.len:=len;
       def:=strdef;

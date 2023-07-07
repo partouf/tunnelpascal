@@ -2446,7 +2446,7 @@ implementation
         len:=ppufile.getlongint;
         getmem(str,len+1);
         ppufile.getdata(str^,len);
-        str[len]:=#0
+        str[len]:=#0;
       end;
 
 
@@ -2463,7 +2463,13 @@ implementation
         p : tlinkedlistitem;
       begin
         p:=inherited getcopy;
-        getmem(tai_string(p).str,len);
+        if (len>0) and (str[len-1]=#0) then
+          getmem(tai_string(p).str,len)
+        else
+          begin
+            getmem(tai_string(p).str,len+1);
+            tai_string(p).str[len]:=#0;
+          end;
         move(str^,tai_string(p).str^,len);
         getcopy:=p;
       end;

@@ -160,7 +160,7 @@ begin
   else begin
     // Use UTF-8 conversion from RTL
     cp:=CP_UTF8;
-    len2:=UnicodeToUtf8(PAnsiChar(dest), len2, source, len) - 1;
+    len2:=UnicodeToUtf8(PAnsiChar(dest), len2 + 1, source, len) - 1;
   end;
   if len2 > Length(dest) then begin
     SetLength(dest, len2);
@@ -168,7 +168,7 @@ begin
     if conv <> nil then
       len2:=ucnv_fromUChars(conv, PAnsiChar(dest), len2, source, len, err)
     else
-      len2:=UnicodeToUtf8(PAnsiChar(dest), len2, source, len) - 1;
+      len2:=UnicodeToUtf8(PAnsiChar(dest), len2 + 1, source, len) - 1;
   end;
   if len2 < 0 then
     len2:=0;

@@ -1143,7 +1143,7 @@ begin
    while hp^<>#0 do
      begin
         len:=UnicodeToUTF8(Nil, hp, 0);
-        SetLength(s,len);
+        SetLength(s,len-1);
         UnicodeToUTF8(PChar(s), hp, len);
         i:=pos('=',s);
         if uppercase(copy(s,1,i-1))=upperenvvar then
@@ -1191,7 +1191,7 @@ begin
         Result:=hp;
 {$else}
         len:=UnicodeToUTF8(Nil, hp, 0);
-        SetLength(Result, len);
+        SetLength(Result, len-1);
         UnicodeToUTF8(PChar(Result), hp, len);
         SetCodePage(RawByteString(Result),CP_UTF8,false);
 {$endif}
