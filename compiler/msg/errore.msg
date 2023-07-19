@@ -465,7 +465,7 @@ scan_e_misplaced_rtti_directive=02113_E_A The RTTI directive cannot be used here
 #
 # Parser
 #
-# 03368 is the last used one
+# 03370 is the last used one
 #
 % \section{Parser messages}
 % This section lists all parser messages. The parser takes care of the
@@ -1679,6 +1679,11 @@ parser_e_nostringaliasinsystem=03370_E_Using 'string' alias is not allowed in th
 parser_e_coperators_off=03371_E_C styled assignment operators are turned off
 % By default, c style assignment operators (+=, -=, *=, /=) are turn off. Either turn them on by the command line
 % parameter -Sc or in the source code by {\$COPERATORS ON}
+parser_n_pure_analysis_too_complex=03372_N_Analysis of pure function was too complex; this call won't be evaluated further.
+% While processing a pure function, the compiler determined that it is either too complex for timely analysis or it detected that it contained an infinite loop.
+% The subroutine in question is no longer considered pure from this point.
+parser_w_pure_ineligible=03373_W_Subroutine "$1" is not eligible to be a pure function due to the following reason: $2
+% While checking to see if the subroutine could be made a pure, a construct was found that made it ineligible and otherwise impossible for the compiler to analyse.
 %
 % \end{description}
 %
