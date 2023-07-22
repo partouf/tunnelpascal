@@ -3522,6 +3522,17 @@ implementation
           paramanager.freecgpara(list,cgpara1);
           g_call_system_proc(list,pd,[@cgpara1],nil).resetiftemp;
         end
+       else if is_rtti_managed_type(t) and is_record(t)
+              and (mop_addref in trecordsymtable(t.getsymtable(gs_record)).managementoperators) then
+        begin
+          pd := tprocsym(t.getsymtable(gs_record).Find('addref')).find_procdef_bytype(potype_operator);
+          paramanager.getcgtempparaloc(list,pd,1,cgpara1);
+          a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+          paramanager.freecgpara(list,cgpara1);
+          allocallcpuregisters(list);
+          a_call_name(list,pd,pd.mangledname,[@cgpara1],nil,false);
+          deallocallcpuregisters(list);
+        end
        else
         begin
           pd:=search_system_proc('fpc_addref');
@@ -3570,8 +3581,18 @@ implementation
            paramanager.freecgpara(list,cgpara1);
           g_call_system_proc(list,pd,[@cgpara1],nil).resetiftemp;
          end
-       else
+       else if is_rtti_managed_type(t) and is_record(t)
+               and (mop_initialize in trecordsymtable(t.getsymtable(gs_record)).managementoperators) then
          begin
+           pd := tprocsym(t.getsymtable(gs_record).Find('initialize')).find_procdef_bytype(potype_operator);
+           paramanager.getcgtempparaloc(list,pd,1,cgpara1);
+           a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
+           paramanager.freecgpara(list,cgpara1);
+           allocallcpuregisters(list);
+           a_call_name(list,pd,pd.mangledname,[@cgpara1],nil,false);
+           deallocallcpuregisters(list);
+         end
+       else begin
             if is_open_array(t) then
               InternalError(201103052);
             pd:=search_system_proc('fpc_initialize');
@@ -3600,8 +3621,8 @@ implementation
     var
        href : treference;
        cgpara1,cgpara2 : TCGPara;
-       pd : tprocdef;
-       decrfunc : string;
+       pd : tprocdef = nil;
+       decrfunc : string = '';
     begin
       if is_interfacecom_or_dispinterface(t) then
         decrfunc:='fpc_intf_decr_ref'
@@ -3613,6 +3634,9 @@ implementation
         decrfunc:='fpc_unicodestr_decr_ref'
       else if t.typ=variantdef then
         decrfunc:='fpc_variant_clear'
+      else if is_rtti_managed_type(t) and is_record(t)
+               and (mop_finalize in trecordsymtable(t.getsymtable(gs_record)).managementoperators) then
+        pd := tprocsym(t.getsymtable(gs_record).Find('finalize')).find_procdef_bytype(potype_operator)
       else
         begin
           cgpara1.init;
@@ -3645,12 +3669,18 @@ implementation
           cgpara2.done;
           exit;
         end;
-      pd:=search_system_proc(decrfunc);
+      if decrfunc <> '' then
+        pd:=search_system_proc(decrfunc);
       cgpara1.init;
       paramanager.getcgtempparaloc(list,pd,1,cgpara1);
       a_loadaddr_ref_cgpara(list,t,ref,cgpara1);
       paramanager.freecgpara(list,cgpara1);
-      g_call_system_proc(list,pd,[@cgpara1],nil).resetiftemp;
+      if decrfunc <> '' then g_call_system_proc(list,pd,[@cgpara1],nil).resetiftemp
+      else begin
+        allocallcpuregisters(list);
+        a_call_name(list,pd,pd.mangledname,[@cgpara1],nil,false);
+        deallocallcpuregisters(list);
+      end;
       cgpara1.done;
     end;
 
