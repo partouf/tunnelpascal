@@ -953,8 +953,7 @@ implementation
             not is_const(left) and
             not(target_info.system in systems_garbage_collected_managed_types) then
          begin
-           if is_rtti_managed_type(left.resultdef) and is_record(left.resultdef)
-               and (mop_copy in trecordsymtable(left.resultdef.getsymtable(gs_record)).managementoperators) then
+           if is_rtti_managed_type_with_directly_callable_mop(left.resultdef, mop_copy) then
              begin
                hsym := tprocsym(left.resultdef.getsymtable(gs_record).Find('copy'));
                hp := ccallparanode.create(left, ccallparanode.create(right, nil));

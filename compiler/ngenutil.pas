@@ -267,8 +267,7 @@ implementation
                   ctypeconvnode.create_internal(p,search_system_type('TVARDATA').typedef),
                 nil));
             end
-          else if is_rtti_managed_type(p.resultdef) and is_record(p.resultdef)
-             and (mop_initialize in trecordsymtable(p.resultdef.getsymtable(gs_record)).managementoperators) then
+          else if is_rtti_managed_type_with_directly_callable_mop(p.resultdef, mop_initialize) then
             begin
               hsym := tprocsym(p.resultdef.getsymtable(gs_record).Find('initialize'));
               result := ccallnode.create(ccallparanode.create(p, nil),
@@ -331,8 +330,7 @@ implementation
                   ctypeconvnode.create_internal(p,search_system_type('TVARDATA').typedef),
                 nil));
             end
-          else if is_rtti_managed_type(p.resultdef) and is_record(p.resultdef)
-             and (mop_finalize in trecordsymtable(p.resultdef.getsymtable(gs_record)).managementoperators) then
+          else if is_rtti_managed_type_with_directly_callable_mop(p.resultdef, mop_finalize) then
             begin
               hsym := tprocsym(p.resultdef.getsymtable(gs_record).Find('finalize'));
               result := ccallnode.create(ccallparanode.create(p, nil),

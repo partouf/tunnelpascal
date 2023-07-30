@@ -123,6 +123,9 @@ interface
     { # Returns whether def is needs to load RTTI for reference counting }
     function is_rtti_managed_type(def: tdef) : boolean;
 
+    { # Returns whether def is_rtti_managed_type and a single call to a managed operator is needed to manage it }
+    function is_rtti_managed_type_with_directly_callable_mop(def: tdef; op: tmanagementoperator) : boolean;
+
 {    function is_in_limit_value(val_from:TConstExprInt;def_from,def_to : tdef) : boolean;}
 
 {*****************************************************************************
@@ -812,6 +815,16 @@ implementation
         );
       end;
 
+    function is_rtti_managed_type_with_directly_callable_mop(def: tdef; op: tmanagementoperator) : boolean;
+    var symtable: trecordsymtable;
+    begin
+      result := is_rtti_managed_type(def) and is_record(def);
+      if not result then
+        exit;
+      symtable := trecordsymtable(def.getsymtable(gs_record));
+      result := (op in symtable.managementoperators) //managed operator of def needs to be called
+                and not symtable.needs_init_final    //there are no nested fields that need to be managed
+    end;
 
     { true, if p points to an open array def }
     function is_open_string(p : tdef) : boolean;

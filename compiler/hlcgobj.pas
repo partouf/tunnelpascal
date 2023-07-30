@@ -3522,8 +3522,7 @@ implementation
           paramanager.freecgpara(list,cgpara1);
           g_call_system_proc(list,pd,[@cgpara1],nil).resetiftemp;
         end
-       else if is_rtti_managed_type(t) and is_record(t)
-              and (mop_addref in trecordsymtable(t.getsymtable(gs_record)).managementoperators) then
+       else if is_rtti_managed_type_with_directly_callable_mop(t, mop_addref) then
         begin
           pd := tprocsym(t.getsymtable(gs_record).Find('addref')).find_procdef_bytype(potype_operator);
           paramanager.getcgtempparaloc(list,pd,1,cgpara1);
@@ -3581,8 +3580,7 @@ implementation
            paramanager.freecgpara(list,cgpara1);
           g_call_system_proc(list,pd,[@cgpara1],nil).resetiftemp;
          end
-       else if is_rtti_managed_type(t) and is_record(t)
-               and (mop_initialize in trecordsymtable(t.getsymtable(gs_record)).managementoperators) then
+       else if is_rtti_managed_type_with_directly_callable_mop(t, mop_initialize) then
          begin
            pd := tprocsym(t.getsymtable(gs_record).Find('initialize')).find_procdef_bytype(potype_operator);
            paramanager.getcgtempparaloc(list,pd,1,cgpara1);
@@ -3634,8 +3632,7 @@ implementation
         decrfunc:='fpc_unicodestr_decr_ref'
       else if t.typ=variantdef then
         decrfunc:='fpc_variant_clear'
-      else if is_rtti_managed_type(t) and is_record(t)
-               and (mop_finalize in trecordsymtable(t.getsymtable(gs_record)).managementoperators) then
+      else if is_rtti_managed_type_with_directly_callable_mop(t, mop_finalize) then
         pd := tprocsym(t.getsymtable(gs_record).Find('finalize')).find_procdef_bytype(potype_operator)
       else
         begin
