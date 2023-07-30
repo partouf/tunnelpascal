@@ -1512,6 +1512,8 @@ implementation
                  not is_void(p.resultdef)) or
                 ((p.nodetype=calln) and
                  (assigned(tcallnode(p).procdefinition)) and
+                 { ignore visibility is set for internally generated calls (for lmanagement operators) }
+                 (not (cnf_ignore_visibility in tcallnode(p).callnodeflags)) and
                  (tcallnode(p).procdefinition.proctypeoption=potype_operator)) then
                Message(parser_e_illegal_expression);
 
