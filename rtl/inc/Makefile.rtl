@@ -600,6 +600,13 @@ ifndef BASEUNIXDIR
 BASEUNIXDIR=$(UNIXINC)
 endif
 
+# On some platforms, the DOS unit is in the buildrtl target, 
+# and will be specified in EXTPAS_DEPS_OS. If it is not, then we add the dos
+# unit as a dependency here
+ifndef EXTPAS_DEPS_OS
+EXTPAS_DEPS_OS=$(DOSUNIT)$(PPUEXT)
+endif
+
 #
 # Some units have the same name for dotted/non-dotted RTL. 
 # These units must be passed FPC_DOTTEDUNITS explicitly
@@ -675,7 +682,7 @@ iso7185$(PPUEXT) : $(ISO7185_DEPS)
 # extpas
 
 EXTPAS_DEPS=$(INC)/extpas.pp \
-            $(DOSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
+            $(SYSTEMUNIT)$(PPUEXT) \
             $(EXTPAS_DEPS_OS) $(EXTPAS_DEPS_CPU)
 
 extpas$(PPUEXT) : $(EXTPAS_DEPS)
@@ -873,7 +880,7 @@ fpcylix$(PPUEXT) : $(FPCYLIX_DEPS)
 #
 # Termio
 #
-TERMIO_DEPS=$(OSDIR)/termio.pp $(BASEUNIXUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)\
+TERMIO_DEPS=$(OSDIR)/termio.pp $(BASEUNIXUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
             $(TERMIO_DEPS_OS) $(TERMIO_DEPS_CPU)
 
 termio$(PPUEXT) : $(TERMIO_DEPS)
@@ -1037,8 +1044,8 @@ System.RtlConsts$(PPUEXT) : $(NSINC)/System.RtlConsts.pp $(RTLCONSTS_DEPS)
 #
 
 
-ifneq ($(findstring $(ARCH),x86_64 i386),)
-CPU_DEPS_OS:=$(CPU_DEPS_OS) $(SYSUTILSUNIT)$(PPUEXT)
+ifneq ($(findstring $(ARCH),x86_64 i386 i8086),)
+CPU_DEPS_CPU:=$(CPU_DEPS_CPU) $(SYSUTILSUNIT)$(PPUEXT)
 endif
 
 CPU_DEPS=$(PROCINC)/cpu.pp \
@@ -1096,7 +1103,7 @@ System.GetOpts$(PPUEXT) : $(NSINC)/System.GetOpts.pp $(GETOPTS_DEPS)
 # lineinfo
 #
 LINEINFO_DEPS=$(INC)/lineinfo.pp \
-              $(STRINGSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) $(SYSUTILSUNIT)$(PPUEXT) \
+              $(STRINGSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) $(SYSUTILSUNIT)$(PPUEXT) $(EXEINFOUNIT)$(PPUEXT) \
               $(LINEINFO_DEPS_OS)  $(LINEINFO_DEPS_CPU)
 
 
@@ -1114,14 +1121,14 @@ EXEINFO_DEPS=$(INC)/exeinfo.pp \
 exeinfo$(PPUEXT) : $(EXEINFO_DEPS)
 	$(COMPILER) $(EXEINFO_OPT) $<
 
-System.ExeInfo$(PPUEXT) : $(NSINC)/System.ExeInfo.pp $(LINEINFO_DEPS)
+System.ExeInfo$(PPUEXT) : $(NSINC)/System.ExeInfo.pp $(EXEINFO_DEPS)
 	$(COMPILER) $(EXEINFO_OPT) $<
 
 #
 # lnfodwrf
 #
 LNFODWRF_DEPS=$(INC)/lnfodwrf.pp \
-              $(SYSTEMUNIT)$(PPUEXT) $(STRINGSUNIT)$(PPUEXT) $(LINEINFOUNIT)$(PPUEXT) \
+              $(SYSTEMUNIT)$(PPUEXT) $(STRINGSUNIT)$(PPUEXT) \
               $(SYSUTILSUNIT)$(PPUEXT) $(EXEINFOUNIT)$(PPUEXT) \
               $(LNFODWRF_DEPS_OS) $(LNFODWRF_DEPS_CPU)
               
@@ -1133,10 +1140,10 @@ System.LineInfo.Dwarf$(PPUEXT) : $(NSINC)/System.LineInfo.Dwarf.pp $(LNFODWRF_DE
 
 #
 # lnfodgdb
-#
+# uses ctypes,baseunix,unix;
 LNFOGDB_DEPS=$(UNIXINC)/lnfogdb.pp \
-              $(SYSTEMUNIT)$(PPUEXT) $(STRINGSUNIT)$(PPUEXT) $(LINEINFOUNIT)$(PPUEXT) \
-              $(SYSUTILSUNIT)$(PPUEXT) $(EXEINFOUNIT)$(PPUEXT) \
+              $(SYSTEMUNIT)$(PPUEXT) $(CTYPESUNIT)$(PPUEXT) \
+	      $(BASEUNIXUNIT)$(PPUEXT) $(UNIXUNIT)$(PPUEXT) \
               $(LNFOGDB_DEPS_OS) $(LNFOGDB_DEPS_CPU)
               
 lnfogdb$(PPUEXT) : $(LNFOGDB_DEPS)
@@ -1266,7 +1273,7 @@ UnixApi.Unix$(PPUEXT) : $(NSINC)/UnixApi.Unix.pp $(UNIX_DEPS)
 # SysCall
 #
 SYSCALL_DEPS=$(UNIXINC)/syscall.pp \
-             $(SYSTEMUNIT)$(PPUEXT)\
+             $(SYSTEMUNIT)$(PPUEXT) \
              $(SYSCALL_DEPS_OS) $(SYSCALL_DEPS_CPU)
 
 syscall$(PPUEXT) : $(SYSCALL_DEPS)
@@ -1279,8 +1286,8 @@ UnixApi.SysCall$(PPUEXT) : $(NSINC)/UnixApi.SysCall.pp $(SYSCALL_DEPS)
 # UnixUtil
 #
 
-UNIXUTIL_DEPS=$(UNIXINC)/unixutil.pp $(INC)/textrec.inc $(INC)/filerec.inc\
-             $(SYSTEMUNIT)$(PPUEXT)\
+UNIXUTIL_DEPS=$(UNIXINC)/unixutil.pp $(INC)/textrec.inc $(INC)/filerec.inc \
+             $(SYSTEMUNIT)$(PPUEXT) \
              $(UNIXUTIL_DEPS_OS)
 
 
@@ -1452,7 +1459,7 @@ sysctl$(PPUEXT) : $(SYSCTL_DEPS)
 	$(COMPILER) $(SYSCTL_OPT) $<
 
 BsdApi.SysCtl$(PPUEXT) : $(NSBSDDIR)/BsdApi.SysCtl.pp $(SYSCTL_DEPS)
-	$(COMPILER) $(BSD_OPT) $<
+	$(COMPILER) $(SYSCTL_OPT) $<
 #
 # bsd unit
 #
