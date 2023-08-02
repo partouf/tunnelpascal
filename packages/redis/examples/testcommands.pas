@@ -49,7 +49,7 @@ begin
     WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
     Halt(1);
   end else begin
-    for i := 0 to Length(GRESP.Elements) - 1 do begin
+    for i := 0 to GRESP.ElementCount - 1 do begin
       if i > 0 then Write(', ');
       Write(GRESP.Elements[i].StrValue);
     end;

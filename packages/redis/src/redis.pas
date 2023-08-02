@@ -18,12 +18,23 @@ type
   TRESPType = (rtError,rtString,rtInteger,rtArray);
 
   TRESP = class
+  private
+    FRESPType: TRESPType;
+    FErrorType: String;
+    FStrValue: String;
+    FIntValue: Integer;
+    FElements: array of TRESP;
+    function GetElement(const i: Integer): TRESP;
+    procedure SetElement(const i: Integer; const AValue: TRESP);
+    function GetElementCount: Integer;
+    procedure SetElementCount(const AValue: Integer);
   public
-    RESPType: TRESPType;
-    ErrorType: String;
-    StrValue: String;
-    IntValue: Integer;
-    Elements: array of TRESP;
+    property RESPType: TRESPType read FRESPType write FRESPType;
+    property ErrorType: String read FErrorType write FErrorType;
+    property StrValue: String read FStrValue write FStrValue;
+    property IntValue: Integer read FIntValue write FIntValue;
+    property Elements[const i: Integer]: TRESP read GetElement write SetElement;
+    property ElementCount: Integer read GetElementCount write SetElementCount;
     destructor Destroy; override;
   end;
 
@@ -42,6 +53,41 @@ uses
   Classes,
   SysUtils,
   Strings;
+
+{ TRESP }
+
+function TRESP.GetElement(const i: Integer): TRESP;
+begin
+  Result := FElements[i];
+end;
+
+procedure TRESP.SetElement(const i: Integer; const AValue: TRESP);
+begin
+  FElements[i] := AValue;
+end;
+
+function TRESP.GetElementCount: Integer;
+begin
+  Result := Length(FElements);
+end;
+
+procedure TRESP.SetElementCount(const AValue: Integer);
+begin
+  SetLength(FElements, AValue);
+end;
+
+destructor TRESP.Destroy;
+var
+  i: Integer;
+begin
+  if RESPType = rtArray then begin
+    for i := 0 to ElementCount - 1 do
+      Elements[i].Free;
+  end;
+  inherited Destroy;
+end;
+
+{ TRedis }
 
 constructor TRedis.Create(const AHost: String; const APort: Word);
 begin
@@ -188,7 +234,7 @@ function RESPStringToRESP(const ARespString: String): TRESP;
 
         Result := TRESP.Create;
         Result.RESPType := rtArray;
-        SetLength(Result.Elements, LCount);
+        Result.ElementCount := LCount;
         for i := 0 to LCount - 1 do begin
           Result.Elements[i] := RESPPCharToRESP(APC);
         end;
@@ -210,17 +256,6 @@ begin
   LStr := ArrayOfConstToRESPString(AParams);
   LStr := FConn.Send(LStr);
   Result := RESPStringToRESP(LStr);
-end;
-
-destructor TRESP.Destroy;
-var
-  i: Integer;
-begin
-  if RESPType = rtArray then begin
-    for i := 0 to Length(Elements) - 1 do
-      Elements[i].Free;
-  end;
-  inherited Destroy;
 end;
 
 end.
