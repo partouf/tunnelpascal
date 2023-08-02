@@ -27,12 +27,9 @@ begin
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
     P.Version:='3.3.1';
-    // P.Dependencies.Add('lnet');
+    P.Dependencies.Add('fcl-net');
 
     P.SourcePath.Add('src');
-    P.UnitPath.Add('../../utils/fppkg/lnet');
-    P.IncludePath.Add('../../utils/fppkg/lnet');
-    P.IncludePath.Add('../../utils/fppkg/lnet/sys');
 
     T:=P.Targets.AddUnit('redis.pas');
     T.ResourceStrings := True;

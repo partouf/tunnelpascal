@@ -8,30 +8,33 @@ uses
   tcpimpl;
 
 const
-  DefaultHost = '127.0.0.1';
-  DefaultPort = 6379;
+  DefaultHost           = '127.0.0.1';
+  DefaultPort           = 6379;
+  DefaultConnectTimeout = 100;
+  DefaultCanReadTimeout = 100;
 
 type
-  TRedis = record
-    Conn: TTCPConn;
-  end;
-  PRedis = ^TRedis;
 
   TRESPType = (rtError,rtString,rtInteger,rtArray);
-  TRESP = record
+
+  TRESP = class
+  public
     RESPType: TRESPType;
     ErrorType: String;
     StrValue: String;
     IntValue: Integer;
-    Elements: array of ^TRESP;
+    Elements: array of TRESP;
+    destructor Destroy; override;
   end;
-  PRESP = ^TRESP;
 
-function Connect(const AHost: String; const APort: Word): PRedis;
-procedure Disconnect(ARedis: PRedis);
-
-function SendCommand(ARedis: PRedis; AParams: array of const): PRESP;
-procedure DisposeRESP(ARESP: PRESP);
+  TRedis = class
+  private
+    FConn: TTCPConn;
+  public
+    constructor Create(const AHost: String; const APort: Word);
+    destructor Destroy; override;
+    function SendCommand(AParams: array of const): TRESP;
+  end;
 
 implementation
 
@@ -40,19 +43,15 @@ uses
   SysUtils,
   Strings;
 
-function Connect(const AHost: String; const APort: Word): PRedis;
+constructor TRedis.Create(const AHost: String; const APort: Word);
 begin
-  New(Result);
-  Result^.Conn := TTCPConn.Create;
-  Result^.Conn.Connect(AHost, APort);
+  FConn := TTCPConn.Create(AHost, APort, DefaultConnectTimeout, DefaultCanReadTimeout);
 end;
 
-procedure Disconnect(ARedis: PRedis);
+destructor TRedis.Destroy;
 begin
-  if Assigned(ARedis) then begin
-    ARedis^.Conn.Free;
-  end;
-  Dispose(ARedis);
+  FConn.Free;
+  inherited Destroy;
 end;
 
 function ArrayOfConstToRESPString(AParams: array of const): String;
@@ -98,9 +97,9 @@ begin
   end;
 end;
 
-function RESPStringToRESP(const ARespString: String): PRESP;
+function RESPStringToRESP(const ARespString: String): TRESP;
 
-  function RESPPCharToRESP(var APC: PChar): PRESP;
+  function RESPPCharToRESP(var APC: PChar): TRESP;
   var
     LPos: PChar;
     LCount,i: Integer;
@@ -113,9 +112,9 @@ function RESPStringToRESP(const ARespString: String): PRESP;
         if LCount > 0 then begin
           SetLength(LStr, LCount);
           StrLCopy(@LStr[1], APC + 1, LCount);
-          New(Result);
-          Result^.RESPType := rtString;
-          Result^.StrValue := LStr;
+          Result := TRESP.Create;
+          Result.RESPType := rtString;
+          Result.StrValue := LStr;
         end;
         APC := LPos + 2;
       end;
@@ -128,16 +127,16 @@ function RESPStringToRESP(const ARespString: String): PRESP;
           LCount := LPos - APC - 1;
           SetLength(LStr, LCount);
           StrLCopy(@LStr[1], APC + 1, LCount);
-          New(Result);
-          Result^.ErrorType := LStr;
+          Result := TRESP.Create;
+          Result.ErrorType := LStr;
           if LPos^ <> #13 then begin
             APC := LPos + 1;
             LPos := StrPos(APC, #13#10);
             LCount := LPos - APC - 1;
             SetLength(LStr, LCount);
             StrLCopy(@LStr[1], APC, LCount);
-            Result^.RESPType := rtError;
-            Result^.StrValue := LStr;
+            Result.RESPType := rtError;
+            Result.StrValue := LStr;
           end;
         end;
       end;
@@ -147,9 +146,9 @@ function RESPStringToRESP(const ARespString: String): PRESP;
         if LCount > 0 then begin
           SetLength(LStr, LCount);
           StrLCopy(@LStr[1], APC + 1, LCount);
-          New(Result);
-          Result^.RESPType := rtInteger;
-          Result^.IntValue := StrToInt(LStr);
+          Result := TRESP.Create;
+          Result.RESPType := rtInteger;
+          Result.IntValue := StrToInt(LStr);
         end;
         APC := LPos + 2;
       end;
@@ -162,17 +161,17 @@ function RESPStringToRESP(const ARespString: String): PRESP;
           LCount := StrToInt(LStr);
         end;
 
-        New(Result);
-        Result^.RESPType := rtString;
+        Result := TRESP.Create;
+        Result.RESPType := rtString;
         case LCount of
           0: begin
-            Result^.StrValue := '';
+            Result.StrValue := '';
           end;
           else begin
             APC := LPos + 2;
             SetLength(LStr, LCount);
             StrLCopy(@LStr[1], APC, LCount);
-            Result^.StrValue := LStr;
+            Result.StrValue := LStr;
           end;
         end;
         Inc(APC, LCount + 2);
@@ -187,11 +186,11 @@ function RESPStringToRESP(const ARespString: String): PRESP;
         end;
         APC := LPos + 2;
 
-        New(Result);
-        Result^.RESPType := rtArray;
-        SetLength(Result^.Elements, LCount);
+        Result := TRESP.Create;
+        Result.RESPType := rtArray;
+        SetLength(Result.Elements, LCount);
         for i := 0 to LCount - 1 do begin
-          Result^.Elements[i] := RESPPCharToRESP(APC);
+          Result.Elements[i] := RESPPCharToRESP(APC);
         end;
       end;
     end;
@@ -204,25 +203,24 @@ begin
   Result := RESPPCharToRESP(LPC);
 end;
 
-function SendCommand(ARedis: PRedis; AParams: array of const): PRESP;
+function TRedis.SendCommand(AParams: array of const): TRESP;
 var
   LStr: String;
 begin
   LStr := ArrayOfConstToRESPString(AParams);
-  LStr := ARedis^.Conn.Send(LStr);
+  LStr := FConn.Send(LStr);
   Result := RESPStringToRESP(LStr);
 end;
 
-procedure DisposeRESP(ARESP: PRESP);
+destructor TRESP.Destroy;
 var
   i: Integer;
 begin
-  if Assigned(ARESP) then begin
-    if ARESP^.RESPType = rtArray then
-      for i := 0 to Length(ARESP^.Elements) - 1 do
-        DisposeRESP(ARESP^.Elements[i]);
-    Dispose(ARESP);
+  if RESPType = rtArray then begin
+    for i := 0 to Length(Elements) - 1 do
+      Elements[i].Free;
   end;
+  inherited Destroy;
 end;
 
 end.

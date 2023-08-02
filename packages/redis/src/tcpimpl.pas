@@ -5,27 +5,19 @@ unit tcpimpl;
 interface
 
 uses
-  SysUtils,
-  lNet;
+  sysutils,
+  ssockets;
 
 type
-  EDisconnect = class(Exception) end;
-  EConnError = class(Exception) end;
 
   TTCPConn = class
   private
-    FConn: TLTCP;
-    FWaiting: Boolean;
-    FMessage: String;
-    procedure DoReceive(aSocket: TLSocket);
-    procedure DoDisconnect(aSocket: TLSocket); 
-    procedure DoError(const msg: string; aSocket: TLSocket);
+    FConn: TInetSocket;
+    FCanReadTimeout: Integer;
   public
-    constructor Create;
+    constructor Create(const AHost: String; const APort: Word; AConnectTimeout,ACanReadTimeout: Integer);
     destructor Destroy; override;
-    procedure Connect(const AHost: String; const APort: Word);
     function Send(const AMsg: String): String;
-    property Message: String read FMessage;
   end;
 
 implementation
@@ -39,78 +31,40 @@ uses
 
 { TTCPConn }
 
-procedure TTCPConn.DoReceive(aSocket: TLSocket);
-{ $define readasmaxaspossible}
-{$ifdef readasmaxaspossible}
-const
-  ChunkSize = 255;
-var
-  LLengthSoFar,LRecvSize: Integer;
+constructor TTCPConn.Create(const AHost: String; const APort: Word; AConnectTimeout,ACanReadTimeout: Integer);
 begin
-  LLengthSoFar := 0;
-  repeat
-    SetLength(FMessage, LLengthSoFar + ChunkSize);
-    LRecvSize := aSocket.Get(FMessage[LLengthSoFar + 1], ChunkSize);
-    Inc(LLengthSoFar, LRecvSize);
-  until LRecvSize < ChunkSize;
-  SetLength(FMessage, LLengthSoFar);
-{$else}
-begin
-  aSocket.GetMessage(FMessage);
-{$endif}
-  FWaiting := false;  
-end;
-
-procedure TTCPConn.DoDisconnect(aSocket: TLSocket); 
-begin
-  raise EDisconnect.Create('');
-end;
-
-procedure TTCPConn.DoError(const msg: string; aSocket: TLSocket);
-begin
-  raise EConnError.Create(msg);
-end;
-
-constructor TTCPConn.Create;
-begin
-  FConn := TLTCP.Create(nil);
-  FConn.OnReceive    := @DoReceive;
-  FConn.OnDisconnect := @DoDisconnect;
-  FConn.OnError      := @DoError;
-  FConn.Timeout      := 100;
+  FConn := TInetSocket.Create(AHost, APort, AConnectTimeout);
+  FCanReadTimeout := ACanReadTimeout;
 end;
 
 destructor TTCPConn.Destroy;
 begin
   FConn.Free;
-end;
-
-procedure TTCPConn.Connect(const AHost: String; const APort: Word);
-begin
-  if FConn.Connect(AHost, APort) then begin
-    repeat
-      FConn.CallAction;
-    until not FConn.Connecting;
-
-    if not FConn.Connected then
-      raise EDisconnect.Create('');
-  end;
+  inherited Destroy;
 end;
 
 function TTCPConn.Send(const AMsg: String): String;
+const
+  ChunkSize = 255;
+var
+  LLengthSoFar,LRecvSize: Integer;
 begin
   {$ifdef debug}
   WriteLn('send: ' + StringsReplace(AMsg,[#13,#10],['\r','\n'],[rfReplaceAll]));
   {$endif debug}
-  FConn.SendMessage(AMsg);
-  FWaiting := true;
+  FConn.Write(AMsg[1],Length(AMsg));
+
+  while not FConn.CanRead(FCanReadTimeout) do Sleep(1); // better than no-op, will not hog CPU
+  LLengthSoFar := 0;
   repeat
-    FConn.CallAction;
-  until not FWaiting;
+    SetLength(Result, LLengthSoFar + ChunkSize);
+    LRecvSize := FConn.Read(Result[LLengthSoFar + 1], ChunkSize);
+    Inc(LLengthSoFar, LRecvSize);
+  until LRecvSize < ChunkSize;
+  SetLength(Result, LLengthSoFar);
   {$ifdef debug}
-  WriteLn('recv: ' + StringsReplace(FMessage,[#13,#10],['\r','\n'],[rfReplaceAll]));
+  WriteLn('recv: ' + StringsReplace(Result,[#13,#10],['\r','\n'],[rfReplaceAll]));
   {$endif debug}
-  Result := FMessage;
 end;
 
 end.
