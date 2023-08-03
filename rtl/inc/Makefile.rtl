@@ -542,7 +542,9 @@ fpcdir=../..
 ifndef OSDIR
 OSDIR=.
 endif
-
+ifndef NSOSDIR
+NSOSDIR=$(NSDIR)/$(OS_TARGET)
+endif
 
 ifndef PORTSDIR
 PORTSDIR=$(OSDIR)
@@ -616,6 +618,8 @@ ifdef FPC_DOTTEDUNITS
 BLOCKRTL_OPT:=$(BLOCKRTL_OPT) -dFPC_DOTTEDUNITS
 FPEXTRES_OPT:=$(FPEXTRES_OPT) -dFPC_DOTTEDUNITS
 OBJC_OPT:=$(OBJC_OPT) -dFPC_DOTTEDUNITS
+OBJCBASE_OPT:=$(OBJCBASE_OPT) -dFPC_DOTTEDUNITS
+FPCYLIX_OPT:=$(FPCYLIX_OPT) -dFPC_DOTTEDUNITS
 endif
 
 
@@ -902,6 +906,14 @@ dos$(PPUEXT): $(DOS_DEPS)
 TP.DOS$(PPUEXT): $(NSINC)/TP.DOS.pp $(DOS_DEPS) 
 	$(COMPILER) $(DOS_OPTS) $<
 
+MSMOUSE_DEPS=msmouse.pp $(SYSTEMUNIT)$(PPUEXT)
+
+msmouse$(PPUEXT) : $(MSMOUSE_DEPS)
+	$(COMPILER) $(MSMOUSE_OPTS) $<
+
+DOSApi.MSMouse$(PPUEXT) : $(NSOSDIR)/DOSApi.MSMouse.pp $(MSMOUSE_DEPS)
+	$(COMPILER) $(MSMOUSE_OPTS) $<
+
 
 ###########################################
 # Delphi Compatible Units
@@ -1049,13 +1061,13 @@ CPU_DEPS_CPU:=$(CPU_DEPS_CPU) $(SYSUTILSUNIT)$(PPUEXT)
 endif
 
 CPU_DEPS=$(PROCINC)/cpu.pp \
-         $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
+         $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) $(SYSUTILSUNIT)$(PPUEXT) \
          $(CPU_DEPS_OS) $(CPU_DEPS_CPU)
 
 cpu$(PPUEXT) : $(CPU_DEPS)
 	$(COMPILER) $(CPU_OPT) $<
 
-System.CPU$(PPUEXT) : $(NSINC)/System.CPU.pp
+System.CPU$(PPUEXT) : $(NSINC)/System.CPU.pp $(CPU_DEPS)
 	$(COMPILER) $(CPU_OPT) $<
 
 #
@@ -1068,7 +1080,7 @@ MMX_DEPS=$(PROCINC)/mmx.pp \
 mmx$(PPUEXT) : $(MMX_DEPS)
 	$(COMPILER) $(MMX_OPT) $<
 
-System.MMX$(PPUEXT) : $(NSINC)/System.MMX $(MMX_DEPS)
+System.CPU.MMX$(PPUEXT) : $(NSINC)/System.CPU.MMX.pp $(MMX_DEPS)
 	$(COMPILER) $(MMX_OPT) $<
 
 #
@@ -1420,9 +1432,9 @@ blockrtl$(PPUEXT) : $(BLOCKRTL_DEPS)
 
 
 #
-# Windows
+# Windows, depends on objpas because of mode switch
 #
-WINDOWS_DEPS=windows.pp $(SYSTEMUNIT)$(PPUEXT) \
+WINDOWS_DEPS=windows.pp $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
              $(WINDOWS_DEPS_OS) $(WINDOWS_DEPS_CPU)
 
 windows$(PPUEXT): $(WINDOWS_DEPS)
@@ -1434,7 +1446,7 @@ WinApi.Windows$(PPUEXT): $(NSOSDIR)/WinApi.Windows.pp $(WINDOWS_DEPS)
 #
 # Windirs
 #
-WINDIRS_DEPS=windirs.pp $(WINDOWSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
+WINDIRS_DEPS=$(WINDIRSDIR)/windirs.pp $(WINDOWSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
              $(WINDIRS_DEPS_OS) $(WINDIRS_DEPS_CPU)
 
 windirs$(PPUEXT): $(WINDIRS_DEPS)
