@@ -9,14 +9,16 @@ const
   ListKey   = 'listkey';
   ListValue = 'v';
 var
+  GTCPClient: TAbstractTCPClient;
   GRedis: TRedis;
   GRESP: TRESP;
   i: Integer;
 begin
-  GRedis := TRedis.Create(redis.DefaultHost, redis.DefaultPort);
+  GTCPClient := TSSocketsTCPClient.Create(TRedis.DefaultHost, TRedis.DefaultPort, TRedis.DefaultConnectTimeout, TRedis.DefaultCanReadTimeout);
+  GRedis := TRedis.Create(GTCPClient);
 
   GRESP := GRedis.SendCommand(['SET', MapKey, MapValue]);
-  if GRESP.RESPType = rtError then begin
+  if GRESP.RESPType = TRESP.TRESPType.rtError then begin
     WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
     Halt(1);
   end else begin
@@ -25,7 +27,7 @@ begin
   GRESP.Free;
 
   GRESP := GRedis.SendCommand(['GET', MapKey]);
-  if GRESP.RESPType = rtError then begin
+  if GRESP.RESPType = TRESP.TRESPType.rtError then begin
     WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
     Halt(1);
   end else begin
@@ -35,7 +37,7 @@ begin
 
   for i := 1 to 3 do begin
     GRESP := GRedis.SendCommand(['LPUSH', ListKey, ListValue]);
-    if GRESP.RESPType = rtError then begin
+    if GRESP.RESPType = TRESP.TRESPType.rtError then begin
       WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
       Halt(1);
     end else begin
@@ -45,7 +47,7 @@ begin
   end;
 
   GRESP := GRedis.SendCommand(['LRANGE', ListKey, '0', '-1']);
-  if GRESP.RESPType = rtError then begin
+  if GRESP.RESPType = TRESP.TRESPType.rtError then begin
     WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
     Halt(1);
   end else begin
@@ -59,7 +61,7 @@ begin
 
   for i := 1 to 3 do begin
     GRESP := GRedis.SendCommand(['RPOP', ListKey]);
-    if GRESP.RESPType = rtError then begin
+    if GRESP.RESPType = TRESP.TRESPType.rtError then begin
       WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
       Halt(1);
     end else begin
@@ -69,7 +71,7 @@ begin
   end;
 
   GRESP := GRedis.SendCommand(['DEL', MapKey]);
-  if GRESP.RESPType = rtError then begin
+  if GRESP.RESPType = TRESP.TRESPType.rtError then begin
     WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
     Halt(1);
   end else begin
@@ -78,7 +80,7 @@ begin
   GRESP.Free;
 
   GRESP := GRedis.SendCommand(['DEL', ListKey]);
-  if GRESP.RESPType = rtError then begin
+  if GRESP.RESPType = TRESP.TRESPType.rtError then begin
     WriteLn(StdErr, GRESP.ErrorType + ': ' + GRESP.StrValue);
     Halt(1);
   end else begin
@@ -87,4 +89,5 @@ begin
   GRESP.Free;
 
   GRedis.Free;
+  GTCPClient.Free;
 end.

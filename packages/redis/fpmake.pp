@@ -33,8 +33,6 @@ begin
 
     T:=P.Targets.AddUnit('redis.pas');
     T.ResourceStrings := True;
-    T:=P.Targets.AddUnit('tcpimpl.pas');
-    T.ResourceStrings := True;
 
     P.NamespaceMap:='namespaces.lst';
 {$ifndef ALLPACKAGES}

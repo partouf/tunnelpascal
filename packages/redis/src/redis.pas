@@ -5,19 +5,13 @@ unit redis;
 interface
 
 uses
-  tcpimpl;
-
-const
-  DefaultHost           = '127.0.0.1';
-  DefaultPort           = 6379;
-  DefaultConnectTimeout = 100;
-  DefaultCanReadTimeout = 100;
+  ssockets;
 
 type
 
-  TRESPType = (rtError,rtString,rtInteger,rtArray);
-
   TRESP = class
+  public type
+    TRESPType = (rtError,rtString,rtInteger,rtArray);
   private
     FRESPType: TRESPType;
     FErrorType: String;
@@ -38,12 +32,33 @@ type
     destructor Destroy; override;
   end;
 
+  TAbstractTCPClient = class abstract
+  public
+    constructor Create(const AHost: String; const APort: Word; AConnectTimeout,ACanReadTimeout: Integer); virtual; abstract;
+    function Send(const AMsg: String): String; virtual; abstract;
+  end;
+  TAbstractTCPClientClass = class of TAbstractTCPClient;
+
+  TSSocketsTCPClient = class(TAbstractTCPClient)
+  private
+    FConn: TInetSocket;
+    FCanReadTimeout: Integer;
+  public
+    constructor Create(const AHost: String; const APort: Word; AConnectTimeout,ACanReadTimeout: Integer); override;
+    destructor Destroy; override;
+    function Send(const AMsg: String): String; override;
+  end;
+
   TRedis = class
   private
-    FConn: TTCPConn;
+    FConn: TAbstractTCPClient;
+  public const
+    DefaultHost           = '127.0.0.1';
+    DefaultPort           = 6379;
+    DefaultConnectTimeout = 100;
+    DefaultCanReadTimeout = 100;
   public
-    constructor Create(const AHost: String; const APort: Word);
-    destructor Destroy; override;
+    constructor Create(AConn: TAbstractTCPClient);
     function SendCommand(AParams: array of const): TRESP;
   end;
 
@@ -52,6 +67,9 @@ implementation
 uses
   Classes,
   SysUtils,
+  {$ifdef debug}
+  StrUtils,
+  {$endif debug}
   Strings;
 
 { TRESP }
@@ -87,17 +105,49 @@ begin
   inherited Destroy;
 end;
 
-{ TRedis }
+{ TSSocketsTCPClient }
 
-constructor TRedis.Create(const AHost: String; const APort: Word);
+constructor TSSocketsTCPClient.Create(const AHost: String; const APort: Word; AConnectTimeout,ACanReadTimeout: Integer);
 begin
-  FConn := TTCPConn.Create(AHost, APort, DefaultConnectTimeout, DefaultCanReadTimeout);
+  FConn := TInetSocket.Create(AHost, APort, AConnectTimeout);
+  FCanReadTimeout := ACanReadTimeout;
 end;
 
-destructor TRedis.Destroy;
+destructor TSSocketsTCPClient.Destroy;
 begin
   FConn.Free;
   inherited Destroy;
+end;
+
+function TSSocketsTCPClient.Send(const AMsg: String): String;
+const
+  ChunkSize = 255;
+var
+  LLengthSoFar,LRecvSize: Integer;
+begin
+  {$ifdef debug}
+  WriteLn('send: ' + StringsReplace(AMsg,[#13,#10],['\r','\n'],[rfReplaceAll]));
+  {$endif debug}
+  FConn.Write(AMsg[1],Length(AMsg));
+
+  while not FConn.CanRead(FCanReadTimeout) do Sleep(1); // better than no-op, will not hog CPU
+  LLengthSoFar := 0;
+  repeat
+    SetLength(Result, LLengthSoFar + ChunkSize);
+    LRecvSize := FConn.Read(Result[LLengthSoFar + 1], ChunkSize);
+    Inc(LLengthSoFar, LRecvSize);
+  until LRecvSize < ChunkSize;
+  SetLength(Result, LLengthSoFar);
+  {$ifdef debug}
+  WriteLn('recv: ' + StringsReplace(Result,[#13,#10],['\r','\n'],[rfReplaceAll]));
+  {$endif debug}
+end;
+
+{ TRedis }
+
+constructor TRedis.Create(AConn: TAbstractTCPClient);
+begin
+  FConn := AConn;
 end;
 
 function ArrayOfConstToRESPString(AParams: array of const): String;
