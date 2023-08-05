@@ -8,8 +8,10 @@ main=rtl
 [target]
 loaders=prt0 prt1
 units=$(SYSTEMUNIT) uuchar ctypes objpas macpas $(ISO7185UNIT) $(EXTPASUNIT) $(STRINGSUNIT) \
-      $(PORTSUNIT) os2def doscalls doscall2 moncalls kbdcalls moucalls viocalls so32dll \
-      pmbitmap pmwin pmgpi pmstddlg pmhelp pmdev pmspl pmshl pmwp pmwsock pmbidi \
+      $(PORTSUNIT) $(OS2DEFUNIT) $(DOSCALLSUNIT) $(DOSCALL2UNIT) $(KBDCALLSUNIT) \
+      $(MOUCALLSUNIT) $(VIOCALLSUNIT) $(SO32DLLUNIT) \
+      $(PMBITMAPUNIT) $(PMWINUNIT) $(PMGPIUNIT) $(PMSTDDLGUNIT) \
+      $(PMHELPUNIT) $(PMDEVUNIT) $(PMSPLUNIT) $(PMSHLUNIT) $(PMWPUNIT) $(PMWSOCKUNIT) $(PMBIDI) \
       $(DOSUNIT) \
       $(SUSITILSUNIT) $(SORTBASEUNIT) $(FGLUNIT) $(CLASSESUNIT) $(MATHUNIT) $(TYPINFOUNIT) \
       $(CHARSETUNIT) $(CPALLUNIT) $(CPUNIT) $(MMXUNIT) $(GETOPTSUNIT) \
@@ -17,7 +19,7 @@ units=$(SYSTEMUNIT) uuchar ctypes objpas macpas $(ISO7185UNIT) $(EXTPASUNIT) $(S
       $(TYPESUNIT) $(RTLCONSTSUNIT) $(SYSCONSTUNIT) \
       $(FPWIDESTRINGUNIT) $(CHARACTERUNIT) \
       $(SOFTFPUUNIT) $(SFPUX80UNIT) $(UFLOATX80UNIT) $(SPFU128UNIT)       $(UFLOAT128UNIT)
-rsts=$(MATHUNIT) $(TYPINFOUNIT) pmhelp $(CLASSESUNIT) $(SYSCONSTUNIT)
+rsts=$(MATHUNIT) $(TYPINFOUNIT) $(PMHELPUNIT) $(CLASSESUNIT) $(SYSCONSTUNIT)
 implicitunits=$(EXEINFOUNIT) \
       $(CP1250UNIT) $(CP1251UNIT) $(CP1252UNIT) $(CP1253UNIT) $(CP1254UNIT) $(CP1255UNIT) $(CP1256UNIT) $(CP1257UNIT) $(CP1258UNIT) \
       $(CP437UNIT) $(CP646UNIT) $(CP737UNIT) $(CP775UNIT) $(CP850UNIT) $(CP852UNIT) $(CP855UNIT) $(CP856UNIT) $(CP857UNIT) $(CP860UNIT) $(CP861UNIT) $(CP862UNIT) \
@@ -46,14 +48,17 @@ RTL=..
 INC=$(RTL)/inc
 PROCINC=$(RTL)/$(CPU_TARGET)
 OS2INC=$(RTL)/os2
-DOS_DEPS_OS=doscalls$(PPUEXT) 
-SYSUTILS_DEPS_OS=dos$(PPUEXT)
-DYNLIBS_DEPS_OD=doscalls($PPUEXT)
+OS2DIR=$(RTL)/os2
+DOS_DEPS_OS=$(DOSCALLSUNIT)$(PPUEXT)
+SYSUTILS_DEPS_OS=$(DOSUNIT)$(PPUEXT)
+DYNLIBS_DEPS_OS=$(DOSCALLSUNIT)$(PPUEXT)
 
 UNITPREFIX=rtl
 
 SYSTEMUNIT=system
+ifndef FPC_DOTTEDUNITS
 RTLCONSTSUNIT=rtlconst
+endif
 
 # Use new feature from 1.0.5 version
 # that generates release PPU files
@@ -100,61 +105,4 @@ SYSDEPS=$(SYSINCDEPS) $(SYSCPUDEPS)
 # Base Units (System, strings, os-dependent-base-unit)
 #
 
-
-doscalls$(PPUEXT) : $(OS2INC)/doscalls.pas strings$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-viocalls$(PPUEXT) : $(OS2INC)/viocalls.pas $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-so32dll$(PPUEXT) : $(OS2INC)/so32dll.pas $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-kbdcalls$(PPUEXT) : $(OS2INC)/kbdcalls.pas $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-moucalls$(PPUEXT) : $(OS2INC)/moucalls.pas $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-moncalls$(PPUEXT) : $(OS2INC)/moncalls.pas strings$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-os2def$(PPUEXT) : $(OS2INC)/os2def.pas $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-doscall2$(PPUEXT) : $(OS2INC)/doscall2.pas doscalls$(PPUEXT) os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmwin$(PPUEXT) : $(OS2INC)/pmwin.pas os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmbitmap$(PPUEXT) : $(OS2INC)/pmbitmap.pas $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmgpi$(PPUEXT) : $(OS2INC)/pmgpi.pas pmbitmap$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmstddlg$(PPUEXT) : $(OS2INC)/pmstddlg.pas os2def$(PPUEXT) doscalls$(PPUEXT) pmwin$(PPUEXT) pmgpi$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmhelp$(PPUEXT) : $(OS2INC)/pmhelp.pas os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmdev$(PPUEXT) : $(OS2INC)/pmdev.pas os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmspl$(PPUEXT) : $(OS2INC)/pmspl.pas os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmshl$(PPUEXT) : $(OS2INC)/pmshl.pas os2def$(PPUEXT) pmwin$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmwp$(PPUEXT) : $(OS2INC)/pmwp.pas os2def$(PPUEXT) pmwin$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmwsock$(PPUEXT) : $(OS2INC)/pmwsock.pas os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
-
-pmbidi$(PPUEXT) : $(OS2INC)/pmbidi.pas os2def$(PPUEXT) pmwin$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-        $(COMPILER) $<
 
