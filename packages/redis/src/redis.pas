@@ -7,11 +7,19 @@ interface
 uses
   ssockets;
 
+const
+  DefaultHost           = '127.0.0.1';
+  DefaultPort           = 6379;
+  DefaultConnectTimeout = 100;
+  DefaultCanReadTimeout = 100;
+  CRLF                  = #13#10;
+  CR                    = #13;
+
 type
 
+  TRESPType = (rtError,rtString,rtInteger,rtArray);
+
   TRESP = class
-  public type
-    TRESPType = (rtError,rtString,rtInteger,rtArray);
   private
     FRESPType: TRESPType;
     FErrorType: String;
@@ -52,11 +60,6 @@ type
   TRedis = class
   private
     FConn: TAbstractTCPClient;
-  public const
-    DefaultHost           = '127.0.0.1';
-    DefaultPort           = 6379;
-    DefaultConnectTimeout = 100;
-    DefaultCanReadTimeout = 100;
   public
     constructor Create(AConn: TAbstractTCPClient);
     function SendCommand(AParams: array of const): TRESP;
@@ -203,7 +206,7 @@ function RESPStringToRESP(const ARespString: String): TRESP;
   begin
     case APC^ of
       '+': begin
-        LPos := StrPos(APC, #13#10);
+        LPos := StrPos(APC, CRLF);
         LCount := LPos - APC - 1;
         if LCount > 0 then begin
           SetLength(LStr, LCount);
@@ -218,16 +221,17 @@ function RESPStringToRESP(const ARespString: String): TRESP;
         LPos := StrPos(APC, ' ');
         // the spec says space or newline, this is just to comply although when this is true that means the error has no StrValue at all
         if not Assigned(LPos) then
-          LPos := StrPos(APC, #13#10);
+          LPos := StrPos(APC, CRLF);
         if Assigned(LPos) then begin
           LCount := LPos - APC - 1;
           SetLength(LStr, LCount);
           StrLCopy(@LStr[1], APC + 1, LCount);
           Result := TRESP.Create;
           Result.ErrorType := LStr;
-          if LPos^ <> #13 then begin
+          // current char not CR means it's an not empty error, get the StrValue
+          if LPos^ <> CR then begin
             APC := LPos + 1;
-            LPos := StrPos(APC, #13#10);
+            LPos := StrPos(APC, CRLF);
             LCount := LPos - APC - 1;
             SetLength(LStr, LCount);
             StrLCopy(@LStr[1], APC, LCount);
@@ -237,7 +241,7 @@ function RESPStringToRESP(const ARespString: String): TRESP;
         end;
       end;
       ':': begin
-        LPos := StrPos(APC, #13#10);
+        LPos := StrPos(APC, CRLF);
         LCount := LPos - APC - 1;
         if LCount > 0 then begin
           SetLength(LStr, LCount);
@@ -249,7 +253,7 @@ function RESPStringToRESP(const ARespString: String): TRESP;
         APC := LPos + 2;
       end;
       '$': begin
-        LPos := StrPos(APC, #13#10);
+        LPos := StrPos(APC, CRLF);
         LCount := LPos - APC - 1;
         if LCount > 0 then begin
           SetLength(LStr, LCount);
@@ -273,7 +277,7 @@ function RESPStringToRESP(const ARespString: String): TRESP;
         Inc(APC, LCount + 2);
       end;
       '*': begin
-        LPos := StrPos(APC, #13#10);
+        LPos := StrPos(APC, CRLF);
         LCount := LPos - APC - 1;
         if LCount > 0 then begin
           SetLength(LStr, LCount);
