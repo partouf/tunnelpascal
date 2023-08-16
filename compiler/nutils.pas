@@ -1181,7 +1181,6 @@ implementation
       var
         treechanged : boolean;
       begin
-        // Optimize if code first
         repeat
           treechanged:=false;
           foreachnodestatic(pm_postandagain,n,@callsimplify,@treechanged);
