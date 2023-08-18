@@ -1847,8 +1847,8 @@ implementation
 
            { This is a shortcutted version of
              "result:=node_count_unbounded(code)+node_complexity(code)<=25". }
-           complexityAvail:=25-integer(node_complexity(code));
-           result:=(complexityAvail>=0) and (node_count(code,complexityAvail+1)<=cardinal(complexityAvail));
+           complexityAvail:=25-node_complexity(code);
+           result:=(complexityAvail>0) and (node_count(code,complexityAvail+1)<=complexityAvail);
          end;
 
       var

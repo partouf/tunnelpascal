@@ -4674,7 +4674,7 @@ implementation
 
     function tcallnode.heuristics_favors_inlining:boolean;
       var
-        limExcluding: cardinal;
+        limExcluding: integer;
       begin
         {  Prevent too deep inlining recursion and code bloat by inlining
 

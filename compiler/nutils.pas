@@ -135,11 +135,11 @@ interface
 
     { count the number of nodes in the node tree,
       rough estimation how large the tree "node" is }
-    function node_count(node : tnode; max : integer) : dword;
-    function node_count_unbounded(node : tnode): dword;
+    function node_count(node : tnode; max : integer) : integer;
+    function node_count_unbounded(node : tnode): integer;
 
-    function node_count_weighted(node : tnode; max : integer) : dword;
-    function node_count_weighted_unbounded(node : tnode) : dword;
+    function node_count_weighted(node : tnode; max : integer) : integer;
+    function node_count_weighted_unbounded(node : tnode) : integer;
 
     { returns true, if the value described by node is constant/immutable, this approximation is safe
       if no dirty tricks like buffer overflows or pointer magic are used }
@@ -1439,18 +1439,19 @@ implementation
       end;
 
 
-    function node_count(node : tnode; max : integer) : dword;
+    function node_count(node : tnode; max : integer) : integer;
       var
         left : integer;
       begin
+        if max<=0 then
+          exit(0);
         left:=max;
         foreachnodestatic(node,@donodecount,@left);
-        if left<0 then left:=0;
-        result:=max-left;
+        result:=max-cutils.max(left,0);
       end;
 
 
-    function node_count_unbounded(node : tnode): dword;
+    function node_count_unbounded(node : tnode): integer;
       begin
         result:=node_count(node,High(integer));
       end;
@@ -1467,18 +1468,19 @@ implementation
       end;
 
 
-    function node_count_weighted(node : tnode; max : integer) : dword;
+    function node_count_weighted(node : tnode; max : integer) : integer;
       var
         left : integer;
       begin
+        if max<=0 then
+          exit(0);
         left:=max;
         foreachnodestatic(node,@donodecount_weighted,@left);
-        if left<0 then left:=0;
-        result:=max-left;
+        result:=max-cutils.max(left,0);
       end;
 
 
-    function node_count_weighted_unbounded(node : tnode) : dword;
+    function node_count_weighted_unbounded(node : tnode) : integer;
       begin
         result:=node_count_weighted(node,High(integer));
       end;
