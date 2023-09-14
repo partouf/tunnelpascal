@@ -40,7 +40,8 @@ Type
                            // rdoServerInfo            // Enable querying server info through /_serverinfo  resource
                            rdoLegacyPut,               // Makes PUT simulate PATCH : Not all values are required, missing values will be gotten from previous record.
                            rdoAllowNoRecordUpdates,    // Check rows affected, rowsaffected = 0 is OK.
-                           rdoAllowMultiRecordUpdates  // Check rows affected, rowsaffected > 1 is OK.
+                           rdoAllowMultiRecordUpdates, // Check rows affected, rowsaffected > 1 is OK.
+                           rdoSingleEmptyOK            // When asking a single resource and it does not exist, an empty dataset is returned
                            );
 
   TRestDispatcherOptions = set of TRestDispatcherOption;
@@ -309,6 +310,8 @@ Type
     function ResolvedCORSAllowedOrigins(aRequest: TRequest): String; virtual;
     procedure HandleCORSRequest(aConnection: TSQLDBConnectionDef; IO: TRestIO); virtual;
     procedure HandleResourceRequest(aConnection : TSQLDBConnectionDef; IO: TRestIO); virtual;
+    procedure HandleCorsResponseHeaders(IO: TRestIO); virtual;
+    procedure HandleOtherResponseHeaders(IO: TRestIO); virtual;
     procedure DoHandleRequest(IO: TRestIO); virtual;
   Public
     Class Procedure SetIOClass (aClass: TRestIOClass);
@@ -1007,9 +1010,6 @@ begin
 end;
 
 function TSQLDBRestDispatcher.CreateMetadataParameterResource: TSQLDBRestResource;
-Var
-  O : TRestFieldOption;
-  S : String;
 
 begin
   Result:=TSQLDBRestResource.Create(Nil);
@@ -1414,6 +1414,8 @@ begin
     Include(opts,rhoCheckupdateCount);
   if (rdoAllowMultiRecordUpdates in DispatchOptions) then
     Include(opts,rhoAllowMultiUpdate);
+  if (rdoSingleEmptyOK in DispatchOptions) then
+    Include(opts,rhoSingleEmptyOK);
   // Options may have been set in handler class, make sure we don't unset any.
   Result.Options:=Result.Options+Opts;
   Result.UpdatedData:=IO.UpdatedData;
@@ -1572,10 +1574,7 @@ procedure TSQLDBRestDispatcher.ResourceParamsToDataset(R: TSQLDBRestResource;
   D: TDataset);
 Var
   P : TSQLDBRestParam;
-  O : TRestFieldOption;
-  I : Integer;
   FName,FType,fDefault : TField;
-  FOptions : Array[TRestFieldOption] of TField;
 
 begin
   FName:=D.FieldByName('name');
@@ -1628,10 +1627,9 @@ end;
 
 function TSQLDBRestDispatcher.CreateMetadataParameterDataset(IO: TRestIO;
   const aResourceName: String; AOwner: TComponent): TDataset;
+  
 Var
-  BD :  TRestBufDataset;
-  O : TRestFieldOption;
-  SO : String;
+  BD :  TRestBufDataset;  
   R : TSQLDBRestResource;
 
 begin
@@ -1941,6 +1939,41 @@ begin
     end;
 end;
 
+
+procedure TSQLDBRestDispatcher.HandleCorsResponseHeaders(IO : TRestIO);
+
+begin
+  if (rdoHandleCORS in DispatchOptions) then
+    begin
+    IO.Response.SetCustomHeader('Access-Control-Allow-Origin',ResolvedCORSAllowedOrigins(IO.Request));
+    IO.Response.SetCustomHeader('Access-Control-Allow-Credentials',BoolToStr(CORSAllowCredentials,'true','false'));
+    end;
+end;
+
+procedure TSQLDBRestDispatcher.HandleOtherResponseHeaders(IO : TRestIO);
+
+Var
+  Qn,CD : String;
+  HaveHeader : Boolean;
+
+begin
+  QN:=IO.RestStrings.AttachmentParam;
+  With IO.Request.QueryFields do
+    begin
+    HaveHeader:=(IndexOfName(QN)<>-1);
+    Cd:=values[QN];
+    end;
+  if (CD<>'') or HaveHeader then
+    begin
+    If CD='' then
+      begin
+      CD:=IO.ResourceName;
+      CD:=CD+IO.RESTOutput.FileExtension;
+      end;
+    IO.Response.SetCustomHeader('Content-Disposition',Format('attachment; filename="%s"',[CD]));
+    end;
+end;
+
 procedure TSQLDBRestDispatcher.HandleResourceRequest(aConnection : TSQLDBConnectionDef; IO : TRestIO);
 
 Var
@@ -1968,15 +2001,12 @@ begin
         Conn.LogEvents:=LogSQLOptions;
         Conn.OnLog:=@IO.DoSQLLog;
         end;
-      if (rdoHandleCORS in DispatchOptions) then
-        begin
-        IO.Response.SetCustomHeader('Access-Control-Allow-Origin',ResolvedCORSAllowedOrigins(IO.Request));
-        IO.Response.SetCustomHeader('Access-Control-Allow-Credentials',BoolToStr(CORSAllowCredentials,'true','false'));
-        end;
+      HandleCorsResponseHeaders(IO);
       if not AuthenticateRequest(IO,True) then
         exit;
       if Not CheckResourceAccess(IO) then
         exit;
+      HandleOtherResponseHeaders(IO);
       DoHandleEvent(True,IO);
       H:=CreateDBHandler(IO);
       if IsSpecialResource(IO.Resource) then

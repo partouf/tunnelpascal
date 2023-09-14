@@ -386,10 +386,10 @@ CMEMUNIT=System.CMem
 COMMONUNIT=PalmApi.Common
 CONSOLEUNIT=System.Console
 CONSOLEIOUNIT=EmbeddedApi.ConsoleIO
-CORTEXM0UNIT=ARMApi.Cortexm0
-CORTEXM3UNIT=ARMApi.Cortexm3
-CORTEXM4UNIT=ARMApi.Cortexm4
-CORTEXM7UNIT=ARMApi.Cortexm7
+CORTEXM0UNIT=ARMApi.cortexm0
+CORTEXM3UNIT=ARMApi.cortexm3
+CORTEXM4UNIT=ARMApi.cortexm4
+CORTEXM7UNIT=ARMApi.cortexm7
 CP1250UNIT=System.CodePages.CP1250
 CP1251UNIT=System.CodePages.CP1251
 CP1252UNIT=System.CodePages.CP1252
@@ -451,7 +451,7 @@ DXETYPEUNIT=DOSApi.Dxetype
 DYNLIBSUNIT=System.DynLibs
 EMU387UNIT=DOSApi.EMU387
 EMXUNIT=DOSApi.EMX
-ERRORSUNIT=System.Errors
+ERRORSUNIT=UnixApi.Errors
 ESP32UNIT=System.Esp32
 ESP8266UNIT=System.Esp8266
 ESP8266RTOS_30300UNIT=System.Esp8266rtos_30300
@@ -460,19 +460,20 @@ ESPIDF_40100UNIT=System.Espidf_40100
 ESPIDF_40200UNIT=System.Espidf_40200
 ESPIDF_40400UNIT=System.Espidf_40400
 EXEUNIT=OS2Api.exe
-EXEINFOUNIT=System.Exeinfo
+EXEINFOUNIT=System.ExeInfo
 EXTPASUNIT=extpas
-FE310G000UNIT=EmbeddedApi.Fe310g000
-FE310G002UNIT=EmbeddedApi.Fe310g002
+FE310G000UNIT=EmbeddedApi.fe310g000
+FE310G002UNIT=EmbeddedApi.fe310g002
 FGLUNIT=System.FGL
 FPCMEMDLLUNIT=System.FPCMemDLL
 FPCYLIXUNIT=fpcylix
+FPINTRESUNIT=fpintres
 FPWIDESTRINGUNIT=System.FPWideString
 FREEBSDUNIT=FreeBSDApi.FreeBSD
-GD32VF103XXUNIT=EmbeddedApi.Gd32vf103xx
+GD32VF103XXUNIT=EmbeddedApi.gd32vf103xx
 GETOPTSUNIT=System.GetOpts
 GO32UNIT=DOSApi.GO32
-GPIOUNIT=EmbeddedApi.Gpio
+GPIOUNIT=EmbeddedApi.gpio
 HEAPMGRUNIT=EmbeddedApi.HeapMGR
 HEAPTRCUNIT=heaptrc
 INITCUNIT=System.InitC
@@ -484,40 +485,41 @@ LIBCUNIT=NetwareLibCApi.Libc
 LINEINFOUNIT=System.LineInfo
 LINUXUNIT=LinuxApi
 LINUXVCSUNIT=LinuxApi.Vcs
-LM3FURYUNIT=EmbeddedApi.Lm3fury
-LM3TEMPESTUNIT=EmbeddedApi.Lm3tempest
-LM4F120UNIT=EmbeddedApi.Lm4f120
+LM3FURYUNIT=EmbeddedApi.lm3fury
+LM3TEMPESTUNIT=EmbeddedApi.lm3tempest
+LM4F120UNIT=EmbeddedApi.lm4f120
 LNFODWRFUNIT=System.LineInfo.Dwarf
 LNFOGDBUNIT=System.LineInfo.Gdb
-LPC11XXUNIT=EmbeddedApi.Lpc11xx
-LPC122XUNIT=EmbeddedApi.Lpc122x
-LPC13XXUNIT=EmbeddedApi.Lpc13xx
-LPC1768UNIT=EmbeddedApi.Lpc1768
-LPC21X4UNIT=EmbeddedApi.Lpc21x4
-LPC8XXUNIT=EmbeddedApi.Lpc8xx
+LPC11XXUNIT=EmbeddedApi.lpc11xx
+LPC122XUNIT=EmbeddedApi.lpc122x
+LPC13XXUNIT=EmbeddedApi.lpc13xx
+LPC1768UNIT=EmbeddedApi.lpc1768
+LPC21X4UNIT=EmbeddedApi.lpc21x4
+LPC8XXUNIT=EmbeddedApi.lpc8xx
 LSTRINGSUNIT=System.LStrings
 MACOSUNIT=MacOSApi.MacOS
 MACOSTPUNIT=MacOSApi.MacOSTP
+MACPASUNIT=macpas
 MACUTILSUNIT=MacOSApi.MacUtils
-MAILBOXUNIT=EmbeddedApi.Mailbox
+MAILBOXUNIT=EmbeddedApi.mailbox
 MATHUNIT=System.Math
 MESSAGESUNIT=WinApi.Messages
-MK20D5UNIT=EmbeddedApi.Mk20d5
-MK20D7UNIT=EmbeddedApi.Mk20d7
-MK22F51212UNIT=EmbeddedApi.Mk22f51212
-MK64F12UNIT=EmbeddedApi.Mk64f12
-MMIOUNIT=EmbeddedApi.Mmio
+MK20D5UNIT=EmbeddedApi.mk20d5
+MK20D7UNIT=EmbeddedApi.mk20d7
+MK22F51212UNIT=EmbeddedApi.mk22f51212
+MK64F12UNIT=EmbeddedApi.mk64f12
+MMIOUNIT=EmbeddedApi.mmio
 MMXUNIT=System.CPU.MMX
 MONCALLSUNIT=OS2Api.moncalls
 MOUCALLSUNIT=OS2Api.moucalls
 MSMOUSEUNIT=DOSApi.MSMouse
-MULTIBOOTUNIT=EmbeddedApi.Multiboot
+MULTIBOOTUNIT=EmbeddedApi.multiboot
 NDKUNIT=NTApi.NDK
 NDKUTILSUNIT=NTApi.NDKUtils
 NETWAREUNIT=NetwareApi.NetWare
 NEWEXEUNIT=OS2Api.newexe
-NRF51UNIT=EmbeddedApi.Nrf51
-NRF52UNIT=EmbeddedApi.Nrf52
+NRF51UNIT=EmbeddedApi.nrf51
+NRF52UNIT=EmbeddedApi.nrf52
 NWCALLSUNIT=NetWareApi.Nwcalls
 NWNITUNIT=NetWareApi.Nwnit
 NWPREUNIT=NetWareApi.Nwpre
@@ -526,6 +528,7 @@ NWSERVUNIT=NetWareApi.Nwserv
 NWSNUTUNIT=NetWareApi.Nwsnut
 OBJCUNIT=objc
 OBJCBASEUNIT=objcbase
+OBJPASUNIT=objpas
 OS2DEFUNIT=OS2Api.os2def
 PAGEMEMUNIT=System.PageMem
 PILOTUNIT=PalmApi.Pilot
@@ -543,13 +546,13 @@ PMWSOCKUNIT=OS2Api.pmwsock
 PORTSUNIT=System.Ports
 POSIXUNIT=QNXApi.Posix
 PROFILEUNIT=DOSApi.Profile
-RASPI2UNIT=EmbeddedApi.Raspi2
-RASPI3UNIT=EmbeddedApi.Raspi3
-RASPIUARTUNIT=EmbeddedApi.Raspiuart
+RASPI2UNIT=EmbeddedApi.raspi2
+RASPI3UNIT=EmbeddedApi.raspi3
+RASPIUARTUNIT=EmbeddedApi.raspiuart
 RTLCONSTSUNIT=System.RtlConsts
-SAM3X8EUNIT=EmbeddedApi.Sam3x8e
-SAMD51P19AUNIT=EmbeddedApi.Samd51p19a
-SC32442BUNIT=EmbeddedApi .Sc32442b
+SAM3X8EUNIT=EmbeddedApi.sam3x8e
+SAMD51P19AUNIT=EmbeddedApi.samd51p19a
+SC32442BUNIT=EmbeddedApi .sc32442b
 SFPU128UNIT=System.SoftFpu128
 SFPUX80UNIT=System.SoftFpuX80
 SHAREMEMUNIT=WinApi.ShareMem
@@ -557,25 +560,25 @@ SIGNALSUNIT=WinApi.Signals
 SO32DLLUNIT=OS2Api.so32dll
 SOFTFPUUNIT=System.SoftFPU
 SORTBASEUNIT=System.SortBase
-STM32F0XXUNIT=EmbeddedApi.Stm32f0xx
-STM32F103XEUNIT=EmbeddedApi.Stm32f103xe
-STM32F10X_CLUNIT=EmbeddedApi.Stm32f10x_cl
-STM32F10X_CONNUNIT=EmbeddedApi.Stm32f10x_conn
-STM32F10X_HDUNIT=EmbeddedApi.Stm32f10x_hd
-STM32F10X_LDUNIT=EmbeddedApi.Stm32f10x_ld
-STM32F10X_MDUNIT=EmbeddedApi.Stm32f10x_md
-STM32F10X_XLUNIT=EmbeddedApi.Stm32f10x_xl
-STM32F401XEUNIT=EmbeddedApi.Stm32f401xe
-STM32F401XXUNIT=EmbeddedApi.Stm32f401xx
-STM32F407XXUNIT=EmbeddedApi.Stm32f407xx
-STM32F411XEUNIT=EmbeddedApi.Stm32f411xe
-STM32F429UNIT=EmbeddedApi.Stm32f429
-STM32F429XXUNIT=EmbeddedApi.Stm32f429xx
-STM32F446XXUNIT=EmbeddedApi.Stm32f446xx
-STM32F745UNIT=EmbeddedApi.Stm32f745
-STM32F746UNIT=EmbeddedApi.Stm32f746
-STM32F756UNIT=EmbeddedApi.Stm32f756
-STM32G071XXUNIT=EmbeddedApi.Stm32g071xx
+STM32F0XXUNIT=EmbeddedApi.stm32f0xx
+STM32F103XEUNIT=EmbeddedApi.stm32f103xe
+STM32F10X_CLUNIT=EmbeddedApi.stm32f10x_cl
+STM32F10X_CONNUNIT=EmbeddedApi.stm32f10x_conn
+STM32F10X_HDUNIT=EmbeddedApi.stm32f10x_hd
+STM32F10X_LDUNIT=EmbeddedApi.stm32f10x_ld
+STM32F10X_MDUNIT=EmbeddedApi.stm32f10x_md
+STM32F10X_XLUNIT=EmbeddedApi.stm32f10x_xl
+STM32F401XEUNIT=EmbeddedApi.stm32f401xe
+STM32F401XXUNIT=EmbeddedApi.stm32f401xx
+STM32F407XXUNIT=EmbeddedApi.stm32f407xx
+STM32F411XEUNIT=EmbeddedApi.stm32f411xe
+STM32F429UNIT=EmbeddedApi.stm32f429
+STM32F429XXUNIT=EmbeddedApi.stm32f429xx
+STM32F446XXUNIT=EmbeddedApi.stm32f446xx
+STM32F745UNIT=EmbeddedApi.stm32f745
+STM32F746UNIT=EmbeddedApi.stm32f746
+STM32F756UNIT=EmbeddedApi.stm32f756
+STM32G071XXUNIT=EmbeddedApi.stm32g071xx
 STRINGSUNIT=System.Strings
 SYMBIANUNIT=SymbianApi.Symbian
 SYSALLUNIT=PalmApi.Sysall
@@ -599,6 +602,7 @@ UNIXUNIT=UnixApi.Unix
 UNIXCPUNIT=UnixApi.CP
 UNIXTYPEUNIT=UnixApi.Types
 UNIXUTILUNIT=UnixApi.Utils
+UUCHARUNIT=uuchar
 VIOCALLSUNIT=OS2Api.viocalls
 WASIAPIUNIT=WASIApi.WASIApi
 WASIUTILUNIT=WASIApi.WASIUtil
@@ -611,9 +615,7 @@ WINPROCSUNIT=WinApi.WinProcs
 WINSYSUTUNIT=WinApi.WinSysUt
 WINTYPESUNIT=WinApi.WinTypes
 X86UNIT=System.X86
-XMC4500UNIT=EmbeddedApi.Xmc4500
-EXEINFOUNIT=System.ExeInfo
-ERRORSUNIT=UnixApi.Errors
+XMC4500UNIT=EmbeddedApi.xmc4500
 else
 AIOUNIT=aio
 ALLWINNER_A20UNIT=allwinner_a20
@@ -711,6 +713,7 @@ FE310G002UNIT=fe310g002
 FGLUNIT=fgl
 FPCMEMDLLUNIT=fpcmemdll
 FPCYLIXUNIT=fpcylix
+FPINTRESUNIT=fpintres
 FPWIDESTRINGUNIT=fpwidestring
 FREEBSDUNIT=freebsd
 GD32VF103XXUNIT=gd32vf103xx
@@ -743,6 +746,7 @@ LSTRINGSUNIT=lstrings
 MACOSUNIT=macos
 MACOSTPUNIT=macostp
 MACUTILSUNIT=macutils
+MACPASUNIT=macpas
 MAILBOXUNIT=mailbox
 MATHUNIT=math
 MESSAGESUNIT=messages
@@ -770,6 +774,7 @@ NWSERVUNIT=nwserv
 NWSNUTUNIT=nwsnut
 OBJCUNIT=objc
 OBJCBASEUNIT=objcbase
+OBJPASUNIT=objpas
 OS2DEFUNIT=os2def
 PAGEMEMUNIT=pagemem
 PILOTUNIT=pilot
@@ -790,9 +795,7 @@ PROFILEUNIT=profile
 RASPI2UNIT=raspi2
 RASPI3UNIT=raspi3
 RASPIUARTUNIT=raspiuart
-ifeq ($(RTLCONSTSUNIT),)
-  RTLCONSTSUNIT=rtlconsts
-endif
+RTLCONSTSUNIT=rtlconsts
 SAM3X8EUNIT=sam3x8e
 SAMD51P19AUNIT=samd51p19a
 SC32442BUNIT=sc32442b
@@ -845,6 +848,7 @@ UNIXUNIT=unix
 UNIXCPUNIT=unixcp
 UNIXTYPEUNIT=unixtype
 UNIXUTILUNIT=unixutil
+UUCHARUNIT=uuchar
 VIOCALLSUNIT=viocalls
 WASIAPIUNIT=wasiapi
 WASIUTILUNIT=wasiutil
@@ -868,12 +872,12 @@ OPT:=$(OPT) -dFPC_DOTTEDUNITS
 BASEINCLUDE=$(INC) $(PROCINC)
 BASESOURCE=$(INC) $(PROCINC) $($(COMMONUNIT))
 endif
-CPUNITSBASE=$(CP1250UNIT) $(CP1251UNIT) $(CP1252UNIT) $(CP1253UNIT) $(CP1254UNIT) $(CP1255UNIT) $(CP1256UNIT) $(CP1257UNIT) $(CP1258UNIT) \
+CP_UNITS_BASE=$(CP1250UNIT) $(CP1251UNIT) $(CP1252UNIT) $(CP1253UNIT) $(CP1254UNIT) $(CP1255UNIT) $(CP1256UNIT) $(CP1257UNIT) $(CP1258UNIT) \
       $(CP437UNIT) $(CP646UNIT) $(CP737UNIT) $(CP775UNIT) $(CP850UNIT) $(CP852UNIT) $(CP855UNIT) $(CP856UNIT) $(CP857UNIT) $(CP860UNIT) $(CP861UNIT) $(CP862UNIT) \
       $(CP863UNIT) $(CP864UNIT) $(CP865UNIT) $(CP866UNIT) $(CP869UNIT) $(CP874UNIT) $(CP3021UNIT) $(CP8859_1UNIT) $(CP8859_2UNIT) $(CP8859_3UNIT) $(CP8859_4UNIT) \
       $(CP8859_5UNIT) $(CP8859_6UNIT) $(CP8859_7UNIT) $(CP8859_8UNIT) $(CP8859_9UNIT) $(CP8859_10UNIT) $(CP8859_11UNIT) \
       $(CP8859_13UNIT) $(CP8859_14UNIT) $(CP8859_15UNIT) $(CP8859_16UNIT) $(CPKOI8_RUNIT) $(CPKOI8_UUNIT)
-CPUNITS=$(addprefix $(NS_CPUNITS),$(CPUNITSBASE))
+CP_UNITS_SRC=$(addsuffix .pas,$(addprefix $(RTL)/charmaps/,$(CP_UNITS)))
 RTL=..
 INC=../inc
 COMMON=$(RTL)/common
@@ -888,10 +892,10 @@ ifdef NO_EXCEPTIONS_IN_SYSTEM
 override FPCOPT+=-dNO_EXCEPTIONS_IN_SYSTEM
 endif
 ifeq ($(CPU_OS_TARGET),z80-msxdos)
-override TARGET_UNITS+=system si_prc uuchar objpas iso7185 strings charset cpall getopts exeinfo heaptrc
+override TARGET_UNITS+=system si_prc $(UUCHARUNIT) $(OBJPASUNIT) $(ISO7185UNIT) $(STRINGSUNIT) $(CHARSETUNIT) $(CPALLUNIT) $(GETOPTSUNIT) $(EXEINFOUNIT) $(HEAPTRCUNIT)
 endif
 ifeq ($(CPU_OS_TARGET),z80-msxdos)
-override TARGET_IMPLICITUNITS+=cp1250 cp1251 cp1252 cp1253 cp1254 cp1255 cp1256 cp1257 cp1258 cp437 cp646 cp737 cp775 cp850 cp852 cp855 cp856 cp857 cp860 cp861 cp862 cp863 cp864 cp865 cp866 cp869 cp874 cp3021 cp8859_1 cp8859_2 cp8859_3 cp8859_4 cp8859_5 cp8859_6 cp8859_7 cp8859_8 cp8859_9 cp8859_10 cp8859_11 cp8859_13 cp8859_14 cp8859_15 cp8859_16 cpkoi8_r cpkoi8_u
+override TARGET_IMPLICITUNITS+=$(CP_UNITS)
 endif
 override INSTALL_FPCPACKAGE=y y
 ifeq ($(CPU_OS_TARGET),z80-msxdos)
@@ -2170,6 +2174,9 @@ endif
 ifndef NSBSDDIR
 NSBSDDIR=$(NSDIR)/bsd
 endif
+ifndef NSWINDOWSDIR
+NSWINDOWSDIR=$(NSDIR)/windows
+endif
 ifdef FPC_DOTTEDUNITS
 MACPAS_OPT:=$(MACPAS_OPT) -dFPC_DOTTEDUNITS
 EXTPAS_OPT:=$(EXTPAS_OPT) -dFPC_DOTTEDUNITS
@@ -2218,7 +2225,7 @@ MACPAS_DEPS=$(INC)/macpas.pp \
 	    $(MACPAS_DEPS_OS)  $(MACPAS_DEPS_CPU)
 macpas$(PPUEXT) : $(MACPAS_DEPS)
 	$(COMPILER) $(MACPAS_OPT) $<
-ISO7185_DEPS= $(INC)/$(ISO7185UNIT).pp \
+ISO7185_DEPS= $(INC)/iso7185.pp \
 	      $(SYSTEMUNIT)$(PPUEXT) \
 	      $(ISO7185_DEPS_OS) $(ISO7185_DEPS_CPU)
 iso7185$(PPUEXT) : $(ISO7185_DEPS)
@@ -2245,23 +2252,23 @@ SOFTFPU_DEPS=$(INC)/softfpu.pp \
 	     $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
 	     $(SOFTFPU_DEPS_OS) $(SOFTFPU_DEPS_CPU)
 softfpu$(PPUEXT) : $(SOFTFPU_DEPS) 
-	$(COMPILER) $(SOFTFPU_OPT) $<
+	$(COMPILER) -Sg $(SOFTFPU_OPT) $<
 System.SoftFPU$(PPUEXT) : $(NSINC)/System.SoftFPU.pp $(SOFTFPU_DEPS) 
-	$(COMPILER) $(SOFTFPU_OPT) $<
+	$(COMPILER) -Sg $(SOFTFPU_OPT) $<
 SFPUX80_DEPS=$(INC)/sfpux80.pp $(INC)/softfpu.pp \
 	     $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
 	     $(SFPUX80_DEPS_OS) $(SFPUX80_DEPS_CPU) 
 sfpux80$(PPUEXT) : $(SFPUX80_DEPS)
-	$(COMPILER) $(SFPUX80_OPT) $<
+	$(COMPILER) -Sg $(SFPUX80_OPT) $<
 System.SoftFpuX80$(PPUEXT) : $(NSINC)/System.SoftFpuX80.pp  $(SFPUX80_DEPS)
-	$(COMPILER) $(SFPUX80_OPT) $<
+	$(COMPILER) -Sg $(SFPUX80_OPT) $<
 SFPU128_DEPS=$(INC)/sfpu128.pp $(INC)/softfpu.pp \
 	     $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
 	     $(SFPU128_DEPS_OS) $(SFPU128_DEPS_CPU)
 sfpu128$(PPUEXT) : $(SFPU128_DEPS)
-	$(COMPILER) $(SFPUX128_OPT) $<
+	$(COMPILER) -Sg $(SFPUX128_OPT) $<
 System.SoftFpu128$(PPUEXT) : $(NSINC)/System.SoftFpu128.pp $(SFPU128_DEPS)
-	$(COMPILER) $(SFPUX128_OPT) $<
+	$(COMPILER) -Sg $(SFPUX128_OPT) $<
 UFLOATX80_DEPS=$(INC)/ufloatx80.pp \
 	       $(SFPUX80UNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
 	       $(UFLOATX80_DEPS_OS) $(UFLOATX80_DEPS_CPU)
@@ -2277,6 +2284,7 @@ ufloat128$(PPUEXT) : $(UFLOAT128_DEPS)
 System.UFloat128$(PPUEXT) : $(NSINC)/System.UFloat128.pp $(UFLOAT128_DEPS)
 	$(COMPILER) $(UFLOAT128_OPT) $<
 STRINGS_DEPS=$(INC)/strings.pp $(INC)/stringsi.inc $(PROCINC)/stringss.inc $(PROCINC)/strings.inc \
+	     $(INC)/genstr.inc $(INC)/genstrs.inc $(INC)/cgenstr.inc \
 	     $(SYSTEMUNIT)$(PPUEXT)  \
 	     $(STRINGS_DEPS_OS)
 strings$(PPUEXT) : $(STRINGS_DEPS)
@@ -2353,9 +2361,9 @@ SYSUTILS_DEPS=$(SYSUTILSDIR)/sysutils.pp $(wildcard $(OBJPASDIR)/$(SYSUTILSUNIT)
 	      $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) $(SYSCONSTUNIT)$(PPUEXT) \
 	      $(SYSUTILS_DEPS_OS) $(SYSUTILS_DEPS_CPU)
 sysutils$(PPUEXT) : $(SYSUTILS_DEPS)
-	$(COMPILER) -Fi$(OBJPASDIR)/$(SYSUTILSUNIT) $<
+	$(COMPILER) -Fi$(OBJPASDIR)/sysutils $<
 System.SysUtils$(PPUEXT) : $(NSINC)/System.SysUtils.pp $(SYSUTILS_DEPS)
-	$(COMPILER) $(SYSUTILS_OPT) -Fi$(OBJPASDIR)/sysutils $<
+	$(COMPILER) $(SYSUTILS_OPT) -Fi$(OBJPASDIR)/sysutils -Fi$(SYSUTILSDIR) $<
 CLASSES_DEPS=$(CLASSESDIR)/classes.pp $(wildcard $(OBJPASDIR)/$(CLASSESUNIT)/*.inc) \
 	     $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
 	     $(SYSUTILSUNIT)$(PPUEXT) $(TYPINFOUNIT)$(PPUEXT) $(RTLCONSTSUNIT)$(PPUEXT) \
@@ -2492,20 +2500,28 @@ System.CharSet$(PPUEXT) : $(NSINC)/System.CharSet.pp $(CHARSET_DEPS)
 	$(COMPILER) $(CHARSET_OPT) $< 
 UNICODEDATA_DEPS = $(OBJPASDIR)/unicodedata.pas $(OBJPASDIR)/unicodedata.inc \
 		   $(OBJPASDIR)/unicodedata_le.inc $(OBJPASDIR)/unicodedata_be.inc \
-		   $(SYSTEMUNIT)$(PPUEXT)
+		   $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT)
 unicodedata$(PPUEXT) : $(UNICODEDATA_DEPS)
 	$(COMPILER) -Fi$(OBJPASDIR) $(UNICODEDATA_OPT) $<
 System.CodePages.unicodedata$(PPUEXT) : $(NSINC)/System.CodePages.unicodedata.pas $(UNICODEDATA_DEPS)
 	$(COMPILER) -Fi$(OBJPASDIR) $(UNICODEDATA_OPT) $<
-CPALL_DEPS=$(RTL)/charmaps/cpall.pas \
+CPALL_DEPS=$(RTL)/charmaps/cpall.pas $(CP_UNITS_SRC) \
 	  system$(PPUEXT) $(CHARSETUNIT)$(PPUEXT) \
 	  $(CPALL_DEPS_OS) $(CPALL_DEPS_CPU)
 cpall$(PPUEXT): $(CPALL_DEPS)  
 	$(COMPILER) $(CPALL_OPT) -Fu$(INC) -Fi$(RTL)/charmaps $<
 System.CodePages.All$(PPUEXT):  $(NSINC)/System.CodePages.All.pas $(CPALL_DEPS)
 	$(COMPILER) $(CPALL_OPT) -Fu$(INC) -Fi$(RTL)/charmaps $<
-FPWIDESTRING_DEPS=$(OBJPASDIR)/fpwidestring.pp \
-		  $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
+ifneq ($(UNIXINC),)
+  FPWIDESTRING_DEPS_OS:=$(FPWIDESTRING_DEPS_OS) $(UNIXCPUNIT)$(PPUEXT)
+endif
+ifeq ($(AMIINC),)
+  RTLDEFSINCDIR = $(OSDIR)
+else
+  RTLDEFSINCDIR=$(AMIINC)
+endif
+FPWIDESTRING_DEPS=$(OBJPASDIR)/fpwidestring.pp $(RTLDEFSINCDIR)/rtldefs.inc \
+		  $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) $(UNICODEDATAUNIT)$(PPUEXT) \
 		  $(CHARACTERUNIT)$(PPUEXT) $(CPALLUNIT)$(PPUEXT) \
 		  $(FPWIDESTRING_DEPS_OS) $(FPWIDESTRING_DEPS_CPU)
 fpwidestring$(PPUEXT): $(FPWIDESTRING_DEPS)
@@ -2624,18 +2640,33 @@ BLOCKRTL_DEPS=$(INC)/blockrtl.pp \
 	      $(BLOCKRTL_DEPS_OS) $(BLOCKRTL_DEPS_CPU)
 blockrtl$(PPUEXT) : $(BLOCKRTL_DEPS)
 	$(COMPILER) $(BLOCKRTL_OPT) $<
+ifndef WININCDIR
+  WININCDIR = $(WINDIR)/wininc
+endif
 WINDOWS_DEPS=windows.pp $(SYSTEMUNIT)$(PPUEXT) objpas$(PPUEXT) \
 	     $(WINDOWS_DEPS_OS) $(WINDOWS_DEPS_CPU)
 windows$(PPUEXT): $(WINDOWS_DEPS)
-	$(COMPILER) $(WINDOWS_OPT) $<
-WinApi.Windows$(PPUEXT): $(NSOSDIR)/WinApi.Windows.pp $(WINDOWS_DEPS)
+	$(COMPILER) -Fi$(WININC) $(WINDOWS_OPT) $<
+WinApi.Windows$(PPUEXT): $(NSWINDOWSDIR)/WinApi.Windows.pp $(WINDOWS_DEPS)
 	$(COMPILER) -Fi$(WININC) -Fi$(WINDIR) $(WINDOWS_OPT) $<
 WINDIRS_DEPS=$(WINDIRSDIR)/windirs.pp $(WINDOWSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
 	     $(WINDIRS_DEPS_OS) $(WINDIRS_DEPS_CPU)
 windirs$(PPUEXT): $(WINDIRS_DEPS)
 	$(COMPILER) $(WINDIRS_OPT) $<
-WinApi.WinDirs$(PPUEXT): $(NSOSDIR)/WinApi.WinDirs.pp $(WINDIRS_DEPS)
+WinApi.WinDirs$(PPUEXT): $(NSWINDOWSDIR)/WinApi.WinDirs.pp $(WINDIRS_DEPS)
 	$(COMPILER) -Fi$(WININC) -Fi$(WINDIR) $(WINDIRS_OPT) $<
+ifndef WINMESSAGESDIR
+  WINMESSAGESDIR = $(WINDIR)
+endif
+ifndef WINMESSAGESINCDIR
+  WINMESSAGESINCDIR = $(WINDIR)/wininc
+endif
+MESSAGES_DEPS = $(WINMESSAGESDIR)/messages.pp $(WINMESSAGESINCDIR)/messages.inc $(WINDOWSUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
+		$(MESSAGES_DEPS_OS) $(MESSAGES_DEPS_CPU)
+messages$(PPUEXT): $(MESSAGES_DEPS)
+	$(COMPILER) -Fi$(WINMESSAGESINCDIR) $<
+WinApi.Messages$(PPUEXT): $(NSWINDOWSDIR)/WinApi.Messages.pp $(MESSAGES_DEPS)
+	$(COMPILER) -Fi$(WINMESSAGESINCDIR) -Fi$(WINMMESSAGESDIR) $<
 SYSCTL_DEPS=$(BSDINC)/sysctl.pp $(SYSTEMUNIT)$(PPUEXT) $(UNIXTYPEUNIT)$(PPUEXT) \
 	    $(SYSCTL_DEPS_OS) $(SYSCTL_DEPS_CPU)
 sysctl$(PPUEXT) : $(SYSCTL_DEPS)
@@ -2786,88 +2817,39 @@ endif
 system$(PPUEXT) : system.pp $(SYSDEPS) $(INC)/tnyheaph.inc $(INC)/tinyheap.inc registers.inc
 	$(COMPILER) $(FPC_SYSTEM_OPT) -Us -Sg system.pp
 	$(EXECPPAS)
-uuchar$(PPUEXT): $(SYSTEMUNIT)$(PPUEXT) $(INC)/uuchar.pp
-	$(COMPILER) $(INC)/uuchar.pp
-	$(EXECPPAS)
-objpas$(PPUEXT): $(OBJPASDIR)/objpas.pp $(INC)/except.inc system$(PPUEXT)
-	$(COMPILER) -Fi$(OBJPASDIR) $(OBJPASDIR)/objpas.pp
-	$(EXECPPAS)
-strings$(PPUEXT) : $(INC)/strings.pp $(INC)/stringsi.inc \
-		   $(PROCINC)/strings.inc $(PROCINC)/stringss.inc \
-		   $(INC)/genstr.inc $(INC)/genstrs.inc \
-		   system$(PPUEXT)
-	$(COMPILER) $(INC)/strings.pp
-	$(EXECPPAS)
-iso7185$(PPUEXT) : $(INC)/iso7185.pp system$(PPUEXT)
-	$(COMPILER) $(INC)/iso7185.pp
-	$(EXECPPAS)
-extpas$(PPUEXT) : $(INC)/extpas.pp dos$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
-	$(COMPILER) $(INC)/extpas.pp
-	$(EXECPPAS)
-ports$(PPUEXT) : ports.pp system$(PPUEXT)
-	$(COMPILER) ports.pp
-	$(EXECPPAS)
 dos$(PPUEXT) : dos.pp registers.inc \
 	       $(INC)/dosh.inc $(INC)/dos.inc $(INC)/fexpand.inc \
 	       strings$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) dos.pp
 	$(EXECPPAS)
 sysutils$(PPUEXT) : sysutils.pp $(wildcard $(OBJPASDIR)/sysutils/*.inc) \
-		    objpas$(PPUEXT) dos$(PPUEXT) sysconst$(PPUEXT) system$(PPUEXT)
+		    $(OBJPASUNIT)$(PPUEXT) dos$(PPUEXT) sysconst$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) -Fi$(OBJPASDIR)/sysutils sysutils.pp
 	$(EXECPPAS)
 classes$(PPUEXT) : classes.pp $(wildcard $(OBJPASDIR)/classes/*.inc) \
 		   sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconsts$(PPUEXT) \
-		   types$(PPUEXT) fgl$(PPUEXT) sortbase$(PPUEXT) \
-		   objpas$(PPUEXT) system$(PPUEXT)
+		   types$(PPUEXT) $(FGLUNIT)$(PPUEXT) sortbase$(PPUEXT) \
+		   $(OBJPASUNIT)$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) -Fi$(OBJPASDIR)/classes classes.pp
 	$(EXECPPAS)
-fgl$(PPUEXT) : $(OBJPASDIR)/fgl.pp types$(PPUEXT) sysutils$(PPUEXT) rtlconsts$(PPUEXT) objpas$(PPUEXT) system$(PPUEXT) sortbase$(PPUEXT)
-	$(COMPILER) $(OBJPASDIR)/fgl.pp
-	$(EXECPPAS)
-math$(PPUEXT): $(OBJPASDIR)/math.pp $(PROCINC)/mathu.inc objpas$(PPUEXT) sysutils$(PPUEXT) system$(PPUEXT)
+math$(PPUEXT): $(OBJPASDIR)/math.pp $(PROCINC)/mathu.inc $(OBJPASUNIT)$(PPUEXT) sysutils$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) $(OBJPASDIR)/math.pp
 	$(EXECPPAS)
-typinfo$(PPUEXT): $(OBJPASDIR)/typinfo.pp sysutils$(PPUEXT) objpas$(PPUEXT) rtlconsts$(PPUEXT) system$(PPUEXT)
+typinfo$(PPUEXT): $(OBJPASDIR)/typinfo.pp sysutils$(PPUEXT) $(OBJPASUNIT)$(PPUEXT) rtlconsts$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) -Sg -Fi$(OBJPASDIR) $(OBJPASDIR)/typinfo.pp
 	$(EXECPPAS)
-types$(PPUEXT) : $(OBJPASDIR)/types.pp objpas$(PPUEXT) math$(PPUEXT) system$(PPUEXT)
+types$(PPUEXT) : $(OBJPASDIR)/types.pp $(OBJPASUNIT)$(PPUEXT) math$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) $(OBJPASDIR)/types.pp
 	$(EXECPPAS)
-rtlconsts$(PPUEXT) : $(OBJPASDIR)/rtlconsts.pp $(OBJPASDIR)/rtlconst.inc objpas$(PPUEXT) system$(PPUEXT)
+rtlconsts$(PPUEXT) : $(OBJPASDIR)/rtlconsts.pp $(OBJPASDIR)/rtlconst.inc $(OBJPASUNIT)$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) -Fi$(OBJPASDIR) $(OBJPASDIR)/rtlconsts.pp
 	$(EXECPPAS)
-sysconst$(PPUEXT) : $(OBJPASDIR)/sysconst.pp objpas$(PPUEXT) system$(PPUEXT)
+sysconst$(PPUEXT) : $(OBJPASDIR)/sysconst.pp $(OBJPASUNIT)$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) $(OBJPASDIR)/sysconst.pp
-	$(EXECPPAS)
-macpas$(PPUEXT) : $(INC)/macpas.pp objpas$(PPUEXT) math$(PPUEXT) system$(PPUEXT)
-	$(COMPILER) $(INC)/macpas.pp $(REDIR)
 	$(EXECPPAS)
 cpu$(PPUEXT) : $(PROCINC)/cpu.pp sysutils$(PPUEXT) system$(PPUEXT)
 	$(COMPILER) $(PROCINC)/cpu.pp
 	$(EXECPPAS)
-getopts$(PPUEXT) : $(INC)/getopts.pp system$(PPUEXT)
-	$(COMPILER) $(INC)/getopts.pp $(REDIR)
-	$(EXECPPAS)
-heaptrc$(PPUEXT) : $(INC)/heaptrc.pp system$(PPUEXT)
-	$(COMPILER) -Sg $(INC)/heaptrc.pp
-	$(EXECPPAS)
-lnfodwrf$(PPUEXT) : $(INC)/lnfodwrf.pp exeinfo$(PPUEXT) system$(PPUEXT)
-	$(COMPILER) $(INC)/lnfodwrf.pp
-	$(EXECPPAS)
-exeinfo$(PPUEXT) : $(INC)/exeinfo.pp strings$(PPUEXT) system$(PPUEXT)
-	$(COMPILER) $(INC)/exeinfo.pp
-	$(EXECPPAS)
-charset$(PPUEXT) : $(INC)/charset.pp objpas$(PPUEXT) system$(PPUEXT)
-	$(COMPILER) $(INC)/charset.pp
-	$(EXECPPAS)
-cpall$(PPUEXT): $(RTL)/charmaps/cpall.pas system$(PPUEXT) charset$(PPUEXT)
-	$(COMPILER) -Fu$(INC) -Fi$(RTL)/charmaps $(RTL)/charmaps/cpall.pas
-	$(EXECPPAS)
-fpwidestring$(PPUEXT): $(OBJPASDIR)/fpwidestring.pp unicodedata$(PPUEXT) charset$(PPUEXT) objpas$(PPUEXT) system$(PPUEXT)
-	$(COMPILER) $(OBJPASDIR)/fpwidestring.pp
-character$(PPUEXT): $(OBJPASDIR)/character.pas sysutils$(PPUEXT) objpas$(PPUEXT) rtlconsts$(PPUEXT) unicodedata$(PPUEXT) system$(PPUEXT)
-	$(COMPILER) $(OBJPASDIR)/character.pas
 msmouse$(PPUEXT) : msmouse.pp system$(PPUEXT)
 	$(COMPILER) msmouse.pp $(REDIR)
 	$(EXECPPAS)

@@ -83,7 +83,8 @@ Type
                          rpXMLDocumentRoot,
                          rpConnectionResourceName,
                          rpParametersResourceName,
-                         rpParametersRoutePart
+                         rpParametersRoutePart,
+                         rpAttachment
                          );
   TRestStringProperties = Set of TRestStringProperty;
 
@@ -144,6 +145,7 @@ Type
     Property CustomViewSQLParam : UTF8string Index ord(rpCustomViewSQLParam) Read GetRestPropName Write SetRestPropName Stored IsRestStringStored;
     Property XMLDocumentRoot : UTF8string Index ord(rpXMLDocumentRoot) Read GetRestPropName Write SetRestPropName Stored IsRestStringStored;
     Property ConnectionResourceName : UTF8string Index ord(rpConnectionResourceName) Read GetRestPropName Write SetRestPropName Stored IsRestStringStored;
+    Property AttachmentParam : UTF8String Index ord(rpAttachment) Read GetRestPropName Write SetRestPropName Stored IsRestStringStored;
   end;
 
   TRestStatus = (rsError,                   // Internal logic/unexpected error (500)
@@ -263,6 +265,7 @@ Type
   Public
     Class Procedure RegisterStreamer(Const aName : String);
     Class Procedure UnRegisterStreamer(Const aName : String);
+    Class Function FileExtension : String; virtual;
     function RequireMetadata : Boolean; virtual;
     Function FieldToString(aFieldType : TRestFieldType; F : TField) : UTF8string; virtual;
     function FieldToBase64(F: TField): UTF8String; virtual;
@@ -290,6 +293,7 @@ Type
     function GetConnection: TSQLConnection; override;
     function GetTransaction: TSQLTransaction; override;
     Function DoGetInputData(const aName : UTF8string) : TJSONData; override;
+    Procedure DoSetInputData(aName : UTF8string; aValue : TJSONData); override;
     Function GetUpdateData : TDataset; override;
     property IO : TRestIO Read FIO;
   Public
@@ -317,6 +321,7 @@ Type
     FTrans: TSQLTransaction;
     FContentStream : TStream;
     FUpdatedData: TBufDataset;
+    FCustomInputData : TJSONObject;
     function GetResourceName: UTF8String;
     function GetUserID: String;
     procedure SetUserID(const AValue: String);
@@ -333,9 +338,13 @@ Type
     procedure SetOperation(aOperation : TRestOperation);
     Procedure SetRestStrings(aValue : TRestStringsConfig);
     Procedure SetRestStatuses(aValue : TRestStatusConfig);
+    Procedure SetCustomInputData(Const aName : UTF8String; aValue : TJSONData);
     // Get things
     class function StrToNullBoolean(const S: String; Strict: Boolean): TNullBoolean;
     Procedure DoGetVariable(Sender : TObject; Const aName : UTF8String; Out aVal : UTF8String);
+    function GetCustomInputData(const aName : UTF8String) : TJSONData;
+    // You must free the result of this function !
+    Function GetContentField(const aName : UTF8string) : TJSONData; virtual;
     Function GetVariable (Const aName : UTF8String; Out aVal : UTF8String; AllowedSources : TVAriableSources = AllVariableSources) : TVariableSource; virtual;
     function GetFilterVariable(const aName: UTF8String; AFilter: TRestFieldFilter; out aValue: UTF8String): TVariableSource;
     Function GetBooleanVar(Const aName : UTF8String; aStrict : Boolean = False) : TNullBoolean;
@@ -476,7 +485,8 @@ Const
     'datapacket',      { rpXMLDocumentRoot}
     '_connection',     { rpConnectionResourceName }
     '_parameters',     { rpParametersResourceName }
-    'parameters'       { rpParametersRoutePart }
+    'parameters',      { rpParametersRoutePart }
+    'att'              { rpAttachment }
   );
   DefaultStatuses : Array[TRestStatus] of Word = (
     500, { rsError }
@@ -590,6 +600,11 @@ end;
 function TRestContext.DoGetInputData(const aName: UTF8string): TJSONData;
 begin
   Result:=IO.RESTInput.GetContentField(aName);
+end;
+
+procedure TRestContext.DoSetInputData(aName: UTF8string; aValue: TJSONData);
+begin
+  IO.SetCustomInputData(aName,aValue);
 end;
 
 function TRestContext.GetUpdateData: TDataset;
@@ -919,9 +934,14 @@ begin
   TStreamerFactory.Instance.RegisterStreamer(rstOutput,aName,Self)
 end;
 
-class procedure TRestOutPutStreamer.UnRegisterStreamer(const aName: String);
+class procedure TRestOutputStreamer.UnRegisterStreamer(const aName: String);
 begin
   TStreamerFactory.Instance.UnRegisterStreamer(rstOutput,aName)
+end;
+
+class function TRestOutputStreamer.FileExtension: String;
+begin
+  Result:='';
 end;
 
 function TRestOutputStreamer.RequireMetadata: Boolean;
@@ -982,11 +1002,50 @@ begin
   FRestStatuses:=aValue;
 end;
 
+procedure TRestIO.SetCustomInputData(const aName: UTF8String; aValue: TJSONData);
+begin
+  if FCustomInputData=Nil then
+    FCustomInputData:=TJSONObject.Create([aName,aValue])
+  else
+    FCustomInputData.Elements[aName]:=aValue;
+end;
+
+function TRestIO.GetCustomInputData(const aName: UTF8String): TJSONData;
+
+var
+  Idx : Integer;
+
+begin
+  Result:=Nil;
+  if (FCustomInputData<>Nil) then
+    begin
+    Idx:=FCustomInputData.IndexOfName(aName,True);
+    if Idx<>-1 then
+      Result:=FCustomInputData.Items[idx];
+    end;
+end;
+
 procedure TRestIO.DoGetVariable(Sender: TObject; const aName: UTF8String; out
   aVal: UTF8String);
 begin
   GetVariable(aName,aVal);
 end;
+
+function TRestIO.GetContentField(const aName: UTF8string): TJSONData;
+
+var
+  Idx : Integer;
+
+begin
+  Idx:=-1;
+  if Assigned(FCustomInputData) then
+    Idx:=FCustomInputData.IndexOfName(aName);
+  if Idx<>-1 then
+    Result:=FCustomInputData.Items[Idx].Clone
+  else
+    Result:=RESTInput.GetContentField(aName);
+end;
+
 
 procedure TRestIO.SetUserID(const AValue: String);
 begin
@@ -1019,6 +1078,7 @@ end;
 
 destructor TRestIO.Destroy;
 begin
+  FreeAndNil(FCustomInputData);
   FreeAndNil(FUpdatedData);
   FreeAndNil(FRestContext);
   if Assigned(FInput) then
@@ -1044,8 +1104,7 @@ begin
   Result:=TRestContext.Create;
 end;
 
-function TRestIO.GetVariable(const aName: UTF8String; out aVal: UTF8String;
-  AllowedSources: TVAriableSources): TVariableSource;
+function TRestIO.GetVariable(const aName: UTF8String; out aVal: UTF8String; AllowedSources: TVariableSources): TVariableSource;
 
   Function FindInList(aSource : TVariableSource;L : TStrings) : Boolean;
 

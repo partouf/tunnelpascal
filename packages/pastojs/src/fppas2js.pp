@@ -484,10 +484,6 @@ uses
   Pascal.Tree, Pascal.Scanner, Pascal.ResolveEval, Pascal.Resolver;
 {$ELSE FPC_DOTTEDUNITS}
 uses
-  {$ifdef pas2js}
-  {$else}
-  AVL_Tree,
-  {$endif}
   Classes, SysUtils, math, contnrs,
   jsbase, jstree, jswriter,
   PasTree, PScanner, PasResolveEval, PasResolver;
@@ -16693,11 +16689,11 @@ begin
     RaiseNotSupported(El,AContext,20181231112029);
 
   // module.$rtti.$Pointer("name",{...})
-  Call:=CreateRTTINewType(El,GetBIName(pbifnRTTIInherited),false,AContext,Obj);
+  Call:=CreateRTTINewType(El,GetBIName(pbifnRTTINewPointer),false,AContext,Obj);
   try
     // "comptype: ref"
     Prop:=Obj.Elements.AddElement;
-    Prop.Name:=TJSString(GetBIName(pbivnRTTISet_CompType));
+    Prop.Name:=TJSString(GetBIName(pbivnRTTIPointer_RefType));
     Prop.Expr:=CreateTypeInfoRef(El.DestType,AContext,El);
     Result:=Call;
   finally
@@ -18905,27 +18901,24 @@ var
   Call: TJSCallExpression;
   HasRTTIMembers: Boolean;
 begin
-  Call:=nil;
-  try
-    // module.$rtti.$Record("typename",{});
-    Call:=CreateRTTINewType(El,GetBIName(pbifnRTTINewRecord),false,FuncContext,ObjLit);
-    if ObjLit=nil then
-      RaiseInconsistency(20190105141430,El);
+  // module.$rtti.$Record("typename",{});
+  Call:=CreateRTTINewType(El,GetBIName(pbifnRTTINewRecord),false,FuncContext,ObjLit);
+  if ObjLit=nil then
+  begin
+    Call.Free;
 
-    HasRTTIMembers:=CreateRTTIMembers(El,Src,FuncContext,MembersSrc,MembersFuncContext,Call,false);
-    if not HasRTTIMembers then
-      begin
-      // no published members, add "module.$rtti.$Record..."
-      if Src=MembersSrc then
-        AddToSourceElements(Src,Call)
-      else
-        Src.Statements.InsertNode(0).Node:=Call;
-      end;
-
-    Call:=nil;
-  finally
-      Call.Free;
+    RaiseInconsistency(20190105141430,El);
   end;
+
+  HasRTTIMembers:=CreateRTTIMembers(El,Src,FuncContext,MembersSrc,MembersFuncContext,Call,false);
+  if not HasRTTIMembers then
+    begin
+    // no published members, add "module.$rtti.$Record..."
+    if Src=MembersSrc then
+      AddToSourceElements(Src,Call)
+    else
+      Src.Statements.InsertNode(0).Node:=Call;
+    end;
 end;
 
 function TPasToJSConverter.CreateDelayedInitMembersFunction(PosEl: TPasElement;
@@ -21222,7 +21215,7 @@ begin
       // check visibility
       case mt of
       mtClass:
-        if P.Visibility<>visPublished then continue;
+        if (P.Visibility<>visPublished) and (not P.InheritsFrom(TPasConstructor) or (P.Visibility <> visPublic)) then continue;
       mtInterface: ; // all members of an interface are published
       mtRecord:
         // a published record publishes all non private members

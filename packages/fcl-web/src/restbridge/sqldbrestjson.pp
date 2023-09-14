@@ -67,6 +67,7 @@ Type
   Public
     Destructor Destroy; override;
     Class Function GetContentType: String; override;
+    Class Function FileExtension : String; override;
     procedure InitStreaming; override;
   end;
 
@@ -120,7 +121,9 @@ Var
   D : TJSONData;
 
 begin
-  D:=(FJSON as TJSONObject).Find(aName);
+  D:=Nil;
+  if Assigned(FJSON) then
+    D:=(FJSON as TJSONObject).Find(aName);
   if D<>nil then
     Result:=D.Clone
   else
@@ -248,6 +251,11 @@ end;
 Class function TJSONOutputStreamer.GetContentType: String;
 begin
   Result:='application/json';
+end;
+
+Class Function TJSONOutputStreamer.FileExtension : String; 
+begin
+  Result:='.json';
 end;
 
 procedure TJSONOutputStreamer.CreateErrorContent(aCode: Integer; const aMessage: String);
