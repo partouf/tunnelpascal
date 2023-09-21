@@ -4145,7 +4145,7 @@ A*2CV<x>_Set section threadvar model to <x>
 *g2gm_Generate Microsoft CodeView debug information (experimental)
 *g2go<x>_Set debug information options
 *g3godwarfcpp_ Simulate C++ debug information in DWARF
-*g3godwarffpdbg_ Generate additional DWARF debug information for FpDebug
+*g3godwarffpdebug_ Generate additional DWARF debug information for FpDebug
 *g3godwarfmethodclassprefix_ Prefix method names in DWARF with class name
 *g3godwarfomflinnum_ Generate line number information in OMF LINNUM records in MS LINK format in addition to the DWARF debug information (Open Watcom Debugger/Linker compatibility)
 *g3godwarfsets_ Enable DWARF 'set' type debug information (breaks gdb < 6.5)
