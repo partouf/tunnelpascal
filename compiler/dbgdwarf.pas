@@ -2109,6 +2109,7 @@ implementation
               end;
           end
         else
+        if (ds_dwarf_fpdebug in current_settings.debugswitches) then
           begin
             if use_dotted_functions then
               procentry := '.' + def.mangledname

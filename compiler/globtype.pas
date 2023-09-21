@@ -273,7 +273,10 @@ interface
           { though, they support and use dwarf debug information in the }
           { final executable file, they expect LINNUM records in the    }
           { object modules for the line number information.             }
-          ds_dwarf_omf_linnum
+          ds_dwarf_omf_linnum,
+          { generate additional DWARF info for FpDebug.                 }
+          { Add DW_AT_entry_pc in repeated (artifical) class info       }
+          ds_dwarf_fpdebug
        );
        tdebugswitches = set of tdebugswitch;
 
@@ -451,7 +454,7 @@ interface
        );
 
        DebugSwitchStr : array[tdebugswitch] of string[22] = ('',
-         'DWARFSETS','STABSABSINCLUDES','DWARFMETHODCLASSPREFIX','DWARFCPP','DWARFOMFLINNUM');
+         'DWARFSETS','STABSABSINCLUDES','DWARFMETHODCLASSPREFIX','DWARFCPP','DWARFOMFLINNUM','DWARFFPDEBUG');
 
        TargetSwitchStr : array[ttargetswitch] of ttargetswitchinfo = (
          (name: '';                    hasvalue: false; isglobal: true ; define: ''),
