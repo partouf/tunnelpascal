@@ -948,15 +948,17 @@ const
   AT_HDR_COUNT = 5;{ AT_PHNUM }
   AT_HDR_SIZE = 4; { AT_PHENT }
   AT_HDR_Addr = 3; { AT_PHDR }
+  AT_HDR_PageSize = 6; {AT_PAGESZ }
   AT_EXE_FN = 31;  {AT_EXECFN }
-
 var
   pc : PPAnsiChar;
   pat_hdr : P_AT_HDR;
   i, phdr_count : ptrint;
   phdr_size : ptruint;
   phdr :  ^telfproghdr;
-  found_addr : ptruint;
+  found_addr, pagesize : ptruint;
+  pelf : plongint;
+  is_elf_start : boolean;
   SavedExitProc : pointer;
 begin
   filename:=ParamStr(0);
@@ -969,6 +971,7 @@ begin
     phdr_count:=-1;
     phdr_size:=0;
     phdr:=nil;
+    pagesize:=ptruint(-1);
     found_addr:=ptruint(-1);
     while (assigned(pc^)) do
       inc (pointer(pc), sizeof(ptruint));
@@ -984,6 +987,8 @@ begin
           phdr_size:=pat_hdr^.value;
         if pat_hdr^.typ = AT_HDR_Addr then
           phdr := pointer(pat_hdr^.value);
+        if pat_hdr^.typ = AT_HDR_PageSize then
+          pagesize := ptruint(pat_hdr^.value);
         if pat_hdr^.typ = AT_EXE_FN then
           filename:=strpas(pansichar(pat_hdr^.value));
         inc (pointer(pat_hdr),sizeof(AT_HDR));
@@ -993,39 +998,58 @@ begin
       begin
         for i:=0 to phdr_count -1 do
           begin
-            if (phdr^.p_type = 1 {PT_LOAD}) and (ptruint(phdr^.p_vaddr) < found_addr) then
-              found_addr:=phdr^.p_vaddr;
+            if (phdr^.p_type = 1 {PT_LOAD}) and (ptruint(phdr^.p_vaddr) < ptruint(addr))
+               and ((found_addr=ptruint(-1)) or (found_addr<ptruint(phdr^.p_vaddr))) then
+              begin
+                found_addr:=phdr^.p_vaddr;
+                if (pagesize=ptruint(-1)) then
+                  pagesize:=phdr^.p_align;
+              end;
             inc(pointer(phdr), phdr_size);
           end;
-      {$ifdef DEBUG_LINEINFO}
-      end
+      end;
+
+    if ((found_addr=ptruint(-1)) or (found_addr < ptruint(phdr))) then
+      found_addr:=ptruint(phdr);
+    if (pagesize<>ptruint(-1)) then
+      begin
+        pelf := plongint(found_addr and ptruint(not (pagesize-1)));
+        is_elf_start:=false;
+        { Question: Should we add some limit
+          to the number of pages to check before giving up }
+        repeat
+          if pelf^={$ifdef ENDIAN_LITTLE}$464c457f{$else}$7f454c46{$endif} then
+            is_elf_start:=true
+          else
+            pelf:=plongint(ptruint(pelf) - pagesize);
+        until is_elf_start;
+        if is_elf_start then
+          found_addr:=ptruint(pelf);
+      end;
+    if found_addr<>ptruint(-1) then
+      begin
+        {$ifdef DEBUG_LINEINFO}
+        Writeln(stderr,'Found addr = $',hexstr(found_addr,2 * sizeof(ptruint)));
+        {$endif}
+        BaseAddr:=pointer(found_addr);
+     end
+    {$ifdef DEBUG_LINEINFO}
     else
       begin
+        writeln(stderr,'Error parsing stack');
         if (phdr_count=-1) then
            writeln(stderr,'AUX entry AT_PHNUM not found');
         if (phdr_size=0) then
            writeln(stderr,'AUX entry AT_PHENT not found');
         if (phdr=nil) then
            writeln(stderr,'AUX entry AT_PHDR not found');
-      {$endif DEBUG_LINEINFO}
       end;
-
-     if found_addr<>ptruint(-1) then
-       begin
-          {$ifdef DEBUG_LINEINFO}
-          Writeln(stderr,'Found addr = $',hexstr(found_addr,2 * sizeof(ptruint)));
-          {$endif}
-          BaseAddr:=pointer(found_addr);
-       end
-  {$ifdef DEBUG_LINEINFO}
-     else
-    writeln(stderr,'Error parsing stack');
-  {$endif DEBUG_LINEINFO}
+    {$endif DEBUG_LINEINFO}
   end
   else
   begin
   {$ifdef DEBUG_LINEINFO}
-    writeln(stderr,'Exception parsing stack');
+    writeln(stderr,'Exception generated while triying to find program base addr');
   {$endif DEBUG_LINEINFO}
   end;
   ExitProc:=SavedExitProc;
