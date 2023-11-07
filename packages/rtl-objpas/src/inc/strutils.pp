@@ -1641,7 +1641,6 @@ begin
     nextPattern := PSizeInt(nextPatternStatic)
   else
     nextPattern := GetMem(Length(OldPattern) * sizeof(SizeInt));
-  FillChar(nextPattern^, Length(OldPattern) * sizeof(SizeInt), byte(-1));
 
   if rfIgnoreCase in Flags then
     begin
@@ -1683,7 +1682,7 @@ begin
         end;
       end;
     end;
-  if nextPattern <> PSizeInt(nextPattern) then
+  if nextPattern <> PSizeInt(nextPatternStatic) then
     FreeMem(nextPattern);
   if litStart = PAnsiChar(Pointer(S)) then
     exit(S); // Unchanged string.
@@ -1901,23 +1900,23 @@ begin
   Result:=DelChars(S,' ');
 end;
 
-function IndexCharSized(p: PChar; nchars: SizeInt; charv: SizeUint): SizeInt; inline;
+function IndexCharType(p: PChar; nchars: SizeInt; ch: Char): SizeInt; inline;
 begin
   result :=
 {$if sizeof(char) = sizeof(byte)} IndexByte
 {$elseif sizeof(char) = sizeof(word)} IndexWord
 {$else} {$error unknown char size}
 {$endif}
-    (p^, nchars, charv);
+    (p^, nchars, ord(ch));
 end;
 
-procedure FillCharSized(p: PChar; nchars: SizeInt; charv: SizeUint); inline;
+procedure FillCharType(p: PChar; nchars: SizeInt; ch: Char); inline;
 begin
 {$if sizeof(char) = sizeof(byte)} FillChar
 {$elseif sizeof(char) = sizeof(word)} FillWord
 {$else} {$error unknown char size}
 {$endif}
-    (p^, nchars, charv);
+    (p^, nchars, ord(ch));
 end;
 
 function DelChars(const S: string; Chr: Char): string;
@@ -1929,7 +1928,7 @@ var
 begin
   Sp := PChar(Pointer(S));
   Se := Sp + Length(S);
-  ToCopy := IndexCharSized(Sp, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char), ord(Chr));
+  ToCopy := IndexCharType(Sp, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char), Chr);
   if ToCopy < 0 then
     exit(S); // Unchanged string.
   SetLength(result, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char));
@@ -1943,7 +1942,7 @@ begin
     until (Sp >= Se) or (Sp^ <> Chr);
     if Sp >= Se then
       break;
-    ToCopy := IndexCharSized(Sp, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char), ord(Chr));
+    ToCopy := IndexCharType(Sp, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char), Chr);
     if ToCopy < 0 then
       ToCopy := SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char);
   until false;
@@ -1954,7 +1953,7 @@ function DelChars(const S: string; Chars: TSysCharSet): string;
 
 var
   Ss, Sp, Se, Rp: PChar;
-  aDelta : Integer;
+  aDelta : SizeInt;
   
 begin
   Ss := PChar(Pointer(S));
@@ -1989,7 +1988,7 @@ var
   SpacePos: SizeInt;
 begin
   repeat
-    SpacePos := IndexCharSized(Sp, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char), ord(' '));
+    SpacePos := IndexCharType(Sp, SizeUint(Pointer(Se) - Pointer(Sp)) div sizeof(Char), ' ');
     if SpacePos < 0 then
       Exit(Se);
     Inc(Sp, SpacePos+1);
@@ -2066,7 +2065,7 @@ begin
   if l>=N then
     Exit(S);
   SetLength(Result,N);
-  FillCharSized(Pointer(Result),N-l,ord(C));
+  FillCharType(Pointer(Result),N-l,Char(C));
   Move(Pointer(S)^,PChar(Pointer(Result))[N-l],l*sizeof(Char));
 end;
 
@@ -2081,7 +2080,7 @@ begin
     Exit(S);
   SetLength(Result,N);
   Move(Pointer(S)^,Pointer(Result)^,l*sizeof(Char));
-  FillCharSized(PChar(Pointer(Result))+l,N-l,ord(C));
+  FillCharType(PChar(Pointer(Result))+l,N-l,Char(C));
 end;
 
 
@@ -2315,28 +2314,24 @@ end;
 function IsWordPresent(const W, S: string; const WordDelims: TSysCharSet): Boolean;
 
 var
-  P,PE,WordStart : PChar;
-  Wbytes : SizeInt;
+  P,PE : PChar;
+  Wn,Sn,Wi : SizeInt;
+  Wstartc : Char;
 
 begin
-  Wbytes:=Length(W)*sizeof(char);
-  P:=PChar(pointer(S));
-  PE:=P+Length(S);
-  while (P<PE) and (P^ in WordDelims) do
-    Inc(P);
-  while (P<PE) do
-    begin
-      WordStart:=P;
-      repeat
-        Inc(P);
-      until (P>=PE) or (P^ in WordDelims);
-      if (pointer(P)-pointer(WordStart)=Wbytes) and (CompareByte(Pointer(W)^,WordStart^,Wbytes)=0) then
-        exit(true);
-      repeat
-        Inc(P); // Can increment to PE + 1.
-      until (P>=PE) or not (P^ in WordDelims);
-    end;
-  result:=false;
+  Wn:=Length(W);
+  Sn:=Length(S);
+  if (Sn=0) or (Wn=0) or (Wn>Sn) then
+    exit(false);
+  Wstartc:=W[1];
+  P:=PChar(pointer(S))-1; { Loop starts with an extra increment. }
+  PE:=P+2+Sn-Wn;
+  repeat
+    P:=P+1;
+    Wi:=IndexCharType(P,SizeUint(Pointer(PE)-Pointer(P)) div SizeOf(Char),Wstartc);
+    P:=P+Wi;
+  until (Wi<0) or ((P=PChar(Pointer(S))) or (P[-1] in WordDelims)) and ((P+1=PE) or (P[Wn] in WordDelims)) and (CompareByte(P^,Pointer(W)^,Wn*SizeOf(Char))=0);
+  result:=Wi>=0;
 end;
 
 
@@ -2366,8 +2361,8 @@ begin
     exit(S);
   SetLength(Result,Len);
   Nfirstspaces:=SizeUint(Len) div 2-SizeUint(Ns) div 2;
-  FillCharSized(Pointer(Result),Nfirstspaces,ord(' '));
-  FillCharSized(PChar(Pointer(Result))+Ns+Nfirstspaces,Len-Ns-Nfirstspaces,ord(' '));
+  FillCharType(Pointer(Result),Nfirstspaces,' ');
+  FillCharType(PChar(Pointer(Result))+Ns+Nfirstspaces,Len-Ns-Nfirstspaces,' ');
   Move(Pointer(S)^,PChar(Pointer(Result))[Nfirstspaces],Ns*sizeof(char));
 end;
 
