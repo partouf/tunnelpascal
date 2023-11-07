@@ -16,6 +16,7 @@
 {$h+}
 {$inline on}
 {$modeswitch advancedrecords}
+{$modeswitch duplicatelocals}
 {$IFNDEF FPC_DOTTEDUNITS}
 unit StrUtils;
 {$ENDIF FPC_DOTTEDUNITS}
@@ -133,7 +134,7 @@ Function PosEx(c:AnsiChar; const S: AnsiString; Offset: SizeInt): SizeInt;inline
 Function PosEx(const SubStr, S: UnicodeString; Offset: SizeInt): SizeInt;inline;
 Function PosEx(c: WideChar; const S: UnicodeString; Offset: SizeInt): SizeInt;inline;
 Function PosEx(const SubStr, S: UnicodeString): Sizeint;inline;
-function StringsReplace(const S: Ansistring; OldPattern, NewPattern: array of Ansistring;  Flags: TReplaceFlags): string;
+function StringsReplace(const S: Ansistring; const OldPattern, NewPattern: array of Ansistring;  Flags: TReplaceFlags): string;
 
 { ---------------------------------------------------------------------
     Delphi compat
@@ -1574,7 +1575,311 @@ begin
 end;
 
 
-function StringsReplace(const S: AnsiString; OldPattern, NewPattern: array of AnsiString;  Flags: TReplaceFlags): string;
+type
+  PStringsFinder = ^TStringsFinder;
+  TStringsFinder = record
+    procedure Init(const samples: array of ansistring);
+
+  private type
+    StoreVertexType = uint32;
+    PStoreVertexType = ^StoreVertexType;
+
+    PVertex = ^Vertex;
+    Vertex = record
+      firstChild, nChilds, suffixLink, endWordLink, word: StoreVertexType;
+    end;
+
+  public type
+    PMatch = ^TMatch;
+    TMatch = record
+      pos, sampleId: SizeInt;
+    end;
+
+    TMatchesIterator = record
+    private
+      sp, se: PAnsiChar;
+      state, check: SizeInt;
+      trie: PVertex;
+      parentChars: pAnsiChar;
+      wordLen: PStoreVertexType;
+      s: ansistring;
+      curMatch: TMatch;
+    public
+      function GetEnumerator: TMatchesIterator; inline;
+      function MoveNext: boolean;
+      property Current: TMatch read curMatch;
+    end;
+
+    function Matches(const s: ansistring; start: SizeInt = 1): TMatchesIterator;
+
+  private type
+    PBuildingVertex = ^BuildingVertex;
+    BuildingVertex = record
+      firstChild, nextChild, word: StoreVertexType;
+      parentChar: ansichar;
+    end;
+
+    Builder = record
+      btrie: PBuildingVertex;
+      class operator Initialize(var self: Builder);
+      class operator Finalize(var self: Builder);
+    end;
+
+    class function FillInitialTrie(btrie: PBuildingVertex; const samples: array of ansistring): SizeUint; static;
+    class function FindChild(btrie: PBuildingVertex; v: SizeUint; c: ansichar): SizeUint; static;
+    procedure FlattenTrieAndCalculateSuffixLinks(btrie: PBuildingVertex);
+    procedure CalcSuffLink(vertex, parent: SizeUint);
+    class operator Initialize(var self: TStringsFinder);
+    class operator Finalize(var self: TStringsFinder);
+
+  var
+    trie: PVertex; // Region contains trie + wordLen + parentChars.
+    // Childs of the vertex trie[i] are trie[i].firstChild .. trie[i].firstChild + trie[i].nChilds - 1,
+    // corresponding characters reside in parentChars at the same indices, i.e. nChilds consecutive characters starting from parentChars[trie[i].firstChild].
+    parentChars: PAnsiChar;
+    wordLen: PStoreVertexType;
+    nTrie: SizeUint;
+  end;
+
+procedure TStringsFinder.Init(const samples: array of ansistring);
+var
+  totalChars, iSample: SizeInt;
+  b: Builder;
+begin
+  FreeMem(trie);
+  trie := nil;
+
+  // In the worst case, for example, samples = [ABC, DEFG, HI]:
+  //        _ A → B → C
+  //        /|
+  //       /
+  // root  →  D → E → F → G
+  //       \
+  //        _|
+  //          H → I
+  // tree will have at most 1 + sum(length(sample) for sample in samples) vertices (including root).
+  //
+  // This size is preallocated for BuildingVertex[], where childs are stored as linked lists of siblings: root.firstChild = A, A.nextChild = D, and so on.
+  // Then actual size is allocated (may or may not be substantially less and can be a dubious idea overall), nodes are moved there,
+  // and child characters (BuildingVertex.parentChar) are flattened into parentChars[] (parallel to trie[]) to be used with Index*.
+  // Could build hashtables instead but probably even Index*(N = 256) will outperform searching a hash table of 256 items.
+  // And usually there is only 1 child: in the example above, root has 3, leaves have 0, everyone else has 1.
+  totalChars := 0;
+  for iSample := 0 to High(samples) do
+    inc(totalChars, length(samples[iSample]));
+
+  b.btrie := GetMem((totalChars + 1) * sizeof(BuildingVertex));
+  nTrie := FillInitialTrie(b.btrie, samples);
+
+  // CalcSuffLink must be called in the breadth-first order.
+  // Trie is laid out in the same order — it does not require a particular order by itself,
+  // only root must be at 0 and childs of any particular node must be sequential, the order of these child blocks does not matter.
+
+  // Region for trie + wordLen + parentChars. No explicit alignment assuming AlignOf(Vertex) >= AlignOf(wordLen[0]) >= AlignOf(parentChars[0]).
+  trie := GetMem(nTrie * (sizeof(trie[0]) + sizeof(parentChars[0])) + SizeUint(length(samples) * sizeof(wordLen[0])));
+  wordLen := pointer(trie) + nTrie * sizeof(Vertex);
+  for iSample := 0 to High(samples) do
+    wordLen[iSample] := length(samples[iSample]);
+  parentChars := pointer(wordLen) + length(samples) * sizeof(wordLen[0]);
+
+  FlattenTrieAndCalculateSuffixLinks(b.btrie);
+end;
+
+function TStringsFinder.TMatchesIterator.GetEnumerator: TMatchesIterator;
+begin
+  result := self;
+end;
+
+function TStringsFinder.TMatchesIterator.MoveNext: boolean;
+var
+  sp: PAnsiChar;
+  trie: PVertex;
+  state, check, iChild: SizeUint;
+begin
+  sp := self.sp - 1; // Loop starts with an increment.
+  trie := self.trie;
+  state := self.state;
+  check := self.check;
+  repeat
+    inc(sp);
+    repeat
+      check := trie[check].endWordLink;
+      if check = 0 then break;
+
+      curMatch.sampleId := trie[check].word;
+      curMatch.pos := sp - PAnsiChar(pointer(s)) + 1 - SizeInt(wordLen[curMatch.sampleId]);
+
+      check := trie[check].suffixLink;
+      self.sp := sp;
+      self.state := state;
+      self.check := check;
+      exit(true);
+    until false;
+
+    if sp = se then
+      break;
+    repeat
+      SizeInt(iChild) := IndexByte(parentChars[trie[state].firstChild], trie[state].nChilds, ord(sp^));
+      if SizeInt(iChild) >= 0 then
+      begin
+        state := trie[state].firstChild + iChild;
+        check := state;
+        break;
+      end;
+      if state = 0 then break;
+      state := trie[state].suffixLink;
+    until false;
+  until false;
+  result := false;
+end;
+
+function TStringsFinder.Matches(const s: ansistring; start: SizeInt = 1): TMatchesIterator;
+var
+  ns: SizeInt;
+begin
+  ns := length(s);
+  if SizeUint(start - 1) >= SizeUint(ns) then // (start < 1) or (start > ns) assuming ns >= 0.
+    start := ns + 1;
+  result.sp := PAnsiChar(pointer(s)) + (start - 1);
+  result.se := PAnsiChar(pointer(s)) + ns;
+  result.state := 0;
+  result.check := 0;
+  result.trie := trie;
+  result.parentChars := parentChars;
+  result.wordLen := wordLen;
+  result.s := s; // Backs up pointers during the iteration.
+end;
+
+class operator TStringsFinder.Builder.Initialize(var self: Builder);
+begin
+  self.btrie := nil;
+end;
+
+class operator TStringsFinder.Builder.Finalize(var self: Builder);
+begin
+  FreeMem(self.btrie);
+end;
+
+class function TStringsFinder.FillInitialTrie(btrie: PBuildingVertex; const samples: array of ansistring): SizeUint;
+var
+  iSample: SizeInt;
+  curVertex, nextVertex: SizeUint;
+  bv, bchild: PBuildingVertex;
+  cp, ce: PAnsiChar;
+begin
+  result := 1;
+  btrie^.firstChild := 0;
+  for iSample := 0 to High(samples) do
+  begin
+    curVertex := 0;
+    cp := PAnsiChar(pointer(samples[iSample]));
+    ce := cp + length(ansistring(pointer(cp)));
+    while cp < ce do
+    begin
+      nextVertex := FindChild(btrie, btrie[curVertex].firstChild, cp^);
+      if nextVertex = 0 then
+      begin
+        nextVertex := result;
+        bchild := btrie + nextVertex;
+        bchild^.firstChild := 0;
+        bv := btrie + curVertex;
+        bchild^.nextChild := bv^.firstChild;
+        bchild^.word := StoreVertexType(-1);
+        bchild^.parentChar := cp^;
+        bv^.firstChild := nextVertex;
+        inc(result);
+      end;
+      curVertex := nextVertex;
+      inc(cp);
+    end;
+    if btrie[curVertex].word = StoreVertexType(-1) then // Ignore repeats.
+      btrie[curVertex].word := iSample;
+  end;
+end;
+
+class function TStringsFinder.FindChild(btrie: PBuildingVertex; v: SizeUint; c: ansichar): SizeUint;
+begin
+  // Not just BuildingVertex[] could be a final tree, this search could be the actual search performing during the state transitions instead of that fancy Index*.
+  result := v;
+  while (result <> 0) and (btrie[result].parentChar <> c) do
+    result := btrie[result].nextChild;
+end;
+
+procedure TStringsFinder.FlattenTrieAndCalculateSuffixLinks(btrie: PBuildingVertex);
+var
+  trie, trieqp: PVertex;
+  bparent, queuePos, queueEnd, bchild: SizeUint;
+begin
+  // trie[i].firstChild is reused for btrie index queue for breadth-first traversal, this is marked as {t2bt}firstChild.
+  queuePos := 0;
+  queueEnd := 1;
+  trie := self.trie;
+  trie[0].{t2bt}firstChild := 0;
+  trie[0].suffixLink := 0;
+  trie[0].endWordLink := 0;
+  repeat
+    trieqp := trie + queuePos;
+    bparent := trieqp^.{t2bt}firstChild;
+    bchild := btrie[bparent].firstChild;
+    trieqp^.firstChild := queueEnd; // trieqp becomes an actual Vertex and gets an actual firstChild.
+    trieqp^.nChilds := 0;
+    while bchild <> 0 do
+    begin
+      inc(trieqp^.nChilds);
+      trie[queueEnd].{t2bt}firstChild := bchild;
+      trie[queueEnd].word := btrie[bchild].word;
+      parentChars[queueEnd] := btrie[bchild].parentChar;
+      CalcSuffLink(queueEnd, queuePos);
+      inc(queueEnd);
+      bchild := btrie[bchild].nextChild;
+    end;
+    inc(queuePos);
+  until queuePos = queueEnd;
+end;
+
+class operator TStringsFinder.Initialize(var self: TStringsFinder);
+begin
+  self.trie := nil;
+end;
+
+procedure TStringsFinder.CalcSuffLink(vertex, parent: SizeUint);
+var
+  trie, tvertex, tparent: PVertex;
+  iChild: SizeInt;
+  chVertex: ansichar;
+begin
+  chVertex := parentChars[vertex];
+  trie := self.trie;
+  tvertex := trie + vertex;
+  tvertex^.suffixLink := 0;
+  if parent <> 0 then
+  begin
+    tparent := trie + parent;
+    repeat
+      parent := tparent^.suffixLink;
+      tparent := trie + parent;
+      iChild := IndexByte(parentChars[tparent^.firstChild], tparent^.nChilds, ord(chVertex));
+      if iChild >= 0 then
+      begin
+        tvertex^.suffixLink := tparent^.firstChild + SizeUint(iChild);
+        break;
+      end;
+    until parent = 0;
+  end;
+
+  if tvertex^.word <> StoreVertexType(-1) then
+    tvertex^.endWordLink := vertex
+  else
+    tvertex^.endWordLink := trie[tvertex^.suffixLink].endWordLink;
+end;
+
+class operator TStringsFinder.Finalize(var self: TStringsFinder);
+begin
+  FreeMem(self.trie);
+end;
+
+
+function StringsReplaceInternal(const S, CompStr: AnsiString; const OldPattern, NewPattern: array of AnsiString; ReplaceAll: boolean): string;
 
 var pc,lastpc,litStart : PAnsiChar;
     iPattern,Rp,Ra,iFirstPattern,OldPatternLen : SizeInt;
@@ -1586,7 +1891,7 @@ var pc,lastpc,litStart : PAnsiChar;
 
     nextPattern   : PSizeInt; // Next pattern starting with the same character.
     nextPatternStatic: array[0 .. 63] of SizeInt;
-    CompStr       : ansistring;
+    AhoCorasickFallbackQuota : SizeInt;
 {$if sizeof(char) <> sizeof(ansichar)}
     tempStr       : string;
 {$endif}
@@ -1602,11 +1907,69 @@ var pc,lastpc,litStart : PAnsiChar;
       Rp:=Rp+N;
     end;
 
+    procedure ReplaceAt(pc: PAnsiChar; iPattern: SizeInt);
+    var
+      pcc: PAnsiChar;
+    begin
+      pcc:=PAnsiChar(Pointer(S))+(pc-PAnsiChar(Pointer(CompStr)));
+{$if sizeof(char)=sizeof(ansichar)}
+      Append(litStart,pcc-litStart);
+      Append(PChar(Pointer(NewPattern[iPattern])), Length(NewPattern[iPattern]));
+{$else}
+      tempStr := Copy(S,1+litStart-PAnsiChar(Pointer(S)),pcc-litStart);
+      Append(PChar(Pointer(tempStr)), Length(tempStr));
+      tempStr := NewPattern[iPattern];
+      Append(PChar(Pointer(tempStr)), Length(tempStr));
+{$endif}
+      litStart := pcc+Length(OldPattern[iPattern]);
+    end;
+
+    procedure AhoCorasickFallback(pc: PAnsiChar);
+    var
+      sf: TStringsFinder;
+      m: TStringsFinder.TMatch;
+      matches: array of TStringsFinder.TMatch;
+      nMatches, aMatches, insertPos, iMatch, minPos: SizeInt;
+    begin
+      // StringsReplace result might depend on the order of samples if they are substrings of each other.
+      // Also, Aho-Corasick might return such matches in unobvious order.
+      // Naive StringsReplace semantics are mimicked by storing and sorting all matches by (pos, sampleId).
+      // Rust crate aho-corasick seems to have better option (LeftmostFirst, which is exactly what required here) but, eh...
+      nMatches:=0;
+      aMatches:=0;
+      matches:=nil;
+      sf.Init(OldPattern);
+      for m in sf.Matches(CompStr, 1+(pc-PAnsiChar(Pointer(CompStr)))) do
+        begin
+        // Insert m into matches maintaining sorted order. Usually (always when matches aren't substrings of each other) will be inserted at the end. :)
+        insertPos:=nMatches;
+        while (insertPos>0) and ((m.pos<matches[insertPos-1].pos) or (m.pos=matches[insertPos-1].pos) and (m.sampleId<matches[insertPos-1].sampleId)) do
+          dec(insertPos);
+        if nMatches=aMatches then
+          begin
+          inc(aMatches,8+SizeInt(SizeUint(aMatches) div 2+SizeUint(aMatches) div 4));
+          SetLength(matches,aMatches);
+          end;
+        Move(TStringsFinder.PMatch(matches)[insertPos],TStringsFinder.PMatch(matches)[insertPos+1],(nMatches-insertPos)*sizeof(TStringsFinder.TMatch));
+        inc(nMatches);
+        matches[insertPos]:=m;
+        end;
+
+      minPos:=1; // To ignore overlapping matches.
+      for iMatch:=0 to nMatches-1 do
+        if matches[iMatch].pos>=minPos then
+          begin
+          ReplaceAt(PAnsiChar(Pointer(CompStr))+(matches[iMatch].pos-1),matches[iMatch].sampleId);
+          minPos:=matches[iMatch].pos+Length(OldPattern[matches[iMatch].sampleId]);
+          if not ReplaceAll then
+            break;
+          end;
+    end;
+
     // Mostly exists to force better register allocation for the main "pc < lastpc" loop, hotter than this procedure. :)
     // Returns the length of the found and replaced OldPattern item, or -1 if not found.
     function TryMatchAndReplace(pc,lastpc: PAnsiChar; iPattern: SizeInt): SizeInt;
     var
-      pcc: PAnsiChar;
       OldPatternLen: SizeInt;
     begin
       repeat
@@ -1614,19 +1977,20 @@ var pc,lastpc,litStart : PAnsiChar;
         if (OldPatternLen <= (lastpc-pc)) and
            (CompareByte(OldPattern[iPattern,1],pc^,OldPatternLen*SizeOf(AnsiChar))=0) then
           begin
-          pcc:=PAnsiChar(Pointer(S))+(pc-PAnsiChar(Pointer(CompStr)));
-{$if sizeof(char)=sizeof(ansichar)}
-          Append(litStart,pcc-litStart);
-          Append(PChar(Pointer(NewPattern[iPattern])), Length(NewPattern[iPattern]));
-{$else}
-          tempStr := Copy(S,1+litStart-PAnsiChar(Pointer(S)),pcc-litStart);
-          Append(PChar(Pointer(tempStr)), Length(tempStr));
-          tempStr := NewPattern[iPattern];
-          Append(PChar(Pointer(tempStr)), Length(tempStr));
-{$endif}
-          litStart := pcc+OldPatternLen;
+          ReplaceAt(pc,iPattern);
           exit(OldPatternLen);
           end;
+        AhoCorasickFallbackQuota:=AhoCorasickFallbackQuota-1;
+        { Use Aho-Corasick if already did the amount of work comparable to initializing Aho-Corasick trie and the rest of the string looks substantial (75% atm). }
+        if AhoCorasickFallbackQuota<0 then
+          if SizeUint(lastpc-pc)>SizeUint(Length(S)) div 4*3 then
+            begin
+            // writeln('Aho-Corasick fallback at ', (pc - PAnsiChar(Pointer(CompStr))) / (Length(CompStr) + ord(Length(CompStr) = 0)) * 100:0:1, '%');
+            AhoCorasickFallback(pc);
+            exit(lastpc-pc);
+            end
+          else
+            AhoCorasickFallbackQuota:=High(SizeInt); { To not recheck too often. :) }
         iPattern := nextPattern[iPattern];
       until iPattern < 0;
       result := -1;
@@ -1641,25 +2005,21 @@ begin
     nextPattern := PSizeInt(nextPatternStatic)
   else
     nextPattern := GetMem(Length(OldPattern) * sizeof(SizeInt));
-  FillChar(nextPattern^, Length(OldPattern) * sizeof(SizeInt), byte(-1));
 
-  if rfIgnoreCase in Flags then
-    begin
-    CompStr := AnsiUpperCase(S);
-    for iPattern := 0 to High(OldPattern) do
-      OldPattern[iPattern] := AnsiUpperCase(OldPattern[iPattern]);
-    end
-  else
-    CompStr := S;
+  // This counter is decremented on each CompareByte, and on reaching zero Aho-Corasick fallback may be performed
+  // (cost of CompareBytes supposedly became comparable).
+  AhoCorasickFallbackQuota := 512+SizeUint(Length(S));
 
   // The element added to the linked list last will be checked first, so add in reverse order.
   for iPattern := High(OldPattern) downto 0 do
     if OldPattern[iPattern] <> '' then
       begin
+      AhoCorasickFallbackQuota:=AhoCorasickFallbackQuota+Length(OldPattern[iPattern]);
       iFirstPattern := ord(OldPattern[iPattern,1]) and High(firstPattern);
       nextPattern[iPattern] := firstPattern[iFirstPattern];
       firstPattern[iFirstPattern] := iPattern;
       end;
+  AhoCorasickFallbackQuota:=SizeUint(AhoCorasickFallbackQuota) div 2;
 
   Ra := Length(S); // Preallocation heuristic.
   SetLength(result, Ra);
@@ -1667,6 +2027,10 @@ begin
   pc := PAnsiChar(Pointer(CompStr));
   litStart := PAnsiChar(Pointer(S));
   lastpc := pc+Length(S);
+
+  // Uncomment to perform Aho-Corasick unconditionally (debug; will greatly slow down sane inputs!)
+  {AhoCorasickFallback(pc);
+  pc := lastpc;}
 
   while pc < lastpc do
     begin
@@ -1678,12 +2042,12 @@ begin
       if OldPatternLen >= 0 then
         begin
         pc := pc-1+OldPatternLen;
-        if not (rfReplaceAll in Flags) then
+        if not ReplaceAll then
           break;
         end;
       end;
     end;
-  if nextPattern <> PSizeInt(nextPattern) then
+  if nextPattern <> PSizeInt(nextPatternStatic) then
     FreeMem(nextPattern);
   if litStart = PAnsiChar(Pointer(S)) then
     exit(S); // Unchanged string.
@@ -1694,6 +2058,25 @@ begin
   Append(PChar(Pointer(tempStr)), Length(tempStr));
 {$endif}
   SetLength(result,Rp);
+end;
+
+function StringsReplaceCaseInsensitive(const S: AnsiString; const OldPattern, NewPattern: array of AnsiString; ReplaceAll: boolean): string;
+var
+  OldPatternUpcased: array of AnsiString;
+  I: SizeInt;
+begin
+  SetLength(OldPatternUpcased, Length(OldPattern));
+  for I := 0 to High(OldPattern) do
+    OldPatternUpcased[I] := AnsiUpperCase(OldPattern[I]);
+  Result := StringsReplaceInternal(S, AnsiUpperCase(S), OldPatternUpcased, NewPattern, ReplaceAll);
+end;
+
+function StringsReplace(const S: AnsiString; const OldPattern, NewPattern: array of AnsiString; Flags: TReplaceFlags): string;
+begin
+  if rfIgnoreCase in flags then
+    Result := StringsReplaceCaseInsensitive(S, OldPattern, NewPattern, rfReplaceAll in Flags)
+  else
+    Result := StringsReplaceInternal(S, S, OldPattern, NewPattern, rfReplaceAll in Flags);
 end;
 
 { ---------------------------------------------------------------------
