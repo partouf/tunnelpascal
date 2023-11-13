@@ -2280,7 +2280,7 @@ begin
 end;
 
 
-{$ifdef cpu64}
+{$if defined(cpu64) or defined(cpui386)}
 function AtomicIncrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
 
 begin
@@ -2404,7 +2404,7 @@ begin
 end;
 
 
-{$ifdef cpu64}
+{$if defined(cpu64) or defined(cpui386)}
 function AtomicIncrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
 
 begin

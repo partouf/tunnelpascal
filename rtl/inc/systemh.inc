@@ -1605,17 +1605,17 @@ function InterlockedDecrement (var Target: longint) : longint; public name 'FPC_
 function InterlockedExchange (var Target: longint;Source : longint) : longint; public name 'FPC_INTERLOCKEDEXCHANGE';
 function InterlockedExchangeAdd (var Target: longint;Source : longint) : longint; public name 'FPC_INTERLOCKEDEXCHANGEADD';
 function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; public name 'FPC_INTERLOCKEDCOMPAREEXCHANGE';
-{$ifdef cpu64}
-function AtomicIncrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-function AtomicDecrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-function AtomicCmpExchange(var Target: int64; NewValue, Comperand: int64): int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-function AtomicExchange (var Target: int64;Source : int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-function InterlockedIncrement64 (var Target: int64) : int64; public name 'FPC_INTERLOCKEDINCREMENT64';
-function InterlockedDecrement64 (var Target: int64) : int64; public name 'FPC_INTERLOCKEDDECREMENT64';
-function InterlockedExchange64 (var Target: int64;Source : int64) : int64; public name 'FPC_INTERLOCKEDEXCHANGE64';
-function InterlockedExchangeAdd64 (var Target: int64;Source : int64) : int64; public name 'FPC_INTERLOCKEDEXCHANGEADD64';
-function InterlockedCompareExchange64(var Target: int64; NewValue: int64; Comperand: int64): int64; public name 'FPC_INTERLOCKEDCOMPAREEXCHANGE64';
-{$endif cpu64}
+{$if defined(cpu64) or defined(cpui386)}
+function AtomicIncrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function AtomicDecrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function AtomicCmpExchange(var Target: int64; NewValue, Comperand: int64): int64; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function AtomicExchange (var Target: int64;Source : int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function InterlockedIncrement64 (var Target: int64) : int64; public name 'FPC_INTERLOCKEDINCREMENT64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedDecrement64 (var Target: int64) : int64; public name 'FPC_INTERLOCKEDDECREMENT64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedExchange64 (var Target: int64;Source : int64) : int64; public name 'FPC_INTERLOCKEDEXCHANGE64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedExchangeAdd64 (var Target: int64;Source : int64) : int64; public name 'FPC_INTERLOCKEDEXCHANGEADD64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedCompareExchange64(var Target: int64; NewValue: int64; Comperand: int64): int64; public name 'FPC_INTERLOCKEDCOMPAREEXCHANGE64'; {$ifndef cpu64} platform; {$endif}
+{$endif cpu64 or cpui386}
 
 { Pointer overloads }
 
@@ -1676,17 +1676,17 @@ function InterlockedDecrement (var Target: cardinal) : cardinal; external name '
 function InterlockedExchange (var Target: cardinal;Source : cardinal) : cardinal; external name 'FPC_INTERLOCKEDEXCHANGE';
 function InterlockedExchangeAdd (var Target: cardinal;Source : cardinal) : cardinal; external name 'FPC_INTERLOCKEDEXCHANGEADD';
 function InterlockedCompareExchange(var Target: cardinal; NewValue: cardinal; Comperand: cardinal): cardinal; external name 'FPC_INTERLOCKEDCOMPAREEXCHANGE';
-{$ifdef cpu64}
-function AtomicIncrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-function AtomicDecrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-function AtomicCmpExchange(var Target: qword; NewValue, Comperand: qword): qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-function AtomicExchange (var Target: qword;Source : qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-function InterlockedIncrement64 (var Target: qword) : qword; external name 'FPC_INTERLOCKEDINCREMENT64';
-function InterlockedDecrement64 (var Target: qword) : qword; external name 'FPC_INTERLOCKEDDECREMENT64';
-function InterlockedExchange64 (var Target: qword;Source : qword) : qword; external name 'FPC_INTERLOCKEDEXCHANGE64';
-function InterlockedExchangeAdd64 (var Target: qword;Source : qword) : qword; external name 'FPC_INTERLOCKEDEXCHANGEADD64';
-function InterlockedCompareExchange64(var Target: qword; NewValue: qword; Comperand: qword): qword; external name 'FPC_INTERLOCKEDCOMPAREEXCHANGE64';
-{$endif cpu64}
+{$if defined(cpu64) or defined(cpui386)}
+function AtomicIncrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function AtomicDecrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function AtomicCmpExchange(var Target: qword; NewValue, Comperand: qword): qword; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function AtomicExchange (var Target: qword;Source : qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif} {$ifndef cpu64} platform; {$endif}
+function InterlockedIncrement64 (var Target: qword) : qword; external name 'FPC_INTERLOCKEDINCREMENT64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedDecrement64 (var Target: qword) : qword; external name 'FPC_INTERLOCKEDDECREMENT64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedExchange64 (var Target: qword;Source : qword) : qword; external name 'FPC_INTERLOCKEDEXCHANGE64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedExchangeAdd64 (var Target: qword;Source : qword) : qword; external name 'FPC_INTERLOCKEDEXCHANGEADD64'; {$ifndef cpu64} platform; {$endif}
+function InterlockedCompareExchange64(var Target: qword; NewValue: qword; Comperand: qword): qword; external name 'FPC_INTERLOCKEDCOMPAREEXCHANGE64'; {$ifndef cpu64} platform; {$endif}
+{$endif cpu64 or cpui386}
 
 
 {*****************************************************************************

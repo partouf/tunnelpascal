@@ -1,4 +1,7 @@
-{$ifdef cpu64}
+uses
+  CTypes; // Dummy uses for {$if declared(System identifier)} to work.
+
+{$if declared(InterlockedCompareExchange64)}
 procedure test64;
 var
   c: qword;
@@ -17,7 +20,7 @@ begin
   if (c<>qword($8000000000000035)) then
     halt(60);
 end;
-{$endif cpu64}
+{$endif InterlockedCompareExchange64}
 
 var
   c: cardinal;
@@ -43,4 +46,7 @@ begin
     halt(5);
   if (c<>$80000000) then
     halt(6);
+{$if declared(InterlockedCompareExchange64)}
+  test64;
+{$endif}
 end.

@@ -7,7 +7,6 @@
 {$endif}
 
 
-{$ifdef CPU64}
 uses
 {$ifndef FPC}
   Windows,
@@ -17,6 +16,7 @@ uses
 {$endif unix}
   SysUtils, Classes;
 
+{$if declared(InterlockedCompareExchange64)}
 type
   TOperation = (opAdd, opDec, opExchange, opExchangeAdd, opExchangeDec, opCompareExchange);
 
@@ -344,7 +344,7 @@ begin
   Run;
 end.
 
-{$else CPU64}
+{$else InterlockedCompareExchange64}
 begin
 end.
-{$endif CPU64}
+{$endif InterlockedCompareExchange64}
