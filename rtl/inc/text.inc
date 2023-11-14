@@ -82,18 +82,30 @@ End;
 Procedure InitText(Var t : Text);
 
 begin
-  FillChar(t,SizeOf(TextRec),0);
-{ only set things that are not zero }
+{ Set up TextRec fields. }
   TextRec(t).Handle:=UnusedHandle;
   TextRec(t).mode:=fmClosed;
   TextRec(t).BufSize:=TextRecBufSize;
+  TextRec(t)._private:=0;
+  TextRec(t).bufpos:=0;
+  TextRec(t).bufend:=0;
   TextRec(t).Bufptr:=@TextRec(t).Buffer;
   TextRec(t).OpenFunc:=@FileOpenFunc;
+  TextRec(t).InOutFunc:=nil;
+  TextRec(t).FlushFunc:=nil;
+  TextRec(t).CloseFunc:=nil;
+  TextRec(t).Name[0]:=#0;
   Case DefaultTextLineBreakStyle Of
     tlbsLF: TextRec(t).LineEnd := #10;
     tlbsCRLF: TextRec(t).LineEnd := #13#10;
     tlbsCR: TextRec(t).LineEnd := #13;
   End;
+{$ifdef FPC_HAS_CPSTRING}
+  TextRec(t).CodePage:=0;
+{$endif}
+{$ifdef FPC_HAS_FEATURE_UNICODESTRINGS}
+  TextRec(t).FullName:=nil;
+{$endif FPC_HAS_FEATURE_UNICODESTRINGS}
 end;
 
 
@@ -146,15 +158,16 @@ End;
 
 Procedure Assign(out t:Text;const s: ShortString);
 Begin
-{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-  Assign(t,AnsiString(s));
-{$else FPC_HAS_FEATURE_ANSISTRINGS}
   InitText(t);
-  { warning: no encoding support }
+{$if defined(FPC_ANSI_TEXTFILEREC) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+  { ensure the characters in the record's filename are encoded correctly }
+  TextRec(t).Name:=ToSingleByteFileSystemEncodedFileName(S);
+{$else}
+  { warning: no encoding support in case of FPC_ANSI_TEXTFILEREC }
   TextRec(t).Name:=s;
+{$endif}
   { null terminate, since the name array is regularly used as p(wide)AnsiChar }
   TextRec(t).Name[high(TextRec(t).Name)]:=#0;
-{$endif FPC_HAS_FEATURE_ANSISTRINGS}
 End;
 
 
@@ -2377,9 +2390,16 @@ begin
   if (t.bufpos=0) then
     exit;
   str:=pshortstring(ppointer(@t.userdata[TempWriteStrDestIndex])^);
+  { Allocate temporary string? }
+  if not assigned(str) then
+    begin
+      str:=getmem(1+t.userdata[ShortStrLenIndex]);
+      ppointer(@t.userdata[TempWriteStrDestIndex])^:=str;
+      str^[0]:=#0;
+    end;
   newbytes:=t.BufPos;
   oldlen:=length(str^);
-  if (oldlen+t.bufpos > t.userdata[ShortStrLenIndex]) then
+  if (oldlen+newbytes > t.userdata[ShortStrLenIndex]) then
     begin
       newbytes:=t.userdata[ShortStrLenIndex]-oldlen;
 {$ifdef writestr_iolencheck}
@@ -2391,14 +2411,33 @@ begin
       inoutres:=101;
 {$endif}
     end;
-  setlength(str^,length(str^)+newbytes);
+  str^[0]:=chr(oldlen+newbytes);
   move(t.bufptr^,str^[oldlen+1],newbytes);
   t.bufpos:=0;
 end;
 
 
 procedure WriteStrShortFlush(var t: textrec);
+var
+  ns: SizeInt;
 begin
+  { If the temporary string is still not allocated then all data resides in t.bufptr^ and can be copied directly to the final shortstring. }
+  if not assigned(ppointer(@t.userdata[TempWriteStrDestIndex])^) then
+    begin
+      ns:=t.bufpos;
+      if ns>t.userdata[ShortStrLenIndex] then
+        begin
+{$ifdef writestr_iolencheck}
+          { "disk full" }
+          inoutres:=101;
+{$endif}
+          ns:=t.userdata[ShortStrLenIndex];
+        end;
+      pshortstring(PPointer(@t.userdata[StrPtrIndex])^)^[0]:=chr(ns);
+      move(t.bufptr^,pshortstring(PPointer(@t.userdata[StrPtrIndex])^)^[1],ns);
+      exit;
+    end;
+
   { move written data from internal buffer to temporary shortstring (don't move
     directly from buffer to final shortstring, because the temporary shortstring may
     already contain data in case the textbuf was smaller than the shortstring
@@ -2407,7 +2446,7 @@ begin
   { move written data to original shortstring }
   move(PPointer(@t.userdata[TempWriteStrDestIndex])^^,
        PPointer(@t.userdata[StrPtrIndex])^^,
-       t.userdata[ShortStrLenIndex]+1);
+       1+length(pshortstring(ppointer(@t.userdata[TempWriteStrDestIndex])^)^));
   { free temporary buffer }
   freemem(PPointer(@t.userdata[TempWriteStrDestIndex])^);
 end;
@@ -2425,19 +2464,33 @@ begin
   str:=pansistring(@t.userdata[TempWriteStrDestIndex]);
   oldlen:=length(str^);
   setlength(str^,oldlen+t.bufpos);
-  move(t.bufptr^,str^[oldlen+1],t.bufpos);
+  move(t.bufptr^,ppansichar(str)^[oldlen],t.bufpos);
   t.bufpos:=0;
 end;
 
 
 procedure WriteStrAnsiFlush(var t: textrec);
+var
+  dest: pansistring;
 begin
+  dest:=ppointer(@t.userdata[StrPtrIndex])^;
+  { If the temporary string is still not allocated then all data resides in t.bufptr^ and can be copied directly to the final ansistring.
+    Bad idea if destination refcount <> 1... unless it so happens that the destination contents completely match t.bufptr^. }
+  if pansistring(@t.userdata[TempWriteStrDestIndex])^='' then
+    if (t.bufpos=length(dest^)) and (CompareByte(pointer(dest^)^,t.bufptr^,t.bufpos)=0) then
+      exit
+    else if StringRefCount(dest^)=1 then
+      begin
+        setlength(dest^,t.bufpos);
+        move(t.bufptr^,pointer(dest^)^,t.bufpos);
+        exit;
+      end;
+
   { see comment in WriteStrShortFlush }
   WriteStrAnsi(t);
-  pansistring(ppointer(@t.userdata[StrPtrIndex])^)^:=
-    pansistring(@t.userdata[TempWriteStrDestIndex])^;
-  { free memory/finalize temp }
-  pansistring(@t.userdata[TempWriteStrDestIndex])^:='';
+  { Replace the destination with the temporary string without excessive reference counting. }
+  finalize(dest^);
+  pointer(dest^):=ppointer(@t.userdata[TempWriteStrDestIndex])^;
 end;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
@@ -2546,13 +2599,20 @@ begin
 end;
 {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
 
-procedure SetupWriteStrCommon(out t: textrec; cp: TSystemCodePage);
+procedure SetupWriteStrCommon(out t: textrec; cp: TSystemCodePage;
+  StrPtr: pointer; InOutFunc, FlushFunc: FileFunc);
 begin
   // initialise
-  Assign(text(t),'');
+  InitText(text(t));
   t.mode:=fmOutput;
   t.OpenFunc:=nil;
-  t.CloseFunc:=nil;
+  t.InOutFunc:=InOutFunc;
+  t.FlushFunc:=FlushFunc;
+  PPointer(@t.userdata[StrPtrIndex])^:=StrPtr;
+
+  { temporary destination (see comments for TempWriteStrDestIndex) }
+  PPointer(@t.userdata[TempWriteStrDestIndex])^:=nil;
+
 {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
   t.CodePage:=TranslatePlaceholderCP(cp);
 {$endif}
@@ -2561,16 +2621,8 @@ end;
 
 procedure fpc_SetupWriteStr_Shortstr(var ReadWriteStrText: text; var s: shortstring); compilerproc;
 begin
-  SetupWriteStrCommon(TextRec(ReadWriteStrText),DefaultSystemCodePage);
-  PPointer(@TextRec(ReadWriteStrText).userdata[StrPtrIndex])^:=@s;
-
-  { temporary destination (see comments for TempWriteStrDestIndex) }
-  getmem(PPointer(@TextRec(ReadWriteStrText).userdata[TempWriteStrDestIndex])^,high(s)+1);
-  setlength(pshortstring(ppointer(@TextRec(ReadWriteStrText).userdata[TempWriteStrDestIndex])^)^,0);
-
+  SetupWriteStrCommon(TextRec(ReadWriteStrText),DefaultSystemCodePage,@s,@WriteStrShort,@WriteStrShortFlush);
   TextRec(ReadWriteStrText).userdata[ShortStrLenIndex]:=high(s);
-  TextRec(ReadWriteStrText).InOutFunc:=@WriteStrShort;
-  TextRec(ReadWriteStrText).FlushFunc:=@WriteStrShortFlush;
 end;
 
 
@@ -2580,14 +2632,7 @@ begin
   { destination rawbytestring -> use CP_ACP }
   if cp=CP_NONE then
     cp:=CP_ACP;
-  SetupWriteStrCommon(TextRec(ReadWriteStrText),cp);
-  PPointer(@TextRec(ReadWriteStrText).userdata[StrPtrIndex])^:=@s;
-
-  { temp destination ansistring, nil = empty shortstring }
-  PPointer(@TextRec(ReadWriteStrText).userdata[TempWriteStrDestIndex])^:=nil;
-
-  TextRec(ReadWriteStrText).InOutFunc:=@WriteStrAnsi;
-  TextRec(ReadWriteStrText).FlushFunc:=@WriteStrAnsiFlush;
+  SetupWriteStrCommon(TextRec(ReadWriteStrText),cp,@s,@WriteStrAnsi,@WriteStrAnsiFlush);
 end;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
@@ -2595,14 +2640,7 @@ end;
 {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
 procedure fpc_SetupWriteStr_Unicodestr(var ReadWriteStrText: text; var s: unicodestring); compilerproc;
 begin
-  SetupWriteStrCommon(TextRec(ReadWriteStrText),CP_UTF8);
-  PPointer(@TextRec(ReadWriteStrText).userdata[StrPtrIndex])^:=@s;
-
-  { temp destination unicodestring, nil = empty shortstring }
-  PPointer(@TextRec(ReadWriteStrText).userdata[TempWriteStrDestIndex])^:=nil;
-
-  TextRec(ReadWriteStrText).InOutFunc:=@WriteStrUnicode;
-  TextRec(ReadWriteStrText).FlushFunc:=@WriteStrUnicodeFlush;
+  SetupWriteStrCommon(TextRec(ReadWriteStrText),CP_UTF8,@s,@WriteStrUnicode,@WriteStrUnicodeFlush);
 end;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
@@ -2610,14 +2648,7 @@ end;
 {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
 procedure fpc_SetupWriteStr_Widestr(var ReadWriteStrText: text; var s: widestring); compilerproc;
 begin
-  SetupWriteStrCommon(TextRec(ReadWriteStrText),CP_UTF8);
-  PPointer(@TextRec(ReadWriteStrText).userdata[StrPtrIndex])^:=@s;
-
-  { temp destination widestring }
-  PWideString(@TextRec(ReadWriteStrText).userdata[TempWriteStrDestIndex])^:='';
-
-  TextRec(ReadWriteStrText).InOutFunc:=@WriteStrWide;
-  TextRec(ReadWriteStrText).FlushFunc:=@WriteStrWideFlush;
+  SetupWriteStrCommon(TextRec(ReadWriteStrText),CP_UTF8,@s,@WriteStrWide,@WriteStrWideFlush);
 end;
 {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
 
@@ -2660,10 +2691,9 @@ end;
 procedure SetupReadStrCommon(out t: textrec; cp: TSystemCodePage);
 begin
   // initialise
-  Assign(text(t),'');
+  InitText(text(t));
   t.mode:=fmInput;
   t.OpenFunc:=nil;
-  t.CloseFunc:=nil;
 {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
   t.CodePage:=TranslatePlaceholderCP(cp);
   {$endif}
@@ -2755,7 +2785,7 @@ Function GetFullName(var t:Text) : UnicodeString;
 
 procedure OpenStdIO(var f:text;mode:longint;hdl:thandle);
 begin
-  Assign(f,'');
+  InitText(f);
   TextRec(f).Handle:=hdl;
   TextRec(f).Mode:=mode;
   TextRec(f).Closefunc:=@FileCloseFunc;
