@@ -2378,6 +2378,7 @@ const
     destination may be used in the writestr expression }
   TempWriteStrDestIndex = 9;
   ShortStrLenIndex = 17;
+  AnsiStrLenIndex = 17;
   { how many bytes of the shortstring have been processed already (used for readstr) }
   BytesReadIndex = 17;
 
@@ -2454,18 +2455,32 @@ end;
 
 
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-procedure WriteStrAnsi(var t: textrec);
+procedure WriteStrAnsiIntern(var t: textrec; flush: boolean);
 var
   str: pansistring;
-  oldlen: longint;
+  len,bufsize: SizeInt;
 begin
-  if (t.bufpos=0) then
+  if (t.bufpos=0) and not flush then
     exit;
   str:=pansistring(@t.userdata[TempWriteStrDestIndex]);
-  oldlen:=length(str^);
-  setlength(str^,oldlen+t.bufpos);
-  move(t.bufptr^,ppansichar(str)^[oldlen],t.bufpos);
+  len:=psizeint(@t.userdata[AnsiStrLenIndex])^+t.bufpos;
+  psizeint(@t.userdata[AnsiStrLenIndex])^:=len;
+  bufsize:=0;
+  if not flush then
+    { Could in princible be arbitrary... if all its users were compiled without range checks. E.g. scale logarithmically. }
+    bufsize:=TextRecBufSize;
+  setlength(str^,len+bufsize);
+  { Initial move from the original buffer. Future operations write directly to the string by reinterpreting its tail as TextBuf. }
+  if len=t.bufpos then
+    move(t.bufptr^,ppansichar(str)^^,len);
+  t.bufptr:=pointer(@ppansichar(str)^[len]);
   t.bufpos:=0;
+end;
+
+
+procedure WriteStrAnsi(var t: textrec);
+begin
+  WriteStrAnsiIntern(t,false);
 end;
 
 
@@ -2487,7 +2502,7 @@ begin
       end;
 
   { see comment in WriteStrShortFlush }
-  WriteStrAnsi(t);
+  WriteStrAnsiIntern(t,true);
   { Replace the destination with the temporary string without excessive reference counting. }
   finalize(dest^);
   pointer(dest^):=ppointer(@t.userdata[TempWriteStrDestIndex])^;
@@ -2633,6 +2648,7 @@ begin
   if cp=CP_NONE then
     cp:=CP_ACP;
   SetupWriteStrCommon(TextRec(ReadWriteStrText),cp,@s,@WriteStrAnsi,@WriteStrAnsiFlush);
+  PSizeInt(@TextRec(ReadWriteStrText).userdata[AnsiStrLenIndex])^:=0;
 end;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
