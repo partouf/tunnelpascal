@@ -114,6 +114,8 @@ unit cgobj;
           procedure alloccpuregisters(list:TAsmList;rt:Tregistertype;const r:Tcpuregisterset);virtual;
           {# Free multiple registers specified.}
           procedure dealloccpuregisters(list:TAsmList;rt:Tregistertype;const r:Tcpuregisterset);virtual;
+          {# Mark multiple registers specified as trashed.}
+          procedure trashcpuregisters(list:TAsmList;rt:Tregistertype;const r:Tcpuregisterset);virtual;
 
           procedure allocallcpuregisters(list:TAsmList);virtual;
           procedure deallocallcpuregisters(list:TAsmList);virtual;
@@ -830,6 +832,15 @@ implementation
           rg[rt].dealloccpuregisters(list,r)
         else
           internalerror(200310093);
+      end;
+
+
+    procedure tcg.trashcpuregisters(list:TAsmList;rt:Tregistertype;const r:Tcpuregisterset);
+      begin
+        if assigned(rg[rt]) then
+          rg[rt].trashcpuregisters(list,r)
+        else
+          internalerror(200310094);
       end;
 
 

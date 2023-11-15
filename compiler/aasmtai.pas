@@ -403,7 +403,11 @@ interface
 {$endif avr}
       );
 
-      TRegAllocType = (ra_alloc,ra_dealloc,ra_sync,ra_resize,ra_markused);
+      TRegAllocType = (ra_alloc,ra_dealloc,ra_sync,ra_resize,ra_markused,
+        { ra_actualparam - this register is being used as an actual parameter in the next CALL instruction }
+        ra_actualparam,
+        { ra_trashed - the register's previous value has been lost }
+        ra_trashed);
 
       TStabType = (stab_stabs,stab_stabn,stab_stabd,
                    { AIX/XCOFF stab types }
@@ -455,7 +459,7 @@ interface
 
 
     const
-      regallocstr : array[tregalloctype] of string[10]=('allocated','released','sync','resized','used');
+      regallocstr : array[tregalloctype] of string[10]=('allocated','released','sync','resized','used','parameter','trashed');
       tempallocstr : array[boolean] of string[10]=('released','allocated');
       stabtypestr : array[TStabType] of string[8]=(
         'stabs','stabn','stabd',
@@ -891,6 +895,8 @@ interface
           constructor sync(r : tregister);
           constructor resize(r : tregister);
           constructor markused(r : tregister);
+          constructor actualparam(r : tregister);
+          constructor trash(r : tregister);
           constructor ppuload(t:taitype;ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
        end;
@@ -2820,6 +2826,24 @@ implementation
         inherited create;
         typ:=ait_regalloc;
         ratype:=ra_markused;
+        reg:=r;
+      end;
+
+
+    constructor tai_regalloc.actualparam(r : tregister);
+      begin
+        inherited create;
+        typ:=ait_regalloc;
+        ratype:=ra_actualparam;
+        reg:=r;
+      end;
+
+
+    constructor tai_regalloc.trash(r : tregister);
+      begin
+        inherited create;
+        typ:=ait_regalloc;
+        ratype:=ra_trashed;
         reg:=r;
       end;
 
