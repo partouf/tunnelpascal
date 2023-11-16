@@ -904,6 +904,7 @@ unit cgx86;
             reference_reset_symbol(r,get_darwin_call_stub(s,weak),0,sizeof(pint),[]);
             r.refaddr:=addr_full;
           end;
+
         list.concat(taicpu.op_ref(A_CALL,S_NO,r));
       end;
 
@@ -922,6 +923,7 @@ unit cgx86;
         sym:=current_asmdata.RefAsmSymbol(s,AT_FUNCTION);
         reference_reset_symbol(r,sym,0,sizeof(pint),[]);
         r.refaddr:=addr_full;
+
         list.concat(taicpu.op_ref(A_CALL,S_NO,r));
       end;
 
@@ -3203,7 +3205,9 @@ unit cgx86;
                 new_section(list,sec_code,lower(current_procinfo.procdef.mangledname),0);
                 list.concat(Taicpu.Op_reg(A_PUSH,S_L,NR_EDX));
                 list.concat(Taicpu.Op_sym_ofs_reg(A_MOV,S_L,pl,0,NR_EDX));
+                MarkActualParameters(list, nil);
                 a_call_name(list,target_info.Cprefix+mcountprefix+'mcount',false);
+                TrashVolatileRegisters(list, nil);
                 list.concat(Taicpu.Op_reg(A_POP,S_L,NR_EDX));
              end;
 
@@ -3212,18 +3216,24 @@ unit cgx86;
 
            system_i386_go32v2,system_i386_watcom:
              begin
+               MarkActualParameters(list, nil);
                a_call_name(list,'MCOUNT',false);
+               TrashVolatileRegisters(list, nil);
              end;
            system_x86_64_linux,
            system_x86_64_darwin,
            system_x86_64_iphonesim:
              begin
+               MarkActualParameters(list, nil);
                a_call_name(list,'mcount',false);
+               TrashVolatileRegisters(list, nil);
              end;
            system_i386_openbsd,
            system_x86_64_openbsd:
              begin
+               MarkActualParameters(list, nil);
                a_call_name(list,'__mcount',false);
+               TrashVolatileRegisters(list, nil);
              end;
            else
              internalerror(2019050701);
@@ -3727,7 +3737,9 @@ unit cgx86;
          list.concat(ai);
 
          a_reg_dealloc(list, NR_DEFAULTFLAGS);
+         MarkActualParameters(list, nil);
          a_call_name(list,'FPC_OVERFLOW',false);
+         TrashVolatileRegisters(list, nil);
          a_label(list,hl);
       end;
 

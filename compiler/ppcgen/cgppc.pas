@@ -658,7 +658,10 @@ unit cgppc;
         end
       else
         a_jmp_cond(list,OC_AE,hl);
+
+      MarkActualParameters(list, nil);
       a_call_name(list,'FPC_OVERFLOW',false);
+      TrashVolatileRegisters(list, nil);
       a_label(list,hl);
     end;
 
@@ -677,7 +680,9 @@ unit cgppc;
           paramanager.freecgpara(list,paraloc1);
           paraloc1.done;
           allocallcpuregisters(list);
+          MarkActualParameters(list, nil);
           a_call_name(list,'mcount',false);
+          TrashVolatileRegisters(list, nil);
           deallocallcpuregisters(list);
           a_reg_dealloc(list,NR_R0);
         end;
@@ -916,7 +921,9 @@ unit cgppc;
       if reg=NR_R0 then
         a_reg_dealloc(list,reg);
       a_cmp_const_reg_label(list,OS_ADDR,OC_A,size-1,reg,lab);
+      MarkActualParameters(list, nil);
       a_call_name(list,'FPC_INVALIDPOINTER',false);
+      TrashVolatileRegisters(list, nil);
       a_label(list,lab);
     end;
 

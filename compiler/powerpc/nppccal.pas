@@ -77,7 +77,9 @@ implementation
         begin
           cg.getcpuregister(current_asmdata.CurrAsmList,NR_R0);
           cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_ADDR,OS_ADDR,ref,NR_R0);
+          cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
           cg.a_call_reg(current_asmdata.CurrAsmList,NR_R0);
+          cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
           cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_R0);
         end;
 

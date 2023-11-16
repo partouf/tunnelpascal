@@ -155,7 +155,9 @@ implementation
             paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
             paraloc1.done;
             cg.allocallcpuregisters(current_asmdata.CurrAsmList);
+            cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
             cg.a_call_reg(current_asmdata.CurrAsmList,hregister);
+            cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
             cg.deallocallcpuregisters(current_asmdata.CurrAsmList);
             cg.getcpuregister(current_asmdata.CurrAsmList,NR_FUNCTION_RESULT_REG);
             cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_FUNCTION_RESULT_REG);

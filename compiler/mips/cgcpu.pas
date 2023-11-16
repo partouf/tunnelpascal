@@ -1551,7 +1551,9 @@ begin
   paramanager.freecgpara(list, paraloc1);
   alloccpuregisters(list, R_INTREGISTER, paramanager.get_volatile_registers_int(pocall_default));
   alloccpuregisters(list, R_FPUREGISTER, paramanager.get_volatile_registers_fpu(pocall_default));
+  MarkActualParameters(list,nil);
   a_call_name(list, 'FPC_MOVE', false);
+  TrashVolatileRegisters(list,nil);
   dealloccpuregisters(list, R_FPUREGISTER, paramanager.get_volatile_registers_fpu(pocall_default));
   dealloccpuregisters(list, R_INTREGISTER, paramanager.get_volatile_registers_int(pocall_default));
   paraloc3.done;
@@ -1737,7 +1739,9 @@ procedure TCGMIPS.g_profilecode(list:TAsmList);
       end;
     list.concat(taicpu.op_reg_reg(A_MOVE,NR_R1,NR_RA));
     list.concat(taicpu.op_reg_reg_const(A_ADDIU,NR_SP,NR_SP,-8));
+    MarkActualParameters(list,nil);
     a_call_sym_pic(list,current_asmdata.RefAsmSymbol('_mcount',AT_FUNCTION));
+    TrashVolatileRegisters(list,nil);
     tcpuprocinfo(current_procinfo).setnoat:=true;
   end;
 

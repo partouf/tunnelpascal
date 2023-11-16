@@ -423,7 +423,9 @@ implementation
             current_asmdata.CurrAsmList.concat(taicpu.op_reg_const(A_CMP,divider,0));
             current_asmdata.getjumplabel(hl);
             current_asmdata.CurrAsmList.concat(taicpu.op_cond_sym(A_B,C_NE,hl));
+            cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
             cg.a_call_name(current_asmdata.CurrAsmList,'FPC_DIVBYZERO',false);
+            cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
             cg.a_label(current_asmdata.CurrAsmList,hl);
           end;
 

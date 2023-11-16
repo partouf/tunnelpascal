@@ -462,6 +462,11 @@ unit cgobj;
           procedure g_check_for_fpu_exception(list : TAsmList; force,clear : boolean); virtual;
           procedure maybe_check_for_fpu_exception(list: TAsmList);
 
+          { For the a_call methods, since we don't know which registers are used
+            and which aren't, mark and trash them all }
+          procedure MarkActualParameters(list : TAsmList; pd : tabstractprocdef);
+          procedure TrashVolatileRegisters(list : TAsmList; pd : tabstractprocdef);
+
          protected
           function g_indirect_sym_load(list:TAsmList;const symname: string; const flags: tindsymflags): tregister;virtual;
        end;
@@ -2897,6 +2902,61 @@ implementation
     procedure tcg.a_call_name_static(list : TAsmList;const s : string);
       begin
         a_call_name(list,s,false);
+      end;
+
+
+    procedure tcg.MarkActualParameters(list : TAsmList; pd : tabstractprocdef);
+      var
+        i: Cardinal; RegSet: TCpuRegisterSet; CallOption: TProcCallOption;
+      begin
+        if Assigned(pd) then
+          CallOption := pd.proccalloption
+        else
+          CallOption := pocall_default;
+
+        if cg.uses_registers(R_MMREGISTER) then
+          begin
+            RegSet := paramanager.get_volatile_registers_mm(CallOption);
+            for i in RegSet do
+              list.concat(tai_regalloc.actualparam(newreg(R_MMREGISTER,i,R_SUBWHOLE)));
+          end;
+
+        if cg.uses_registers(R_FPUREGISTER) then
+          begin
+            RegSet := paramanager.get_volatile_registers_fpu(CallOption);
+            for i in RegSet do
+              list.concat(tai_regalloc.actualparam(newreg(R_FPUREGISTER,i,R_SUBWHOLE)));
+          end;
+
+        if cg.uses_registers(R_ADDRESSREGISTER) then
+          begin
+            RegSet := paramanager.get_volatile_registers_address(CallOption);
+            for i in RegSet do
+              list.concat(tai_regalloc.actualparam(newreg(R_ADDRESSREGISTER,i,R_SUBWHOLE)));
+          end;
+
+        RegSet := paramanager.get_volatile_registers_int(CallOption);
+        for i in RegSet do
+          list.concat(tai_regalloc.actualparam(newreg(R_INTREGISTER,i,R_SUBWHOLE)));
+      end;
+
+
+    procedure tcg.TrashVolatileRegisters(list : TAsmList; pd : tabstractprocdef);
+      var
+         CallOption: TProcCallOption;
+      begin
+        if Assigned(pd) then
+          CallOption := pd.proccalloption
+        else
+          CallOption := pocall_default;
+
+        if cg.uses_registers(R_MMREGISTER) then
+          cg.trashcpuregisters(list,R_MMREGISTER,paramanager.get_volatile_registers_mm(CallOption));
+        if cg.uses_registers(R_FPUREGISTER) then
+          cg.trashcpuregisters(list,R_FPUREGISTER,paramanager.get_volatile_registers_fpu(CallOption));
+        if cg.uses_registers(R_ADDRESSREGISTER) then
+          cg.trashcpuregisters(list,R_ADDRESSREGISTER,paramanager.get_volatile_registers_address(CallOption));
+        cg.trashcpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(CallOption));
       end;
 
 

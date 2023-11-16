@@ -290,12 +290,17 @@ end;
 
 procedure tcgppc.a_call_name_direct(list: TAsmList; opc: tasmop; s: string; weak: boolean; prependDot : boolean; addNOP : boolean; includeCall : boolean);
 begin
+  MarkActualParameters(list, nil);
+
   if (prependDot) then
     s := '.' + s;
   if not(weak) then
     list.concat(taicpu.op_sym(opc, current_asmdata.RefAsmSymbol(s,AT_FUNCTION)))
   else
     list.concat(taicpu.op_sym(opc, current_asmdata.WeakRefAsmSymbol(s,AT_FUNCTION)));
+
+  TrashVolatileRegisters(list, nil);
+
   if (addNOP) then
     list.concat(taicpu.op_none(A_NOP));
 
@@ -1089,9 +1094,7 @@ end;
 procedure tcgppc.g_profilecode(list: TAsmList);
 begin
   current_procinfo.procdef.paras.ForEachCall(TObjectListCallback(@profilecode_savepara), list);
-
   a_call_name_direct(list, A_BL, '_mcount', false, false, true);
-
   current_procinfo.procdef.paras.ForEachCall(TObjectListCallback(@profilecode_restorepara), list);
 end;
 

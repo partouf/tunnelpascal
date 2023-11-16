@@ -989,7 +989,9 @@ unit cg64f32;
              cg.a_reg_dealloc(list, NR_DEFAULTFLAGS);
 
              { For all other values we have a range check error }
+             cg.MarkActualParameters(list, nil);
              cg.a_call_name(list,'fpc_rangeerror',false);
+             cg.TrashVolatileRegisters(list, nil);
 
              { if the high dword = 0, the low dword can be considered a }
              { simple cardinal                                          }
@@ -1031,7 +1033,9 @@ unit cg64f32;
                  cg.a_cmp_const_reg_label(list,OS_32,OC_LT,0,hreg,neglabel);
                  cg.a_reg_dealloc(list, NR_DEFAULTFLAGS);
 
+                 cg.MarkActualParameters(list, nil);
                  cg.a_call_name(list,'fpc_rangeerror',false);
+                 cg.TrashVolatileRegisters(list, nil);
 
                  { if we get here, the 64bit value lies between }
                  { longint($80000000) and -1 (JM)               }
@@ -1084,7 +1088,9 @@ unit cg64f32;
                cg.a_cmp_const_reg_label(list,opsize,OC_GTE,0,hreg,poslabel);
                cg.a_reg_dealloc(list, NR_DEFAULTFLAGS);
 
+               cg.MarkActualParameters(list, nil);
                cg.a_call_name(list,'fpc_rangeerror',false);
+               cg.TrashVolatileRegisters(list, nil);
                cg.a_label(list,poslabel);
              end;
       end;

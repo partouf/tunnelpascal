@@ -1028,11 +1028,13 @@ const
              r:=NR_R12;
              list.concat(taicpu.op_reg_reg_const(A_ADDI,r,r,(ord(R_F31)-ord(firstregfpu.enum)+1)*8));
              {
+             MarkActualParameters(list,nil);
              if (pi_do_call in current_procinfo.flags) then
                a_call_name(current_asmdata.RefAsmSymbol('_restfpr_'+tostr(ord(firstregfpu)-ord(R_F14)+14)+'_x',AT_FUNCTION))
              else
                { leaf node => lr haven't to be restored }
                a_call_name('_restfpr_'+tostr(ord(firstregfpu.enum)-ord(R_F14)+14)+'_l');
+             TrashVolatileRegisters(list,nil);
              genret:=false;
              }
           end;

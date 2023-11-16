@@ -312,7 +312,9 @@ implementation
             paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
             paraloc1.done;
             hlcg.allocallcpuregisters(current_asmdata.CurrAsmList);
+            cg.MarkActualParameters(current_asmdata.CurrAsmList,pd);
             hlcg.a_call_name(current_asmdata.CurrAsmList,pd,'FPC_CHECKPOINTER',[@paraloc1],nil,false);
+            cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,pd);
             hlcg.deallocallcpuregisters(current_asmdata.CurrAsmList);
             include(current_settings.moduleswitches,cs_checkpointer_called);
           end;
@@ -404,7 +406,9 @@ implementation
                     hlcg.a_loadaddr_ref_cgpara(current_asmdata.CurrAsmList,left.resultdef,location.reference,paraloc1);
                     paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
                     hlcg.allocallcpuregisters(current_asmdata.CurrAsmList);
+                    cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
                     hlcg.a_call_name(current_asmdata.CurrAsmList,pd,'FPC_CHECKPOINTER',[@paraloc1],nil,false);
+                    cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
                     hlcg.deallocallcpuregisters(current_asmdata.CurrAsmList);
                     system.include(current_settings.moduleswitches,cs_checkpointer_called);
                   end;

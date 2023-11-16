@@ -66,7 +66,9 @@ implementation
                   get_syscall_call_ref(tmpref,NR_R12);
 
                   cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_ADDR,OS_ADDR,tmpref,NR_R12);
+                  cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
                   cg.a_call_reg(current_asmdata.CurrAsmList,NR_R12);
+                  cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
                   cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_R12);
                   exit;
                 end;

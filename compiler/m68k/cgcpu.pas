@@ -1896,7 +1896,9 @@ unit cgcpu;
         ai.is_jmp:=true;
         list.concat(ai);
 
+        MarkActualParameters(list,nil);
         a_call_name(list,'FPC_OVERFLOW',false);
+        TrashVolatileRegisters(list,nil);
         a_label(list,hl);
       end;
 
