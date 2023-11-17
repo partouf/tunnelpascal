@@ -18,7 +18,7 @@ begin
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
     P.Version:='3.3.1';
-    P.OSes := [freebsd,linux,win32];
+    P.OSes := [freebsd,linux,win32,win64];
     P.SourcePath.Add('src');
     P.IncludePath.Add('src');
     P.Dependencies.Add('rtl-objpas');
@@ -26,6 +26,7 @@ begin
   T:=P.Targets.AddUnit('xml2.pas');
   with T.Dependencies do
     begin
+      AddInclude('xml2h.inc');
       AddInclude('xml2.inc');
       AddInclude('xinclude.inc');
       AddInclude('xpointer.inc');
@@ -73,6 +74,62 @@ begin
       AddInclude('xmlschemastypes.inc');
       AddInclude('c14n.inc');
       AddInclude('schematron.inc');
+      AddInclude('fpcfunctions.inc');
+      AddInclude('macros.inc');
+    end;
+
+  T:=P.Targets.AddUnit('xml2dyn.pas');
+  with T.Dependencies do
+    begin
+      AddInclude('xml2h.inc');
+      AddInclude('xml2.inc');
+      AddInclude('xinclude.inc');
+      AddInclude('xpointer.inc');
+      AddInclude('HTMLparser.inc');
+      AddInclude('schemasInternals.inc');
+      AddInclude('SAX2.inc');
+      AddInclude('xmlversion.inc');
+      AddInclude('globals.inc');
+      AddInclude('nanoftp.inc');
+      AddInclude('SAX.inc');
+      AddInclude('uri.inc');
+      AddInclude('debugXML.inc');
+      AddInclude('xmlunicode.inc');
+      AddInclude('xmlIO.inc');
+      AddInclude('xmlsave.inc');
+      AddInclude('HTMLtree.inc');
+      AddInclude('parserInternals.inc');
+      AddInclude('chvalid.inc');
+      AddInclude('xmlwriter.inc');
+      AddInclude('relaxng.inc');
+      AddInclude('threads.inc');
+      AddInclude('list.inc');
+      AddInclude('encoding.inc');
+      AddInclude('catalog.inc');
+      AddInclude('pattern.inc');
+      AddInclude('xmlregexp.inc');
+      AddInclude('xmlerror.inc');
+      AddInclude('xpath.inc');
+      AddInclude('xmlautomata.inc');
+      AddInclude('entities.inc');
+      AddInclude('xmlreader.inc');
+      AddInclude('xmlstring.inc');
+      AddInclude('xmlmemory.inc');
+      AddInclude('xmlmodule.inc');
+      AddInclude('xmlschemas.inc');
+      AddInclude('hash.inc');
+      AddInclude('nanohttp.inc');
+      AddInclude('libxmlparser.inc');
+      AddInclude('tree.inc');
+      AddInclude('dict.inc');
+      AddInclude('xlink.inc');
+      AddInclude('valid.inc');
+      AddInclude('xpathInternals.inc');
+      AddInclude('xmlschemastypes.inc');
+      AddInclude('c14n.inc');
+      AddInclude('schematron.inc');
+      AddInclude('fpcfunctions.inc');
+      AddInclude('macros.inc');
     end;
 
   T:=P.Targets.AddUnit('xmlxsdparser.pas');
