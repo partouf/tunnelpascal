@@ -138,6 +138,66 @@ begin
   T:=P.Targets.AddUnit('xmlxsd.pas');
   T.ResourceStrings := True;
 
+  T:=P.Targets.AddUnit('xslt.pas');
+  with T.Dependencies do
+    begin
+      AddInclude('xsltlocale.inc');
+      AddInclude('xsltInternals.inc');
+      AddInclude('xslt_item_common_fields.inc');
+      AddInclude('xsltpattern.inc');
+      AddInclude('numbersInternals.inc');
+      AddInclude('documents.inc');
+      AddInclude('extensions.inc');
+      AddInclude('security.inc');
+      AddInclude('xsltutils.inc');
+      AddInclude('extra.inc');
+      AddInclude('keys.inc');
+      AddInclude('namespaces.inc');
+      AddInclude('variables.inc');
+      AddInclude('xslt.inc');
+      AddInclude('xsltconfig.inc');
+      AddInclude('attributes.inc');
+      AddInclude('functions.inc');
+      AddInclude('imports.inc');
+      AddInclude('preproc.inc');
+      AddInclude('templates.inc');
+      AddInclude('transform.inc');
+    end;
+
+  T:=P.Targets.AddUnit('xsltdyn.pas');
+  with T.Dependencies do
+    begin
+      AddInclude('xsltlocale.inc');
+      AddInclude('xsltInternals.inc');
+      AddInclude('xslt_item_common_fields.inc');
+      AddInclude('xsltpattern.inc');
+      AddInclude('numbersInternals.inc');
+      AddInclude('documents.inc');
+      AddInclude('extensions.inc');
+      AddInclude('security.inc');
+      AddInclude('xsltutils.inc');
+      AddInclude('extra.inc');
+      AddInclude('keys.inc');
+      AddInclude('namespaces.inc');
+      AddInclude('variables.inc');
+      AddInclude('xslt.inc');
+      AddInclude('xsltconfig.inc');
+      AddInclude('attributes.inc');
+      AddInclude('functions.inc');
+      AddInclude('imports.inc');
+      AddInclude('preproc.inc');
+      AddInclude('templates.inc');
+      AddInclude('transform.inc');
+    end;
+
+  T:=P.Targets.AddUnit('exslt.pas');
+  with T.Dependencies do
+    AddInclude('exslt.inc');
+
+  T:=P.Targets.AddUnit('exsltdyn.pas');
+  with T.Dependencies do
+    AddInclude('exslt.inc');
+
     P.ExamplePath.Add('examples');
     P.Targets.AddExampleProgram('reader1.pas');
     P.Targets.AddExampleProgram('reader2.pas');
