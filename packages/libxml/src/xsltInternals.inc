@@ -1627,7 +1627,7 @@ function xsltPointerListAddSize(list: xsltPointerListPtr; item: Pointer; initial
      * Per Context Debugging
      *)
     debugStatus: cint;                  (* the context level debug status *)
-    traceCode: pulong;                  (* pointer to the variable holding the mask *)
+    traceCode: pculong;                  (* pointer to the variable holding the mask *)
 
     parserOptions: cint;                (* parser options xmlParserOption *)
 
