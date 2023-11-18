@@ -13,9 +13,6 @@
 (*
  * Interfaces
  *)
-var
-  xsltExtMarker: xmlCharPtr; external xsltlib;
-
 function xsltDocumentComp(style: xsltStylesheetPtr; inst: xmlNodePtr; &function: xsltTransformFunction): xsltElemPreCompPtr; EXTDECL; external xsltlib;
 procedure xsltStylePreCompute(style: xsltStylesheetPtr; inst: xmlNodePtr); EXTDECL; external xsltlib;
 procedure xsltFreeStylePreComps(style: xsltStylesheetPtr); EXTDECL; external xsltlib;
@@ -28,9 +25,6 @@ procedure xsltFreeStylePreComps(style: xsltStylesheetPtr); EXTDECL; external xsl
 {$ENDIF} {FUNCTIONVAR}
 
 {$IFDEF EXTVAR}
-(*
- * Interfaces
- *)
 var
   xsltExtMarker: xmlCharPtr; external xsltlib;
 

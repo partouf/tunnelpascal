@@ -32,6 +32,10 @@ const
   {$MESSAGE ERROR 'Platform not supported right now'}
 {$IFEND}
 
+{$IFNDEF NO_EXTERNAL_VARS}
+{$DEFINE NO_EXTERNAL_VARS}
+{$ENDIF}
+
 {$I exslt.inc}
 
 var
