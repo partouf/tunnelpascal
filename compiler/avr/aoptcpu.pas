@@ -75,7 +75,8 @@ Implementation
     aasmbase,aasmcpu,aasmdata,
     aoptutils,
     globals,globtype,
-    cgutils;
+    cgutils,
+    paramgr;
 
   type
     TAsmOpSet = set of TAsmOp;
@@ -202,7 +203,9 @@ Implementation
       Result := ((p.opcode in [A_LDI,A_MOV,A_LDS]) and (reg=p.oper[0]^.reg) and ((p.oper[1]^.typ<>top_reg) or (reg<>p.oper[1]^.reg))) or
         ((p.opcode in [A_LD,A_LDD,A_LPM]) and (reg=p.oper[0]^.reg) and not(RegInRef(reg,p.oper[1]^.ref^))) or
         ((p.opcode in [A_MOVW]) and ((reg=p.oper[0]^.reg) or (TRegister(ord(reg)+1)=p.oper[0]^.reg)) and not(reg=p.oper[1]^.reg) and not(TRegister(ord(reg)+1)=p.oper[1]^.reg)) or
-        ((p.opcode in [A_POP]) and (reg=p.oper[0]^.reg));
+        ((p.opcode in [A_POP]) and (reg=p.oper[0]^.reg)) or
+        // For a call instruction, volatile registers may have new values
+        ((p.opcode in [A_CALL, A_RCALL]) and (getsupreg(reg) in paramanager.get_volatile_registers_int(pocall_default)));
     end;
 
 
