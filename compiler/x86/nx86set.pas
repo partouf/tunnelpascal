@@ -240,14 +240,17 @@ implementation
                     cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList, opcgsize, OC_EQ,0,hregister,blocklabel(t^.blockid))
                   else
                     begin
+                      cg.a_reg_alloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
                       cg.a_op_const_reg(current_asmdata.CurrAsmList, OP_SUB, opcgsize, aint(t^._low.svalue-last.svalue), hregister);
                       cg.a_jmp_flags(current_asmdata.CurrAsmList,F_E,blocklabel(t^.blockid));
+                      cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
                     end;
                   last:=t^._low;
                   lastrange:=false;
                end
              else
                begin
+                  cg.a_reg_alloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
                   range := aint(t^._high.svalue - t^._low.svalue);
                   { it begins with the smallest label, if the value }
                   { is even smaller then jump immediately to the    }
@@ -281,12 +284,15 @@ implementation
                   { we need to use A_SUB, if cond_le uses the carry flags
                     because A_DEC does not set the correct flags, therefor
                     using a_op_const_reg(OP_SUB) is not possible }
+
                   if (cond_le in [F_C,F_NC,F_A,F_AE,F_B,F_BE]) and (range = 1) then
                     emit_const_reg(A_SUB,TCGSize2OpSize[opcgsize], range, hregister)
                   else
                     cg.a_op_const_reg(current_asmdata.CurrAsmList, OP_SUB, opcgsize, range, hregister);
 
                   cg.a_jmp_flags(current_asmdata.CurrAsmList,cond_le,blocklabel(t^.blockid));
+                  cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
+
                   last:=t^._high;
                   lastrange:=true;
                end;
@@ -343,6 +349,7 @@ implementation
           lesslabel,greaterlabel : tasmlabel;
           cond_gt: TResFlags;
           cmplow : Boolean;
+          LastEntry: tai;
         begin
            if with_sign then
              cond_gt:=F_G
@@ -371,11 +378,29 @@ implementation
                 begin
                   cmplow:=p^._low-1<>parentvalue;
                   if cmplow then
-                    hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opsize,jmp_lt,p^._low,hregister,lesslabel);
+                    begin
+                      hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opsize,jmp_lt,p^._low,hregister,lesslabel);
+                      if p^._high+1<>parentvalue then
+                        begin
+                          LastEntry := tai(current_asmdata.CurrAsmList.last);
+                          { Remove deallocation of NR_DEFAULTFLAGS so it remains allocated over a_jmp_flags below }
+                          if (LastEntry.typ <> ait_regalloc) or
+                            (tai_regalloc(LastEntry).ratype <> ra_dealloc) or
+                            (tai_regalloc(LastEntry).reg <> NR_DEFAULTFLAGS) then
+                            { It should be the flags deallocation - why isn't it? }
+                            InternalError(2023120201);
+
+                          current_asmdata.CurrAsmList.Remove(LastEntry);
+                          LastEntry.Free;
+                        end;
+                    end;
                   if p^._high+1<>parentvalue then
                     begin
                       if cmplow then
-                        hlcg.a_jmp_flags(current_asmdata.CurrAsmList,cond_gt,greaterlabel)
+                        begin
+                          hlcg.a_jmp_flags(current_asmdata.CurrAsmList,cond_gt,greaterlabel);
+                          cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
+                        end
                       else
                         hlcg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opsize,jmp_gt,p^._low,hregister,greaterlabel);
                     end;
