@@ -227,6 +227,8 @@ unit aoptx86;
         function TryCmpCMovOpts(var p, hp1: tai) : Boolean;
         function TryJccStcClcOpt(var p, hp1: tai): Boolean;
 
+        class function SignedWrap(const value: TCGInt; bitsize: Byte): TCGInt; static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
       end;
@@ -5793,6 +5795,13 @@ unit aoptx86;
       end;
 
 
+    class function TX86AsmOptimizer.SignedWrap(const value: TCGInt; bitsize: Byte): TCGInt; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      begin
+        bitsize := 64 - bitsize; { Shift amount }
+        Result := SarInt64(TCGInt(QWord(value) shl bitsize), bitsize);
+      end;
+
+
     function TX86AsmOptimizer.OptPass1Add(var p : tai) : boolean;
       var
         hp1, hp2: tai;
@@ -5907,11 +5916,11 @@ unit aoptx86;
                         { Handle any overflows }
                         case taicpu(p).opsize of
                           S_B:
-                            taicpu(p).oper[0]^.val := ThisConst and $FF;
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 8);
                           S_W:
-                            taicpu(p).oper[0]^.val := ThisConst and $FFFF;
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 16);
                           S_L:
-                            taicpu(p).oper[0]^.val := ThisConst and $FFFFFFFF;
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 32);
 {$ifdef x86_64}
                           S_Q:
                             if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
@@ -5931,6 +5940,7 @@ unit aoptx86;
                               overflow flag isn't affected }
                             if (taicpu(p).oper[0]^.val < 0) or RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) and
                               (
+                                (taicpu(p).oper[0]^.val > -128) or { Numbers between -128 and 0 can be encoded as signed bytes }
                                 ((taicpu(p).opsize = S_B) and (taicpu(p).oper[0]^.val <> -128)) or
                                 ((taicpu(p).opsize = S_W) and (taicpu(p).oper[0]^.val <> -32768)) or
                                 ((taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and (taicpu(p).oper[0]^.val <> -2147483648))
@@ -7013,11 +7023,11 @@ unit aoptx86;
                         { Handle any overflows }
                         case taicpu(p).opsize of
                           S_B:
-                            taicpu(p).oper[0]^.val := ThisConst and $FF;
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 8);
                           S_W:
-                            taicpu(p).oper[0]^.val := ThisConst and $FFFF;
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 16);
                           S_L:
-                            taicpu(p).oper[0]^.val := ThisConst and $FFFFFFFF;
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 32);
 {$ifdef x86_64}
                           S_Q:
                             if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
@@ -7040,6 +7050,7 @@ unit aoptx86;
                               begin
                                 if (taicpu(p).oper[0]^.val < 0) and
                                   (
+                                    (taicpu(p).oper[0]^.val > -128) or { Numbers between -128 and 0 can be encoded as signed bytes }
                                     ((taicpu(p).opsize = S_B) and (taicpu(p).oper[0]^.val <> -128)) or
                                     ((taicpu(p).opsize = S_W) and (taicpu(p).oper[0]^.val <> -32768)) or
                                     ((taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and (taicpu(p).oper[0]^.val <> -2147483648))
