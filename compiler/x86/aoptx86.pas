@@ -16582,6 +16582,10 @@ unit aoptx86;
                       { Stop searching at an unconditional jump }
                       Break;
 
+                    if RegLoadedWithNewValue(NR_DEFAULTFLAGS, hp1) then
+                      { Flags completely overwritten - safe endpoint }
+                      Break;
+
                     if not
                       (
                         MatchInstruction(hp1, A_ADC, A_SBB, []) and
@@ -16602,18 +16606,42 @@ unit aoptx86;
                   begin
                     NewCond := C_None;
 
-                    case taicpu(hp2).condition of
-                      C_A, C_NBE:
-                        NewCond := C_BE;
-                      C_B, C_C, C_NAE:
-                        NewCond := C_AE;
-                      C_AE, C_NB, C_NC:
-                        NewCond := C_B;
-                      C_BE, C_NA:
-                        NewCond := C_A;
-                      else
-                        { No change needed };
-                    end;
+                    { Invert the carry bits in the conditions, but the
+                      meaning of the zero flag depends on the operation }
+                    if Opposite = A_ADD then
+                      begin
+                        { If a sub becomes an add, the zero flag is NOT an
+                          overflow }
+                        case taicpu(hp2).condition of
+                          C_A, C_NBE:
+                            NewCond := C_B;
+                          C_B, C_C, C_NAE:
+                            NewCond := C_A;
+                          C_AE, C_NB, C_NC:
+                            NewCond := C_BE;
+                          C_BE, C_NA:
+                            NewCond := C_AE;
+                          else
+                            { No change needed };
+                        end;
+                      end
+                    else
+                      begin
+                        { If an add becomes a sub, the zero flag is an
+                          overflow }
+                        case taicpu(hp2).condition of
+                          C_A, C_NBE:
+                            NewCond := C_BE;
+                          C_B, C_C, C_NAE:
+                            NewCond := C_AE;
+                          C_AE, C_NB, C_NC:
+                            NewCond := C_B;
+                          C_BE, C_NA:
+                            NewCond := C_A;
+                          else
+                            { No change needed };
+                        end;
+                      end;
 
                     if NewCond <> C_None then
                       begin
