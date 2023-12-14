@@ -5882,19 +5882,24 @@ var
   C: TClass;
 begin
   Result:=inherited;
-  Params:=TParamsExpr(Expr);
-  Param:=Params.Params[1];
-  ComputeElement(Param,ParamResolved,[]);
-  Result:=cIncompatible;
-  bt:=ParamResolved.BaseType;
-  if bt=btRange then
-    bt:=ParamResolved.SubType;
-  if bt=btContext then
-    begin
-    C:=ParamResolved.LoTypeEl.ClassType;
-    if (C=TPasEnumType) or (C=TPasRangeType) then
-      Result:=cExact
-    end;
+
+  if CheckBuiltInMinParamCount(Proc, Expr, 3, RaiseOnError) then
+  begin
+    Params:=TParamsExpr(Expr);
+    Param:=Params.Params[1];
+    ComputeElement(Param,ParamResolved,[]);
+    Result:=cIncompatible;
+    bt:=ParamResolved.BaseType;
+    if bt=btRange then
+      bt:=ParamResolved.SubType;
+    if bt=btContext then
+      begin
+      C:=ParamResolved.LoTypeEl.ClassType;
+      if (C=TPasEnumType) or (C=TPasRangeType) then
+        Result:=cExact
+      end;
+  end;
+
   if Result=cIncompatible then
     exit(CheckRaiseTypeArgNo(20181214142349,2,Param,ParamResolved,
          'enum variable',RaiseOnError));
@@ -25016,6 +25021,8 @@ begin
           Lit.Value.AsNumber:=0
         else if bt in btAllJSFloats then
           Lit.Value.CustomValue:='0.0'
+        else if bt in btAllJSChars then
+          Lit.Value.AsString := #0
         else if bt in btAllJSStringAndChars then
           Lit.Value.AsString:=''
         else if bt in btAllJSBooleans then
