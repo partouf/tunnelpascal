@@ -198,6 +198,7 @@ unit aoptx86;
         function OptPass2SETcc(var p : tai) : boolean;
 
         function CheckMemoryWrite(var first_mov, second_mov: taicpu): Boolean;
+        function DetermineCondition(cond: TAsmCond; SetVal, CmpVal: TCGInt; Bits: Integer): Boolean;
 
         function PostPeepholeOptMov(var p : tai) : Boolean;
         function PostPeepholeOptMovzx(var p : tai) : Boolean;
@@ -215,6 +216,7 @@ unit aoptx86;
 
         procedure ConvertJumpToRET(const p: tai; const ret_p: tai);
 
+        function CheckMovBranchCmpJccShortcut(var mov_p: tai): Boolean;
         function CheckJumpMovTransferOpt(var p: tai; hp1: tai; LoopCount: Integer; out Count: Integer): Boolean;
         function TrySwapMovOp(var p, hp1: tai): Boolean;
         function TrySwapMovCmp(var p, hp1: tai): Boolean;
@@ -257,7 +259,7 @@ unit aoptx86;
       cpuinfo,
       procinfo,
       paramgr,
-      aasmbase,
+      aasmbase,aasmdata,
       aoptbase,aoptutils,
       symconst,symsym,
       cgx86,
@@ -2788,6 +2790,229 @@ unit aoptx86;
           end;
       end;
 
+{$push}{$Q-}{$R-}
+    { Disable range and overflow checks because "(1 shl Bits) - 1" overflows if Bits is 64 }
+    function TX86AsmOptimizer.DetermineCondition(cond: TAsmCond; SetVal, CmpVal: TCGInt; Bits: Integer): Boolean;
+      var
+        SignedOffset, Mask: TCGInt;
+      begin
+        SignedOffset := TCGInt(1) shl (Bits - 1);
+        Mask := (SignedOffset shl 1) - 1;
+        SetVal := SetVal and Mask;
+        CmpVal := CmpVal and Mask;
+
+        case cond of
+          C_E, C_Z:
+            Result := (SetVal = CmpVal);
+          C_NE, C_NZ:
+            Result := (SetVal <> CmpVal);
+          C_L, C_NGE:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) < QWord(CmpVal - SignedOffset));
+          C_LE, C_NG:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) <= QWord(CmpVal - SignedOffset));
+          C_G, C_NLE:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) > QWord(CmpVal - SignedOffset));
+          C_GE, C_NL:
+            { Signed }
+            Result := (QWord(SetVal - SignedOffset) >= QWord(CmpVal - SignedOffset));
+          C_B, C_C, C_NAE:
+            Result := (SetVal < CmpVal);
+          C_BE, C_NA:
+            Result := (SetVal <= CmpVal);
+          C_A, C_NBE:
+            Result := (SetVal > CmpVal);
+          C_AE, C_NB, C_NC:
+            Result := (SetVal >= CmpVal);
+          else
+            InternalError(2021122801);
+        end;
+      end;
+{$pop}
+
+    function TX86AsmOptimizer.CheckMovBranchCmpJccShortcut(var mov_p: tai): Boolean;
+      var
+        hp1: tai;
+
+        function AnalyseJump(var jump_p: tai): Boolean;
+          var
+            hp2, hp3, hp_label: tai;
+            Value, Comparison: TCGInt;
+            Branch: Boolean;
+            OldLabel, NewLabel: TAsmLabel;
+          begin
+            Result := False;
+
+            if not IsJumpToLabel(taicpu(jump_p)) then
+              { Needs to be a distinct label }
+              Exit;
+
+            OldLabel := TAsmLabel(JumpTargetOp(taicpu(jump_p))^.ref^.symbol);
+            hp_label := getlabelwithsym(OldLabel);
+            if not Assigned(hp_label) then
+              { Couldn't get the label }
+              Exit;
+
+            if GetNextInstruction(hp_label, hp2) and
+              (hp2.typ = ait_instruction) then
+              begin
+                { Another possibility:
+                      mov      $x, (oper)
+                      jmp      @Lbl1
+                      ...
+                    @Lbl1:
+                      mov      $y, (oper)
+
+                  If x = y, then try to change to (@Lbl2 must exist; if not,
+                    a later optimisation will sort that out):
+                      mov      $x, (oper)
+                      jmp      @Lbl2
+                      ...
+                    @Lbl1:
+                      mov      $y, (oper)
+                    @Lbl2:
+
+                  Failing that, or if x <> y, or y is not a constant, then
+                    remove "mov $x, (oper)".
+                }
+                if (taicpu(hp2).opcode = A_MOV) then
+                  begin
+                    if (taicpu(hp2).opsize >= taicpu(mov_p).opsize) and
+                      not MatchOperand(taicpu(hp2).oper[0]^, taicpu(mov_p).oper[1]^) and
+                      MatchOperand(taicpu(mov_p).oper[1]^, taicpu(hp2).oper[1]^) then
+                      begin
+                        if (taicpu(hp2).oper[0]^.typ <> top_const) or
+                          (taicpu(hp2).oper[0]^.val <> taicpu(mov_p).oper[0]^.val) or
+                          not FindLiveLabel(hp2, NewLabel) then
+                          begin
+                            DebugMsg(SPeepholeOptimization + 'MOV/JMP/@Lbl/MOV -> Removed initial MOV as it is completely dominated', mov_p);
+                            RemoveCurrentp(mov_p, hp1);
+                            Result := True;
+                            Exit;
+                          end
+                        else
+                          begin
+                            DebugMsg(SPeepholeOptimization + 'MOV/JMP/@Lbl/MOV/@Lbl -> Redirected jump to second label because MOVs are identical', jump_p);
+                            JumpTargetOp(taicpu(jump_p))^.ref^.symbol.decrefs;
+                            JumpTargetOp(taicpu(jump_p))^.ref^.symbol := NewLabel;
+                            NewLabel.increfs;
+                          end;
+                      end;
+                  end
+                else if (taicpu(hp2).opsize = taicpu(mov_p).opsize) and
+                  (
+                    (
+                      (taicpu(hp2).opcode = A_CMP) and
+                      (taicpu(hp2).oper[0]^.typ = top_const) and
+                      MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^)
+                    ) or
+                    (
+                      (taicpu(hp2).opcode = A_TEST) and
+                      (taicpu(mov_p).oper[1]^.typ = top_reg) and
+                      MatchOperand(taicpu(hp2).oper[0]^, taicpu(mov_p).oper[1]^.reg) and
+                      MatchOperand(taicpu(hp2).oper[1]^, taicpu(mov_p).oper[1]^.reg)
+                    )
+                  ) and
+                  GetNextInstruction(hp2, hp3) and
+                  MatchInstruction(hp3, A_Jcc, []) and
+                  IsJumpToLabel(taicpu(hp3)) then
+                  begin
+                    Value := taicpu(mov_p).oper[0]^.val;
+                    if (taicpu(hp2).opcode = A_TEST) then
+                      Comparison := 0
+                    else
+                      Comparison := taicpu(hp2).oper[0]^.val;
+
+                    Branch := DetermineCondition(taicpu(hp3).condition, Value, Comparison, topsize2memsize[taicpu(hp2).opsize]);
+                    Result := True;
+                    if Branch then
+                      begin
+                        { The simpler one }
+                        DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always true)', jump_p);
+                        NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp3))^.ref^.symbol);
+                      end
+                    else
+                      begin
+                        { We need a new label for this }
+                        if not FindLiveLabel(hp3, NewLabel) then
+                          begin
+                            { See if an unconditional jump follows, as we can use the destination of that instead }
+                            if GetNextInstruction(hp3, hp2) and
+                              (hp2.typ = ait_instruction) and
+                              IsJumpToLabelUncond(taicpu(hp2)) then
+                              NewLabel := TAsmLabel(JumpTargetOp(taicpu(hp2))^.ref^.symbol)
+                            else
+                              begin
+                                current_asmdata.getjumplabel(NewLabel);
+                                asml.InsertAfter(tai_label.Create(NewLabel), hp3);
+                              end;
+                          end;
+
+                        DebugMsg(SPeepholeOptimization + 'Redirected jump due to distant comparison being deterministic (always false)', jump_p);
+                      end;
+
+                    OldLabel.decrefs;
+                    JumpTargetOp(taicpu(jump_p))^.ref^.symbol := NewLabel;
+                    NewLabel.increfs;
+                  end;
+              end;
+          end;
+
+      begin
+        Result := False;
+        { Try to find the following combination:
+            mov      $x, (oper)
+            jmp      @Lbl1
+            ...
+          @Lbl:
+            cmp      $y, (oper)
+            j(c)     @Lbl2
+
+          Evaluate the cmp instruction based on what x and y are, since
+          "j(c) @Lbl2" is deterministic (either change the first jump to @Lbl2
+          or to a new label appearing after "j(c) @Lbl2"
+
+          Other possibilities:
+            mov      $x, (oper)
+            test/cmp ###, ###
+            j(c1)    @Lbl1
+            ...
+          @Lbl:
+            cmp      $y, (oper)
+            j(c2)    @Lbl2
+
+          ... and:
+            mov      $x, (oper)
+            (unrelated movs)
+            j(c1)    @Lbl1
+          ...
+          @Lbl:
+            cmp      $y, (oper)
+            j(c2)    @Lbl2#
+
+          ... or a combination thereof.
+        }
+
+        if (taicpu(mov_p).oper[0]^.typ <> top_const) then
+          { Only constants are deterministic }
+          Exit;
+
+        hp1 := mov_p;
+        while GetNextInstruction(mov_p, hp1) and (hp1.typ = ait_instruction) do
+          case taicpu(hp1).opcode of
+            A_JMP:
+              begin
+                Result := AnalyseJump(hp1);
+                Exit;
+              end;
+            else
+              { Play safe }
+              Break;
+          end;
+      end;
+
 
     function TX86AsmOptimizer.FuncMov2Func(var p: tai; const hp1: tai): Boolean;
       var
@@ -2911,6 +3136,7 @@ unit aoptx86;
 {$ifdef x86_64}
       NewConst: TCGInt;
 {$endif x86_64}
+      MovVal, CmpVal: TCGInt;
 
       procedure convert_mov_value(signed_movop: tasmop; max_value: tcgint); inline;
         begin
@@ -3007,8 +3233,71 @@ unit aoptx86;
             end;
         end;
 
+      function TryCrossLabelMovCmpJcc: Boolean;
+        begin
+          { hp1 is expected to be a label }
+
+          Result := False;
+          { This optimisation adds an instruction, so don't optimise for size }
+          if not (cs_opt_size in current_settings.optimizerswitches) and
+            (taicpu(p).oper[0]^.typ = top_const) and
+            (
+              (
+                MatchInstruction(hp2, A_CMP, []) and
+                (taicpu(hp2).oper[0]^.typ = top_const) and
+                MatchOperand(taicpu(hp2).oper[1]^, taicpu(p).oper[1]^)
+              ) or
+              (
+                (taicpu(p).oper[1]^.typ = top_reg) and
+                MatchInstruction(hp2, A_TEST, []) and
+                MatchOperand(taicpu(hp2).oper[0]^, taicpu(p).oper[1]^.reg) and
+                MatchOperand(taicpu(hp2).oper[1]^, taicpu(p).oper[1]^.reg)
+              )
+            ) and
+            GetNextInstruction(hp2, hp3) and
+            MatchInstruction(hp3, A_Jcc, []) then
+            begin
+              { In this sitaution, we have the following:
+                    mov $x,%reg  (%reg can be a reference too)
+                  @Lbl:
+                    cmp $y,%reg / test %reg,%reg
+                    j(c) @Lbl2
+
+                j(c) is deterministic and if it happens to be always
+                true, insert a JMP after the MOV.
+              }
+              if taicpu(hp2).opcode = A_TEST then
+                CmpVal := 0
+              else
+                CmpVal := taicpu(hp2).oper[0]^.val;
+
+              { Make sure we optimise this jump because we're making a copy
+                that's unconditional (plus the condition might flip). }
+              if DoJumpOptimizations(hp3, TempBool) then
+                begin
+                  Result := True;
+                  if taicpu(hp3).condition = C_None then
+                    { This indicates that the jump has become unconditional,
+                      or is no longer a jump }
+                    Exit;
+                end;
+
+              if DetermineCondition(taicpu(hp3).condition, taicpu(p).oper[0]^.val, CmpVal, topsize2memsize[taicpu(hp2).opsize]) then
+                begin
+                  hp1 := taicpu.op_sym(A_JMP, S_NO, JumpTargetOp(taicpu(hp3))^.ref^.symbol);
+                  taicpu(hp1).fileinfo:=taicpu(p).fileinfo;
+                  asml.InsertAfter(hp1, p);
+                  DebugMsg(SPeepholeOptimization + 'Inserted unconditional jump due to comparison after label being deterministic (always true)', hp1);
+
+                  { See if we can optimise the new MOV/JMP pair }
+                  CheckMovBranchCmpJccShortcut(p);
+                  Result := True;
+                end;
+            end;
+        end;
+
       var
-        GetNextInstruction_p, TempRegUsed, CrossJump: Boolean;
+        GetNextInstruction_p, TempRegUsed, CrossJump, CondResult: Boolean;
         PreMessage, RegName1, RegName2, InputVal, MaskNum: string;
         NewSize: topsize; NewOffset: asizeint;
         p_SourceReg, p_TargetReg, NewMMReg: TRegister;
@@ -3033,7 +3322,91 @@ unit aoptx86;
           end;
 
         { All the next optimisations require a next instruction }
-        if not GetNextInstruction_p or (hp1.typ <> ait_instruction) then
+        if not GetNextInstruction_p then
+          Exit;
+
+        if (
+            (hp1.typ = ait_label) or
+            (
+              (hp1.typ = ait_align) and
+              SkipAligns(hp1, hp1) and
+              (hp1.typ = ait_label)
+            )
+          ) then
+          begin
+            {
+              This optimisation looks across a label to see if a register is
+              completely overwritten on the other side - e.g.
+
+                movl   ###,(oper)
+              @Lbl:
+                movslq ###,(oper) (### doesn't have to be the same as the first one, just as long as it doesn't contain %reg2)
+
+              Then the first MOV can be erased.
+            }
+            if (taicpu(p).oper[1]^.typ = top_reg) then
+              begin
+                p_TargetReg := taicpu(p).oper[1]^.reg;
+                if GetNextInstructionUsingReg(hp1, hp2, p_TargetReg) and
+                  (hp2.typ = ait_instruction) then
+                  begin
+                    if MatchInstruction(hp2, [A_LEA, A_MOV, A_MOVSX, A_MOVZX{$ifdef x86_64}, A_MOVSXD{$endif x86_64}], []) and
+                      (taicpu(hp2).oper[1]^.typ = top_reg) and
+                      Reg1WriteOverwritesReg2Entirely(taicpu(hp2).oper[1]^.reg, p_TargetReg) and
+                      not RegInOp(p_TargetReg, taicpu(hp2).oper[0]^) then
+                      begin
+                        DebugMsg(SPeepholeOptimization + 'Mov2Nop 5a done (cross-label)', p);
+                        RemoveCurrentp(p, hp1);
+                        Result := True;
+                      end
+                    else if
+                      (
+                        { Must be the immediate next instruction }
+                        not(cs_opt_level3 in current_settings.optimizerswitches) or
+                        GetNextInstruction(hp1, hp2)
+                      ) and
+                      TryCrossLabelMovCmpJcc then
+                      Result := True;
+
+                    Exit;
+                  end;
+              end
+            else
+              { Memory operands work too, but only search one instruction ahead for safety }
+              begin
+                if GetNextInstruction(hp1, hp2) and
+                  (hp2.typ = ait_instruction) then
+                  begin
+                    if (
+                        (
+                          MatchInstruction(hp2, A_LEA, A_MOV, []) and
+                          (taicpu(hp2).opsize >= taicpu(p).opsize)
+                        ) or
+                        (
+                          MatchInstruction(hp2, A_MOVSX, A_MOVZX{$ifdef x86_64}, A_MOVSXD{$endif x86_64}, []) and
+                          (
+                            ((taicpu(p).opsize = S_B) and (taicpu(hp2).opsize in [S_BW, S_BL{$ifdef x86_64}, S_BQ{$endif x86_64}])) or
+                            ((taicpu(p).opsize = S_W) and (taicpu(hp2).opsize in [S_WL{$ifdef x86_64}, S_wQ{$endif x86_64}]))
+                            {$ifdef x86_64}or ((taicpu(p).opsize = S_L) and (taicpu(hp2).opsize = S_LQ)){$endif x86_64}
+                          )
+                        )
+                      ) and
+                      (taicpu(hp2).oper[1]^.typ = top_ref) and
+                      RefsEqual(taicpu(hp2).oper[1]^.ref^, taicpu(p).oper[1]^.ref^) then
+                      begin
+                        DebugMsg(SPeepholeOptimization + 'Mov2Nop 5b done (cross-label reference)', p);
+                        RemoveCurrentp(p, hp1);
+                        Result := True;
+                      end
+                    else if TryCrossLabelMovCmpJcc then
+                      Result := True;
+
+                    Exit;
+                  end;
+              end;
+          end;
+
+        if (hp1.typ <> ait_instruction) then
           Exit;
 
         { Prevent compiler warnings }
@@ -3556,6 +3929,22 @@ unit aoptx86;
                         UpdateUsedRegs(TmpUsedRegs, tai(hp3.Next));
                         if MatchInstruction(hp3, A_Jcc, A_SETcc, A_CMOVcc, []) then
                           begin
+                            if (taicpu(hp3).opcode = A_Jcc) then
+                              begin
+                                { Check for jump shortcuts first.  Not only will they
+                                  be missed if the condition is destroyed, but the
+                                  jump optimisations may invert the condition, or remove
+                                  it completely, so doing these optimisations after the
+                                  condition has already been read may cause incorrect
+                                  code to be generated. }
+                                DoJumpOptimizations(hp3, TempBool);
+                                if taicpu(hp3).condition = C_None then
+                                  begin
+                                    DoOptimisation := False;
+                                    hp3 := hp2;
+                                    Continue;
+                                  end;
+                              end;
 
                             if condition_in(C_E, taicpu(hp3).condition) or (taicpu(hp3).condition in [C_NC, C_NS, C_NO]) then
                               begin
@@ -3564,8 +3953,6 @@ unit aoptx86;
                                   A_Jcc:
                                     begin
                                       DebugMsg(SPeepholeOptimization + 'Condition is always true (jump made unconditional)', hp3);
-                                      { Check for jump shortcuts before we destroy the condition }
-                                      DoJumpOptimizations(hp3, TempBool);
                                       MakeUnconditional(taicpu(hp3));
                                       Result := True;
                                     end;
@@ -3664,6 +4051,13 @@ unit aoptx86;
                 Result := True;
                 Exit;
               end;
+          end;
+
+        { Check the MOV/JMP into distant comparison optimisation }
+        if CheckMovBranchCmpJccShortcut(p) then
+          begin
+            Result := True;
+            Exit;
           end;
 
         { Next instruction is also a MOV ? }
@@ -4729,6 +5123,133 @@ unit aoptx86;
               begin
                 Result := True;
                 Exit;
+              end;
+
+            if (taicpu(p).oper[0]^.typ = top_const) and
+              MatchOperand(taicpu(p).oper[1]^, taicpu(hp1).oper[1]^) and
+              (
+                (
+                  (taicpu(hp1).opcode = A_CMP) and
+                  (taicpu(hp1).oper[0]^.typ = top_const)
+                ) or
+                (
+                  (taicpu(p).oper[1]^.typ = top_reg) and
+                  (taicpu(hp1).opcode = A_TEST) and
+                  MatchOperand(taicpu(hp1).oper[0]^, taicpu(p).oper[1]^.reg)
+                )
+              ) then
+              begin
+                {
+                  mov $x,(oper)
+                  cmp %y,(oper)
+                  jcc/setcc/cmovcc etc.
+
+                  Conditions are deterministic
+                }
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+
+                MovVal := taicpu(p).oper[0]^.val;
+                if taicpu(hp1).opcode = A_TEST then
+                  CmpVal := 0
+                else
+                  CmpVal := taicpu(hp1).oper[0]^.val;
+
+                hp3 := hp1;
+                while RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) and GetNextInstruction(hp3, hp2) and (hp2.typ = ait_instruction) do
+                  begin
+                    if (taicpu(hp2).opcode = A_Jcc) then
+                      { Check for jump shortcuts first.  Not only will they
+                        be missed if the condition is destroyed, but the
+                        jump optimisations may invert the condition, or remove
+                        it completely, so doing these optimisations after the
+                        condition has already been read may cause incorrect
+                        code to be generated. }
+                      DoJumpOptimizations(hp2, TempBool);
+
+                    if taicpu(hp2).condition = C_None then
+                      CondResult := False
+                    else
+                      CondResult := DetermineCondition(taicpu(hp2).condition, MovVal, CmpVal, topsize2memsize[taicpu(hp1).opsize]);
+
+                    case taicpu(hp2).opcode of
+                      A_CMOVcc:
+                        begin
+                          if CondResult then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'CMOVcc -> MOV because condition is always true', hp2);
+                              taicpu(hp2).opcode := A_MOV;
+                              taicpu(hp2).condition := C_None;
+                              Result := True;
+                            end
+                          else
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'CMOVcc -> NOP because condition is always false', hp2);
+                              UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+                              RemoveInstruction(hp2);
+                              Result := True;
+                              Continue;
+                            end;
+                        end;
+                      A_SETcc:
+                        begin
+                          taicpu(hp2).opcode := A_MOV;
+                          taicpu(hp2).condition := C_None;
+                          taicpu(hp2).ops := 2;
+                          taicpu(hp2).loadoper(1, taicpu(hp2).oper[0]^);
+                          if CondResult then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'SETcc -> MOV 1 because condition is always true', hp2);
+                              taicpu(hp2).loadconst(0, 1);
+                            end
+                          else
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'SETcc -> MOV 0 because condition is always false', hp2);
+                              taicpu(hp2).loadconst(0, 0);
+                            end;
+
+                          Result := True;
+                        end;
+                      A_Jcc:
+                        begin
+                          if CondResult then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'Jcc -> JMP because condition is always true', hp2);
+                              MakeUnconditional(taicpu(hp2));
+                              Result := True;
+                            end
+                          else
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'Jcc -> NOP because condition is always false', hp2);
+                              if IsJumpToLabel(taicpu(hp2)) then
+                                JumpTargetOp(taicpu(hp2))^.ref^.symbol.decrefs;
+
+                              UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+                              RemoveInstruction(hp2);
+                              Result := True;
+                              Continue;
+                            end;
+                        end;
+                      else
+                        if RegInInstruction(NR_DEFAULTFLAGS, hp2) then
+                          Break;
+                    end;
+
+                    UpdateUsedRegs(TmpUsedRegs, tai(hp2.Next));
+                    hp3 := hp2;
+                  end;
+
+                if Result then
+                  begin
+                    if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                      begin
+                        DebugMsg(SPeepholeOptimization + 'MOV/CMP -> MOV because comparison is deterministic', hp1);
+                        RemoveInstruction(hp1);
+                      end;
+
+                    Exit;
+                  end;
               end;
           end;
 

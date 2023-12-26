@@ -357,6 +357,10 @@ Unit AoptObj;
         { removes hp from asml then frees it }
         procedure RemoveInstruction(const hp: tai); inline;
 
+        { Finds the next live label appearing right after hp - returns False if one isn't found
+          (e.g. because another instruction is found) }
+        class function FindLiveLabel(hp: tai; var l: tasmlabel): Boolean; static;
+
        { traces sucessive jumps to their final destination and sets it, e.g.
          je l1                je l3
          <code>               <code>
@@ -1584,7 +1588,7 @@ Unit AoptObj;
       end;
 
 
-    function FindLiveLabel(hp: tai; var l: tasmlabel): Boolean;
+    class function TAOptObj.FindLiveLabel(hp: tai; var l: tasmlabel): Boolean;
       var
         next: tai;
       begin
