@@ -99,6 +99,7 @@ interface
           ait_tagtype,
           ait_import_module,
           ait_import_name,
+          ait_wasm_structured_instruction,
 {$endif}
           { SEH directives used in ARM,MIPS and x86_64 COFF targets }
           ait_seh_directive,
@@ -250,6 +251,7 @@ interface
           'tagtype',
           'import_module',
           'import_name',
+          'wasm_structured_instr',
 {$endif}
           'cfi',
           'seh_directive',
@@ -335,7 +337,7 @@ interface
         the way the program runs/behaves, but which may be encountered by the
         optimizer (= if it's sometimes added to the exprasm list). Update if you add
         a new ait type!                                                              }
-      SkipInstr = [ait_comment, ait_symbol,ait_section
+      SkipInstr = [ait_comment, ait_symbol,ait_section,ait_align
                    ,ait_stab, ait_function_name, ait_force_line
                    ,ait_regalloc, ait_tempalloc, ait_symbol_end
                    ,ait_directive
@@ -372,6 +374,7 @@ interface
                      ait_tagtype,
                      ait_import_module,
                      ait_import_name,
+                     ait_wasm_structured_instruction,
 {$endif wasm}
                      ait_seh_directive,
                      ait_cfi,

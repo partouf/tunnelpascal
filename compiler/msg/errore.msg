@@ -143,6 +143,9 @@ general_t_unitscope=01027_T_Using unit scope: $1
 % When the \var{-vt} switch is used, this line tells you what unit scopes (namespaces)
 % the compiler is using when looking up units. You can add a unit scope with the
 % \var{-FN} option.
+general_i_reduced_filesearch=01028_I_Reduced file search: Not searching for uppercased or 8.3 unit filenames.
+% When the \var{-Ft} switch is used, this line informs you that the compiler
+% will not look for uppercased filenames or 8.3 conforming filenames.
 % \end{description}
 #
 # Scanner
@@ -3182,7 +3185,7 @@ execinfo_x_stackcommit=09134_X_Stack space committed: $1 bytes
 #
 # Internal linker messages
 #
-# 09222 is the last used one
+# 09223 is the last used one
 #
 # BeginOfTeX
 % \section{Linker messages}
@@ -3247,6 +3250,8 @@ link_e_undefined_symbol_in_obj=09221_E_Undefined symbol: $1 (first seen in $2)
 % The specified symbol is used, but not defined and was first seen in the specified object file.
 link_e_undefined_symbol=09222_E_Undefined symbol: $1
 % The specified symbol is used, but not defined.
+link_w_unsupported_cross_endian_internal_linker=09223_W_Internal linker in cross-endian configuration is work in progress
+% The internal linker does not correctly handle endianess conversion.
 % \end{description}
 # EndOfTeX
 
@@ -3492,7 +3497,7 @@ unit_u_ppu_wasm_threads_mismatch=10070_U_PPU and program must both be compiled w
 #
 #  Options
 #
-# 11067 is the last used one
+# 11068 is the last used one
 #
 # BeginOfTeX
 %
@@ -3558,6 +3563,9 @@ option_obsolete_switch_use_new=11019_W_You are using the obsolete switch $1, ple
 option_switch_bin_to_src_assembler=11020_N_Switching assembler to default source writing assembler
 % This notifies you that the assembler has been changed because you used the
 % -a switch, which cannot be used with a binary assembler writer.
+option_switch_bin_to_src_assembler_cross_endian=11068_N_Switching assembler to default source writing assembler in cross-endian configuration
+% This notifies you that the assembler has been changed because
+% the binary assembler writer is not yet ready for cross-endian configuration.
 option_incompatible_asm=11021_W_Assembler output selected "$1" is not compatible with "$2"
 option_asm_forced=11022_W_"$1" assembler use forced
 % The assembler output selected cannot generate
@@ -4014,7 +4022,7 @@ Z*2Az80asm_Assemble using z80asm
 **2bl_Generate local symbol info
 **1B_Build all modules
 **1C<x>_Code generation options:
-**2C3_Turn on ieee error checking for constants
+**2C3_Turn on IEEE error checking for constants
 **2Ca<x>_Select ABI; see fpc -i or fpc -ia for possible values
 **2Cb_Generate code for a big-endian variant of the target architecture
 **2Cc<x>_Set default calling convention to <x>
@@ -4108,6 +4116,7 @@ A*2CV<x>_Set section threadvar model to <x>
 **2Fo<x>_Add <x> to object path
 **2Fr<x>_Load error message file <x>
 **2FR<x>_Set resource (.res) linker to <x>
+**2Ft_Do not search uppercased or 8.3 unit filenames on case sensitive filesystems.
 **2Fu<x>_Add <x> to unit path
 **2FU<x>_Set unit output path to <x>, overrides -FE
 **2Fw<x>_Load previously stored whole-program optimization feedback from <x>
@@ -4268,6 +4277,7 @@ F*2P<x>_Set target CPU (aarch64,arm,avr,i386,i8086,jvm,m68k,mips,mipsel,powerpc,
 6*2Tamiga_Commodore Amiga
 6*2Tatari_Atari ST/STe/TT
 6*2Tembedded_Embedded
+6*2Thuman68k_Human 68k
 6*2Tlinux_Linux
 6*2Tnetbsd_NetBSD
 6*2Tmacosclassic_Classic Mac OS

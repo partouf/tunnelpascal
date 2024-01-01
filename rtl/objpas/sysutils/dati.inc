@@ -76,19 +76,28 @@ end;
 {   MSecsToTimeStamp   }
 
 function MSecsToTimeStamp(MSecs: comp): TTimeStamp;
+
 var
-  D1:Int64;
+  D1 : Int64;
+  
 begin
   D1:=Trunc(msecs);
-  result.Date := D1 div msecsperday;
-  result.Time := D1 - result.date * msecsperday;
+  Result:=MSecsToTimeStamp(D1);
+end;
+
+function MSecsToTimeStamp(MSecs: Int64): TTimeStamp;
+
+begin
+  result.Date := MSecs div msecsperday;
+  result.Time := MSecs - result.date * msecsperday;
 end;
 
 {   TimeStampToMSecs   }
 
-function TimeStampToMSecs(const TimeStamp: TTimeStamp): comp;
+function TimeStampToMSecs(const TimeStamp: TTimeStamp): Int64;
 begin
-  result := TimeStamp.Time + comp(timestamp.date)*msecsperday;
+  //  Int64() typecast fixes issues 40522 and 40568 on 32-bit.
+  result := TimeStamp.Time + Int64(timestamp.date) * msecsperday;
 end;
 
 Function TryEncodeDate(Year,Month,Day : Word; Out Date : TDateTime) : Boolean;

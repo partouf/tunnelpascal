@@ -1076,6 +1076,14 @@ implementation
                 assigned(getfuncrefdef) then
                aprocdef:=Tprocsym(sym).Find_procdef_byfuncrefdef(getfuncrefdef);
 
+             { ensure that the correct function is considered as captured }
+             if assigned(current_procinfo) and
+                 assigned(aprocdef) and
+                 (aprocdef.parast.symtablelevel<=current_procinfo.procdef.parast.symtablelevel) and
+                 (aprocdef.parast.symtablelevel>normal_function_level) and
+                 (current_procinfo.procdef.parast.symtablelevel>normal_function_level) then
+               current_procinfo.add_captured_sym(sym,aprocdef,current_filepos);
+
              { generate a methodcallnode or proccallnode }
              { we shouldn't convert things like @tcollection.load }
              p2:=cloadnode.create_procvar(sym,aprocdef,st);
@@ -3510,7 +3518,7 @@ implementation
                      not (sp_generic_para in srsym.symoptions) and
                      (token in [_LT, _LSHARPBRACKET])
                    ) then
-                 check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg);
+                 check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg,tokenpos);
 
                { if nothing found give error and return errorsym }
                if not assigned(srsym) or
@@ -4485,7 +4493,7 @@ implementation
               end;
             procdef:
               begin
-                if block_type<>bt_body then
+                if not (block_type in [bt_body,bt_except]) then
                   begin
                     message(parser_e_illegal_expression);
                     gensym:=generrorsym;
@@ -5012,6 +5020,7 @@ implementation
       s : string;
       pw : pcompilerwidestring;
       pc : pansichar;
+      len : Integer;
 
     begin
       get_stringconst:='';
@@ -5026,7 +5035,9 @@ implementation
       else if (tstringconstnode(p).cst_type in [cst_unicodestring,cst_widestring]) then
          begin
            pw:=pcompilerwideString(tstringconstnode(p).value_str);
-           pc:=getmem(getlengthwidestring(pw));
+           len:=getlengthwidestring(pw);
+           pc:=getmem(Len+1);
+           pc[len]:=#0;
            unicode2ascii(pw,pc,current_settings.sourcecodepage);
            get_stringconst:=strpas(pc);
            freemem(pc);

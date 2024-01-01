@@ -1141,6 +1141,7 @@ var
   function SSLGetServername(ssl: PSSL; _type: cInt = TLSEXT_NAMETYPE_host_name): AnsiString;
   procedure SslCtxCallbackCtrl(ssl: PSSL; _type: cInt; cb: PCallbackCb);
   function SslSetSslCtx(ssl: PSSL; ctx: PSSL_CTX): PSSL;
+  function SslSet1Host(ssl: PSSL; hostname: string): cInt;
 
 // libeay.dll
   function OPENSSL_INIT_new : POPENSSL_INIT_SETTINGS;
@@ -1165,7 +1166,7 @@ var
   function X509NameAddEntryByTxt(name: PX509_NAME; field: AnsiString; _type: cInt;
     bytes: AnsiString; len, loc, _set: cInt): cInt;
   function X509Sign(x: PX509; pkey: PEVP_PKEY; const md: PEVP_MD): cInt;
-  function X509GmtimeAdj(s: PASN1_UTCTIME; adj: cInt): PASN1_UTCTIME;
+  function X509GmtimeAdj(s: PASN1_UTCTIME; adj: cLong): PASN1_UTCTIME;
   function X509SetNotBefore(x: PX509; tm: PASN1_UTCTIME): cInt;
   function X509SetNotAfter(x: PX509; tm: PASN1_UTCTIME): cInt;
   function X509GetSerialNumber(x: PX509): PASN1_cInt;
@@ -1644,6 +1645,7 @@ type
   TSSLGetServername = function(ssl: PSSL; _type: cInt = TLSEXT_NAMETYPE_host_name): PAnsiChar; cdecl;
   TSSLCtxCallbackCtrl = procedure(ctx: PSSL_CTX; _type: cInt; cb: PCallbackCb); cdecl;
   TSSLSetSslCtx = function(ssl: PSSL; ctx: PSSL_CTX): PSSL; cdecl;
+  TSslSet1Host = function(ssl: PSSL; hostname: string): cInt; cdecl;
 
 // libeay.dll
   TERR_load_crypto_strings = procedure; cdecl;
@@ -1662,7 +1664,7 @@ type
   TX509NameAddEntryByTxt = function(name: PX509_NAME; field: PAnsiChar; _type: cInt;
     bytes: PAnsiChar; len, loc, _set: cInt): cInt; cdecl;
   TX509Sign = function(x: PX509; pkey: PEVP_PKEY; const md: PEVP_MD): cInt; cdecl;
-  TX509GmtimeAdj = function(s: PASN1_UTCTIME; adj: cInt): PASN1_UTCTIME; cdecl;
+  TX509GmtimeAdj = function(s: PASN1_UTCTIME; adj: cLong): PASN1_UTCTIME; cdecl;
   TX509SetNotBefore = function(x: PX509; tm: PASN1_UTCTIME): cInt; cdecl;
   TX509SetNotAfter = function(x: PX509; tm: PASN1_UTCTIME): cInt; cdecl;
   TX509GetSerialNumber = function(x: PX509): PASN1_cInt; cdecl;
@@ -1890,6 +1892,7 @@ var
   _SSLGetServername: TSSLGetServername = nil;
   _SslCtxCallbackCtrl: TSSLCtxCallbackCtrl = nil;
   _SslSetSslCtx: TSSLSetSslCtx = nil;
+  _SslSet1Host: TSslSet1Host = nil;
 
 // libeay.dll
   _OPENSSL_cleanup : TOPENSSL_cleanup = Nil;
@@ -2637,6 +2640,14 @@ begin
     result := nil;
 end;
 
+function SslSet1Host(ssl: PSSL; hostname: string): cInt;
+begin
+  if InitSSLInterface and Assigned(_SslSet1Host) then
+    result := _SslSet1Host(ssl, hostname)
+  else
+    result := 0;
+end;
+
 // libeay.dll
 function SSLeayversion(t: cInt): AnsiString;
 begin
@@ -3016,7 +3027,7 @@ begin
     Result := 0;
 end;
 
-function X509GmtimeAdj(s: PASN1_UTCTIME; adj: cInt): PASN1_UTCTIME;
+function X509GmtimeAdj(s: PASN1_UTCTIME; adj: cLong): PASN1_UTCTIME;
 begin
   if InitSSLInterface and Assigned(_X509GmtimeAdj) then
     Result := _X509GmtimeAdj(s, adj)
@@ -5048,6 +5059,7 @@ begin
   _SslGetServername := GetProcAddr(SSLLibHandle, 'SSL_get_servername');
   _SslCtxCallbackCtrl := GetProcAddr(SSLLibHandle, 'SSL_CTX_callback_ctrl');
   _SslSetSslCtx := GetProcAddr(SSLLibHandle, 'SSL_set_SSL_CTX');
+  _SslSet1Host := GetProcAddr(SSLLibHandle, 'SSL_set1_host');
 end;
 
 Procedure LoadUtilEntryPoints;
@@ -5404,6 +5416,7 @@ begin
   _SslGetServername := nil;
   _SslCtxCallbackCtrl := nil;
   _SslSetSslCtx := nil;
+  _SslSet1Host := nil;
   _PKCS7_ISSUER_AND_SERIAL_new:=nil;
   _PKCS7_ISSUER_AND_SERIAL_free:=nil;
   _PKCS7_ISSUER_AND_SERIAL_digest:=nil;

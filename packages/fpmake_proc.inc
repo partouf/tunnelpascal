@@ -280,6 +280,12 @@ begin
 {$include gtk2/fpmake.pp}
 end;
 
+procedure add_h68units(const ADirectory: string);
+begin
+  with Installer do
+{$include h68units/fpmake.pp}
+end;
+
 procedure add_hash(const ADirectory: string);
 begin
   with Installer do
@@ -833,6 +839,13 @@ begin
 {$include vcl-compat/fpmake.pp}
 end;
 
+procedure add_libpcre(const ADirectory: string);
+begin
+  with Installer do
+{$include libpcre/fpmake.pp}
+end;
+
+
 procedure add_qlunits(const ADirectory: string);
 begin
   with Installer do
@@ -851,11 +864,19 @@ begin
 {$include wasmtime/fpmake.pp}
 end;
 
+procedure add_wasmedge(const ADirectory: string);
+begin
+  with Installer do
+{$include wasmedge/fpmake.pp}
+end;
+
 procedure add_gstreamer(const ADirectory: string);
 begin
   with Installer do
 {$include gstreamer/fpmake.pp}
 end;
+
+{$include testinsight/fpmake.pp}
 
 {$include ide/fpmake.pp}
 {$include gitlab/fpmake.pp}

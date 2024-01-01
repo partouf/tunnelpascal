@@ -392,7 +392,7 @@ interface
        systems_internal_sysinit = [system_i386_win32,system_x86_64_win64,
                                    system_i386_linux,system_powerpc64_linux,system_sparc64_linux,system_x86_64_linux,
                                    system_xtensa_linux,system_mips64_linux,system_mips64el_linux,
-                                   system_m68k_atari,system_m68k_palmos,system_m68k_sinclairql,
+                                   system_m68k_atari,system_m68k_palmos,system_m68k_sinclairql,system_m68k_human68k,
                                    system_i386_haiku,system_x86_64_haiku,
                                    system_i386_openbsd,system_x86_64_openbsd,
                                    system_riscv32_linux,system_riscv64_linux,
@@ -469,6 +469,14 @@ interface
        { all internal COFF writers }
        asms_int_coff = [as_arm_pecoffwince,as_x86_64_pecoff,as_i386_pecoffwince,
                         as_i386_pecoffwdosx,as_i386_pecoff,as_i386_coff];
+
+       { all internal ELF writers }
+       asms_int_elf = [as_arm_elf32,as_x86_64_elf64,as_m68k_elf32,
+                       as_sparc_elf32,as_i386_elf32];
+
+       { all internal writers }
+       asms_internals = asms_int_coff + asms_int_elf
+                        + [as_i8086_omf, as_z80_rel, as_wasm32_wasm, as_i386_macho];
 
        cpu2str : array[TSystemCpu] of string[12] =
             ('','i386','m68k','alpha','powerpc','sparc','vm','ia64','x86_64',

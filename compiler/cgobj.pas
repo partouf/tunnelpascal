@@ -124,6 +124,8 @@ unit cgobj;
 
           {# Emit a label to the instruction stream. }
           procedure a_label(list : TAsmList;l : tasmlabel);virtual;
+          {# Emit a label that can be a target of a Pascal goto statement to the instruction stream. }
+          procedure a_label_pascal_goto_target(list : TAsmList;l : tasmlabel);virtual;
 
           {# Allocates register r by inserting a pai_realloc record }
           procedure a_reg_alloc(list : TAsmList;r : tregister);
@@ -953,6 +955,12 @@ implementation
       end;
 
 
+    procedure tcg.a_label_pascal_goto_target(list : TAsmList;l : tasmlabel);
+      begin
+        a_label(list,l);
+      end;
+
+
 {*****************************************************************************
           for better code generation these methods should be overridden
 ******************************************************************************}
@@ -1237,7 +1245,8 @@ implementation
             begin
               hreg:=paraloc.register;
               cgsize:=paraloc.size;
-              if paraloc.shiftval>0 then
+              if (paraloc.shiftval>0) and
+	        not ((target_info.endian=endian_big) and (sizeleft in [3,5,6,7])) then
                 a_op_const_reg_reg(list,OP_SHL,OS_INT,paraloc.shiftval,paraloc.register,paraloc.register)
               { in case the original size was 3 or 5/6/7 bytes, the value was
                 shifted to the top of the to 4 resp. 8 byte register on the

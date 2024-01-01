@@ -65,6 +65,9 @@ var
 { TStrings and TStringList implementations }
 {$i stringl.inc}
 
+{ ObservableMemberAttribute, TObservers and TObserverMapping}
+{$i observer.inc}
+
 { TThread implementation }
 
 { system independend threading code }
@@ -109,21 +112,38 @@ var
 type
   { this type is used if a thread is created using
     TThread.CreateAnonymousThread }
+
+  { TAnonymousThread }
+
   TAnonymousThread = class(TThread)
   private
     fProc: TProcedure;
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    fAnonProc : TThreadProcedure;
+    {$ENDIF}
+    FMethod : TThreadMethod;
   protected
     procedure Execute; override;
   public
-    { as in TThread aProc needs to be changed to TProc once closures are
-      supported }
     constructor Create(aProc: TProcedure);
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    constructor Create(aProc: TThreadProcedure);
+    {$ENDIF}
+    constructor Create(aProc: TThreadMethod);
   end;
 
 
 procedure TAnonymousThread.Execute;
 begin
-  fProc();
+  {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+  if assigned(fAnonProc) then
+    fAnonProc()
+  else
+  {$ENDIF}
+  if assigned(FMethod) then
+    FMethod()
+  else
+    fProc();
 end;
 
 
@@ -133,6 +153,22 @@ begin
   inherited Create(True);
   FreeOnTerminate := True;
   fProc := aProc;
+end;
+
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+constructor TAnonymousThread.Create(aProc: TThreadProcedure);
+begin
+  inherited Create(True);
+  FreeOnTerminate := True;
+  fAnonProc := aProc;
+end;
+{$ENDIF}
+
+constructor TAnonymousThread.Create(aProc: TThreadMethod);
+begin
+  inherited Create(True);
+  FreeOnTerminate := True;
+  FMethod := aProc;
 end;
 
 
@@ -281,7 +317,7 @@ begin
   TerminatedSet;
 end;
 
-Procedure TThread.TerminatedSet;
+procedure TThread.TerminatedSet;
 
 begin
   // Empty, must be overridden.
@@ -631,7 +667,7 @@ begin
 end;
 
 {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
-class procedure TThread.Queue(aThread: TThread; aProcedure: TThreadProcedure); static;
+class procedure TThread.Queue(aThread: TThread; AProcedure: TThreadProcedure);
 begin
   InternalQueue(aThread, aProcedure, False);
 end;
@@ -779,6 +815,23 @@ end;
 
 
 class function TThread.CreateAnonymousThread(aProc: TProcedure): TThread;
+begin
+  if not Assigned(aProc) then
+    raise Exception.Create(SNoProcGiven);
+  Result := TAnonymousThread.Create(aProc);
+end;
+
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+class function TThread.CreateAnonymousThread(aProc: TThreadProcedure): TThread;
+
+begin
+  if not Assigned(aProc) then
+    raise Exception.Create(SNoProcGiven);
+  Result := TAnonymousThread.Create(aProc);
+end;
+{$ENDIF}
+
+class function TThread.CreateAnonymousThread(aProc: TThreadMethod): TThread;
 begin
   if not Assigned(aProc) then
     raise Exception.Create(SNoProcGiven);
@@ -1026,19 +1079,20 @@ begin
 end;
 
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteHandler; AOnTerminate : TNotifyEvent = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteHandler; AOnTerminate: TNotifyEvent): TThread;
 
 begin
   Result:=TSimpleThread.Create(AMethod,AOnTerminate);
 end;
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteCallback; AData : Pointer; AOnTerminate : TNotifyCallback = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteCallback; AData: Pointer; AOnTerminate: TNotifyCallBack): TThread;
 
 begin
   Result:=TSimpleProcThread.Create(AMethod,AData,AOnTerminate);
 end;
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteStatusHandler; AOnStatus : TThreadStatusNotifyEvent; AOnTerminate : TNotifyEvent = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteStatusHandler; AOnStatus: TThreadStatusNotifyEvent;
+  AOnTerminate: TNotifyEvent): TThread;
 
 begin
   If Not Assigned(AOnStatus) then
@@ -1046,7 +1100,8 @@ begin
   Result:=TSimpleStatusThread.Create(AMethod,AOnStatus,AOnTerminate);
 end;
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteStatusCallback; AOnStatus : TThreadStatusNotifyCallback;AData : Pointer = Nil;  AOnTerminate : TNotifyCallBack = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteStatusCallback; AOnStatus: TThreadStatusNotifyCallback;
+  AData: Pointer; AOnTerminate: TNotifyCallBack): TThread;
 
 begin
   If Not Assigned(AOnStatus) then
@@ -1459,6 +1514,8 @@ function DefaultInitHandler(Instance: TComponent; RootAncestor: TClass): Boolean
     try
 {$endif}
       result:=doinit(Instance.ClassType);
+      if Result then 
+        Instance.ReadDeltaState;
 {$ifdef FPC_HAS_FEATURE_THREADING}
     finally
       GlobalNameSpace.EndWrite;
@@ -2774,3 +2831,8 @@ end;
 {$i twriter.inc}
 
 
+constructor ComponentPlatformsAttribute.Create(const aPlatforms: TPlatformIds);
+
+begin
+  FPlatForms:=aPlatForms;
+end;

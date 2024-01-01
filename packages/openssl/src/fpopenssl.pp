@@ -115,6 +115,7 @@ Type
     function CipherBits: integer;
     function CipherAlgBits: integer;
     Function VerifyResult : Integer;
+    function Set1Host(const hostname: string): Integer;
     Property SSL: PSSL Read FSSL;
   end;
 
@@ -243,9 +244,9 @@ var
 begin
   Utc:=Asn1UtctimeNew;
   try
-    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS',ValidFrom)));
+    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS"Z"',ValidFrom)));
     X509SetNotBefore(x, Utc);
-    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS',ValidTo)));
+    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS"Z"',ValidTo)));
     X509SetNotAfter(x,Utc);
   finally
     Asn1UtctimeFree(Utc);
@@ -820,6 +821,11 @@ Function TSSL.VerifyResult: Integer;
 
 begin
   Result:=SslGetVerifyResult(FSsl);
+end;
+
+function TSSL.Set1Host(const hostname: string): Integer;
+begin
+  Result := SslSet1Host(FSsl, hostname);
 end;
 
 end.

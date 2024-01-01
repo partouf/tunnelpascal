@@ -48,6 +48,7 @@
   add_graph(ADirectory+IncludeTrailingPathDelimiter('graph'));
   add_gtk1(ADirectory+IncludeTrailingPathDelimiter('gtk1'));
   add_gtk2(ADirectory+IncludeTrailingPathDelimiter('gtk2'));
+  add_h68units(ADirectory+IncludeTrailingPathDelimiter('h68units'));
   add_hash(ADirectory+IncludeTrailingPathDelimiter('hash'));
   add_hermes(ADirectory+IncludeTrailingPathDelimiter('hermes'));
   add_httpd13(ADirectory+IncludeTrailingPathDelimiter('httpd13'));
@@ -145,11 +146,14 @@
   add_webidl(ADirectory+IncludeTrailingPathDelimiter('webidl'));
   add_gnutls(ADirectory+IncludeTrailingPathDelimiter('gnutls'));
   add_ide(ADirectory+IncludeTrailingPathDelimiter('ide'));
+  add_libpcre(ADirectory+IncludeTrailingPathDelimiter('libpcre'));
   add_vclcompat(ADirectory+IncludeTrailingPathDelimiter('vcl-compat'));
   add_qlunits(ADirectory+IncludeTrailingPathDelimiter('qlunits'));
   add_mustache(ADirectory+IncludeTrailingPathDelimiter('fcl-mustache'));
   add_wasmtime(ADirectory+IncludeTrailingPathDelimiter('wasmtime'));
+  add_wasmedge(ADirectory+IncludeTrailingPathDelimiter('wasmedge'));
   add_gitlab(ADirectory+IncludeTrailingPathDelimiter('gitlab'));
   add_fcl_css(ADirectory+IncludeTrailingPathDelimiter('fcl-css'));
   add_gstreamer(ADirectory+IncludeTrailingPathDelimiter('gstreamer'));
+  add_testinsight(ADirectory+IncludeTrailingPathDelimiter('testinsight'));
   

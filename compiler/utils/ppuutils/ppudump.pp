@@ -247,7 +247,8 @@ const
   { 118 } 'Linux-MIPS64el',
   { 119 } 'FreeRTos-RiscV32',
   { 120 } 'Linux-LoongArch64',
-  { 121 } 'iPhoneSim-AArch64'
+  { 121 } 'iPhoneSim-AArch64',
+  { 122 } 'Human68k-m68k'
   );
 
 const
@@ -2709,7 +2710,7 @@ begin
                     stbi:=tbi;
                     tokenreadsettings(new_settings, copy_size);
                     tbi:=stbi+copy_size;
-                    if CompareByte(new_settings,prev_settings,sizeof(new_settings))<>0 then
+                    if CompareByte(new_settings,prev_settings,copy_size)<>0 then
                       begin
                         dump_new_settings;
                         writeln;
@@ -2723,14 +2724,16 @@ begin
                 ST_LOADMESSAGES:
                   begin
                     inc(tbi);
-                    mesgnb:=tokenbuf[tbi];
+                    mesgnb:=gettokenbufsizeint;;
                     writeln([space,mesgnb,' messages: ']);
-                    inc(tbi);
+                    if (tbi+2*sizeof(longint)*mesgnb>tokenbufsize) then
+                      begin
+                        WriteError('!! Error: number of messages incompatible with token buffer size');
+                      end;
                     for nb:=1 to mesgnb do
                       begin
-                        msgvalue:=gettokenbufsizeint;
-                        //inc(tbi,sizeof(sizeint));
-                        state:=tmsgstate(gettokenbufsizeint);
+                        msgvalue:=gettokenbuflongint;
+                        state:=tmsgstate(gettokenbuflongint);
                         writeln(['#',msgvalue,' ',state]);
                       end;
                   end;
@@ -2776,7 +2779,12 @@ begin
       if tbi<tokenbufsize then
         write(',');
     end;
-  writeln;
+  if (tbi>tokenbufsize) then
+    begin
+      WriteError('!! Error: read past of token buffer size');
+    end
+  else
+    writeln;
   StrAppend(genstr,linestr);
   writeln(['##',genstr,'##']);
 end;

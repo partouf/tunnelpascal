@@ -213,7 +213,8 @@
              system_mips64el_linux,     { 118 }
              system_riscv32_freertos,   { 119 }
              system_loongarch64_linux,  { 120 }
-             system_aarch64_iphonesim   { 121 }
+             system_aarch64_iphonesim,  { 121 }
+             system_m68k_human68k       { 122 }
        );
 
      type
@@ -284,7 +285,7 @@
              ,as_wasm32_wasm
              ,as_clang_llvm_darwin
              ,as_m68k_elf32
-	     ,as_win64_gas
+             ,as_win64_gas
        );
 
        tlink = (ld_none,
@@ -326,12 +327,14 @@
              ld_int_win16,
              ld_int_zxspectrum,
              ld_int_msxdos,
+             ld_int_wasi,
              ld_freertos,
              ld_zxspectrum,
              ld_msxdos,
              ld_amstradcpc,
              ld_sinclairql,
-             ld_wasi
+             ld_wasi,
+             ld_human68k
        );
 
        tar = (ar_none

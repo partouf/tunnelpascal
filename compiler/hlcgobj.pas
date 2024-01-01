@@ -126,6 +126,8 @@ unit hlcgobj;
 
           {# Emit a label to the instruction stream. }
           procedure a_label(list : TAsmList;l : tasmlabel); inline;
+          {# Emit a label that can be a target of a Pascal goto statement to the instruction stream. }
+          procedure a_label_pascal_goto_target(list : TAsmList;l : tasmlabel); inline;
 
           {# Allocates register r by inserting a pai_realloc record }
           procedure a_reg_alloc(list : TAsmList;r : tregister); inline;
@@ -391,6 +393,7 @@ unit hlcgobj;
           procedure a_cmp_ref_loc_label(list: TAsmList; size: tdef;cmp_op: topcmp; const ref: treference; const loc: tlocation; l : tasmlabel);virtual;
 
           procedure a_jmp_always(list : TAsmList;l: tasmlabel); virtual;abstract;
+          procedure a_jmp_always_pascal_goto(list : TAsmList;l: tasmlabel);virtual;
 {$ifdef cpuflags}
           procedure a_jmp_flags(list : TAsmList;const f : TResFlags;l: tasmlabel); virtual; abstract;
 
@@ -650,7 +653,7 @@ unit hlcgobj;
           { allocate a local temp to serve as storage for a para/localsym }
           procedure getlocal(list: TAsmList; sym: tsym; size: asizeint; alignment: shortint; def: tdef; out ref : treference);
           { the symbol is stored at this location from now on }
-          procedure recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference); virtual;
+          procedure recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference; initial: boolean); virtual;
          protected
           procedure gen_loadfpu_loc_cgpara(list: TAsmList; size: tdef; const l: tlocation;const cgpara: tcgpara;locintsize: longint);virtual;
           procedure init_paras(p:TObject;arg:pointer);
@@ -899,6 +902,11 @@ implementation
   procedure thlcgobj.a_label(list: TAsmList; l: tasmlabel); inline;
     begin
       cg.a_label(list,l);
+    end;
+
+  procedure thlcgobj.a_label_pascal_goto_target(list : TAsmList;l : tasmlabel); inline;
+    begin
+      cg.a_label_pascal_goto_target(list,l);
     end;
 
   procedure thlcgobj.a_reg_alloc(list: TAsmList; r: tregister);
@@ -3354,6 +3362,12 @@ implementation
     end;
 
 
+  procedure thlcgobj.a_jmp_always_pascal_goto(list : TAsmList;l: tasmlabel);
+    begin
+      a_jmp_always(list,l);
+    end;
+
+
   procedure thlcgobj.g_exception_reason_save(list: TAsmList; fromsize, tosize: tdef; reg: tregister; const href: treference);
     begin
       a_load_reg_ref(list,fromsize,tosize,reg,href);
@@ -5275,10 +5289,10 @@ implementation
   procedure thlcgobj.getlocal(list: TAsmList; sym: tsym; size: asizeint; alignment: shortint; def: tdef; out ref: treference);
     begin
       tg.getlocal(list,size,alignment,def,ref);
-      recordnewsymloc(list,sym,def,ref);
+      recordnewsymloc(list,sym,def,ref,true);
     end;
 
-  procedure thlcgobj.recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference);
+  procedure thlcgobj.recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference; initial: boolean);
     begin
       // do nothing
     end;

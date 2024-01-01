@@ -33,7 +33,19 @@
       TextFile = Text;
 
       PGuid = ^TGuid;
+
+      { TGuid }
+
       TGuid = packed record
+      Public
+        class operator =(const aLeft, aRight: TGUID): Boolean;
+        class operator <>(const aLeft, aRight: TGUID): Boolean; inline;
+        class function Empty: TGUID; static;
+        class function Create(const aData; aBigEndian: Boolean = False): TGUID; overload; static;
+        class function Create(const aData: array of Byte; aStartIndex: Cardinal; aBigEndian: Boolean = False): TGUID; overload; static;
+        class function Create(const aData : PByte; aBigEndian: Boolean = False): TGUID; overload; static;
+        function IsEmpty: Boolean;
+      Public
          case integer of
             1 : (
                  Data1 : DWord;
@@ -216,6 +228,8 @@
        {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
        TObject = class
+       protected
+          function GetDisposed : Boolean; inline;
        public
           { please don't change the order of virtual methods, because
             their vmt offsets are used by some assembler code which uses
@@ -268,6 +282,9 @@
           { new since Delphi 2009 }
           class function UnitName : RTLString;
           class function QualifiedClassName: RTLString;
+          Procedure DisposeOf; inline;
+          Procedure CheckDisposed; inline;
+          Property Disposed : Boolean Read GetDisposed;
           function Equals(Obj: TObject) : boolean;virtual;
           function GetHashCode: PtrInt;virtual;
           function ToString: RTLString; virtual;
@@ -644,9 +661,8 @@ Type
     Slightly Less useful in FPC, since dyn array compatibility is at the element level. 
     But still useful for generic methods and of course Delphi compatibility}
   generic TArray<T> = array of T;
-  
-  
-  
+
+
   TMarshal = class sealed
   public
     Type 
@@ -754,6 +770,9 @@ Type
     class function ReadPtr(Ptr: TPtrWrapper; Ofs: SizeInt = 0): TPtrWrapper; static; inline;
     class procedure WritePtr(Ptr: TPtrWrapper; Ofs: SizeInt; Value: TPtrWrapper); static; inline;
     class procedure WritePtr(Ptr, Value: TPtrWrapper); static; inline;
-
-
   end;
+
+Const
+  // In Delphi System.SysInit
+  PtrToNil: Pointer = nil;
+

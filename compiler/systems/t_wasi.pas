@@ -35,7 +35,7 @@ uses
   cfileutl, cutils, cclasses,
 
   import, export, aasmdata, aasmcpu,
-  fmodule, ogbase,
+  fmodule, ogbase, ogwasm,
 
   symconst, symsym, symdef, symcpu,
 
@@ -70,6 +70,21 @@ type
 
     function  MakeExecutable:boolean;override;
     function  MakeSharedLibrary:boolean;override;
+  end;
+
+  { TInternalLinkerWasi }
+
+  TInternalLinkerWasi=class(tinternallinker)
+  protected
+    procedure DefaultLinkScript;override;
+
+    function GetCodeSize(aExeOutput: TExeOutput): QWord;override;
+    function GetDataSize(aExeOutput: TExeOutput): QWord;override;
+    function GetBssSize(aExeOutput: TExeOutput): QWord;override;
+  public
+    constructor create;override;
+
+    procedure InitSysInitUnitName;override;
   end;
 
 
@@ -271,10 +286,69 @@ begin
   //inherited generatelib;
 end;
 
+{ TInternalLinkerWasi }
+
+procedure TInternalLinkerWasi.DefaultLinkScript;
+var
+  s: TCmdStr;
+begin
+  while not ObjectFiles.Empty do
+  begin
+    s:=ObjectFiles.GetFirst;
+    if s<>'' then
+      LinkScript.Concat('READOBJECT ' + maybequoted(s));
+  end;
+
+  LinkScript.Concat('EXESECTION .text');
+  LinkScript.Concat('  OBJSECTION .text.*');
+  LinkScript.Concat('ENDEXESECTION');
+
+  LinkScript.Concat('EXESECTION .data');
+  LinkScript.Concat('  OBJSECTION .rodata.*');
+  LinkScript.Concat('  OBJSECTION .data.*');
+  LinkScript.Concat('  OBJSECTION .bss');
+  LinkScript.Concat('ENDEXESECTION');
+
+end;
+
+function TInternalLinkerWasi.GetCodeSize(aExeOutput: TExeOutput): QWord;
+begin
+  {TODO}
+  Result:=0;
+end;
+
+function TInternalLinkerWasi.GetDataSize(aExeOutput: TExeOutput): QWord;
+begin
+  {TODO}
+  Result:=0;
+end;
+
+function TInternalLinkerWasi.GetBssSize(aExeOutput: TExeOutput): QWord;
+begin
+  {TODO}
+  Result:=0;
+end;
+
+constructor TInternalLinkerWasi.create;
+begin
+  inherited create;
+  CExeOutput:=TWasmExeOutput;
+  CObjInput:=TWasmObjInput;
+end;
+
+procedure TInternalLinkerWasi.InitSysInitUnitName;
+begin
+  if current_module.islibrary then
+    sysinitunit:='si_dll'
+  else
+    sysinitunit:='si_prc';
+end;
+
 initialization
   RegisterTarget(system_wasm32_wasi_info);
   RegisterImport(system_wasm32_wasi, timportlibwasi);
   RegisterExport(system_wasm32_wasi, texportlibwasi);
+  RegisterLinker(ld_int_wasi,TInternalLinkerWasi);
   RegisterLinker(ld_wasi, tlinkerwasi);
 
 end.
