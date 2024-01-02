@@ -151,9 +151,6 @@ type
     FPasElementId: NativeInt;
     class var FLastPasElementId: NativeInt;
     {$endif}
-    {$ifdef EnablePasTreeGlobalRefCount}
-    class var FGlobalRefCount: NativeInt;
-    {$endif}
   protected
     procedure ProcessHints(const ASemiColonPrefix: boolean; var AResult: TPasTreeString); virtual;
     procedure SetParent(const AValue: TPasElement); virtual;
@@ -162,13 +159,6 @@ type
     SourceLinenumber: Integer;
     SourceEndLinenumber: Integer;
     Visibility: TPasMemberVisibility;
-    {$IFDEF CheckPasTreeRefCount}
-  public
-    RefIds: TStringList;
-    NextRefEl, PrevRefEl: TPasElement;
-    class var FirstRefEl, LastRefEl: TPasElement;
-    procedure ChangeRefId(const OldId, NewId: TPasTreeString);
-    {$ENDIF}
     constructor Create(const AName: TPasTreeString; AParent: TPasElement); virtual;
     destructor Destroy; override;
     Class Function IsKeyWord(Const S : TPasTreeString) : Boolean;
@@ -200,9 +190,6 @@ type
     property DocComment : TPasTreeString Read FDocComment Write FDocComment;
     {$ifdef pas2js}
     property PasElementId: NativeInt read FPasElementId; // global unique id
-    {$endif}
-    {$ifdef EnablePasTreeGlobalRefCount}
-    class property GlobalRefCount: NativeInt read FGlobalRefCount write FGlobalRefCount;
     {$endif}
   end;
 
@@ -2925,25 +2912,6 @@ begin
   FParent:=AValue;
 end;
 
-{$IFDEF CheckPasTreeRefCount}
-procedure TPasElement.ChangeRefId(const OldId, NewId: TPasTreeString);
-var
-  i: Integer;
-begin
-  i:=RefIds.IndexOf(OldId);
-  if i<0 then
-    begin
-    {AllowWriteln}
-    writeln('ERROR: TPasElement.ChangeRefId ',Name,':',ClassName,' Old="'+OldId+'" New="'+NewId+'" Old not found');
-    writeln(RefIds.Text);
-    {AllowWriteln-}
-    raise EPasTree.Create('');
-    end;
-  RefIds.Delete(i);
-  RefIds.Add(NewId);
-end;
-{$ENDIF}
-
 constructor TPasElement.Create(const AName: TPasTreeString; AParent: TPasElement);
 begin
   inherited Create;
@@ -2954,18 +2922,6 @@ begin
   FPasElementId:=FLastPasElementId;
   //writeln('TPasElement.Create ',Name,':',ClassName,' ID=[',FPasElementId,']');
   {$endif}
-  {$ifdef EnablePasTreeGlobalRefCount}
-  Inc(FGlobalRefCount);
-  {$endif}
-  {$IFDEF CheckPasTreeRefCount}
-  RefIds:=TStringList.Create;
-  PrevRefEl:=LastRefEl;
-  if LastRefEl<>nil then
-    LastRefEl.NextRefEl:=Self
-  else
-    FirstRefEl:=Self;
-  LastRefEl:=Self;
-  {$ENDIF}
 end;
 
 destructor TPasElement.Destroy;
@@ -4619,13 +4575,13 @@ Var
 
 begin
   Result:=False;
-  I:=0;
-  While (Not Result) and (I<Members.Count) do
+  For I:=0 to Members.Count-1 do
     begin
     Member:=TPasElement(Members[i]);
-    if (Member.Visibility<>visPublic) then exit(true);
-    if (Member.ClassType<>TPasVariable) then exit(true);
-    Inc(I);
+    if (Member.Visibility<>visPublic) then 
+      Exit(True);
+    if (Member.ClassType<>TPasVariable) then 
+      Exit(True);
     end;
 end;
 
@@ -5469,7 +5425,7 @@ end;
 
 constructor TPasInlineVarDeclStatement.Create(const aName: TPasTreeString; aParent: TPasElement);
 begin
-  inherited Create('',aParent);
+  inherited Create(aName,aParent);
   Declarations:=TFPList.Create;
 end;
 

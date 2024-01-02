@@ -4057,6 +4057,8 @@ begin
         end;
       't': // subtarget
         begin
+        if not FromCmdLine then
+          ParamFatal('subtarget -t parameter can only be passed as cmd line parameter');
         inc(p);
         SubTarget:=copy(Param,p,length(Param));
         end;
@@ -4277,7 +4279,8 @@ procedure TPas2jsCompiler.SetSubTarget(AValue: String);
 begin
   if FSubTarget=AValue then Exit;
   FSubTarget:=AValue;
-  //
+  AddDefine('FPC_SUBTARGET',UPPERCASE(aValue));
+  AddDefine('FPC_SUBTARGET_'+UPPERCASE(aValue));
 end;
 
 function TPas2jsCompiler.CreateImportList: TJSSourceElements;
@@ -4911,7 +4914,7 @@ begin
   w('  -SI<x>  : Set interface style to <x>');
   w('    -SIcom  : COM, reference counted interface (default)');
   w('    -SIcorba: CORBA interface');
-  w('  -T<x>  : Set subtarget (searches for pas2js-<subtarget>.cfg');
+  w('  -t<x>  : Set subtarget (searches for pas2js-<subtarget>.cfg');
   w('  -T<x>  : Set target platform');
   w('    -Tbrowser: default');
   w('    -Tnodejs : add pas.run(), includes -Jc');
@@ -4953,7 +4956,7 @@ begin
   if FHasShownLogo then exit;
   FHasShownLogo:=true;
   WriteVersionLine;
-  Log.LogPlain('Copyright (c) 2022 Free Pascal team.');
+  Log.LogPlain('Copyright (c) 2023 Free Pascal team.');
   if coShowInfos in Options then
     WriteEncoding;
 end;
