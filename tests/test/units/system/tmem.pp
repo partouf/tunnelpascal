@@ -7,271 +7,202 @@
 {********************************************}
 { Tested against Delphi 6 and Delphi 3       }
 {********************************************}
+
+{$ifdef fpc}
+  {$mode delphi}
+{$endif}
+{$q-,r-}
 program tmem;
 
-const
-  MAX_TABLE = 69;  { this value should not be even ! }
-  DEFAULT_VALUE = $55;
-  FILL_VALUE = $33;
+type
+  TByteArray = array[0 .. 0] of byte;
 
+
+procedure test_move(n: integer; const fuzzValues: array of integer; large: boolean);
+
+type
+  FuzzModeEnum = (Fuzz0Plus, FuzzHalfMinus, FuzzHalfPlus, FuzzEndMinus);
+
+  procedure PrepareArray(out p; n: integer);
+  var
+    i, v: integer;
+  begin
+    v := 1;
+    for i := 0 to n - 1 do
+    begin
+      TByteArray(p)[i] := v;
+      v := v + 1;
+      if v > 255 then
+        v := 1;
+    end;
+  end;
+
+  function GetFuzzedValue(mode: FuzzModeEnum; n, fuzz: integer): integer;
+  begin
+    result := -1;
+    case mode of
+      Fuzz0Plus: result := fuzz;
+      FuzzHalfMinus: if fuzz > 0 then result := integer(cardinal(n) div 2) - fuzz;
+      FuzzHalfPlus: result := integer(cardinal(n) div 2) + fuzz;
+      FuzzEndMinus: result := n - fuzz;
+    end;
+  end;
 
 var
-  dst_arraybyte : array[1..MAX_TABLE] of byte;
-  src_arraybyte : array[1..MAX_TABLE] of byte;
-  dst_arrayword : array[1..MAX_TABLE] of word;
-  dst_arraylongword : array[1..MAX_TABLE] of longword;
-  i: integer;
+  orig, got: array of byte;
 
-
-procedure test(value, required: longint);
-begin
-  if value <> required then
+  procedure Test(src, dst, count: integer);
+  var
+    icheck, expect: integer;
+  begin
+{$ifdef CPUI8086}
+    if count < 0 then
+      exit;
+{$endif}
+    PrepareArray(got[0], n);
+    Move(got[src], got[dst], count);
+    for icheck := 0 to n - 1 do
     begin
-      writeln('Got ',value,' instead of ',required);
-      halt(1);
+      if (icheck >= dst) and (icheck < dst + count) then
+        expect := orig[src + (icheck - dst)]
+      else
+        expect := orig[icheck];
+      if got[icheck] <> expect then
+      begin
+        writeln('Move(src = ', src, ', dst = ', dst, ', count = ', count, '): got[', icheck, '] = ', got[icheck], ', expected ', expect, '.');
+        halt(1);
+      end;
+    end;
+  end;
+
+var
+  srcMode, dstMode, countMode: FuzzModeEnum;
+  iSrcFuzz, iDstFuzz, iCountFuzz, src, dst, count: integer;
+
+begin
+  SetLength(orig, n);
+  SetLength(got, n);
+  PrepareArray(orig[0], n);
+  for srcMode := Fuzz0Plus to FuzzEndMinus do
+    for iSrcFuzz := 0 to High(fuzzValues) do
+    begin
+      src := GetFuzzedValue(srcMode, n, fuzzValues[iSrcFuzz]);
+      if (src >= 0) and (src <= n) then
+        for dstMode := Fuzz0Plus to FuzzEndMinus do
+          for iDstFuzz := 0 to High(fuzzValues) do
+          begin
+            dst := GetFuzzedValue(dstMode, n, fuzzValues[iDstFuzz]);
+            if (dst >= 0) and (dst <= n) then
+            begin
+              { negative move count }
+              if not large then
+                Test(src, dst, -12);
+              for countMode := FuzzModeEnum(ord(Fuzz0Plus) + ord(large)) to FuzzEndMinus do
+                for iCountFuzz := 0 to High(fuzzValues) do
+                begin
+                  count := GetFuzzedValue(countMode, n, fuzzValues[iCountFuzz]);
+                  if (count >= 0) and (src + count <= n) and (dst + count <= n) then
+                    Test(src, dst, count);
+                end;
+            end;
+          end;
     end;
 end;
 
 
-procedure test_fillchar;
- var
-  i: integer;
- begin
-  { non-aligned count }
-  write('testing fillchar (non-aligned size)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraybyte[i] := DEFAULT_VALUE;
-  fillchar(dst_arraybyte, MAX_TABLE-2, FILL_VALUE);
-  test(dst_arraybyte[MAX_TABLE], DEFAULT_VALUE);
-  test(dst_arraybyte[MAX_TABLE-1], DEFAULT_VALUE);
-  for i := 1 to MAX_TABLE-2 do
-    test(dst_arraybyte[i], FILL_VALUE);
-  writeln('Passed!');
-  { modulo 2 count fill }
-  write('testing fillchar (aligned size)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraybyte[i] := DEFAULT_VALUE;
-  fillchar(dst_arraybyte, MAX_TABLE-1, FILL_VALUE);
-  test(dst_arraybyte[MAX_TABLE], DEFAULT_VALUE);
-  for i := 1 to MAX_TABLE-1 do
-    test(dst_arraybyte[i], FILL_VALUE);
-  writeln('Passed!');
-  { test zero fillchar count }
-  write('testing fillchar (zero count)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraybyte[i] := DEFAULT_VALUE;
-  fillchar(dst_arraybyte, 0, FILL_VALUE);
-  for i := 1 to MAX_TABLE do
-    test(dst_arraybyte[i], DEFAULT_VALUE);
-  writeln('Passed!');
-{$ifndef CPUI8086}
-  { i8086 uses word as the count parameter for fillchar }
-  { test negative fillchar count }
-  write('testing fillchar (negative count)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraybyte[i] := DEFAULT_VALUE;
-  fillchar(dst_arraybyte, -1, FILL_VALUE);
-  for i := 1 to MAX_TABLE do
-    test(dst_arraybyte[i], DEFAULT_VALUE);
-  writeln('Passed!');
-{$endif CPUI8086}
- end;
+type
+  TFillProc = procedure(out p; n: integer; const value);
 
 
-procedure test_move;
-begin
-  { non-aligned count }
-  write('testing move (non-aligned size)...');
-  for i := 1 to MAX_TABLE do
-  begin
-    dst_arraybyte[i] := DEFAULT_VALUE;
-    src_arraybyte[i] := FILL_VALUE;
-  end;
-  move(src_arraybyte, dst_arraybyte, MAX_TABLE-2);
-  test(dst_arraybyte[MAX_TABLE], DEFAULT_VALUE);
-  test(dst_arraybyte[MAX_TABLE-1], DEFAULT_VALUE);
-  for i:= 1 to MAX_TABLE-2 do
-    test(dst_arraybyte[i], FILL_VALUE);
-  writeln('Passed!');
-  { modulo 2 count fill }
-  { non-aligned count }
-  write('testing move (aligned size)...');
-  for i := 1 to MAX_TABLE do
-  begin
-    dst_arraybyte[i] := DEFAULT_VALUE;
-    src_arraybyte[i] := FILL_VALUE;
-  end;
-  move(src_arraybyte, dst_arraybyte, MAX_TABLE-1);
-  test(dst_arraybyte[MAX_TABLE], DEFAULT_VALUE);
-  for i:= 1 to MAX_TABLE-1 do
-    test(dst_arraybyte[i], FILL_VALUE);
-  writeln('Passed!');
-  { zero move count }
-  write('testing move (zero count)...');
-  for i := 1 to MAX_TABLE do
-  begin
-    dst_arraybyte[i] := DEFAULT_VALUE;
-    src_arraybyte[i] := FILL_VALUE;
-  end;
-  move(src_arraybyte,dst_arraybyte, 0);
-  for i:= 1 to MAX_TABLE do
-    test(dst_arraybyte[i], DEFAULT_VALUE);
-  writeln('Passed!');
-{$ifndef CPUI8086}
-  { i8086 uses word as the count parameter for fillchar }
-  { negative move count }
-  write('testing move (negative count)...');
-  move(src_arraybyte,dst_arraybyte,-12);
-  writeln('Passed!');
-{$endif CPUI8086}
-end;
-
-
-procedure test_move_large(size: longint);
+procedure test_fill(fill: TFillProc; tySize: integer; const tyName: string);
+const
+  MainBytes = 256;
+  Misalignments: array[0 .. 3] of integer = (0, 1, 4, 15);
 var
-  src, dst: PLongInt;
-  i: LongInt;
+  va, vb: array[0 .. 7] of byte;
+  data: array of byte;
+  i, tysInData, tysInMainBytes, start, count, iMisalignment, misalignment, expect: integer;
 begin
-  GetMem(src, size*sizeof(LongInt));
-  GetMem(dst, size*sizeof(LongInt));
-  write('testing move of ',size,' dwords ...');
-  for i := 0 to size-1 do
+  for i := 0 to High(va) do
   begin
-    src[i] := i;
-    dst[i] := -1;
+    va[i] := 1 + i;
+    vb[i] := 100 + i;
   end;
-  move(src[0], dst[2], (size-4)*sizeof(LongInt));
-  test(dst[0], -1);
-  test(dst[1], -1);
-  test(dst[size-1], -1);
-  test(dst[size-2], -1);
-  for i := 2 to size-3 do
-    test(dst[i], i-2);
-  writeln('Passed!');
-
-  // repeat with source and dest swapped (maybe move in opposite direction)
-  // current implementations detect that regions don't overlap and move forward,
-  // so this test is mostly useless. But it won't harm anyway.
-  write('testing move of ',size,' dwords, opposite direction...');
-  for i := 0 to size-1 do
+  tysInData := (MainBytes + (Misalignments[High(Misalignments)] + 1) + tySize - 1) div tySize;
+  tysInMainBytes := MainBytes div tySize;
+  SetLength(data, tysInData * tySize);
+  for iMisalignment := 0 to High(Misalignments) do
   begin
-    dst[i] := i;
-    src[i] := -1;
+    misalignment := Misalignments[iMisalignment];
+    for start := 0 to tysInMainBytes do
+      for count := -1 to tysInMainBytes - start do
+      begin
+{$ifdef CPUI8086}
+        { i8086 uses word as the count parameter for fillchar }
+        if count < 0 then
+          continue;
+{$endif}
+        fill(data[0], tysInData, va);
+        fill(data[misalignment + start * tySize], count, vb);
+        for i := 0 to High(data) do
+        begin
+          if (i >= misalignment + start * tySize) and (i < misalignment + (start + count) * tySize) then
+            expect := vb[(i - start * tySize - misalignment) and (tySize - 1)]
+          else
+            expect := va[i and (tySize - 1)];
+          if data[i] <> expect then
+          begin
+            writeln('Fill', tyName, '(start = ', start, ', count = ', count, ', misalignment = ', misalignment, '): byte #', i, ' = ', data[i], ', expected ', expect, '.');
+            halt(1);
+          end;
+        end;
+      end;
   end;
-  move(dst[0], src[2], (size-4)*sizeof(LongInt));
-  test(src[0], -1);
-  test(src[1], -1);
-  test(src[size-1], -1);
-  test(src[size-2], -1);
-  for i := 2 to size-3 do
-    test(src[i], i-2);
-  writeln('Passed!');
-
-  write('testing move of ',size,' dwords, overlapping forward...');
-  for i := 0 to size-1 do
-    src[i] := i;
-  move(src[0], src[100], (size-100)*sizeof(LongInt));
-  for i := 0 to 99 do
-    test(src[i], i);
-  for i := 100 to size-101 do
-    test(src[i], i-100);
-  writeln('Passed!');
-
-  write('testing move of ',size,' dwords, overlapping backward...');
-  for i := 0 to size-1 do
-    src[i] := i;
-  move(src[100], src[0], (size-100)*sizeof(LongInt));
-  for i := 0 to size-101 do
-    test(src[i], i+100);
-  for i := size-100 to size-1 do
-    test(src[i], i);
-  writeln('Passed!');
-  FreeMem(dst);
-  FreeMem(src);
 end;
+
+
+procedure FillCharImpl(out p; n: integer; const value);
+begin
+  FillChar(p, n, byte(value));
+end;
+
 
 {$ifdef fpc}
-procedure test_fillword;
- var
-  i: integer;
- begin
-  { non-aligned count }
-  write('testing fillword (non-aligned size)...');
-  for i := 1 to MAX_TABLE do
-    dst_arrayword[i] := DEFAULT_VALUE;
-  fillword(dst_arrayword, MAX_TABLE-2, FILL_VALUE);
-  test(dst_arrayword[MAX_TABLE], DEFAULT_VALUE);
-  test(dst_arrayword[MAX_TABLE-1], DEFAULT_VALUE);
-  for i := 1 to MAX_TABLE-2 do
-    test(dst_arrayword[i], FILL_VALUE);
-  writeln('Passed!');
-  { modulo 2 count fill }
-  write('testing fillword (aligned size)...');
-  for i := 1 to MAX_TABLE do
-    dst_arrayword[i] := DEFAULT_VALUE;
-  fillword(dst_arrayword, MAX_TABLE-1, FILL_VALUE);
-  test(dst_arrayword[MAX_TABLE], DEFAULT_VALUE);
-  for i := 1 to MAX_TABLE-1 do
-    test(dst_arrayword[i], FILL_VALUE);
-  writeln('Passed!');
-  { test zero fillword count }
-  write('testing fillword (zero count)...');
-  for i := 1 to MAX_TABLE do
-    dst_arrayword[i] := DEFAULT_VALUE;
-  fillword(dst_arrayword, 0, FILL_VALUE);
-  for i := 1 to MAX_TABLE do
-    test(dst_arrayword[i], DEFAULT_VALUE);
-  writeln('Passed!');
-  { test negative fillword count }
-  write('testing fillword (negative count)...');
-  for i := 1 to MAX_TABLE do
-    dst_arrayword[i] := DEFAULT_VALUE;
-  fillword(dst_arrayword, -1, FILL_VALUE);
-  writeln('Passed!');
- end;
+procedure FillWordImpl(out p; n: integer; const value);
+begin
+  FillWord(p, n, unaligned(word(value)));
+end;
 
 
-procedure test_filldword;
- var
-  i: integer;
- begin
-  { non-aligned count }
-  write('testing filldword (non-aligned size)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraylongword[i] := DEFAULT_VALUE;
-  filldword(dst_arraylongword, MAX_TABLE-2, FILL_VALUE);
-  test(dst_arraylongword[MAX_TABLE], DEFAULT_VALUE);
-  test(dst_arraylongword[MAX_TABLE-1], DEFAULT_VALUE);
-  for i := 1 to MAX_TABLE-2 do
-    test(dst_arraylongword[i], FILL_VALUE);
-  writeln('Passed!');
-  { modulo 2 count fill }
-  write('testing filldword (aligned size)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraylongword[i] := DEFAULT_VALUE;
-  filldword(dst_arraylongword, MAX_TABLE-1, FILL_VALUE);
-  test(dst_arraylongword[MAX_TABLE], DEFAULT_VALUE);
-  for i := 1 to MAX_TABLE-1 do
-    test(dst_arraylongword[i], FILL_VALUE);
-  writeln('Passed!');
-  { test zero filldword count }
-  write('testing filldword (zero count)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraylongword[i] := DEFAULT_VALUE;
-  filldword(dst_arraylongword, 0, FILL_VALUE);
-  for i := 1 to MAX_TABLE do
-    test(dst_arraylongword[i], DEFAULT_VALUE);
-  writeln('Passed!');
-  { test negative filldword count }
-  write('testing filldword (negative count)...');
-  for i := 1 to MAX_TABLE do
-    dst_arraylongword[i] := DEFAULT_VALUE;
-  filldword(dst_arraylongword, -1, FILL_VALUE);
-  writeln('Passed!');
- end;
+procedure FillDWordImpl(out p; n: integer; const value);
+begin
+  FillDWord(p, n, unaligned(dword(value)));
+end;
+
+
+procedure FillQWordImpl(out p; n: integer; const value);
+begin
+  FillQWord(p, n, unaligned(qword(value)));
+end;
 
 
 procedure test_movechar0;
+  procedure test(value, required: longint);
+  begin
+    if value <> required then
+      begin
+        writeln('Got ',value,' instead of ',required);
+        halt(1);
+      end;
+  end;
+const
+  MAX_TABLE = 69;  { this value should not be even ! }
+  DEFAULT_VALUE = $55;
+  FILL_VALUE = $33;
+var
+  i : integer;
+  dst_arraybyte : array[1..MAX_TABLE] of byte;
+  src_arraybyte : array[1..MAX_TABLE] of byte;
 begin
   { non-aligned count }
   write('testing movechar0 (non-aligned size)...');
@@ -340,15 +271,15 @@ end;
 
 
 begin
-  test_fillchar;
-  test_move;
-  test_move_large(500);   // 512 longints=2048 bytes
+  test_fill(FillCharImpl, 1, 'Char');
+  test_move(150, [0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 30, 31, 32, 47, 48, 49], false);
 {$ifndef CPU16}
-  test_move_large(500000);
+  test_move(500000, [0, 6], true);
 {$endif CPU16}
 {$ifdef fpc}
-  test_fillword;
-  test_filldword;
+  test_fill(FillWordImpl, 2, 'Word');
+  test_fill(FillDWordImpl, 4, 'DWord');
+  test_fill(FillQWordImpl, 8, 'QWord');
   test_movechar0;
 {$endif}
 end.
