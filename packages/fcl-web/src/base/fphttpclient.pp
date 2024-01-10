@@ -424,6 +424,12 @@ Type
 
   end;
 
+  TCookieList = class(TStringList)
+  public
+    procedure AddCookie(S: string);
+    function GetCookie(Index: Integer): string;
+  end;
+
   EHTTPClient = Class(EHTTP);
   // client socket exceptions
   EHTTPClientSocket = class(EHTTPClient);
@@ -544,6 +550,48 @@ begin
     Inc(i);
   end;
   SetLength(Result, P-PAnsiChar(Result));
+end;
+
+{ TCookieList }
+
+procedure TCookieList.AddCookie(S: string);
+var
+  P: Integer;
+  C, A: String;
+begin
+  // Remove 'Set-Cookie:'
+  P := Pos(':',S);
+  System.Delete(S,1,P);
+
+  // Get cookie name by getting either the position of attribute start/separator (;) or the end of string
+  P := Pos(';',S);
+  if P = 0 then
+    P := Length(S) + 1;
+  C := Trim(Copy(S,1,P - 1));
+  System.Delete(S,1,P);
+
+  // '=' is a reserved char in name-value capability of TStrings, replace with an escape char as a trick
+  P := Pos('=', C);
+  if P > 0 then
+    C[P] := #9;
+
+  // Get cookie attributes, if any
+  A := '';
+  if P > 0 then
+    A := Trim(S);
+
+  // Make use of TStrings, name-value capability to store the cookie (as name) and its attributes (as value)
+  Values[C] := A;
+end;
+
+function TCookieList.GetCookie(Index: Integer): string;
+var
+  P: Integer;
+begin
+  Result := Names[Index];
+  P := Pos(#9, Result);
+  if P > 0 then
+    Result[P] := '='; 
 end;
 
 { TProxyData }
@@ -788,8 +836,8 @@ end;
 procedure TFPCustomHTTPClient.SendRequest(const AMethod: String; URI: TURI);
 
 Var
-  PH,UN,PW,S,L : String;
-  I : Integer;
+  PH,UN,PW,S,L,C : String;
+  I,P : Integer;
   AddContentLength : Boolean;
 
 begin
@@ -832,15 +880,11 @@ begin
     FRequestHeaders.Delete(FRequestHeaders.IndexOfName('Content-Length'));
   if Assigned(FCookies) then
     begin
-    L:='Cookie: ';
-    For I:=0 to FCookies.Count-1 do
-      begin
-      If (I>0) then
-        L:=L+'; ';
-      L:=L+FCookies[i];
+      For I:=0 to FCookies.Count-1 do begin
+        L:='Cookie: '+(FCookies as TCookieList).GetCookie(i);
+        if AllowHeader(L) then
+          S:=S+L+CRLF;
       end;
-    if AllowHeader(L) then
-      S:=S+L+CRLF;
     end;
   FreeAndNil(FSentCookies);
   FSentCookies:=FCookies;
@@ -1031,26 +1075,6 @@ begin
 end;
 
 function TFPCustomHTTPClient.ReadResponseHeaders: integer;
-
-  Procedure DoCookies(S : String);
-
-  Var
-    P : Integer;
-    C : String;
-
-  begin
-    P:=Pos(':',S);
-    System.Delete(S,1,P);
-    Repeat
-      P:=Pos(';',S);
-      If (P=0) then
-        P:=Length(S)+1;
-      C:=Trim(Copy(S,1,P-1));
-      Cookies.Add(C);
-      System.Delete(S,1,P);
-    Until (S='') or Terminated;
-  end;
-
 Const
   SetCookie = 'set-cookie';
 
@@ -1068,7 +1092,7 @@ begin
       begin
       ResponseHeaders.Add(S);
       If (LowerCase(Copy(S,1,Length(SetCookie)))=SetCookie) then
-        DoCookies(S);
+        (Cookies as TCookieList).AddCookie(S);
       end
   Until (S='') or Terminated;
 end;
@@ -1156,7 +1180,7 @@ end;
 function TFPCustomHTTPClient.GetCookies: TStrings;
 begin
   If (FCookies=Nil) then
-    FCookies:=TStringList.Create;
+    FCookies:=TCookieList.Create;
   Result:=FCookies;
 end;
 
