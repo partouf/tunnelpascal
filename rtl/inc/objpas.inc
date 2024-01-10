@@ -529,15 +529,26 @@ end;
         end;
 
       type
-         tmethodnamerec = packed record
+         {$PUSH}
+         {$PACKRECORDS NORMAL}
+         tmethodnamerec =
+         {$IFNDEF FPC_REQUIRES_PROPER_ALIGNMENT}
+         packed
+         {$ENDIF FPC_REQUIRES_PROPER_ALIGNMENT}
+         record
             name : pshortstring;
             addr : codepointer;
          end;
 
-         tmethodnametable = packed record
+         tmethodnametable =
+         {$IFNDEF FPC_REQUIRES_PROPER_ALIGNMENT}
+         packed
+         {$ENDIF FPC_REQUIRES_PROPER_ALIGNMENT}
+         record
            count : dword;
            entries : packed array[0..0] of tmethodnamerec;
          end;
+         {$POP}
 
          pmethodnametable =  ^tmethodnametable;
 
@@ -545,7 +556,7 @@ end;
 
         var
            methodtable : pmethodnametable;
-           i : dword;
+           i : longint; // in case count=0
            ovmt : PVmt;
 
         begin
@@ -571,7 +582,7 @@ end;
       class function TObject.MethodName(address : codepointer) : shortstring;
         var
            methodtable : pmethodnametable;
-           i : dword;
+           i : longint; // in case count=0
            ovmt : PVmt;
         begin
            ovmt:=PVmt(self);
@@ -598,6 +609,8 @@ end;
          {The following is copied to the typinfo unit. If it is changed here, change it there as well ! }
 
         type
+           {$PUSH}
+           {$PACKRECORDS NORMAL}
            PFieldInfo = ^TFieldInfo;
            TFieldInfo =
 {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
@@ -621,6 +634,7 @@ end;
                Elements have variant size! force at least proper alignment }
              Fields: array[0..0] of TFieldInfo
            end;
+           {$POP}
 
         var
            ovmt: PVmt;

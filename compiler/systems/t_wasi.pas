@@ -78,9 +78,7 @@ type
   protected
     procedure DefaultLinkScript;override;
 
-    function GetCodeSize(aExeOutput: TExeOutput): QWord;override;
     function GetDataSize(aExeOutput: TExeOutput): QWord;override;
-    function GetBssSize(aExeOutput: TExeOutput): QWord;override;
   public
     constructor create;override;
 
@@ -299,34 +297,18 @@ begin
       LinkScript.Concat('READOBJECT ' + maybequoted(s));
   end;
 
-  LinkScript.Concat('EXESECTION .text');
-  LinkScript.Concat('  OBJSECTION .text.*');
+  LinkScript.Concat('EXESECTION .wasm_globals');
+  LinkScript.Concat('  SYMBOL __stack_pointer');
+  LinkScript.Concat('  OBJSECTION .wasm_globals.*');
   LinkScript.Concat('ENDEXESECTION');
 
-  LinkScript.Concat('EXESECTION .data');
-  LinkScript.Concat('  OBJSECTION .rodata.*');
-  LinkScript.Concat('  OBJSECTION .data.*');
-  LinkScript.Concat('  OBJSECTION .bss');
-  LinkScript.Concat('ENDEXESECTION');
-
-end;
-
-function TInternalLinkerWasi.GetCodeSize(aExeOutput: TExeOutput): QWord;
-begin
-  {TODO}
-  Result:=0;
+  ScriptAddGenericSections('.wasm_tags,.text,.rodata,.data,.bss,.debug_frame,.debug_info,.debug_line,.debug_abbrev,.debug_aranges,.debug_ranges,.debug_str');
 end;
 
 function TInternalLinkerWasi.GetDataSize(aExeOutput: TExeOutput): QWord;
 begin
-  {TODO}
-  Result:=0;
-end;
-
-function TInternalLinkerWasi.GetBssSize(aExeOutput: TExeOutput): QWord;
-begin
-  {TODO}
-  Result:=0;
+  Result:=aExeOutput.findexesection('.rodata').size +
+          aExeOutput.findexesection('.data').size;
 end;
 
 constructor TInternalLinkerWasi.create;
