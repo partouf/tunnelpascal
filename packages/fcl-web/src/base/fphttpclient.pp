@@ -792,8 +792,8 @@ end;
 procedure TFPCustomHTTPClient.SendRequest(const AMethod: String; URI: TURI);
 
 Var
-  PH,UN,PW,S,L,C : String;
-  I,P : Integer;
+  PH,UN,PW,S,L : String;
+  I : Integer;
   AddContentLength : Boolean;
 
 begin
@@ -836,10 +836,14 @@ begin
     FRequestHeaders.Delete(FRequestHeaders.IndexOfName('Content-Length'));
   if Assigned(FCookies) then
     begin
-      For I:=0 to FCookies.Count-1 do begin
-        L:='Cookie: '+FCookies[i];
-        if AllowHeader(L) then
-          S:=S+L+CRLF;
+    L:='Cookie: ';
+    For I:=0 to FCookies.Count-1 do
+      begin
+      If (I>0) then
+        L:=L+'; ';
+      L:=L+FCookies[i];
+      if AllowHeader(L) then
+        S:=S+L+CRLF;
       end;
     end;
   FreeAndNil(FSentCookies);
