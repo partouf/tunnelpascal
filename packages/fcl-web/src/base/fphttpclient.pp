@@ -92,6 +92,7 @@ Type
     FConnectTimeout: Integer;
     FSentCookies,
     FCookies: TStrings;
+    FCookieList: TCookies;
     FHTTPVersion: String;
     FRequestBody: TStream;
     FRequestHeaders: TStrings;
@@ -113,10 +114,12 @@ Type
     function CheckContentLength: Int64;
     function CheckTransferEncoding: string;
     function GetCookies: TStrings;
+    function GetCookieList: TCookies;
     function GetProxy: TProxyData;
     Procedure ResetResponse;
     procedure SetConnectTimeout(AValue: Integer);
     Procedure SetCookies(const AValue: TStrings);
+    Procedure SetCookieList(const AValue: TCookies);
     procedure SetHTTPVersion(const AValue: String);
     procedure SetKeepConnection(AValue: Boolean);
     procedure SetProxy(AValue: TProxyData);
@@ -323,7 +326,8 @@ Type
     Property RequestHeaders : TStrings Read FRequestHeaders Write SetRequestHeaders;
     // Cookies. Set before request to send cookies to server.
     // After request the property is filled with the cookies sent by the server.
-    Property Cookies : TStrings Read GetCookies Write SetCookies;
+    Property Cookies : TStrings Read GetCookies Write SetCookies; deprecated; // the implementation was buggy, use CookieList below instead
+    Property CookieList : TCookies Read GetCookieList Write SetCookieList;
     // Optional body to send (mainly in POST request)
     Property RequestBody : TStream read FRequestBody Write FRequestBody;
     // used HTTP version when constructing the request.
@@ -1075,6 +1079,26 @@ begin
 end;
 
 function TFPCustomHTTPClient.ReadResponseHeaders: integer;
+
+  Procedure DoCookies(S : String);
+
+  Var
+    P : Integer;
+    C : String;
+
+  begin
+    P:=Pos(':',S);
+    System.Delete(S,1,P);
+    Repeat
+      P:=Pos(';',S);
+      If (P=0) then
+        P:=Length(S)+1;
+      C:=Trim(Copy(S,1,P-1));
+      Cookies.Add(C);
+      System.Delete(S,1,P);
+    Until (S='') or Terminated;
+  end;
+
 Const
   SetCookie = 'set-cookie';
 
@@ -1091,8 +1115,11 @@ begin
     if ReadString(S) and (S<>'') then
       begin
       ResponseHeaders.Add(S);
-      If (LowerCase(Copy(S,1,Length(SetCookie)))=SetCookie) then
-        (Cookies as TCookieList).AddCookie(S);
+      If (LowerCase(Copy(S,1,Length(SetCookie)))=SetCookie) then 
+        begin
+        DoCookies(S);
+        CookieList.AddFromString(S);
+        end;
       end
   Until (S='') or Terminated;
 end;
@@ -1180,8 +1207,15 @@ end;
 function TFPCustomHTTPClient.GetCookies: TStrings;
 begin
   If (FCookies=Nil) then
-    FCookies:=TCookieList.Create;
+    FCookies:=TStringList.Create;
   Result:=FCookies;
+end;
+
+function TFPCustomHTTPClient.GetCookieList: TCookies;
+begin
+  If (FCookieList=Nil) then
+    FCookieList:=TCookies.Create(TCookie);
+  Result:=FCookieList;
 end;
 
 function TFPCustomHTTPClient.GetProxy: TProxyData;
@@ -1198,6 +1232,12 @@ procedure TFPCustomHTTPClient.SetCookies(const AValue: TStrings);
 begin
   if GetCookies=AValue then exit;
   GetCookies.Assign(AValue);
+end;
+
+procedure TFPCustomHTTPClient.SetCookieList(const AValue: TCookies);
+begin
+  if GetCookieList=AValue then exit;
+  GetCookieList.Assign(AValue);
 end;
 
 procedure TFPCustomHTTPClient.SetHTTPVersion(const AValue: String);

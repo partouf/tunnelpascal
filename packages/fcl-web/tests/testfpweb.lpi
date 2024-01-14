@@ -22,13 +22,13 @@
     </PublishOptions>
     <RunParams>
       <local>
-        <CommandLineParams Value="--suite=TTestCookieList.TestParseWriteRead"/>
+        <CommandLineParams Value="--suite=TTestTCookies.TestParseWriteRead"/>
       </local>
       <FormatVersion Value="2"/>
       <Modes Count="1">
         <Mode0 Name="default">
           <local>
-            <CommandLineParams Value="--suite=TTestCookieList.TestParseWriteRead"/>
+            <CommandLineParams Value="--suite=TTestTCookies.TestParseWriteRead"/>
           </local>
         </Mode0>
       </Modes>
@@ -76,7 +76,7 @@
         <IsPartOfProject Value="True"/>
       </Unit8>
       <Unit9>
-        <Filename Value="tccookiereadwrite.pp"/>
+        <Filename Value="tccookies.pp"/>
         <IsPartOfProject Value="True"/>
       </Unit9>
     </Units>
@@ -91,6 +91,11 @@
       <OtherUnitFiles Value="../src/base;../src/jwt"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
+    <Linking>
+      <Debugging>
+        <DebugInfoType Value="dsDwarf3"/>
+      </Debugging>
+    </Linking>
   </CompilerOptions>
   <Debugging>
     <Exceptions Count="3">
