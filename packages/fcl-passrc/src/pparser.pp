@@ -1389,7 +1389,7 @@ begin
     p^.TokenPos:=Scanner.CurTokenPos;
     P^.IsEscaped:=Scanner.CurTokenEscaped;
     end;
-  //writeln('TPasParser.NextToken END Start=',FTokenRingStart,' Cur=',FTokenRingCur,' End=',FTokenRingEnd,' Cur=',CurTokenString);
+  //writeln('TPasParser.NextToken END Start=',FTokenRingStart,' Cur=',FTokenRingCur,' End=',FTokenRingEnd,' Cur="',CurTokenString,'"');
 end;
 
 procedure TPasParser.ChangeToken(tk: TToken);
@@ -8351,6 +8351,7 @@ var
   SrcPos: TPasSourcePos;
   I : Integer;
   V : TPasVariable;
+  Obj: TObject;
 
 begin
   // var a : Integer;
@@ -8372,7 +8373,10 @@ begin
   finally
      For I:=0 to List.count-1 do
        if List[i]<>Nil then
-         TObject(List[I]).Free;
+         begin
+         Obj:=TObject(List[I]);
+         Obj.Free;
+         end;
      List.Free;
   end;
 

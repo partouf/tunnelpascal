@@ -4622,7 +4622,7 @@ begin
   if Index >= ParamCount then
     Result := Nil
   else
-    Result := PVmtMethodParamArray(@params)[Index];
+    Result := PVmtMethodParam(@params) + Index;
 end;
 
 function TVMTMethodExEntry.GetResultLocs: PParameterLocations;
@@ -4826,12 +4826,20 @@ function TClassData.GetExMethodTable: PVmtMethodExTable;
 type
    {$push}
    {$packrecords normal}
-   tmethodnamerec = packed record
+   tmethodnamerec =
+   {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
+   packed
+   {$endif}
+   record
       name : pshortstring;
       addr : codepointer;
    end;
 
-   tmethodnametable = packed record
+   tmethodnametable =
+   {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
+   packed
+   {$endif}
+   record
      count : dword;
      entries : packed array[0..0] of tmethodnamerec;
    end;

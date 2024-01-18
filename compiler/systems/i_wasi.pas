@@ -79,11 +79,7 @@ unit i_wasi;
             dirsep       : '/';
             assem        : as_wasm32_wasm;
             assemextern  : as_wasm32_llvm_mc;
-{$ifdef ENABLE_WASM_INTERNAL_LINKER}
             link         : ld_int_wasi;
-{$else ENABLE_WASM_INTERNAL_LINKER}
-            link         : ld_none;
-{$endif ENABLE_WASM_INTERNAL_LINKER}
             linkextern   : ld_wasi;
             ar           : ar_none;
             res          : res_none;
@@ -109,7 +105,7 @@ unit i_wasi;
                 maxCrecordalign : 16
               );
             first_parm_offset : 0;
-            stacksize   : 65536;
+            stacksize   : 8*1024*1024;
             stackalign   : 16;
             abi          : abi_default;
             llvmdatalayout : 'todo';

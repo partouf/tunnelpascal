@@ -61,8 +61,8 @@ uses
 {$ENDIF FPC_DOTTEDUNITS}
 
 const
-  VersionMajor = 2;
-  VersionMinor = 3;
+  VersionMajor = 3;
+  VersionMinor = 1;
   VersionRelease = 1;
   VersionExtra = '';
   DefaultConfigFile = 'pas2js.cfg';
@@ -4614,8 +4614,10 @@ begin
   AddDefine('STR_CONCAT_PROCS');
   AddDefine('UNICODE');
   if SubTarget<>'' then
+    begin
     AddDefine('FPC_SUBTARGET',SubTarget);
-
+    AddDefine('FPC_SUBTARGET_'+Uppercase(SubTarget));
+    end;
   FHasShownLogo:=false;
   FHasShownEncoding:=false;
   FFS.Reset;
