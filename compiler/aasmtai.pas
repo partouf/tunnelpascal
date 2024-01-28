@@ -568,6 +568,72 @@ interface
         end;
         poper=^toper;
 
+      { ************************************************************************* }
+      { ********* Extra optimisation information for assembler objects ********** }
+      { ************************************************************************* }
+
+        TExtraInfoType = (
+          eit_tag,       { No special fields other than the custom tag }
+          eit_value,     { Contains a single value }
+          eit_valuepair, { Contains a pair of values }
+          eit_tai         { Contains an ai object }
+        );
+
+        TExtraOptInfo = class(TLinkedListItem)
+        private
+          FOwner: tai;
+          FOwnsNext: Boolean;
+        public
+          typ: TExtraInfoType;
+          { User-defined tag to help describe what this information is about }
+          tag: LongInt;
+          constructor Create(var AOwner: tai); reintroduce; virtual;
+
+          { Explicit call since FOwnsNext shouldn't be changed in most
+            circumstances, but a different class needs to be able to (TAOptObj
+            is essentially a 'friend' class) }
+          procedure SetOwnsNext; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+          property Owner: tai read FOwner;
+
+          { A convenient way of quickly detecting whether the next item in the
+            linked list is also associated with Owner }
+          property OwnsNext: Boolean read FOwnsNext;
+        end;
+
+        TExtraOptInfoClass = class of TExtraOptInfo;
+
+        TExtraInfoValueType = (eiv_unknown, eiv_cgint, eiv_aint, eiv_aword, eiv_boolean, eiv_object, eiv_pointer, eiv_ptrint, eiv_ptruint, eiv_register, eiv_single, eiv_double);
+
+        TOptInfoData = record
+          case typ: TExtraInfoValueType of
+          eiv_cgint: (value: TCGInt);
+          eiv_aint: (value_int: AInt);
+          eiv_aword: (value_word: AWord);
+          eiv_boolean: (value_bool: Boolean);
+          eiv_object: (value_obj: TObject);
+          eiv_pointer: (value_ptr: Pointer);
+          eiv_ptrint: (value_ptrint: PtrInt);
+          eiv_ptruint: (value_ptruint: PtrUInt);
+          eiv_register: (value_reg: TRegister);
+          eiv_single: (value_single: Single);
+          eiv_double: (value_double: Double);
+        end;
+
+        TExtraOptInfoValue = class(TExtraOptInfo)
+          data: TOptInfoData;
+          constructor Create(var AOwner: tai); override;
+        end;
+
+        TExtraOptInfoValuePair = class(TExtraOptInfoValue)
+          second_data: TOptInfoData;
+          constructor Create(var AOwner: tai); override;
+        end;
+
+        TExtraOptInfoTai = class(TExtraOptInfo)
+          tai_object: tai;
+          constructor Create(var AOwner: tai); override;
+        end;
+
        { abstract assembler item }
        tai = class(TLinkedListItem)
 {$ifndef NOOPT}
@@ -575,6 +641,7 @@ interface
           optinfo  : pointer;
 {$endif NOOPT}
           typ      : taitype;
+          ExtraOptInfo: TExtraOptInfo;
           constructor Create;
           constructor ppuload(t:taitype;ppufile:tcompilerppufile);virtual;
           procedure ppuwrite(ppufile:tcompilerppufile);virtual;
@@ -1255,6 +1322,47 @@ implementation
         inherited derefimpl;
       end;
 
+
+{****************************************************************************
+                             TExtraOptInfo
+ ****************************************************************************}
+
+    constructor TExtraOptInfo.Create(var AOwner: tai);
+      begin
+        inherited Create;
+        FOwner := AOwner;
+        FOwnsNext := False;
+        tag := 0;
+        typ := eit_tag;
+      end;
+
+    procedure TExtraOptInfo.SetOwnsNext; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      begin
+        FOwnsNext := True;
+      end;
+
+    { TExtraOptInfo constructors }
+
+    constructor TExtraOptInfoValue.Create(var AOwner: tai);
+      begin
+        inherited Create(AOwner);
+        typ := eit_value;
+        data.typ := eiv_unknown;
+      end;
+
+    constructor TExtraOptInfoValuePair.Create(var AOwner: tai);
+      begin
+        inherited Create(AOwner);
+        typ := eit_valuepair;
+        second_data.typ := eiv_unknown;
+      end;
+
+    constructor TExtraOptInfoTai.Create(var AOwner: tai);
+      begin
+        inherited Create(AOwner);
+        typ := eit_tai;
+        tai_object := nil;
+      end;
 
 {****************************************************************************
                              TAI

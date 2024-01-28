@@ -221,6 +221,9 @@ unit aoptx86;
         function TrySwapMovOp(var p, hp1: tai): Boolean;
         function TrySwapMovCmp(var p, hp1: tai): Boolean;
         function TryCmpCMovOpts(var p, hp1: tai) : Boolean;
+{$ifdef x86_64}
+        procedure ZeroUpperHint(var p: tai; Reg: TRegister);
+{$endif x86_64}
 
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
@@ -325,13 +328,16 @@ unit aoptx86;
 {$endif 8086}
 
 
-{$ifdef DEBUG_AOPTCPU}
     const
+{$ifdef x86_64}
+      EXTRA_OPT_TAG_ZERO_UPPER = $74677A75; { tgzu in big-endian }
+{$endif x86_64}
+
+{$ifdef DEBUG_AOPTCPU}
       SPeepholeOptimization: shortstring = 'Peephole Optimization: ';
 {$else DEBUG_AOPTCPU}
     { Empty strings help the optimizer to remove string concatenations that won't
       ever appear to the user on release builds. [Kit] }
-    const
       SPeepholeOptimization = '';
 {$endif DEBUG_AOPTCPU}
       LIST_STEP_SIZE = 4;
@@ -2588,19 +2594,21 @@ unit aoptx86;
     class function TX86AsmOptimizer.ReplaceRegisterInRef(var ref: TReference; const AOldReg, ANewReg: TRegister): Boolean;
       begin
         Result := False;
-        { For safety reasons, only check for exact register matches }
 
         { Check base register }
-        if (ref.base = AOldReg) then
+        if SuperRegistersEqual(ref.base, AOldReg) and
+          (getsubreg(ref.base) <= getsubreg(AOldReg)) then
           begin
-            ref.base := ANewReg;
+            setsupreg(ref.base, getsupreg(ANewReg));
             Result := True;
           end;
 
         { Check index register }
-        if (ref.index = AOldReg) and (getsupreg(ANewReg)<>RS_ESP) then
+        if (getsupreg(ANewReg) <> RS_ESP) and
+          SuperRegistersEqual(ref.index, AOldReg) and
+          (getsubreg(ref.index) <= getsubreg(AOldReg)) then
           begin
-            ref.index := ANewReg;
+            setsupreg(ref.index, getsupreg(ANewReg));
             Result := True;
           end;
       end;
@@ -2779,6 +2787,17 @@ unit aoptx86;
 
         ReplaceReg := taicpu(p_mov).oper[0]^.reg;
         CurrentReg := taicpu(p_mov).oper[1]^.reg;
+
+{$ifdef x86_64}
+        if (taicpu(p_mov).opsize = S_L) and Assigned(FindExtraInfo(p_mov, eit_tag, EXTRA_OPT_TAG_ZERO_UPPER)) then
+          begin
+            { We know that the register being read has its upper 32 bits set to zero,
+              so it's safe to replace references to the full 64-bit register even
+              though only the lower 32 bits have been written to }
+            setsubreg(ReplaceReg, R_SUBQ);
+            setsubreg(CurrentReg, R_SUBQ);
+          end;
+{$endif x86_64}
 
         case hp.opcode of
           A_FSTSW, A_FNSTSW,
@@ -5764,6 +5783,9 @@ unit aoptx86;
           GetNextInstruction(p_dist, hp1_dist) and
           MatchInstruction(hp1_dist, A_JCC, []) then { This doesn't have to be an explicit label }
           begin
+            if not Assigned(JumpLabel) then
+              InternalError(2021101101);
+
             JumpLabel_dist := TAsmLabel(taicpu(hp1_dist).oper[0]^.ref^.symbol);
 
             if JumpLabel = JumpLabel_dist then
@@ -7335,8 +7357,7 @@ unit aoptx86;
            if const in 1..3
         }
 
-        if MatchOpType(taicpu(p), top_const, top_reg) and
-          (taicpu(p).oper[0]^.val in [1..3]) and
+        if (taicpu(p).oper[0]^.val in [1..3]) and
           GetNextInstructionUsingReg(p,hp1,taicpu(p).oper[1]^.reg) and
           ((MatchInstruction(hp1,A_MOV,A_LEA,[]) and
            MatchOpType(taicpu(hp1),top_ref,top_reg)) or
@@ -7957,6 +7978,9 @@ unit aoptx86;
                    GetNextInstruction(p_dist, hp1_dist) and
                    MatchInstruction(hp1_dist, A_JCC, []) then { This doesn't have to be an explicit label }
                    begin
+                     if not Assigned(JumpLabel) then
+                       InternalError(2021101102);
+
                      JumpLabel_dist := TAsmLabel(taicpu(hp1_dist).oper[0]^.ref^.symbol);
 
                      if JumpLabel = JumpLabel_dist then
@@ -8991,8 +9015,6 @@ unit aoptx86;
         not (taicpu(p).oper[0]^.ref^.symbol is TAsmLabel) then
         Exit;
 
-      OrigLabel := TAsmLabel(taicpu(p).oper[0]^.ref^.symbol);
-
       {
         change
                jmp .L1
@@ -9005,12 +9027,13 @@ unit aoptx86;
                jmp/ret
       }
 
-      if not Assigned(hp1) then
+      if Assigned(hp1) then
+        OrigLabel := TAsmLabel(taicpu(p).oper[0]^.ref^.symbol)
+      else
         begin
-          hp1 := GetLabelWithSym(OrigLabel);
+          hp1 := GetDestinationLabel(taicpu(p), OrigLabel);
           if not Assigned(hp1) or not SkipLabels(hp1, hp1) then
             Exit;
-
         end;
 
       hp2 := hp1;
@@ -9405,6 +9428,38 @@ unit aoptx86;
           TrySwapMovOp(hp2, hp1);
     end;
 
+{$ifdef x86_64}
+  procedure TX86AsmOptimizer.ZeroUpperHint(var p: tai; Reg: TRegister);
+    var
+      hp1: tai;
+    begin
+      hp1 := p;
+      while GetNextInstructionUsingReg(hp1, hp1, Reg) and (hp1.typ = ait_instruction) do
+        begin
+          if MatchInstruction(hp1, A_TEST, A_CMP, A_Jcc, []) then
+            { These don't modify the register but there might be a MOV following
+              them.  Also allow the crossing of a conditional jump; it's only
+              if a label gets hit that the assumption can no longer hold. }
+            Continue;
+
+          if MatchInstruction(hp1, A_MOV, [S_L]) and
+            MatchOpType(taicpu(hp1), top_reg, top_reg) and
+            (taicpu(hp1).oper[0]^.reg = Reg) and
+            { Provide a hint for the compiler that the upper 32 bits are zero, if
+              one doesn't exist}
+            not Assigned(FindExtraInfo(hp1, eit_tag, EXTRA_OPT_TAG_ZERO_UPPER)) then
+              begin
+{$ifdef DEBUG_AOPTCPU}
+                { This doesn't get optimised out yet when it's no longer used }
+                setsubreg(Reg, R_SUBQ);
+                DebugMsg(SPeepholeOptimization + 'Compiler hint: Upper 32 bits of ' + debug_regname(Reg) + ' is zero', hp1);
+{$endif DEBUG_AOPTCPU}
+                AppendExtraInfo(hp1, TExtraOptInfo, EXTRA_OPT_TAG_ZERO_UPPER);
+              end;
+            Break;
+          end;
+    end;
+{$endif x86_64}
 
   function TX86AsmOptimizer.OptPass2MOV(var p : tai) : boolean;
 
@@ -9578,7 +9633,9 @@ unit aoptx86;
                         begin
                           { Just so we have something to insert as a paremeter}
                           reference_reset(NewRef, 1, []);
+
                           NewInstr := taicpu.op_ref(A_JMP, S_NO, NewRef);
+                          NewInstr.is_jmp := True;
 
                           { Now actually load the correct parameter (this also
                             increases the reference count) }
@@ -12091,8 +12148,7 @@ unit aoptx86;
         if (taicpu(p).oper[0]^.typ=top_ref) and (taicpu(p).oper[0]^.ref^.refaddr=addr_full) and (taicpu(p).oper[0]^.ref^.base=NR_NO) and
           (taicpu(p).oper[0]^.ref^.index=NR_NO) and (taicpu(p).oper[0]^.ref^.symbol is tasmlabel) then
           begin
-            OrigLabel := TAsmLabel(taicpu(p).oper[0]^.ref^.symbol);
-
+            hp1 := GetDestinationLabel(taicpu(p), OrigLabel);
             { Also a side-effect of optimisations }
             if CollapseZeroDistJump(p, OrigLabel) then
               begin
@@ -12100,7 +12156,6 @@ unit aoptx86;
                 Exit;
               end;
 
-            hp1 := GetLabelWithSym(OrigLabel);
             if (taicpu(p).condition=C_None) and assigned(hp1) and SkipLabels(hp1,hp1) and (hp1.typ = ait_instruction) then
               begin
                 if taicpu(hp1).opcode = A_RET then
@@ -13177,7 +13232,7 @@ unit aoptx86;
               }
               if MatchInstruction(hp1,A_JMP,[]) and (taicpu(hp1).oper[0]^.ref^.refaddr=addr_full) then
                 begin
-                  hp2:=getlabelwithsym(TAsmLabel(symbol));
+                  hp2:=GetDestinationLabel(taicpu(p));
                   if Assigned(hp2) and SkipLabels(hp2,hp2) and
                     MatchInstruction(hp2,A_RET,[S_NO]) then
                     begin

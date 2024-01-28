@@ -370,6 +370,18 @@ Unit AoptObj;
          to avoid endless loops with constructs such as "l5: ; jmp l5"           }
         function GetFinalDestination(hp: taicpu; level: longint): boolean;
 
+        { Retrieves a jump's destination label, first by attempting
+          to call "getlabelwithsym", then checking for extra optimisation
+          information.  Returns nil if the label couldn't be found or the
+          instruction is not a valid jump to a label }
+        function GetDestinationLabel(jump_p: taicpu): tai;
+
+        { Retrieves a jump's destination label and also returns the symbol, first
+          by attempting to call "getlabelwithsym", then checking for extra optimisation
+          information.  Returns nil if the label couldn't be found or the
+          instruction is not a valid jump to a label }
+        function GetDestinationLabel(jump_p: taicpu; out Symbol: TAsmLabel): tai;
+
         function getlabelwithsym(sym: tasmlabel): tai;
 
         { Removes an instruction following hp1 (possibly with reg.deallocations in between),
@@ -430,17 +442,55 @@ Unit AoptObj;
           each instruction. Useful for debugging the InstructionLoadsFromReg and
           other similar functions. }
         procedure Debug_InsertInstrRegisterDependencyInfo; virtual;
+
+        { Creates an object of the requested class and attaches it to the tai object's "ExtraOptInfo" field }
+        function AppendExtraInfo(p: tai; InfoClass: TExtraOptInfoClass): TExtraOptInfo;
+
+        { Creates an object of the requested class and tag and attaches it to the tai object's "ExtraOptInfo" field }
+        function AppendExtraInfo(p: tai; InfoClass: TExtraOptInfoClass; tag: LongInt): TExtraOptInfo;
+
+        { Duplicates all associated TExtraOptInfo objects from old_p to new_p. Returns the first
+          duplicated object for new_p, or nil if old_p doesn't have any TExtraOptInfo objects
+          associated with it}
+        function DuplicateExtraInfo(old_p: tai; new_p: tai): TExtraOptInfo;
+
+        { Returns the first associated extra information object of the given
+          type, or nil if one couldn't be found }
+        function FindExtraInfo(p: tai; typ: TExtraInfoType): TExtraOptInfo;
+
+        { Returns the first associated extra information object of the given
+          type and tag, or nil if one couldn't be found }
+        function FindExtraInfo(p: tai; typ: TExtraInfoType; tag: LongInt): TExtraOptInfo;
+
+        { Returns the next associated extra information object of the given
+          type that appears after Info, or nil if one couldn't be found }
+        function FindExtraInfoAfter(p: tai; typ: TExtraInfoType; Info: TExtraOptInfo): TExtraOptInfo;
+
+        { Returns the next associated extra information object of the given
+          type and tag that appears after Info, or nil if one couldn't be found }
+        function FindExtraInfoAfter(p: tai; typ: TExtraInfoType; tag: LongInt; Info: TExtraOptInfo): TExtraOptInfo;
+
+        { Removes a single entry of extra optimisation information from p }
+        procedure RemoveSingleExtraInfo(p: tai; Info: TExtraOptInfo);
+
+        { Removes all extra optimisation information from p }
+        procedure RemoveAllExtraInfo(p: tai);
+      private
+        procedure DebugMsg(const s: string; p: tai);
       protected
         { Set to True if this is the second time that Pass 1 is being run }
         NotFirstIteration: Boolean;
-      private
-        procedure DebugMsg(const s: string; p: tai);
+
+        { ExtraOptInfo is a linked list of objects that optimisers can use
+          to store extra information for custom purposes which gets freed
+          en masse upon destruction of the TAOptObj object }
+        ExtraOptInfo: TLinkedList;
       End;
 
        Function ArrayRefsEq(const r1, r2: TReference): Boolean;
 
        { Returns a pointer to the operand that contains the destination label }
-       function JumpTargetOp(ai: taicpu): poper;
+       function JumpTargetOp(ai: taicpu): poper;{$ifdef USEINLINE}{$ifndef SPARC64}inline;{$endif SPARC64}{$endif USEINLINE} { SPARC64 version contains a branch }
 
        { Returns True if hp is any jump to a label }
        function IsJumpToLabel(hp: taicpu): boolean;
@@ -463,6 +513,8 @@ Unit AoptObj;
 {$endif defined(ARM)}
       procinfo;
 
+    const
+      EXTRA_OPT_TAG_DEST_LABEL = $61696C62; { ailb in big-endian }
 
 {$ifdef DEBUG_AOPTOBJ}
     const
@@ -475,7 +527,7 @@ Unit AoptObj;
 {$endif DEBUG_AOPTOBJ}
 
 
-    function JumpTargetOp(ai: taicpu): poper; inline;
+    function JumpTargetOp(ai: taicpu): poper; {$ifdef USEINLINE}{$ifndef SPARC64}inline;{$endif SPARC64}{$endif USEINLINE}
       begin
 {$if defined(MIPS) or defined(riscv64) or defined(riscv32) or defined(xtensa) or defined(loongarch64)}
         { Branches of above archs can have 1,2 or 3 operands, target label is the last one. }
@@ -962,12 +1014,14 @@ Unit AoptObj;
         BlockEnd := _BlockEnd;
         LabelInfo := _LabelInfo;
         CreateUsedRegs(UsedRegs);
+        ExtraOptInfo := TLinkedList.Create;
       End;
 
       destructor TAOptObj.Destroy;
         var
           i : TRegisterType;
         begin
+          ExtraOptInfo.Free;
           for i:=low(TRegisterType) to high(TRegisterType) do
             UsedRegs[i].Destroy;
           inherited Destroy;
@@ -1615,6 +1669,74 @@ Unit AoptObj;
       end;
 
 
+    { Retrieves a jump's destination label, first by attempting
+      to call "getlabelwithsym", then checking for extra optimisation
+      information.  Returns nil if the label couldn't be found or the
+      instruction is not a valid jump to a label }
+    function TAOptObj.GetDestinationLabel(jump_p: taicpu): tai;
+      var
+        Symbol: TAsmLabel; ExtraInfo: TExtraOptInfo;
+      begin
+        Result := nil;
+        if not IsJumpToLabel(jump_p) then
+          Exit;
+
+        Symbol := TAsmLabel(JumpTargetOp(jump_p)^.ref^.symbol);
+        if not Assigned(Symbol) then
+          Exit;
+
+        Result := getlabelwithsym(Symbol);
+        if not Assigned(Result) then
+          begin
+            { If getlabelwithsym failed, see if there extra optimisation
+              information on the jump that points to it }
+            ExtraInfo := FindExtraInfo(jump_p, eit_tai, EXTRA_OPT_TAG_DEST_LABEL);
+            if Assigned(ExtraInfo) then
+              begin
+                Result := TExtraOptInfoTai(ExtraInfo).tai_object;
+
+                { A safety check in case the destination was changed at some point }
+                if tai_label(Result).labsym <> Symbol then
+                  Result := nil;
+              end;
+          end;
+      end;
+
+
+    { Retrieves a jump's destination label and also returns the symbol, first
+      by attempting to call "getlabelwithsym", then checking for extra optimisation
+      information.  Returns nil if the label couldn't be found or the
+      instruction is not a valid jump to a label }
+    function TAOptObj.GetDestinationLabel(jump_p: taicpu; out Symbol: TAsmLabel): tai;
+      var
+        ExtraInfo: TExtraOptInfo;
+      begin
+        Result := nil;
+        Symbol := nil;
+        if not IsJumpToLabel(jump_p) then
+          Exit;
+
+        Symbol := TAsmLabel(JumpTargetOp(jump_p)^.ref^.symbol);
+        if not Assigned(Symbol) then
+          Exit;
+
+        Result := getlabelwithsym(Symbol);
+        if not Assigned(Result) then
+          begin
+            { If getlabelwithsym failed, see if there extra optimisation
+              information on the jump that points to it }
+            ExtraInfo := FindExtraInfo(jump_p, eit_tai, EXTRA_OPT_TAG_DEST_LABEL);
+            if Assigned(ExtraInfo) then
+              begin
+                Result := TExtraOptInfoTai(ExtraInfo).tai_object;
+
+                { A safety check in case the destination was changed at some point }
+                if tai_label(Result).labsym <> Symbol then
+                  Result := nil;
+              end;
+          end;
+      end;
+
 {$push}
 {$r-}
     function TAOptObj.getlabelwithsym(sym: tasmlabel): tai;
@@ -2067,7 +2189,7 @@ Unit AoptObj;
                     if RemoveDeadCodeAfterJump(taicpu(hp1)) then
                       stoploop := False;
 
-                    hp2 := getlabelwithsym(NCJLabel);
+                    hp2 := GetDestinationLabel(taicpu(hp1));
                     if Assigned(hp2) then
                       { Collapse the cluster now to aid optimisation and potentially
                         cut down on the number of iterations required }
@@ -2317,11 +2439,9 @@ Unit AoptObj;
               if (hp1 = BlockEnd) then
                 Exit;
 
-              ThisLabel := TAsmLabel(JumpTargetOp(taicpu(p))^.ref^.symbol);
+              hp2 := GetDestinationLabel(taicpu(p));
 
-              hp2 := getlabelwithsym(ThisLabel);
-
-              { getlabelwithsym returning nil occurs if a label is in a
+              { GetDestinationLabel returning nil occurs if a label is in a
                 different block (e.g. on the other side of an asm...end pair). }
               if Assigned(hp2) then
                 begin
@@ -2378,14 +2498,13 @@ Unit AoptObj;
           p3: tai;
 {$endif}
           ThisLabel, l: tasmlabel;
-
+          ExtraInfo: TExtraOptInfo;
       begin
         GetFinalDestination := false;
         if level > 20 then
           exit;
 
-        ThisLabel := TAsmLabel(JumpTargetOp(hp)^.ref^.symbol);
-        p1 := getlabelwithsym(ThisLabel);
+        p1 := GetDestinationLabel(hp);
         if assigned(p1) then
           begin
             SkipLabels(p1,p1);
@@ -2395,6 +2514,8 @@ Unit AoptObj;
                 p2 := tai(p1.Next);
                 if p2 = BlockEnd then
                   Exit;
+
+                ThisLabel := TAsmLabel(JumpTargetOp(hp)^.ref^.symbol);
 
                 { Collapse any zero distance jumps we stumble across }
                 while (p1<>StartPoint) and CollapseZeroDistJump(p1, TAsmLabel(JumpTargetOp(taicpu(p1))^.ref^.symbol)) do
@@ -2490,16 +2611,25 @@ Unit AoptObj;
                             strpnew('previous label inserted'))));
 {$endif finaldestdebug}
                           current_asmdata.getjumplabel(l);
-                          insertllitem(p1,p1.next,tai_label.Create(l));
+                          p2 := tai_label.Create(l);
+                          insertllitem(p1,p1.next,p2);
 
                           ThisLabel.decrefs;
                           JumpTargetOp(hp)^.ref^.symbol := l;
                           l.increfs;
+
+                          { Provide a new link to the label from the jump, reusing the old
+                            extra optimisation information object if one is already present }
+                          ExtraInfo := FindExtraInfo(hp, eit_tai, EXTRA_OPT_TAG_DEST_LABEL);
+                          if not Assigned(ExtraInfo) then
+                            ExtraInfo := AppendExtraInfo(hp, TExtraOptInfoTai, EXTRA_OPT_TAG_DEST_LABEL);
+
+                          TExtraOptInfoTai(ExtraInfo).tai_object := p2;
+
                           GetFinalDestination := True;
-          {               this won't work, since the new label isn't in the labeltable }
-          {               so it will fail the rangecheck. Labeltable should become a   }
-          {               hashtable to support this:                                   }
-          {               GetFinalDestination(asml, hp);                               }
+
+                          if not GetFinalDestination(hp,succ(level)) then
+                            exit;
                         end
                       else
                         begin
@@ -2754,6 +2884,209 @@ Unit AoptObj;
                 AsmL.InsertAfter(tai_comment.Create(strpnew(commentstr)),p);
               end;
             p:=tai(p.next);
+          end;
+      end;
+
+    { Creates an object of the requested class and attaches it to the tai object's "optinfo" field }
+    function TAOptObj.AppendExtraInfo(p: tai; InfoClass: TExtraOptInfoClass): TExtraOptInfo;
+      begin
+        Result := TExtraOptInfoClass.Create(p);
+        if Assigned(p.ExtraOptInfo) then
+          begin
+            Result.SetOwnsNext;
+            ExtraOptInfo.InsertBefore(Result, p.ExtraOptInfo);
+          end
+        else
+          ExtraOptInfo.Insert(Result);
+
+        p.ExtraOptInfo := Result;
+      end;
+
+    { Creates an object of the requested class and tag attaches it to the tai object's "optinfo" field }
+    function TAOptObj.AppendExtraInfo(p: tai; InfoClass: TExtraOptInfoClass; tag: LongInt): TExtraOptInfo;
+      begin
+        Result := TExtraOptInfoClass.Create(p);
+        Result.tag := tag;
+        if Assigned(p.ExtraOptInfo) then
+          begin
+            Result.SetOwnsNext;
+            ExtraOptInfo.InsertBefore(Result, p.ExtraOptInfo);
+          end
+        else
+          ExtraOptInfo.Insert(Result);
+
+        p.ExtraOptInfo := Result;
+      end;
+
+    { Duplicates all associated TExtraOptInfo objects from old_p to new_p. Returns the first
+      duplicated object for new_p, or nil if old_p doesn't have any TExtraOptInfo objects
+      associated with it}
+    function TAOptObj.DuplicateExtraInfo(old_p: tai; new_p: tai): TExtraOptInfo;
+      var
+        CurrentObj, NewObj, LastObj, NewPExtra: TExtraOptInfo;
+        DoneFirst: Boolean;
+      begin
+        Result := nil;
+        DoneFirst := False;
+        CurrentObj := old_p.ExtraOptInfo;
+        NewPExtra := new_p.ExtraOptInfo;
+        LastObj := nil;
+        NewObj := nil;
+        while Assigned(CurrentObj) and (CurrentObj.Owner = old_p) do
+          begin
+            Prefetch(Pointer(CurrentObj.Next)^);
+
+            { Duplicate each item in turn }
+            NewObj := TExtraOptInfo(CurrentObj.GetCopy);
+
+            if not DoneFirst then
+              begin
+                new_p.ExtraOptInfo := NewObj;
+                if Assigned(NewPExtra) then
+                  ExtraOptInfo.InsertBefore(NewObj, NewPExtra)
+                else
+                  ExtraOptInfo.Insert(NewObj);
+
+                { This will be the first item in the duplicated list }
+                Result := NewObj;
+                DoneFirst := True;
+              end
+            else
+              ExtraOptInfo.InsertAfter(NewObj, LastObj);
+
+            CurrentObj := TExtraOptInfo(CurrentObj.Next);
+            LastObj := NewObj;
+          end;
+
+        { Make sure the existing object on new_p doesn't get missed }
+        if Assigned(NewPExtra) and Assigned(NewObj) then
+          NewObj.SetOwnsNext;
+      end;
+
+    { Returns the first associated extra information object of the given
+      type, or nil if one couldn't be found }
+    function TAOptObj.FindExtraInfo(p: tai; typ: TExtraInfoType): TExtraOptInfo;
+      var
+        CurrentObj: TExtraOptInfo;
+      begin
+        Result := nil;
+        CurrentObj := p.ExtraOptInfo;
+        while Assigned(CurrentObj) and (CurrentObj.Owner = p) do
+          begin
+            if CurrentObj.typ = typ then
+              begin
+                Result := CurrentObj;
+                Exit;
+              end;
+
+            CurrentObj := TExtraOptInfo(CurrentObj.Next);
+          end;
+      end;
+
+    { Returns the first associated extra information object of the given
+      type, or nil if one couldn't be found }
+    function TAOptObj.FindExtraInfo(p: tai; typ: TExtraInfoType; tag: LongInt): TExtraOptInfo;
+      var
+        CurrentObj: TExtraOptInfo;
+      begin
+        Result := nil;
+        CurrentObj := p.ExtraOptInfo;
+        while Assigned(CurrentObj) and (CurrentObj.Owner = p) do
+          begin
+            if (CurrentObj.typ = typ) and (CurrentObj.tag = tag) then
+              begin
+                Result := CurrentObj;
+                Exit;
+              end;
+
+            CurrentObj := TExtraOptInfo(CurrentObj.Next);
+          end;
+      end;
+
+    { Returns the next associated extra information object of the given
+      type that appears after Info, or nil if one couldn't be found }
+    function TAOptObj.FindExtraInfoAfter(p: tai; typ: TExtraInfoType; Info: TExtraOptInfo): TExtraOptInfo;
+      begin
+        Result := nil;
+
+        { Sanity check (but possible if another function result was nil) }
+        if not Assigned(Info) then
+          Exit;
+
+        Info := TExtraOptInfo(Info.Next);
+        while Assigned(Info) and (Info.Owner = p) do
+          begin
+            if Info.typ = typ then
+              begin
+                Result := Info;
+                Exit;
+              end;
+
+            Info := TExtraOptInfo(Info.Next);
+          end;
+      end;
+
+    { Returns the next associated extra information object of the given
+      type and tag that appears after Info, or nil if one couldn't be found }
+    function TAOptObj.FindExtraInfoAfter(p: tai; typ: TExtraInfoType; tag: LongInt; Info: TExtraOptInfo): TExtraOptInfo;
+      begin
+        Result := nil;
+
+        { Sanity check (but possible if another function result was nil) }
+        if not Assigned(Info) then
+          Exit;
+
+        Info := TExtraOptInfo(Info.Next);
+        while Assigned(Info) and (Info.Owner = p) do
+          begin
+            if (Info.typ = typ) and (Info.tag = tag) then
+              begin
+                Result := Info;
+                Exit;
+              end;
+
+            Info := TExtraOptInfo(Info.Next);
+          end;
+      end;
+
+    { Removes a single entry of extra optimisation information from p }
+    procedure TAOptObj.RemoveSingleExtraInfo(p: tai; Info: TExtraOptInfo);
+      begin
+        if Info.Owner <> p then
+          { This should be kept consistent }
+          InternalError(2021100701);;
+
+        if (p.ExtraOptInfo = Info) then
+          begin
+            if Info.OwnsNext then
+              p.ExtraOptInfo := TExtraOptInfo(Info.Next)
+            else
+              p.ExtraOptInfo := nil;
+          end;
+
+        ExtraOptInfo.Remove(Info);
+        Info.Free;
+      end;
+
+    { Removes all extra optimisation information from p }
+    procedure TAOptObj.RemoveAllExtraInfo(p: tai);
+      var
+        CurrentObj, NextObj: TExtraOptInfo;
+      begin
+        if Assigned(p.ExtraOptInfo) then
+          begin
+            CurrentObj := p.ExtraOptInfo;
+            p.optinfo := nil;
+            repeat
+              NextObj := TExtraOptInfo(CurrentObj.Next);
+              ExtraOptInfo.Remove(CurrentObj);
+              CurrentObj.Free;
+
+              if not CurrentObj.OwnsNext then
+                { This waS the last one }
+                Break;
+              CurrentObj := NextObj;
+            until False;
           end;
       end;
 
