@@ -70,7 +70,7 @@ begin
       T:=P.Targets.AddExampleProgram('ipcclient.pp');
       T:=P.Targets.AddExampleProgram('ipcserver.pp');
       T:=P.Targets.AddExampleProgram('dbugsrv.pp');
-
+    T:=P.Targets.AddUnit('syncipc.pp');
 
     P.NamespaceMap:='namespaces.lst';
 
