@@ -1630,8 +1630,8 @@ BEGIN
                                                       { We do not check for Data <> Sw_PString_Empty
                                                         in the Unicode version, or else this function
                                                         will always fail to get the data }
-   if (Validator = Nil) OR (Validator^.Transfer(
-     Data, @Rec, vtSetData) = 0) Then
+   If (Validator = Nil) OR (Validator^.Transfer(Data Sw_PString_DeRef,
+   @Rec, vtGetData) = 0) Then
      Sw_String(Rec) := Data;
 {$else FV_UNICODE}
    If Data <> Sw_PString_Empty Then Begin             { Data ptr valid }
