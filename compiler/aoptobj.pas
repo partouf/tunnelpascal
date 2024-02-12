@@ -85,7 +85,7 @@ Unit AoptObj;
           p                                                         }
         procedure Update(p: Tai; IgnoreNewAllocs: Boolean=false);
         { is Reg currently in use }
-        Function IsUsed(Reg: TRegister): Boolean;
+        Function IsUsed(Reg: TRegister): Boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
         { get all the currently used registers }
         Function GetUsedRegs: TRegSet; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
@@ -271,7 +271,7 @@ Unit AoptObj;
 
         Procedure CreateUsedRegs(var regs: TAllUsedRegs);
         Procedure ClearUsedRegs;
-        Procedure UpdateUsedRegs(p : Tai);
+        Procedure UpdateUsedRegs(p : Tai); {$ifdef USEINLINE}inline;{$endif USEINLINE}
         class procedure UpdateUsedRegs(var Regs: TAllUsedRegs; p: Tai); static;
 
         { UpdateUsedRegsBetween updates the given TUsedRegs from p1 to p2 exclusive, calling GetNextInstruction
@@ -287,9 +287,9 @@ Unit AoptObj;
         procedure RestoreUsedRegs(const Regs : TAllUsedRegs);
         procedure TransferUsedRegs(var dest: TAllUsedRegs);
         class procedure ReleaseUsedRegs(const regs : TAllUsedRegs); static;
-        class function RegInUsedRegs(reg : TRegister;regs : TAllUsedRegs) : boolean; static;
-        class procedure IncludeRegInUsedRegs(reg : TRegister;var regs : TAllUsedRegs); static;
-        class procedure ExcludeRegFromUsedRegs(reg: TRegister;var regs : TAllUsedRegs); static;
+        class function RegInUsedRegs(reg : TRegister;var regs : TAllUsedRegs) : boolean; static;
+        class procedure IncludeRegInUsedRegs(reg : TRegister;var regs : TAllUsedRegs); static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+        class procedure ExcludeRegFromUsedRegs(reg: TRegister;var regs : TAllUsedRegs); static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
         class function GetAllocationString(const regs : TAllUsedRegs) : string; static;
 
@@ -426,6 +426,11 @@ Unit AoptObj;
         { Jump/label optimisation entry method }
         function DoJumpOptimizations(var p: tai; var stoploop: Boolean): Boolean;
 
+        { Attempts to reconfigure the Regallocs and Regdeallocs before p1 and
+          after p2 so Reg is no longer allocated between them.  Returns True if
+          the register is no longer allocated at p1 }
+        function TryRemoveRegAlloc(const Reg: TRegister; p1, p2: tai): Boolean;
+
         { insert debug comments about which registers are read and written by
           each instruction. Useful for debugging the InstructionLoadsFromReg and
           other similar functions. }
@@ -433,8 +438,14 @@ Unit AoptObj;
       protected
         { Set to True if this is the second time that Pass 1 is being run }
         NotFirstIteration: Boolean;
+
+        { Actually updates a used register }
+        class procedure UpdateReg(var Regs : TAllUsedRegs; p: tai_regalloc); static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       private
         procedure DebugMsg(const s: string; p: tai);
+
+        { Utilty function for the UpdateUsedRegs family of methods }
+        class function GetNextRegUpdatePoint(var p : Tai; pTerm: tai): Boolean; static;
       End;
 
        Function ArrayRefsEq(const r1, r2: TReference): Boolean;
@@ -547,7 +558,7 @@ Unit AoptObj;
       End;
 
 
-    Function TUsedRegs.IsUsed(Reg: TRegister): Boolean;
+    Function TUsedRegs.IsUsed(Reg: TRegister): Boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       Begin
         IsUsed := (getregtype(Reg)=Typ) and (getsupreg(Reg) in UsedRegs);
       End;
@@ -1080,30 +1091,57 @@ Unit AoptObj;
         end;
 
 
-      procedure TAOptObj.UpdateUsedRegs(p : Tai);
+      procedure TAOptObj.UpdateUsedRegs(p : Tai); {$ifdef USEINLINE}inline;{$endif USEINLINE}
+        begin
+          UpdateUsedRegs(UsedRegs, p);
+        end;
+
+
+      class function TAOptObj.GetNextRegUpdatePoint(var p : Tai; pTerm: tai): Boolean;
+        begin
+          Result := False; { Needed to suppress compiler warning }
+          while SetAndTest(Assigned(p) and (p <> pTerm), Result) and
+                ((p.typ in (SkipInstr - [ait_RegAlloc])) or
+                 ((p.typ = ait_label) and
+                  labelCanBeSkipped(tai_label(p))) or
+                 ((p.typ = ait_marker) and
+                  (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd])) or
+                  (
+                    Assigned(pTerm) and { Causes p to stop on any live label or instruction if pTerm is nil }
+                    (p.typ in [ait_label, ait_instruction])
+                  )
+                ) do
+               p := tai(p.next);
+        end;
+
+
+
+      class procedure TAOptObj.UpdateReg(var Regs : TAllUsedRegs; p: tai_regalloc);
+        begin
+          case tai_regalloc(p).ratype of
+            ra_alloc :
+              Include(Regs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
+            ra_dealloc :
+              Exclude(Regs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
+            else
+              ;
+          end;
+        end;
+
+
+      class procedure TAOptObj.UpdateUsedRegs(var Regs : TAllUsedRegs;p : Tai);
         begin
           { this code is based on TUsedRegs.Update to avoid multiple passes through the asmlist,
             the code is duplicated here }
           repeat
-            while assigned(p) and
-                  ((p.typ in (SkipInstr - [ait_RegAlloc])) or
-                   ((p.typ = ait_label) and
-                    labelCanBeSkipped(tai_label(p))) or
-                   ((p.typ = ait_marker) and
-                    (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd]))) do
-                 p := tai(p.next);
+            if not GetNextRegUpdatePoint(p, nil) then
+              Exit;
+
             while assigned(p) and
                   (p.typ=ait_RegAlloc) Do
               begin
                 prefetch(pointer(p.Next)^);
-                case tai_regalloc(p).ratype of
-                  ra_alloc :
-                    Include(UsedRegs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
-                  ra_dealloc :
-                    Exclude(UsedRegs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
-                  else
-                    ;
-                end;
+                UpdateReg(Regs, tai_regalloc(p));
                 p := tai(p.next);
               end;
           until not(assigned(p)) or
@@ -1113,27 +1151,34 @@ Unit AoptObj;
         end;
 
 
-      class procedure TAOptObj.UpdateUsedRegs(var Regs : TAllUsedRegs;p : Tai);
-        var
-          i : TRegisterType;
+      class procedure TAOptObj.UpdateUsedRegsBetween(var Regs: TAllUsedRegs; p1, p2: Tai);
         begin
-          for i:=low(TRegisterType) to high(TRegisterType) do
-            Regs[i].Update(p);
-        end;
+          { this code is based on TUsedRegs.Update to avoid multiple passes through the asmlist,
+            the code is duplicated here }
+          repeat
+            if not GetNextRegUpdatePoint(p1, p2) then
+              Exit;
 
+            while assigned(p1) and (p1 <> p2) and
+                  (p1.typ=ait_RegAlloc) Do
+              begin
+                prefetch(pointer(p1.Next)^);
+                UpdateReg(Regs, tai_regalloc(p1));
+                p1 := tai(p1.next);
+              end;
 
-      class procedure TAOptObj.UpdateUsedRegsBetween(var Regs: TAllUsedRegs; p1, p2: Tai); static;
-        var
-          i : TRegisterType;
-        begin
-          while (p1 <> p2) do
-            begin
-              for i:=low(TRegisterType) to high(TRegisterType) do
-                Regs[i].Update(tai(p1.Next));
+            { Only stop if either p2 or a terminating marker is reached }
+          until not Assigned(p1) or (p1 = p2) or
+            not (p1.typ in (SkipInstr + [ait_label, ait_instruction])) or
+            (
+              (p1.typ = ait_marker) and
+              not (tai_Marker(p1).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd])
+            );
 
-              if not GetNextInstruction(p1, p1) then
-                InternalError(2022010701);
-            end;
+          if (p1 <> p2) then
+            { Reached the end of the procedure or a terminating marker that wasn't p2 }
+            InternalError(2022010701);
+
         end;
 
 
@@ -1180,21 +1225,21 @@ Unit AoptObj;
       end;
 
 
-      class Function TAOptObj.RegInUsedRegs(reg : TRegister;regs : TAllUsedRegs) : boolean;
+      class Function TAOptObj.RegInUsedRegs(reg : TRegister; var regs : TAllUsedRegs) : boolean;
       begin
         result:=regs[getregtype(reg)].IsUsed(reg);
       end;
 
 
       class procedure TAOptObj.IncludeRegInUsedRegs(reg: TRegister;
-       var regs: TAllUsedRegs);
+       var regs: TAllUsedRegs); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         include(regs[getregtype(reg)].UsedRegs,getsupreg(Reg));
       end;
 
 
       class procedure TAOptObj.ExcludeRegFromUsedRegs(reg: TRegister;
-       var regs: TAllUsedRegs);
+       var regs: TAllUsedRegs); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         exclude(regs[getregtype(reg)].UsedRegs,getsupreg(Reg));
       end;
@@ -1342,10 +1387,11 @@ Unit AoptObj;
           If Assigned(StartPai) And
              (StartPai.typ = ait_regAlloc) Then
             Begin
-              if (tai_regalloc(StartPai).ratype=ra_alloc) and
-                SuperRegistersEqual(tai_regalloc(StartPai).Reg,Reg) then
+              if SuperRegistersEqual(tai_regalloc(StartPai).Reg,Reg) then
                begin
-                 Result:=tai_regalloc(StartPai);
+                 { If we find a dealloc first, say, return nil }
+                 if (tai_regalloc(StartPai).ratype<>ra_dealloc) then
+                   Result:=tai_regalloc(StartPai);
                  exit;
                end;
               StartPai := Tai(StartPai.Previous);
@@ -2523,6 +2569,79 @@ Unit AoptObj;
         { Required to ensure recursion works properly, but to also
           return false if a jump isn't modified. [Kit] }
         if level > 0 then GetFinalDestination := True;
+      end;
+
+
+    { Attempts to reconfigure the Regallocs and Regdeallocs before p1 and
+      after p2 so Reg is no longer allocated between them.  Returns True if the
+      register is no longer allocated at p1 }
+    function TAOptObj.TryRemoveRegAlloc(const Reg: TRegister; p1, p2: tai): Boolean;
+      var
+        CurrentAlloc: tai;
+      begin
+        Result := False;
+        if RegInInstruction(Reg, p1) then
+          { Register is definitely in use }
+          Exit;
+
+        { Search for the first de/alloc before p1 that relates to Reg }
+        CurrentAlloc := tai(p1.Previous);
+        repeat
+          while Assigned(CurrentAlloc) and
+                ((CurrentAlloc.typ in (SkipInstr - [ait_regAlloc])) or
+                 ((CurrentAlloc.typ = ait_label) and
+                  not(Tai_Label(CurrentAlloc).labsym.Is_Used))) do
+            CurrentAlloc := Tai(CurrentAlloc.Previous);
+          if Assigned(CurrentAlloc) and
+            (CurrentAlloc.typ = ait_regalloc) then
+            begin
+              if (getregtype(tai_regalloc(CurrentAlloc).Reg) = getregtype(Reg)) and
+                (getsupreg(tai_regalloc(CurrentAlloc).Reg) = getsupreg(Reg)) then
+               begin
+                 Break;
+               end;
+              CurrentAlloc := Tai(CurrentAlloc.Previous);
+            end
+          else
+            begin
+              CurrentAlloc := nil;
+              Break;
+            end;
+        until false;
+
+        { Remove any register allocation prior to p1 }
+        if Assigned(CurrentAlloc) and (CurrentAlloc.typ = ait_regalloc) and
+          (tai_regalloc(CurrentAlloc).ratype = ra_alloc) then
+          begin
+            RemoveInstruction(CurrentAlloc);
+            Result := True;
+          end
+        else if not Assigned(CurrentAlloc) or (CurrentAlloc.typ <> ait_regalloc) or
+          (tai_regalloc(CurrentAlloc).ratype <> ra_dealloc) then
+          begin
+            AsmL.InsertBefore(tai_regalloc.dealloc(Reg, nil), p1);
+            Result := True;
+          end;
+
+        if (p1 <> p2) and RegInInstruction(Reg, p2) then
+          begin
+            { Reg is in use, so insert allocation before it }
+            AsmL.InsertBefore(tai_regalloc.alloc(Reg, nil), p2);
+            Exit;
+          end;
+
+        { If a deallocation exists, remove it since the register will no longer be allocated by this time }
+        CurrentAlloc := FindRegDealloc(Reg, tai(p2.Next));
+        if Assigned(CurrentAlloc) and (CurrentAlloc.typ = ait_regalloc) and
+          (tai_regalloc(CurrentAlloc).ratype = ra_dealloc) then
+          begin
+            RemoveInstruction(CurrentAlloc);
+          end
+        else
+          begin
+            { Since no deallocation was found, Register may end up being used afterwards, so add a new alloc to play safe }
+            AsmL.InsertAfter(tai_regalloc.alloc(Reg, nil), p2);
+          end;
       end;
 
 

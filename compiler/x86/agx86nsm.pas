@@ -108,19 +108,25 @@ interface
 {$if defined(x86_64)}
         'ia64',        // cpu_none
         'x64',         // cpu_athlon64
+        'x64',         // cpu_x86_64
+        'x64',         // cpu_x86_64_v1
         'ia64',        // cpu_core_i
+        'ia64',        // cpu_x86_64_v2
         'ia64',        // cpu_bobcat
         'ia64',        // cpu_core_avx
         'ia64',        // cpu_jaguar
         'ia64',        // cpu_piledriver
         'ia64',        // cpu_excavator
         'ia64',        // cpu_core_avx2
+        'ia64',        // cpu_x86_64_v3
         'ia64',        // cpu_zen
         'ia64',        // cpu_zen2
+        'ia64',        // cpu_x86_64_v4
         'ia64',        // cpu_icelake
         'ia64',        // cpu_icelake_client
         'ia64',        // cpu_icelake_server
-        'ia64'         // cpu_zen3
+        'ia64',        // cpu_zen3
+        'ia64'         // cpu_zen4
 {$elseif defined(i386)}
         'ia64',     // cpu_none
         '386',      // cpu_386

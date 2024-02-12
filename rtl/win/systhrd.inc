@@ -227,7 +227,15 @@ var
           - static threadvars, no callback: ThreadID remains 0 and
             initialization happens here. }
         if ThreadID=TThreadID(0) then
-          InitThread(ti.stklen);
+          begin
+            InitThread(ti.stklen);
+{$ifndef wince}
+{$ifdef win32}
+            if Assigned(SetThreadStackGuarantee) then
+{$endif win32}
+              SetThreadStackGuarantee(@StackMargin);
+{$endif wince}            
+          end;
 
         dispose(pthreadinfo(param));
 
@@ -367,12 +375,12 @@ var
     var
       thrdinfo: THREADNAME_INFO;
     begin
+      thrdinfo:=Default(THREADNAME_INFO);
       thrdinfo.dwType:=$1000;
       thrdinfo.szName:=@ThreadName[1];
       thrdinfo.dwThreadID:=threadHandle;
-      thrdinfo.dwFlags:=0;
       try
-        RaiseException(MS_VC_EXCEPTION, 0, SizeOf(thrdinfo) div SizeOf(DWord), @thrdinfo);
+        RaiseException(MS_VC_EXCEPTION, 0, SizeOf(thrdinfo) div SizeOf(PtrUInt), @thrdinfo);
       except
         {do nothing}
       end;
