@@ -7882,7 +7882,7 @@ unit aoptx86;
        var
          v: TCGInt;
          true_hp1, hp1, hp2, p_dist, p_jump, hp1_dist, p_label, hp1_label: tai;
-         FirstMatch, TempBool: Boolean;
+         FirstMatch, TempBool, FoundJNE: Boolean;
          NewReg: TRegister;
          JumpLabel, JumpLabel_dist, JumpLabel_far: TAsmLabel;
        begin
@@ -7910,9 +7910,11 @@ unit aoptx86;
 
          { Also handle cases where there are multiple jumps in a row }
          p_jump := hp1;
+         FoundJNE := False;
          while Assigned(p_jump) and MatchInstruction(p_jump, A_JCC, []) do
            begin
              Prefetch(p_jump.Next);
+
              if IsJumpToLabel(taicpu(p_jump)) then
                begin
                  { Do jump optimisations first in case the condition becomes
@@ -8034,6 +8036,11 @@ unit aoptx86;
                    end;
                end;
 
+             { We can't do this at the start of the while loop because of
+               constructs such as "jne @lbl1; jmp @lbl2; @lbl1" that are
+               optimised by DoJumpOptimizations into "je @lbl2" }
+             FoundJNE := FoundJNE or (taicpu(p_jump).condition in [C_NE, C_NZ]);
+
              { Search for:
                  cmp   ###,###
                  j(c1) @lbl1
@@ -8083,6 +8090,66 @@ unit aoptx86;
                end;
 
              GetNextInstruction(p_jump, p_jump);
+           end;
+
+         { Search for:
+             cmp   x,(reg/ref)
+             (maybe other jumps)
+             jne   @lbl1
+             (Operation with (reg/ref))
+
+           (reg/ref) is deterministic and equal to x
+         }
+         if FoundJNE and (taicpu(p).oper[1]^.typ = top_ref) then
+           { p_jump is one instruction after the last jump }
+           while MatchInstruction(p_jump, A_MOV, [taicpu(p).opsize]) do
+             begin
+               if MatchOperand(taicpu(p).oper[1]^, taicpu(p_jump).oper[0]^) then
+                 begin
+
+                   { Make sure the reference is decremented when it is replaced }
+                   if Assigned(taicpu(p_jump).oper[0]^.ref^.symbol) then
+                     taicpu(p_jump).oper[0]^.ref^.symbol.decrefs
+                   else if Assigned(taicpu(p_jump).oper[0]^.ref^.relsymbol) then
+                     taicpu(p_jump).oper[0]^.ref^.relsymbol.decrefs;
+
+                   if MatchOperand(taicpu(p).oper[0]^, taicpu(p_jump).oper[1]^) then
+                     begin
+                       DebugMsg(SPeepholeOptimization + 'CMP/JNE/MOV -> reference value was deterministic (Mov2Nop 7)', p_jump);
+                       RemoveInstruction(p_jump);
+                     end
+                   else
+                     begin
+                       if taicpu(p).oper[0]^.typ = top_reg then
+                         begin
+                           TransferUsedRegs(TmpUsedRegs);
+                           AllocRegBetween(taicpu(p).oper[0]^.reg, p, p_jump, TmpUsedRegs);
+                         end;
+
+                       DebugMsg(SPeepholeOptimization + 'CMP/JNE/MOV -> reference value was deterministic (Mov2Mov 7) - changed from "mov ' +
+                         debug_operstr(taicpu(p_jump).oper[0]^) + ',' + debug_operstr(taicpu(p_jump).oper[1]^) + '" to "mov ' +
+                         debug_operstr(taicpu(p).oper[0]^) + ',' + debug_operstr(taicpu(p_jump).oper[1]^) + '"', p_jump);
+
+                       taicpu(p_jump).loadoper(0, taicpu(p).oper[0]^);
+                     end;
+
+                   Include(OptsToCheck, aoc_ForceNewIteration);
+                 end
+               else if MatchOperand(taicpu(p).oper[1]^, taicpu(p_jump).oper[1]^) then
+                 { Reference is written to }
+                 Break;
+
+               { See if a later MOV modifies the same address }
+               if (
+                   (taicpu(p_jump).oper[1]^.typ <> top_reg) or
+                   not RegInRef(taicpu(p_jump).oper[1]^.reg, taicpu(p).oper[1]^.ref^)
+                 ) then
+                 begin
+                   if not GetNextInstruction(p_jump, p_jump) then
+                     Break;
+                 end
+               else
+                 Break;
            end;
 
          if (
