@@ -3066,12 +3066,13 @@ unit aoptx86;
       var
         GetNextInstruction_p, TempRegUsed, CrossJump: Boolean;
         PreMessage, RegName1, RegName2, InputVal, MaskNum: string;
-        NewSize: topsize; NewOffset: asizeint;
+        NewSize: topsize; NewOffset: TCGInt;
         p_SourceReg, p_TargetReg, NewMMReg: TRegister;
         SourceRef, TargetRef: TReference;
         MovAligned, MovUnaligned: TAsmOp;
         ThisRef: TReference;
         JumpTracking: TLinkedList;
+        X: Integer;
       begin
         Result:=false;
 
@@ -5243,6 +5244,109 @@ unit aoptx86;
               { RegReadByInstruction checks to see if hp1 is an instruction }
               RegReadByInstruction(p_TargetReg, hp1) do
               begin
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegsBetween(TmpUsedRegs, p, hp1);
+
+                { mov     x,%reg
+                  ...
+                  op with a ref that contains %reg
+
+                  Remove %reg if possible and add to offset
+                }
+                for X := 0 to taicpu(hp1).ops - 1 do
+                  if taicpu(hp1).oper[X]^.typ = top_ref then
+                    begin
+                      NewOffset := taicpu(hp1).oper[X]^.ref^.offset; { Initialise }
+                      if (taicpu(hp1).opcode = A_LEA) or
+                        (
+                          { We can't have a reference that becomes completely
+                            empty (save for an offset) should the register get
+                            stripped out }
+                          ((taicpu(hp1).oper[X]^.ref^.base <> NR_NO) and (taicpu(hp1).oper[X]^.ref^.index <> NR_NO)) or
+                          Assigned(taicpu(hp1).oper[X]^.ref^.symbol) or
+                          Assigned(taicpu(hp1).oper[X]^.ref^.relsymbol)
+                        ) then
+                        begin
+                          TempRegUsed := False; { Reusing the variable to detect if a change was made }
+
+                          { We can only make this optimisation if both base and
+                            index are set or a symbol is used }
+                          if (taicpu(hp1).oper[X]^.ref^.index = p_TargetReg) then
+                            begin
+                              Inc(NewOffset, TCGInt(taicpu(p).oper[0]^.val) * max(taicpu(hp1).oper[X]^.ref^.scalefactor, 1));
+                              if (NewOffset >= -2147483648) and (NewOffset <= $7FFFFFFF) then
+                                begin
+                                  taicpu(hp1).oper[X]^.ref^.index := NR_NO;
+                                  taicpu(hp1).oper[X]^.ref^.offset := NewOffset;
+                                  taicpu(hp1).oper[X]^.ref^.scalefactor := 0;
+                                  TempRegUsed := True;
+                                end;
+                            end;
+
+                          if (taicpu(hp1).oper[X]^.ref^.base = p_TargetReg) and
+                            (
+                              (taicpu(hp1).opcode = A_LEA) or
+                              (taicpu(hp1).oper[X]^.ref^.index <> p_TargetReg)
+                            ) then
+                            begin
+                              Inc(NewOffset, taicpu(p).oper[0]^.val);
+                              if (NewOffset >= -2147483648) and (NewOffset <= $7FFFFFFF) then
+                                begin
+                                  taicpu(hp1).oper[X]^.ref^.base := NR_NO;
+                                  taicpu(hp1).oper[X]^.ref^.offset := NewOffset;
+                                  TempRegUsed := True;
+                                end;
+                            end;
+
+                          if TempRegUsed then
+                            begin
+                              { Handle the case if the reference becomes empty
+                                in a LEA instruction, as in this case it can be
+                                translated to a MOV or a null operation }
+                              if (taicpu(hp1).oper[X]^.ref^.base = NR_NO) and
+                                (taicpu(hp1).oper[X]^.ref^.index = NR_NO) and
+                                not Assigned(taicpu(hp1).oper[X]^.ref^.symbol) and
+                                not Assigned(taicpu(hp1).oper[X]^.ref^.relsymbol) then
+                                begin
+                                  DebugMsg(SPeepholeOptimization + debug_regname(p_TargetReg) + ' = $' + debug_tostr(taicpu(p).oper[0]^.val) + '; removed register from reference. amended offset and converted LEA to MOV (Lea2Mov 2)', hp1);
+                                  if (NewOffset = taicpu(p).oper[0]^.val) and Reg1WriteOverwritesReg2Entirely(taicpu(hp1).oper[1]^.reg, p_TargetReg) then
+                                    begin
+                                      { Since this would set the register to a value that it's already equal to, just remove it }
+                                      DebugMsg(SPeepholeOptimization + 'Mov2Nop 5c done', hp1);
+                                      RemoveInstruction(hp1);
+                                      hp1 := nil;
+                                    end
+                                  else
+                                    begin
+                                      taicpu(hp1).opcode := A_MOV;
+                                      taicpu(hp1).loadconst(0, NewOffset);
+                                    end;
+                                end
+                              else
+                                DebugMsg(SPeepholeOptimization + debug_regname(p_TargetReg) + ' = $' + debug_tostr(taicpu(p).oper[0]^.val) + '; removed register from reference and amended offset', hp1);
+
+                              if Assigned(hp1) and not RegUsedBetween(p_TargetReg, p, hp1) and
+                                not RegUsedAfterInstruction(p_TargetReg, hp1, TmpUsedRegs) then
+                                begin
+                                  { If the original register is no longer used, we can remove the initial MOV }
+                                  DebugMsg(SPeepholeOptimization + 'Mov2Nop 9a', p);
+                                  RemoveCurrentP(p);
+                                  Result := True;
+                                  Exit;
+                                end;
+
+                              Include(OptsToCheck, aoc_ForceNewIteration);
+                            end;
+                        end;
+
+                      { Only one reference per instruction }
+                      Break;
+                    end;
+
+                if not Assigned(hp1) then
+                  { hp1 got deleted by the Mov2Nop 5c optimisation above }
+                  Continue;
+
                 { mov     0,%reg1
                   ...
                   add/sub %reg1,%reg2
