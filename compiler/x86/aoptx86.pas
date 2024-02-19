@@ -6196,8 +6196,17 @@ unit aoptx86;
           internalerror(2022022001);
 
         { changes "lea (%reg1), %reg2" into "mov %reg1, %reg2" }
-        if (taicpu(p).oper[0]^.ref^.base <> NR_NO) and
-           (taicpu(p).oper[0]^.ref^.index = NR_NO) and
+        if (
+             (
+               (taicpu(p).oper[0]^.ref^.base <> NR_NO) and
+               (taicpu(p).oper[0]^.ref^.index = NR_NO)
+             ) or
+             (
+               (taicpu(p).oper[0]^.ref^.base = NR_NO) and
+               (taicpu(p).oper[0]^.ref^.index <> NR_NO) and
+               (taicpu(p).oper[0]^.ref^.scalefactor <= 1)
+             )
+           ) and
            (
              { do not mess with leas accessing the stack pointer
                unless it's a null operation }
@@ -6211,6 +6220,13 @@ unit aoptx86;
           begin
             if (taicpu(p).oper[0]^.ref^.offset = 0) then
               begin
+                { If index contains a register, base is definitely NR_NO }
+                if (taicpu(p).oper[0]^.ref^.index <> NR_NO) then
+                  begin
+                    taicpu(p).oper[0]^.ref^.base := taicpu(p).oper[0]^.ref^.index;
+                    taicpu(p).oper[0]^.ref^.index := NR_NO;
+                  end;
+
                 if (taicpu(p).oper[0]^.ref^.base <> taicpu(p).oper[1]^.reg) then
                   begin
                     taicpu(p).opcode := A_MOV;
