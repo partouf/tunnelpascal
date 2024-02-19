@@ -130,6 +130,8 @@ interface
             is not cleared); the entries are copies and thus must be freed by the
             caller }
           procedure get_managementoperator_offset_list(mop:tmanagementoperator;list:tfplist);
+          { add all subfields from a fieldvar for composition }
+          procedure add_composition_references(fieldvs:tfieldvarsym;visibility:tvisibility);
         protected
           { size in bytes including padding }
           _datasize      : asizeint;
@@ -628,6 +630,7 @@ implementation
                  ibsyssym : sym:=csyssym.ppuload(ppufile);
                ibmacrosym : sym:=tmacro.ppuload(ppufile);
            ibnamespacesym : sym:=cnamespacesym.ppuload(ppufile);
+              ibsymrefsym : sym:=csymrefsym.ppuload(ppufile);
                 ibendsyms : break;
                     ibend : Message(unit_f_ppu_read_error);
            else
@@ -1802,6 +1805,52 @@ implementation
           end;
       end;
 
+    procedure tabstractrecordsymtable.add_composition_references(fieldvs:tfieldvarsym;visibility:tvisibility);
+      var
+        ard : tabstractrecorddef;
+        recst : tabstractrecordsymtable;
+        i : longint;
+        sym : tsym;
+        refsym : tsymrefsym;
+        hashedid : thashedidstring;
+        collision_sym : pointer;
+      begin
+        ard:=tabstractrecorddef(fieldvs.vardef);
+        recst:=tabstractrecordsymtable(ard.symtable);
+
+        sym:=tsym(symlist.FindWithHash(fieldvs.name,fieldvs.hash));
+        if not assigned(sym) then
+          internalerror(2024010601);
+
+        for i:=0 to recst.symlist.count-1 do
+          begin
+            sym:=tsym(recst.symlist[i]);
+           { composition should only be used for directly addressible symbols }
+           { so all invisible symbols will be ignored }
+            if not (sym.visibility in [vis_public,vis_published]) or
+               (length(sym.RealName)=0) or (sym.RealName[1]='$') then
+              continue;
+            { It seems sensible to only restrict to actual accesses to the referenced object }
+            { i.e. fields, methods, constants and properties }
+            if not (sym.typ in [fieldvarsym,procsym,constsym,propertysym,symrefsym]) then
+              continue;
+            { check for collisions with self defined symbols }
+            hashedid.Id:=upper(sym.Name);
+            collision_sym:=symlist.FindWithHash(hashedid.Id,hashedid.Hash);
+            if assigned(collision_sym) then
+              begin
+                if (fieldvs.visibility=vis_hidden) then
+                  Message1(sym_e_duplicate_id,tsym(sym).realname)
+                else { if it's a named field, disambiguation is possible through that field }
+                  Message1(sym_w_duplicate_id,tsym(sym).realname);
+                continue;
+              end;
+            refsym:=tsymrefsym.create(sym,fieldvs);
+            refsym.visibility:=visibility;
+            insertsym(refsym,false);
+          end;
+      end;
+
     procedure tabstractrecordsymtable.setdatasize(val: asizeint);
       begin
         _datasize:=val;
@@ -1919,6 +1968,14 @@ implementation
         for i:=0 to unionst.SymList.Count-1 do
           begin
             sym:=TSym(unionst.SymList[i]);
+            if sym.typ=symrefsym then
+              begin
+                { with record composition union branches can now contain
+                  symrefsyms. These don't need to be aligned, so just add
+                  them to record symtable and go on to next }
+                insertsym(sym);
+                Continue;
+              end;
             if not is_normal_fieldvarsym(sym) then
               internalerror(200601272);
             if tfieldvarsym(sym).fieldoffset=0 then

@@ -1680,7 +1680,14 @@ implementation
 
 
     procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc : ppvariantrecdesc;out had_generic:boolean);
+      type
+        tcompositefield=record
+          fieldvs:tfieldvarsym;
+          visibility:tvisibility;
+        end;
+        pcompositefield=^tcompositefield;
       var
+         cf : TFPList;
          sc : TFPObjectList;
          i  : longint;
          hs,sorg : string;
@@ -1693,6 +1700,7 @@ implementation
          maxpadalign, startpadalign: shortint;
          pt : tnode;
          fieldvs   : tfieldvarsym;
+         cfvs : pcompositefield;
          hstaticvs : tstaticvarsym;
          vs    : tabstractvarsym;
          srsym : tsym;
@@ -1706,7 +1714,7 @@ implementation
          deprecatedmsg : pshortstring;
          hadgendummy,
          semicoloneaten,
-         removeclassoption: boolean;
+         removeclassoption : boolean;
 {$if defined(powerpc) or defined(powerpc64)}
          tempdef: tdef;
          is_first_type: boolean;
@@ -1725,6 +1733,7 @@ implementation
            consume(_ID);
          { read vars }
          sc:=TFPObjectList.create(false);
+         cf:=TFPList.create;
          removeclassoption:=false;
          had_generic:=false;
          while (token=_ID) and
@@ -1737,44 +1746,125 @@ implementation
              visibility:=symtablestack.top.currentvisibility;
              semicoloneaten:=false;
              sc.clear;
-             repeat
-               sorg:=orgpattern;
-               if token=_ID then
-                 begin
-                   vs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
+             { Check for composition "contains" }
+             if (m_record_composition in current_settings.modeswitches) and
+                try_to_consume(_CONTAINS) then
+               begin
+                 sorg:='';
+                 srsym:=nil;
+                 { read field name if named composition }
+                 if token=_ID then
+                   begin
+                     sorg:=orgpattern;
+                     hs:=pattern;
+                     searchsym(hs,srsym,srsymtable);
+                     if Assigned(srsym) then
+                       case srsym.typ of
+                       fieldvarsym:
+                         begin
+                           consume(_ID);
+                           { when composing with existing field, no type expected }
+                           if token=_COLON then
+                             begin
+                               Message1(sym_e_duplicate_id,srsym.realname);
+                               { this is just to allow to find additional errors,
+                                 otherwise parsing stop could be forced with consume(_SEMICOLON) }
+                               consume(_COLON);
+                               consume(_ID);
+                               consume(_SEMICOLON);
+                               continue;
+                             end;
 
-                   { normally the visibility is set via addfield, but sometimes
-                     we collect symbols so we can add them in a batch of
-                     potentially mixed visibility, and then the individual
-                     symbols need to have their visibility already set }
-                   vs.visibility:=visibility;
-                   if (vd_check_generic in options) and (idtoken=_GENERIC) then
-                     had_generic:=true;
-                 end
-               else
-                 vs:=nil;
-               consume(_ID);
-               if assigned(vs) and
-                  (
-                    not had_generic or
-                    not (token in [_PROCEDURE,_FUNCTION,_CLASS])
-                  ) then
-                 begin
-                   vs.register_sym;
-                   sc.add(vs);
-                   recst.insertsym(vs);
-                   had_generic:=false;
-                 end
-               else
-                 vs.free;
-             until not try_to_consume(_COMMA);
-             if m_delphi in current_settings.modeswitches then
-               block_type:=bt_var_type
+                           { check for duplicates }
+                           for i:=0 to cf.count-1 do
+                             if pcompositefield(cf[i])^.fieldvs=srsym then
+                               begin
+                                 Message(sym_e_duplicate_id);
+                                 srsym:=nil;
+                               end;
+                           if assigned(srsym) then
+                             begin
+                               new(cfvs);
+                               cfvs^.visibility:=visibility;
+                               cfvs^.fieldvs:=tfieldvarsym(srsym);
+                               cf.add(cfvs);
+                             end;
+                           consume(_SEMICOLON);
+                           continue;
+                         end;
+                       typesym,unitsym:
+                           sorg:='';
+                       else
+                         Message(parser_e_illegal_expression);
+                       end
+                     else
+                       begin
+                         { when a new field symbol is read, we need a type }
+                         consume(_ID);
+                         consume(_COLON);
+                       end;
+                   end;
+                 if sorg='' then
+                   { generate a unique name for an unnamed field }
+                   sorg:='$unknown_'+IntToStr(variantrecordlevel)+'_'+inttostr(recst.symlist.count);
+                 fieldvs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
+                 if assigned(srsym) and (srsym.typ in [typesym,unitsym]) then
+                   fieldvs.visibility:=vis_hidden
+                 else
+                   fieldvs.visibility:=visibility;
+                 fieldvs.register_sym;
+                 sc.add(fieldvs);
+                 recst.insertsym(fieldvs);
+                 had_generic:=false;
+
+                 new(cfvs);
+                 cfvs^.visibility:=visibility;
+                 cfvs^.fieldvs:=fieldvs;
+                 cf.Add(cfvs);
+
+                 block_type:=bt_var_type;
+               end
              else
-               block_type:=old_block_type;
-             if had_generic and (sc.count=0) then
-               break;
-             consume(_COLON);
+               begin
+                 repeat
+                   sorg:=orgpattern;
+                   if token=_ID then
+                     begin
+                       vs:=cfieldvarsym.create(sorg,vs_value,generrordef,[]);
+
+                       { normally the visibility is set via addfield, but sometimes
+                         we collect symbols so we can add them in a batch of
+                         potentially mixed visibility, and then the individual
+                         symbols need to have their visibility already set }
+                       vs.visibility:=visibility;
+                       if (vd_check_generic in options) and (idtoken=_GENERIC) then
+                         had_generic:=true;
+                     end
+                   else
+                     vs:=nil;
+                   consume(_ID);
+                   if assigned(vs) and
+                      (
+                        not had_generic or
+                        not (token in [_PROCEDURE,_FUNCTION,_CLASS])
+                      ) then
+                     begin
+                       vs.register_sym;
+                       sc.add(vs);
+                       recst.insertsym(vs);
+                       had_generic:=false;
+                     end
+                   else
+                     vs.free;
+                 until not try_to_consume(_COMMA);
+                 if m_delphi in current_settings.modeswitches then
+                   block_type:=bt_var_type
+                 else
+                   block_type:=old_block_type;
+                 if had_generic and (sc.count=0) then
+                   break;
+                 consume(_COLON);
+               end;
              typepos:=current_filepos;
 
              read_anon_type(hdef,false);
@@ -2112,7 +2202,36 @@ implementation
               trecordsymtable(recst).insertunionst(Unionsymtable,offset);
               uniondef.owner.deletedef(uniondef);
            end;
-         { free the list }
+         { Because of duplication checks add composite symbols after all normal symbols have been read }
+         for i:=0 to cf.count-1 do
+           begin
+             visibility:=pcompositefield(cf[i])^.visibility;
+             fieldvs:=pcompositefield(cf[i])^.fieldvs;
+             dispose(pcompositefield(cf[i]));
+             { Only composition with records are allowed }
+             if not (
+               (fieldvs.vardef.typ in [recorddef]) or (
+                 { also allow for generic params that are resolved later }
+                 (fieldvs.vardef.typ=undefineddef) and
+                 (sp_generic_para in fieldvs.vardef.typesym.symoptions)
+               )
+             ) then
+               begin
+                 { FIXME: Better error (only record not rec or object) }
+                 Message(sym_e_type_must_be_rec_or_object);
+                 continue;
+               end;
+             { Composition of generic parameters will be deferred to when the
+               type is specialized. Then this same function will be called
+               again and the type is resolved }
+             if not (
+               (fieldvs.vardef.typ=undefineddef) and
+               (sp_generic_para in fieldvs.vardef.typesym.symoptions)
+             ) then
+               recst.add_composition_references(fieldvs,visibility);
+           end;
+         { free the lists }
+         cf.free;
          sc.free;
 {$ifdef powerpc}
          is_first_type := false;
