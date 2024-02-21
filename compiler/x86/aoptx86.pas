@@ -5240,9 +5240,13 @@ unit aoptx86;
         if MatchOpType(taicpu(p), top_const, top_reg) then
           begin
             hp2 := p;
+            CrossJump := False;
             while GetNextInstructionUsingReg(hp2, hp1, p_TargetReg) and
-              { RegReadByInstruction checks to see if hp1 is an instruction }
-              RegReadByInstruction(p_TargetReg, hp1) do
+              (hp1.typ = ait_instruction) and
+              (
+                is_calljmp(taicpu(hp1).opcode) or
+                RegReadByInstruction(p_TargetReg, hp1)
+              ) do
               begin
                 TransferUsedRegs(TmpUsedRegs);
                 UpdateUsedRegsBetween(TmpUsedRegs, p, hp1);
@@ -5347,111 +5351,126 @@ unit aoptx86;
                   { hp1 got deleted by the Mov2Nop 5c optimisation above }
                   Continue;
 
-                { mov     0,%reg1
-                  ...
-                  add/sub %reg1,%reg2
+                case taicpu(hp1).opcode of
+                  A_Jcc:
+                    begin
+                      { Don't continue on lower optimisation settings }
+                      if not (cs_opt_level2 in current_settings.optimizerswitches) then
+                        Break;
 
-                  Remove add/sub
+                      CrossJump := True;
+                      { Go to the next instruction }
+                      hp2 := hp1;
+                      Continue;
+                    end;
 
-                And:
-                  mov     x,%reg1
-                  ...
-                  add/sub %reg1,%reg2
+                  A_ADD, A_SUB:
+                    { mov     0,%reg1
+                      ...
+                      add/sub %reg1,%reg2
 
-                Change to:
-                  mov     x,%reg1
-                  ...
-                  add/sub x,%reg2
-                }
-                if MatchInstruction(hp1, A_ADD, A_SUB, []) and
-                  MatchOperand(taicpu(hp1).oper[0]^, p_TargetReg) and
-                  (
-                    { "add/sub %reg,%reg" is fine to remove since %reg = 0
-                      still makes it an identity operation }
-                    MatchOperand(taicpu(hp1).oper[1]^, p_TargetReg) or
-                    not RegModifiedByInstruction(p_TargetReg, hp1)
-                  )
-                  then
-                  begin
-                    TempRegUsed := True; { Reusing to identify if the optimisation is invalid }
+                      Remove add/sub
 
                     And:
                       mov     x,%reg1
                       ...
                       add/sub %reg1,%reg2
 
-                    if not RegUsedAfterInstruction(NR_DEFAULTFLAGS, hp1, TmpUsedRegs) then
+                    Change to:
+                      mov     x,%reg1
+                      ...
+                      add/sub x,%reg2
+                    }
+                    if MatchOperand(taicpu(hp1).oper[0]^, p_TargetReg) and
+                      (
+                        { "add/sub %reg,%reg" is fine to remove since %reg = 0
+                          still makes it an identity operation }
+                        MatchOperand(taicpu(hp1).oper[1]^, p_TargetReg) or
+                        not RegModifiedByInstruction(p_TargetReg, hp1)
+                      )
+                      then
                       begin
-                        if (taicpu(p).oper[0]^.val <> 0) then
-                          begin
-                            if MatchOperand(taicpu(hp1).oper[1]^, p_TargetReg) then
-                              begin
-{$ifndef x86_64}
-                                NewConst := 2 * taicpu(p).oper[0]^.val;
-{$else x86_64}
-                                { Protect against overflows }
-                                NewConst := (taicpu(p).oper[0]^.val and $7FFFFFFFFFFFFFFF) shl 1;
-                                if (NewConst > $7FFFFFFF) or (NewConst < -2147483648) then
-                                  { Constant out of range }
-                                  TempRegUsed := False
-                                else
-{$endif x86_64}
-                                  begin
-                                    { add %reg,%reg doubles the value }
-                                    taicpu(hp1).opcode := A_MOV;
+                        TempRegUsed := True; { Reusing to identify if the optimisation is invalid }
 
-                                    case taicpu(hp1).opsize of
-                                      S_B: taicpu(hp1).loadconst(0, NewConst and $FF);
-                                      S_W: taicpu(hp1).loadconst(0, NewConst and $FFFF);
-                                      S_L: taicpu(hp1).loadconst(0, NewConst and $FFFFFFFF);
-{$ifdef x86_64}
-                                      S_Q: taicpu(hp1).loadconst(0, NewConst);
-{$endif x86_64}
-                                      else
-                                        InternalError(2024022001);
-                                    end;
-                                  end;
-                              end
-                            else
+                        TransferUsedRegs(TmpUsedRegs);
+                        UpdateUsedRegsBetween(TmpUsedRegs, p, hp1);
+
+                        if not RegUsedAfterInstruction(NR_DEFAULTFLAGS, hp1, TmpUsedRegs) then
+                          begin
+                            if (taicpu(p).oper[0]^.val <> 0) then
                               begin
-{$ifdef x86_64}
-                                if (taicpu(p).oper[0]^.val > $7FFFFFFF) or (taicpu(p).oper[0]^.val < -2147483648) then
-                                  { Constant out of range }
-                                  TempRegUsed := False
-                                else
+                                if MatchOperand(taicpu(hp1).oper[1]^, p_TargetReg) then
+                                  begin
+{$ifndef x86_64}
+                                    NewConst := 2 * taicpu(p).oper[0]^.val;
+{$else x86_64}
+                                    { Protect against overflows }
+                                    NewConst := (taicpu(p).oper[0]^.val and $7FFFFFFFFFFFFFFF) shl 1;
+                                    if (NewConst > $7FFFFFFF) or (NewConst < -2147483648) then
+                                      { Constant out of range }
+                                      TempRegUsed := False
+                                    else
 {$endif x86_64}
-                                  taicpu(hp1).loadconst(0, taicpu(p).oper[0]^.val);
+                                      begin
+                                        { add %reg,%reg doubles the value }
+                                        taicpu(hp1).opcode := A_MOV;
+
+                                        case taicpu(hp1).opsize of
+                                          S_B: taicpu(hp1).loadconst(0, NewConst and $FF);
+                                          S_W: taicpu(hp1).loadconst(0, NewConst and $FFFF);
+                                          S_L: taicpu(hp1).loadconst(0, NewConst and $FFFFFFFF);
+{$ifdef x86_64}
+                                          S_Q: taicpu(hp1).loadconst(0, NewConst);
+{$endif x86_64}
+                                          else
+                                            InternalError(2024022001);
+                                        end;
+                                      end;
+                                  end
+                                else
+                                  begin
+{$ifdef x86_64}
+                                    if (taicpu(p).oper[0]^.val > $7FFFFFFF) or (taicpu(p).oper[0]^.val < -2147483648) then
+                                      { Constant out of range }
+                                      TempRegUsed := False
+                                    else
+{$endif x86_64}
+                                      taicpu(hp1).loadconst(0, taicpu(p).oper[0]^.val);
+                                  end;
+
+                                if TempRegUsed then
+                                  DebugMsg(SPeepholeOptimization + 'Adapting ADD/SUB since ' + debug_regname(p_TargetReg) + ' = $' + debug_tostr(taicpu(p).oper[0]^.val), hp1);
                               end;
 
                             if TempRegUsed then
-                              DebugMsg(SPeepholeOptimization + 'Adapting ADD/SUB since ' + debug_regname(p_TargetReg) + ' = $' + debug_tostr(taicpu(p).oper[0]^.val), hp1);
-                          end;
-
-                        if TempRegUsed then
-                          begin
-                            if (taicpu(p).oper[0]^.val = 0) then
-                              DebugMsg(SPeepholeOptimization + 'Removing ADD/SUB since ' + debug_regname(p_TargetReg) + ' = $0', hp1);
-
-                            if not RegUsedBetween(p_TargetReg, p, hp1) and
-                              not RegUsedAfterInstruction(p_TargetReg, hp1, TmpUsedRegs) then
                               begin
-                                { If the original register is no longer used, we can remove the initial MOV }
-                                DebugMsg(SPeepholeOptimization + 'Mov2Nop 9', p);
+                                if (taicpu(p).oper[0]^.val = 0) then
+                                  DebugMsg(SPeepholeOptimization + 'Removing ADD/SUB since ' + debug_regname(p_TargetReg) + ' = $0', hp1);
+
+                                if not CrossJump and
+                                  not RegUsedBetween(p_TargetReg, p, hp1) and
+                                  not RegUsedAfterInstruction(p_TargetReg, hp1, TmpUsedRegs) then
+                                  begin
+                                    { If the original register is no longer used, we can remove the initial MOV }
+                                    DebugMsg(SPeepholeOptimization + 'Mov2Nop 9', p);
+                                    if (taicpu(p).oper[0]^.val = 0) then
+                                      RemoveInstruction(hp1);
+                                    RemoveCurrentP(p);
+                                    Result := True;
+                                    Exit;
+                                  end;
+
                                 if (taicpu(p).oper[0]^.val = 0) then
                                   RemoveInstruction(hp1);
-                                RemoveCurrentP(p);
-                                Result := True;
-                                Exit;
+
+                                Include(OptsToCheck, aoc_ForceNewIteration);
+                                Continue;
                               end;
-
-                            if (taicpu(p).oper[0]^.val = 0) then
-                              RemoveInstruction(hp1);
-
-                            Include(OptsToCheck, aoc_ForceNewIteration);
-                            Continue;
                           end;
                       end;
-                  end;
+                  else
+                    ;
+                end;
 
                 if (cs_opt_level2 in current_settings.optimizerswitches) and
                   not RegModifiedByInstruction(p_TargetReg, hp1) then
