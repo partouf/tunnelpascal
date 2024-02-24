@@ -4787,6 +4787,71 @@ unit aoptx86;
                 Exit;
               end;
 
+            if (taicpu(p).opsize = S_B) and
+              (taicpu(p).oper[0]^.typ = top_const) and
+              { Make sure it doesn't affect the comparison instruction }
+              not MatchOperand(taicpu(hp1).oper[0]^, taicpu(p).oper[1]^) and
+              not MatchOperand(taicpu(hp1).oper[1]^, taicpu(p).oper[1]^) and
+              (
+                (taicpu(p).oper[1]^.typ <> top_reg) or
+                not RegInInstruction(taicpu(p).oper[1]^.reg, hp1)
+              ) and
+              { Test the value to see if it's 0 or 1 now to delay the expensive
+                GetNextInstruction calls for as long as possible }
+              (taicpu(p).oper[0]^.val in [0, 1]) and
+              GetNextInstruction(hp1, hp2) and
+              MatchInstruction(hp2, A_Jcc, []) and
+              GetNextInstruction(hp2, hp3) and
+              MatchInstruction(hp3, A_MOV, A_OR, [S_B]) and
+              (taicpu(hp3).oper[0]^.typ = top_const) and
+              (
+                (
+                  (taicpu(p).oper[0]^.val = 0) and
+                  (taicpu(hp3).oper[0]^.val = 1)
+                ) or
+                (
+                  (taicpu(hp3).opcode = A_MOV) and
+                  (taicpu(p).oper[0]^.val = 1) and
+                  (taicpu(hp3).oper[0]^.val = 0)
+                )
+              ) and
+              MatchOperand(taicpu(hp3).oper[1]^, taicpu(p).oper[1]^) and
+              GetNextInstruction(hp3, hp4) and (hp4.typ = ait_label) and
+              (GetLabelWithSym(TAsmLabel(JumpTargetOp(taicpu(hp2))^.ref^.symbol)) = hp4) then
+              begin
+                {
+                  Change:
+                    movb  0,reg/ref
+                    cmpb  $1,45(%rcx)
+                    j(c)  .Lbl
+                    movb  1,reg/ref
+                  .Lbl:
+
+                  To:
+                    cmpb  $1,45(%rcx)
+                    set(~c) reg/ref   (or set(c) if 0 and 1 are switched around)
+                }
+                taicpu(hp3).opcode := A_SETcc;
+                taicpu(hp3).loadoper(0, taicpu(hp3).oper[1]^);
+                taicpu(hp3).ops := 1;
+                if (taicpu(p).oper[0]^.val = 0) then
+                  begin
+                    taicpu(hp3).condition := inverse_cond(taicpu(hp2).condition);
+                    DebugMsg(SPeepholeOptimization + 'Mov0J(c)Mov1LbL -> Set(~c)',p);
+                  end
+                else
+                  begin
+                    taicpu(hp3).condition := taicpu(hp2).condition;
+                    DebugMsg(SPeepholeOptimization + 'Mov1J(c)Mov1LbL -> Set(c)',p);
+                  end;
+
+                tai_label(hp4).labsym.decrefs;
+                RemoveInstruction(hp2);
+                RemoveCurrentP(p, hp1);
+                Result := True;
+                Exit;
+              end;
+
             if DoMovCmpMemOpt(p, hp1) then
               begin
                 Result := True;
