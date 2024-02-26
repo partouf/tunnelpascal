@@ -6085,14 +6085,20 @@ unit aoptx86;
                       begin
                         TransferUsedRegs(TmpUsedRegs);
                         UpdateUsedRegs(TmpUsedRegs, tai(p.next));
-                        { reg1 is not updated so it might not be used afterwards }
+                        { reg1 is not updated so it must not be used afterwards }
                         if not(RegUsedAfterInstruction(taicpu(p).oper[1]^.reg,hp1,TmpUsedRegs)) then
                           begin
                             DebugMsg(SPeepholeOptimization + 'LeaOp2Op done',p);
                             if taicpu(p).oper[0]^.ref^.base<>NR_NO then
-                              taicpu(hp1).oper[ref]^.ref^.base:=taicpu(p).oper[0]^.ref^.base;
+                              begin
+                                taicpu(hp1).oper[ref]^.ref^.base:=taicpu(p).oper[0]^.ref^.base;
+                                AllocRegBetween(taicpu(p).oper[0]^.ref^.base, p, hp1, UsedRegs);
+                              end;
                             if taicpu(p).oper[0]^.ref^.index<>NR_NO then
-                              taicpu(hp1).oper[ref]^.ref^.index:=taicpu(p).oper[0]^.ref^.index;
+                              begin
+                                taicpu(hp1).oper[ref]^.ref^.index:=taicpu(p).oper[0]^.ref^.index;
+                                AllocRegBetween(taicpu(p).oper[0]^.ref^.index, p, hp1, UsedRegs);
+                              end;
                             if taicpu(p).oper[0]^.ref^.symbol<>nil then
                               taicpu(hp1).oper[ref]^.ref^.symbol:=taicpu(p).oper[0]^.ref^.symbol;
                             if taicpu(p).oper[0]^.ref^.relsymbol<>nil then
@@ -6242,7 +6248,9 @@ unit aoptx86;
 
                             if (taicpu(p).oper[0]^.ref^.offset <> 0) then
                               Inc(taicpu(hp1).oper[0]^.ref^.offset, taicpu(p).oper[0]^.ref^.offset * max(taicpu(hp1).oper[0]^.ref^.scalefactor, 1));
+
                             taicpu(hp1).oper[0]^.ref^.index := taicpu(p).oper[0]^.ref^.index;
+                            AllocRegBetween(taicpu(p).oper[0]^.ref^.index, p, hp1, UsedRegs);
 
                             { Just to prevent miscalculations }
                             if (taicpu(hp1).oper[0]^.ref^.scalefactor = 0) then
