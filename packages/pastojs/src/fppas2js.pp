@@ -21259,7 +21259,7 @@ begin
         if (P.Visibility=visPublished) then
           // published member
         else if (P is TPasConstructor) and (P.Visibility = visPublic)
-            and (pcsfPublished in TPas2JSClassScope(El.CustomData).Flags) then
+            or (pcsfPublished in TPas2JSClassScope(El.CustomData).Flags) then
           // this class supports published members -> add public constructor to RTTI
           // workaround til extended RTTI
           // see issue #37752
