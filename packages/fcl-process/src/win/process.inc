@@ -48,10 +48,13 @@ begin
     WaitForSingleObject(FProcessHandle,10);
 end;
 
-Function GetStartupFlags (P : TProcess): Cardinal;
+Function GetStartupFlags (P : TProcess; AllDescriptorsDefault: Boolean): Cardinal;
 
 begin
-  Result:= Startf_UseStdHandles;
+  if AllDescriptorsDefault then
+    Result:= 0
+  else
+    Result:= Startf_UseStdHandles;
   if suoUseShowWindow in P.StartupOptions then
     Result:=Result or startf_USESHOWWINDOW;
   if suoUSESIZE in P.StartupOptions then
@@ -112,21 +115,21 @@ begin
   CopyMemory(Result, @EnvBlock[1], Length(EnvBlock)*2);
 end;
 
-Procedure InitProcessAttributes(P : TProcess; Var PA : TSecurityAttributes);
+Procedure InitProcessAttributes(P : TProcess; Out PA : TSecurityAttributes);
 
 begin
   FillChar(PA,SizeOf(PA),0);
   PA.nLength := SizeOf(PA);
 end;
 
-Procedure InitThreadAttributes(P : TProcess; Var TA : TSecurityAttributes);
+Procedure InitThreadAttributes(P : TProcess; Out TA : TSecurityAttributes);
 
 begin
   FillChar(TA,SizeOf(TA),0);
   TA.nLength := SizeOf(TA);
 end;
 
-Procedure InitStartupInfo(P : TProcess; Var SI : STARTUPINFOW);
+Procedure InitStartupInfo(P : TProcess; AllDescriptorsDefault: Boolean; Out SI : STARTUPINFOW);
 
 Const
   SWC : Array [TShowWindowOptions] of Cardinal =
@@ -137,16 +140,12 @@ Const
 begin
   FillChar(SI,SizeOf(SI),0);
   SI.cb:=SizeOf(SI);
-  SI.dwFlags:=GetStartupFlags(P);
+  SI.dwFlags:=GetStartupFlags(P, AllDescriptorsDefault);
   if P.FShowWindow<>swoNone then
    SI.dwFlags:=SI.dwFlags or Startf_UseShowWindow
   else
     SI.dwFlags:=SI.dwFlags and not Startf_UseShowWindow;
   SI.wShowWindow:=SWC[P.FShowWindow];
-  if (poUsePipes in P.Options) then
-    begin
-    SI.dwFlags:=SI.dwFlags or Startf_UseStdHandles;
-    end;
   if P.FillAttribute<>0 then
     begin
     SI.dwFlags:=SI.dwFlags or Startf_UseFillAttribute;
@@ -181,13 +180,20 @@ Var
   FThreadAttributes : TSecurityAttributes;
   FProcessInformation : TProcessInformation;
   FStartupInfo : STARTUPINFOW;
-  HI,HO,HE : THandle;
   Cmd : TProcessString;
+  AllDescriptorsDefault: Boolean;
 
  begin
+  fProcessInformation:=default(TProcessInformation);
+  AllDescriptorsDefault :=
+    (FDescriptors[phtInput].IOType = iotDefault) and
+    (FDescriptors[phtOutput].IOType = iotDefault) and
+    (FDescriptors[phtError].IOType = iotDefault) and 
+    not (poStdErrToOutput in Options);
   FDescriptors[phtInput].PrepareHandles;
   FDescriptors[phtOutput].PrepareHandles;
-  FDescriptors[phtError].PrepareHandles;
+  if not (poStdErrToOutput in Options) then
+    FDescriptors[phtError].PrepareHandles;
   WName:='';
   WCommandLine:='';
   WDir:='';
@@ -217,13 +223,16 @@ Var
     FCreationFlags:=GetCreationFlags(Self);
     InitProcessAttributes(Self,FProcessAttributes);
     InitThreadAttributes(Self,FThreadAttributes);
-    InitStartupInfo(Self,FStartUpInfo);
-    FStartupInfo.hStdInput:=FDescriptors[phtInput].ResolveProcessHandle;
-    FStartupInfo.hStdOutput:=FDescriptors[phtOutput].ResolveProcessHandle;
-    if Not(poStdErrToOutPut in Options) then
-      FStartupInfo.hStdError:=FDescriptors[phtError].ResolveProcessHandle
-    else
-      FStartupInfo.hStdError:=FStartupInfo.hStdOutput;
+    InitStartupInfo(Self,AllDescriptorsDefault,FStartUpInfo);
+    if not AllDescriptorsDefault then
+      begin
+      FStartupInfo.hStdInput:=FDescriptors[phtInput].ResolveProcessHandle;
+      FStartupInfo.hStdOutput:=FDescriptors[phtOutput].ResolveProcessHandle;
+      if Not(poStdErrToOutPut in Options) then
+        FStartupInfo.hStdError:=FDescriptors[phtError].ResolveProcessHandle
+      else
+        FStartupInfo.hStdError:=FStartupInfo.hStdOutput;
+      end;
     Try
       // Beware: CreateProcess can alter the strings
       // Beware: nil is not the same as a pointer to a #0
@@ -241,7 +250,8 @@ Var
     Finally
       FDescriptors[phtInput].CloseTheirHandle;
       FDescriptors[phtOutput].CloseTheirHandle;
-      FDescriptors[phtError].CloseTheirHandle;
+      if Not(poStdErrToOutPut in Options) then
+        FDescriptors[phtError].CloseTheirHandle;
     end;
     FRunning:=True;
   Finally
@@ -307,17 +317,15 @@ end;
 Function TIODescriptor.SysCreateFileNameHandle(const aFileName: string) : THandle;
 
 const
-  DefaultRights = 438; // 438 = 666 octal which is rw rw rw
   ModeNames : Array[Boolean] of String = ('Reading','Writing');
 
 var
-  FM :  Integer;
   Sec: SECURITY_ATTRIBUTES;
 
 begin
   if (aFileName='') then
     Raise EProcess.Create('No filename set');
-  FillByte(sec, SizeOf(sec), 0);
+  Sec:=Default(SECURITY_ATTRIBUTES);
   sec.nLength := SizeOf(Sec);
   sec.bInheritHandle := True;
   case ProcessHandleType of
@@ -345,10 +353,11 @@ var
   Res : Boolean;
   
 begin
-  if IOType in [iotNone,iotFile] then begin
+  if (IOType in [iotDefault,iotFile]) or ((IOType=iotHandle) and FCustomHandleIsInheritable) then
+    begin
     Result:=aHandle;
     exit;
-  end;
+    end;
   oldHandle := ahandle;
   ahandle:=THandle(INVALID_HANDLE_VALUE); 
   Res := DuplicateHandle
@@ -360,8 +369,13 @@ begin
     true,
     DUPLICATE_SAME_ACCESS
   );
-  if Res then
-    Res:=CloseHandle(oldHandle);
+  if Res then begin
+    // Either AutoCloseCustomHandle or set in OnGetHandle
+    if (IOType=iotHandle) and not FCloseHandleOnExecute then
+      FCloseHandleOnExecute:=True // the original CustomHandle is kept open / Set True for the duplicate handle
+    else
+      Res:=CloseHandle(oldHandle);
+  end;
   if not Res then
     begin
     FileClose(aHandle);

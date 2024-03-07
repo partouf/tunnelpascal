@@ -32,16 +32,25 @@ Interface
 {$ifdef OS2}
 {$define implemented}
 {$endif}
+
 {$ifdef windows}
 {$define implemented}
+{$if (FPC_FULLVERSION > 30300)}
+{$define EXECUTEREDIR_USES_PROCESS}
+{$ENDIF}
 {$define USES_UNIT_PROCESS}
 {$endif}
+
 {$IFDEF UNIX}
 {$define implemented}
 {$ifndef MACOS}
+{$if (FPC_FULLVERSION > 30300)}
+{$define EXECUTEREDIR_USES_PROCESS}
+{$ENDIF}
 {$define USES_UNIT_PROCESS}
 {$endif}
-{$endif}
+{$ENDIF}
+
 Var
   IOStatus                   : Integer;
   RedirErrorOut,RedirErrorIn,
@@ -786,11 +795,11 @@ function ChangeRedirError(Const Redir : String; AppendToFile : Boolean) : Boolea
 
 {............................................................................}
 
-{$ifdef USES_UNIT_PROCESS}
+{$ifdef EXECUTEREDIR_USES_PROCESS}
 function ExecuteRedir (Const ProgName, ComLine : String; RedirStdIn, RedirStdOut, RedirStdErr: String): boolean;
 
 const
-  max_count = 6000;
+  max_count = 60000;
 
 var
   P : TProcess;
@@ -801,11 +810,14 @@ begin
     P.CommandLine:=Progname + ' ' + ComLine;
     P.InputDescriptor.FileName:=RedirStdIn;
     P.OutputDescriptor.FileName:=RedirStdOut;
-    P.ErrorDescriptor.FileName:=RedirStdErr;
+    if RedirStdErr='stdout' then
+      P.Options:=P.options+[poStdErrToOutput]
+    else  
+      P.ErrorDescriptor.FileName:=RedirStdErr;
     P.Execute;
     Result:=P.WaitOnExit(max_count);
     if Result then  
-      ExecuteResult:=P.ExitStatus
+      ExecuteResult:=P.ExitCode
     else
       begin
       Writeln(stderr,'Terminate requested for ',Progname,' ',ComLine);
@@ -816,7 +828,7 @@ begin
         P.Terminate(255);
         Sleep(10);
       Until not P.Running;  
-      ExecuteResult:=1000+P.ExitStatus;
+      ExecuteResult:=1000+P.ExitCode;
       end;  
     Result:=ExecuteResult=0;
   finally
