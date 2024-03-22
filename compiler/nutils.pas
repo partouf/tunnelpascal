@@ -1406,32 +1406,29 @@ implementation
 
     function has_no_code(n : tnode) : boolean;
       begin
-        if n=nil then
-          begin
-            result:=true;
-            exit;
-          end;
-        case n.nodetype of
-          nothingn:
-            begin
-               result:=true;
-               exit;
-            end;
-          blockn:
-            begin
-              result:=has_no_code(tblocknode(n).left);
-              exit;
-            end;
-          statementn:
-            begin
-              repeat
-                result:=has_no_code(tstatementnode(n).left);
-                n:=tstatementnode(n).right;
-              until not(result) or not assigned(n);
-              exit;
-            end;
-          else
-            result:=false;
+        result:=true;
+        while Assigned(n) do
+          case n.nodetype of
+            nothingn:
+              Exit;
+            blockn:
+              begin
+                n:=tblocknode(n).left;
+                Continue;
+              end;
+            statementn:
+              begin
+                repeat
+                  result:=has_no_code(tstatementnode(n).left);
+                  n:=tstatementnode(n).right; { Will be another statement }
+                until not(result) or not assigned(n);
+                Exit;
+              end;
+            else
+              begin
+                result:=false;
+                Exit;
+              end;
         end;
       end;
 
