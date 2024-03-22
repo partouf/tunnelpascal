@@ -1559,8 +1559,8 @@ implementation
     function get_open_const_array(p : tnode) : tnode;
       begin
         result:=p;
-        if (p.nodetype=derefn) and (tderefnode(p).left.nodetype=addrn) then
-          result:=get_open_const_array(taddrnode(tderefnode(result).left).left);
+        while (result.nodetype=derefn) and (tderefnode(result).left.nodetype=addrn) do
+          result:=taddrnode(tderefnode(result).left).left;
       end;
 
     type
