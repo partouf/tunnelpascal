@@ -135,9 +135,9 @@ interface
 
     { count the number of nodes in the node tree,
       rough estimation how large the tree "node" is }
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     { returns true, if the value described by node is constant/immutable, this approximation is safe
       if no dirty tricks like buffer overflows or pointer magic are used }
@@ -1487,37 +1487,33 @@ implementation
         result:=foreachnodestatic(n,@check_for_conditional_nodes,nil);
       end;
 
-    var
-      nodecount : dword;
 
     function donodecount(var n: tnode; arg: pointer): foreachnoderesult;
       begin
-        inc(nodecount);
+        Inc(PDWord(arg)^);
         result:=fen_false;
       end;
 
 
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount,nil);
-        result:=nodecount;
+        result:=0;
+        foreachnodestatic(node,@donodecount,@result);
       end;
 
 
     function donodecount_weighted(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         if not(n.nodetype in [blockn,statementn,callparan,nothingn]) then
-          inc(nodecount);
+          Inc(PDWord(arg)^);
         result:=fen_false;
       end;
 
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount_weighted,nil);
-        result:=nodecount;
+        result:=0;
+        foreachnodestatic(node,@donodecount_weighted,@result);
       end;
 
 
