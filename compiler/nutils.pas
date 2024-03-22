@@ -1535,13 +1535,11 @@ implementation
     function actualtargetnode(n : pnode) : pnode;
       begin
         result:=n;
-        case n^.nodetype of
-          typeconvn:
-            if ttypeconvnode(n^).retains_value_location then
-              result:=actualtargetnode(@ttypeconvnode(n^).left);
+        while result^.nodetype = typeconvn do
+          if ttypeconvnode(result^).retains_value_location then
+            result:=@(ttypeconvnode(result^).left)
           else
-            ;
-        end;
+            Break;
       end;
 
 
