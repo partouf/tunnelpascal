@@ -1654,25 +1654,31 @@ implementation
     function IsSingleStatement(p: tnode; var s: tnode): Boolean;
       begin
         Result:=false;
-        if assigned(p) then
-          case p.nodetype of
-            blockn:
-              Result:=IsSingleStatement(tblocknode(p).statements,s);
-            statementn:
-              if not(assigned(tstatementnode(p).next)) then
+        while assigned(p) do
+          begin
+            case p.nodetype of
+              blockn:
                 begin
-                  Result:=true;
-                  s:=tstatementnode(p).statement;
+                  p:=tblocknode(p).statements;
+                  Continue;
                 end;
-            inlinen,
-            assignn,
-            calln:
-              begin
-                s:=p;
-                Result:=true;
-              end
-            else
-              ;
+              statementn:
+                if not(assigned(tstatementnode(p).next)) then
+                  begin
+                    s:=tstatementnode(p).statement;
+                    Result:=true;
+                  end;
+              inlinen,
+              assignn,
+              calln:
+                begin
+                  s:=p;
+                  Result:=true;
+                end
+              else
+                ;
+            end;
+            Break;
           end;
       end;
 
