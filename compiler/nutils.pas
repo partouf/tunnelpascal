@@ -162,7 +162,7 @@ interface
     function get_open_const_array(p : tnode) : tnode;
 
     { excludes the flags passed in nf from the node tree passed }
-    procedure node_reset_flags(p : tnode;nf : TNodeFlags; tnf : TTransientNodeFlags);
+    procedure node_reset_flags(p : tnode;nf : TNodeFlags; tnf : TTransientNodeFlags); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     { include or exclude cs from p.localswitches }
     procedure node_change_local_switch(p : tnode;cs : tlocalswitch;enable : boolean);
@@ -1578,7 +1578,7 @@ implementation
       end;
 
 
-    procedure node_reset_flags(p : tnode; nf : TNodeFlags; tnf : TTransientNodeFlags);
+    procedure node_reset_flags(p : tnode; nf : TNodeFlags; tnf : TTransientNodeFlags); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       var
         FlagSet: TFlagSet;
       begin
