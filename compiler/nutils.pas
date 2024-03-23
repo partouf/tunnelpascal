@@ -75,7 +75,7 @@ interface
     { checks if the given node tree contains only nodes of the given type,
       if this isn't the case, an ie is thrown
     }
-    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset);
+    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     procedure load_procvar_from_calln(var p1:tnode);
     function get_local_or_para_sym(const aname: string): tabstractvarsym;
@@ -441,7 +441,7 @@ implementation
       end;
 
 
-    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset);
+    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         foreachnodestatic(n,@do_check,@typeset);
       end;
