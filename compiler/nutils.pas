@@ -93,7 +93,7 @@ interface
 
     function node_complexity(p: tnode): cardinal;
     function node_resources_fpu(p: tnode): cardinal;
-    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo);
+    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     { tries to simplify the given node after inlining }
     procedure doinlinesimplify(var n : tnode);
@@ -1129,7 +1129,7 @@ implementation
       end;
 
 
-    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo);
+    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         foreachnodestatic(n,@setnodefilepos,@filepos);
       end;
