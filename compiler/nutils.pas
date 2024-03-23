@@ -205,7 +205,7 @@ interface
     {
       resets all flags so that nf_write/nf_modify information is regenerated
     }
-    procedure node_reset_pass1_write(n: tnode);
+    procedure node_reset_pass1_write(n: tnode); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
 implementation
 
@@ -1729,7 +1729,7 @@ implementation
        end;
 
 
-     procedure node_reset_pass1_write(n: tnode);
+     procedure node_reset_pass1_write(n: tnode); {$ifdef USEINLINE}inline;{$endif USEINLINE}
        begin
          foreachnodestatic(n,@_node_reset_pass1_write,nil);
        end;
