@@ -597,6 +597,7 @@ Implementation
       hp1, hp1_last: tai;
       CGSize: TCGSize;
       MessageStr: string;
+      X: Integer;
     begin
       Result := False;
 
@@ -652,7 +653,20 @@ Implementation
                     ;
                 end;
             3:
-              begin
+              case taicpu(hp1).opcode of
+                A_ADD, A_SUB:
+                  if (
+                      (taicpu(p).oper[1]^.typ = top_reg) or { Will be the zero register }
+                      is_arith_const(aword(taicpu(p).oper[1]^.val))
+                    )and
+                    MatchOperand(taicpu(hp1).oper[2]^, taicpu(p).oper[0]^.reg) then
+                    begin
+                      DebugMsg(SPeepholeOptimization + 'MovAdd/Sub2MovAdd/Sub; ' + MessageStr, hp1);
+                      taicpu(hp1).loadoper(2, taicpu(p).oper[1]^);
+                      Result := True;
+                    end;
+                else
+                  ;
               end;
             else
               ;
