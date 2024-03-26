@@ -63,6 +63,7 @@ Interface
         function OptPass1MOVZ(var p: tai): boolean;
         function OptPass1FMov(var p: tai): Boolean;
         function OptPass1B(var p: tai): boolean;
+        function OptPass1CMP(var p: tai): boolean;
         function OptPass1SXTW(var p: tai): Boolean;
 
         function OptPass2CSEL(var p: tai): Boolean;
@@ -1101,6 +1102,19 @@ Implementation
     end;
 
 
+  function TCpuAsmOptimizer.OptPass1CMP(var p: tai): boolean;
+    begin
+      Result := False;
+      if (taicpu(p).oper[1]^.typ = top_reg) and
+        (getsupreg(taicpu(p).oper[1]^.reg) = RS_XZR) then
+        begin
+          { Favour "cmp reg,#0" over "cmp reg,xzr" }
+          taicpu(p).loadconst(1, 0);
+          Result := True;
+        end;
+    end;
+
+
   function TCpuAsmOptimizer.OptPass2B(var p: tai): Boolean;
     var
       hp1: tai;
@@ -1551,6 +1565,8 @@ Implementation
           case taicpu(p).opcode of
             A_B:
               Result:=OptPass1B(p);
+            A_CMP:
+              Result:=OptPass1CMP(p);
             A_LDR:
               Result:=OptPass1LDR(p);
             A_STR:
