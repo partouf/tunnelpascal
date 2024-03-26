@@ -343,6 +343,7 @@ unit cpubase;
     function dwarf_reg_no_error(r:tregister):shortint;
     function eh_return_data_regno(nr: longint): longint;
 
+    function is_arith_const(d: aword): boolean;
     function is_shifter_const(d: aint; size: tcgsize): boolean;
     function IsFloatImmediate(ft : tfloattype;value : bestreal) : boolean;
 
@@ -558,6 +559,17 @@ unit cpubase;
     function dwarf_reg_no_error(r:tregister):shortint;
       begin
         result:=regdwarf_table[findreg_by_number(r)];
+      end;
+
+    function is_arith_const(d: aword): boolean;
+      begin
+        Result :=
+          (d <= 4096) or
+          (
+            { Valid d shl 12 value? }
+            ((d and $FFF) = 0) and
+            (d < 16777216)
+          );
       end;
 
     function is_shifter_const(d: aint; size: tcgsize): boolean;
