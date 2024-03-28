@@ -509,6 +509,30 @@ Implementation
     var
       hp1: tai;
     begin
+      Result := False;
+      if taicpu(p).opcode in [A_ADD, A_SUB] then
+        begin
+          {
+            Remove: add/sub reg,reg,wzr/#0
+          }
+          if (taicpu(p).ops = 3) and
+            (taicpu(p).oppostfix = PF_None) and
+            (taicpu(p).oper[1]^.reg = taicpu(p).oper[0]^.reg) and
+            (
+              MatchOperand(taicpu(p).oper[2]^, 0) or
+              (
+                (taicpu(p).oper[2]^.typ = top_reg) and
+                (getsupreg(taicpu(p).oper[2]^.reg) = RS_XZR)
+              )
+            ) then
+            begin
+              DebugMsg(SPeepholeOptimization + 'Arithmetic identity operation removed', p);
+              RemoveCurrentP(p);
+              Result := True;
+              Exit;
+            end;
+        end;
+
       Result := GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) and
         RemoveSuperfluousMove(p, hp1, 'DataMov2Data');
     end;
