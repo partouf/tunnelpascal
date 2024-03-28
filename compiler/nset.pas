@@ -22,13 +22,14 @@
 unit nset;
 
 {$i fpcdefs.inc}
+{$modeswitch advancedrecords}
 
 interface
 
     uses
        cclasses,constexp,
        node,globtype,globals,
-       aasmbase,ncon,nflw,symtype;
+       aasmbase,ncon,nflw,symtype,ninl,compinnr;
 
     type
        TLabelType = (ltOrdinal, ltConstString);
@@ -205,6 +206,190 @@ implementation
       end;
 
 
+    type
+      { Of all the elements from min to max,
+        — all elements belonging to the set satisfy (elem and mask = res),
+        — all elements not belonging to the set satisfy (elem and mask <> res).
+
+        For example: for set [5, 7, 9, 11],
+        min = 5, max = 11, mask = 1, res = 1,
+        allowing to rewrite “x in [5, 7, 9, 11]” as “(x >= 5) and (x <= 11) and (x and 1 = 1)”.
+
+        min/max are set to baseLo/baseHi if possible (if elements up to baseLo/baseHi give no false positives),
+        to help simplify or omit the range check sometimes. }
+
+      tinsetandshortcut=record
+        min,max,mask,res : uint32;
+        function detect(const s : tconstset; baseLo,baseHi,setLo,setHi : uint32):boolean;
+        function build(x : tnode; checkLo,checkHi : boolean):tnode;
+
+        { Software PDEP from BMI2.
+          BitScatter(%ABC, %0100101) = %0A00B0C. }
+        class function bit_scatter(x,amask : uint32):uint32; static;
+      end;
+
+
+    function tinsetandshortcut.detect(const s : tconstset; baseLo,baseHi,setLo,setHi : uint32):boolean;
+      var
+         v,vmin,vmax,nRanges,itemsAnd,itemComplementsAnd,fullMask,submaskIndex,vres,curScore,bestScore : uint32;
+         cur,best : record
+           min,max,mask : uint32;
+         end;
+         streak,ok,better : boolean;
+      begin
+         nRanges:=0;
+
+         { Bit itemsAnd[i] is 1 if bit elem[i] = 1 for all elem ∈ s.
+           Bit itemComplementsAnd[i] is 1 if bit elem[i] = 0 for all elem ∈ s.
+           Then “itemsAnd or itemComplementsAnd” gives the largest mask such that “elem and mask” is constant over all elem ∈ s. }
+
+         itemsAnd:=uint32(-1);
+         itemComplementsAnd:=uint32(-1);
+         vmin:=0; { avoid warning }
+         vmax:=0; { avoid warning }
+
+         streak:=false;
+         for v:=setLo to setHi do
+           if byte(v) in s then
+             begin
+               if nRanges=0 then
+                 vmin:=v;
+               itemsAnd:=itemsAnd and v;
+               itemComplementsAnd:=itemComplementsAnd and not v;
+               vmax:=v;
+               if not streak then
+                 inc(nRanges);
+               streak:=true;
+             end else
+               streak:=false;
+         if nRanges<=2 then { Two ranges or less; todo / don’t care / delegate to someone else. }
+           exit(false);
+
+         { By construction, itemComplementsAnd has many leading 1s. Keep its N least significant bits, where N is the smaller of:
+           — number of bits to represent baseHi;
+           — number of bits to represent vmax, plus one more bit (to give a chance to the zero bit above vmax bits to be discriminating). }
+         fullMask:=itemsAnd or itemComplementsAnd and (uint32(2) shl cutils.min(BsrDWord(baseHi or 1), 1+BsrDWord(vmax or 1))-1);
+         if fullMask=0 then
+           exit(false); { No common bits among s elements. :( }
+
+         { Go through all subsets of fullMask and see if there are any that reliably distinguish between elements belonging and not belonging to s.
+           For example, if fullMask = %110010, check the following masks:
+           %000010 (submaskIndex = 1 = %001)
+           %010000 (submaskIndex = 2 = %010)
+           %010010 (submaskIndex = 3 = %011)
+           %100000 (submaskIndex = 4 = %100)
+           %100010 (submaskIndex = 5 = %101)
+           %110000 (submaskIndex = 6 = %110)
+           %110010 (submaskIndex = 7 = %111)
+           This is done by iterating submaskIndex from 1 to “1 shl PopCnt(fullMask) − 1” and PDEP-style scattering submaskIndex to fullMask. }
+
+         best.mask:=0; { best.mask = 0 means “nothing found yet” }
+         for submaskIndex:=1 to uint32(1) shl PopCnt(fullMask)-1 do
+           begin
+             cur.mask:=bit_scatter(submaskIndex, fullMask);
+             vres:=vmin and cur.mask; { vmin is arbitrary value belonging to s. By construction, any other value belonging to s will give the same vres. }
+
+             { Mask works reliably if there are no elements from vmin .. vmax not belonging to s that give the same vres. }
+             ok:=true;
+             for v:=vmin+1 to vmax do
+               if not (byte(v) in s) and (v and cur.mask=vres) then
+                 begin
+                   ok:=false;
+                   break;
+                 end;
+             if not ok then
+               continue;
+
+             { Maybe change cur.min/cur.max to baseLo/baseHi if mask keeps working all the way to them. }
+             cur.min:=vmin;
+             while (cur.min>baseLo) and ((cur.min-1) and cur.mask<>vres) do
+               dec(cur.min);
+             if cur.min<>baseLo then
+               cur.min := vmin;
+
+             cur.max:=vmax;
+             while (cur.max<baseHi) and ((cur.max+1) and cur.mask<>vres) do
+               inc(cur.max);
+             if cur.max<>baseHi then
+               cur.max:=vmax;
+
+             better:=best.mask=0;
+             if best.mask<>0 then
+               begin
+                 { Better than the already found mask if relaxes range check more (in the hope to omit it completely). }
+                 curScore:=ord(cur.min=baseLo)+ord(cur.max=baseHi);
+                 bestScore:=ord(best.min=baseLo)+ord(best.max=baseHi);
+                 better:=curScore>bestScore;
+               end;
+             if better then
+               best:=cur;
+           end;
+
+         result:=best.mask<>0;
+         if result then
+           begin
+             self.min:=best.min;
+             self.max:=best.max;
+             self.mask:=best.mask;
+             self.res:=vmin and best.mask;
+           end;
+      end;
+
+
+    function tinsetandshortcut.build(x : tnode;checkLo,checkHi : boolean):tnode;
+      var
+         chk,chk2 : tnode;
+      begin
+         { “x() and mask = res” with exactly one mention of x() is still safe even with side effects. }
+         if (checkLo or checkHi) and might_have_sideeffects(x) then
+           exit(nil);
+         x:=x.getcopy;
+         if not is_integer(x.resultdef) then
+           begin
+             x:=geninlinenode(in_ord_x,false,x);
+             typecheckpass(x); { Deduce x.resultdef. }
+           end;
+
+         { ord(x) and mask = res. }
+         result:=caddnode.create_internal(equaln,
+           caddnode.create_internal(andn,
+             x,
+             cordconstnode.create(mask,x.resultdef,false)),
+           cordconstnode.create(res,x.resultdef,false));
+
+         { maybe add (x >= min) and (x <= max). }
+         chk:=nil;
+         if checkLo then
+           chk:=caddnode.create(gten,x.getcopy,cordconstnode.create(min,x.resultdef,false));
+         if checkHi then
+           begin
+             chk2:=caddnode.create(lten,x.getcopy,cordconstnode.create(max,x.resultdef,false));
+             if assigned(chk) then
+               chk:=caddnode.create(andn,chk,chk2)
+             else
+               chk:=chk2;
+           end;
+         if assigned(chk) then
+           result:=caddnode.create(andn,chk,result);
+      end;
+
+
+    class function tinsetandshortcut.bit_scatter(x,amask : uint32):uint32;
+      var
+         mask1 : uint32;
+      begin
+         result:=0;
+         repeat
+           mask1:=amask and uint32(-int32(amask));
+           if x and 1<>0 then
+             result:=result or mask1;
+           x:=x shr 1;
+           amask:=amask and not mask1;
+         until amask=0;
+      end;
+
+
+
 {*****************************************************************************
                               TINNODE
 *****************************************************************************}
@@ -348,6 +533,11 @@ implementation
     function tinnode.simplify(forinline : boolean):tnode;
       var
         t : tnode;
+        x : integer;
+        ci : tconstexprint;
+        forceCheckLo,forceCheckHi : boolean;
+        baseLo,baseHi : uint32;
+        shortcut : tinsetandshortcut;
       begin
          result:=nil;
          { constant evaluation }
@@ -400,6 +590,27 @@ implementation
              typecheckpass(t);
              result:=t;
              exit;
+           end;
+
+         { Supposed to be a bad idea for small sets, but presently usually generates better code. }
+         if (right.nodetype=setconstn) and (cs_opt_level2 in current_settings.optimizerswitches) and (left.resultdef.typ in [orddef,enumdef]) then
+           begin
+             ci:=get_min_value(left.resultdef);
+             baseLo:=0;
+             forceCheckLo:=ci.uvalue>255; { includes < 0 }
+             if not forceCheckLo then
+               baseLo:=ci.uvalue;
+             ci:=get_max_value(left.resultdef);
+             baseHi:=255;
+             forceCheckHi:=ci.uvalue>255;
+             if not forceCheckHi then
+               baseHi:=ci.uvalue;
+             if shortcut.detect(tsetconstnode(right).value_set^,baseLo,baseHi,tsetdef(right.resultdef).setbase,tsetdef(right.resultdef).setmax) then
+               begin
+                 result:=shortcut.build(left,forceCheckLo or (shortcut.min<>baseLo), forceCheckHi or (shortcut.max<>baseHi));
+                 if assigned(result) then
+                   exit;
+               end;
            end;
       end;
 
