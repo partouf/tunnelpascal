@@ -373,14 +373,14 @@ begin
     GetStr:=P^;
 end;
 
-function IntToStr(L: longint): string;
+function IntToStr(L: longint): string; {$ifdef USEPURE}pure;{$endif}
 var S: string;
 begin
   Str(L,S);
   IntToStr:=S;
 end;
 
-function UpcaseStr(S: string): string;
+function UpcaseStr(S: string): string; {$ifdef USEPURE}pure;{$endif}
 var I: integer;
 begin
   for I:=1 to length(S) do

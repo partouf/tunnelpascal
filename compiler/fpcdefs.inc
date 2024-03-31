@@ -36,6 +36,13 @@
   {$define cpawaremessages}
 {$endif}
 
+{ Use pure functions where appropriate, but not when EXTDEBUG is used }
+{$ifndef EXTDEBUG}
+  {$ifdef FPC_HAS_PURE}
+    {$define USEPURE}
+  {$endif FPC_HAS_PURE}
+{$endif EXTDEBUG}
+
 {$ifdef DEBUG_ALL_OPT}
   { for aopt unit }
   {$define DEBUG_OPTALLOC}

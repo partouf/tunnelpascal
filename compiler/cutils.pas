@@ -59,14 +59,14 @@ interface
     function max(const a,b : Tconstexprint) : Tconstexprint;{$ifdef USEINLINE}inline;{$endif}
 
     {# Return value @var(i) aligned on @var(a) boundary }
-    function align(i,a:longint):longint;{$ifdef USEINLINE}inline;{$endif}
-    function align(i,a:int64):int64;{$ifdef USEINLINE}inline;{$endif}
-    function align(i,a:qword):qword;{$ifdef USEINLINE}inline;{$endif}
+    function align(i,a:longint):longint;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}
+    function align(i,a:int64):int64;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}
+    function align(i,a:qword):qword;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}
     { if you have an address aligned using "oldalignment" and add an
       offset of (a multiple of) offset to it, this function calculates
       the new minimally guaranteed alignment
     }
-    function newalignment(oldalignment: longint; offset: int64): longint;
+    function newalignment(oldalignment: longint; offset: int64): longint;{$ifdef USEPURE}pure;{$endif}
     {# Return @var(b) with the bit order reversed }
     function reverse_byte(b: byte): byte;
     {# Return @var(w) with the bit order reversed }
@@ -74,11 +74,11 @@ interface
     {# Return @var(l) with the bit order reversed }
     function reverse_longword(l: longword): longword;
 
-    function next_prime(l: longint): longint;
+    function next_prime(l: longint): longint;{$ifdef USEPURE}pure;{$endif}
 
-    function used_align(varalign,minalign,maxalign:longint):longint;
-    function isbetteralignedthan(new, org, limit: cardinal): boolean;
-    function packedbitsloadsize(bitlen: int64) : int64;
+    function used_align(varalign,minalign,maxalign:longint):longint;{$ifdef USEPURE}pure;{$endif}
+    function isbetteralignedthan(new, org, limit: cardinal): boolean;{$ifdef USEPURE}pure;{$endif}
+    function packedbitsloadsize(bitlen: int64) : int64;{$ifdef USEPURE}pure;{$endif}
     procedure Replace(var s:string;s1:string;const s2:string);
     procedure Replace(var s:AnsiString;s1:string;const s2:AnsiString);
     procedure ReplaceCase(var s:string;const s1,s2:string);
@@ -103,13 +103,13 @@ interface
     function GetToken(var s:ansistring;endchar:char):ansistring;
     procedure uppervar(var s : string);
     function realtostr(e:extended):string;{$ifdef USEINLINE}inline;{$endif}
-    function tostr(i : qword) : string;{$ifdef USEINLINE}inline;{$endif}overload;
-    function tostr(i : int64) : string;{$ifdef USEINLINE}inline;{$endif}overload;
-    function tostr(i : longint) : string;{$ifdef USEINLINE}inline;{$endif}overload;
-    function tostr_with_plus(i : int64) : string;{$ifdef USEINLINE}inline;{$endif}
+    function tostr(i : qword) : string;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}overload;
+    function tostr(i : int64) : string;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}overload;
+    function tostr(i : longint) : string;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}overload;
+    function tostr_with_plus(i : int64) : string;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}
     function DStr(l:longint):string;
     {# Returns true if the string s is a number }
-    function is_number(const s : string) : boolean;{$ifdef USEINLINE}inline;{$endif}
+    function is_number(const s : string) : boolean;{$ifdef USEPURE}pure;{$endif}{$ifdef USEINLINE}inline;{$endif}
     {# Returns true if value is a power of 2, the actual
        exponent value is returned in power.
     }
