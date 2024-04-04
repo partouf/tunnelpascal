@@ -161,6 +161,8 @@ unit aoptcpu;
                   Result:=OptPass1ADD(p);
                 A_AND:
                   Result:=OptPass1And(p);
+                A_CMOVcc:
+                  Result:=OptPass1CMOVcc(p);
                 A_IMUL:
                   Result:=OptPass1Imul(p);
                 A_CMP:
@@ -294,6 +296,8 @@ unit aoptcpu;
               case taicpu(p).opcode Of
                 A_ADD:
                   Result:=OptPass2ADD(p);
+                A_CMOVcc:
+                  Result:=OptPass2CMOVcc(p);
                 A_CMP:
                   Result:=OptPass2CMP(p);
                 A_TEST:

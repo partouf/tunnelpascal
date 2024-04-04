@@ -1780,9 +1780,8 @@ unit cgcpu;
         ai: taicpu;
         l: TAsmLabel;
       begin
-        if ((cs_check_fpu_exceptions in current_settings.localswitches) and
-            not(FPUARM_HAS_EXCEPTION_TRAPPING in fpu_capabilities[current_settings.fputype]) and
-            (force or current_procinfo.FPUExceptionCheckNeeded)) then
+        if needs_check_for_fpu_exceptions and
+          (force or current_procinfo.FPUExceptionCheckNeeded) then
           begin
             r:=getintregister(list,OS_INT);
             list.concat(taicpu.op_reg_reg(A_FMRX,r,NR_FPSCR));
@@ -3664,10 +3663,10 @@ unit cgcpu;
               else
                 internalerror(2003083102);
             end;
+            ovloc.loc:=LOC_FLAGS;
             if size=OS_64 then
               begin
-                { the arm has an weired opinion how flags for SUB/ADD are handled }
-                ovloc.loc:=LOC_FLAGS;
+                { arm has a weired opinion how flags for SUB/ADD are handled }
                 case op of
                   OP_ADD:
                     ovloc.resflags:=F_CS;
@@ -3676,7 +3675,9 @@ unit cgcpu;
                   else
                     internalerror(2019050917);
                 end;
-              end;
+              end
+            else
+              ovloc.resflags:=F_VS;
           end
         else
           begin

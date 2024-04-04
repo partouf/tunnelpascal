@@ -36,9 +36,14 @@ interface
 ****************************************************************************}
 
     type
+
+       { tstoredsymtable }
+
        tstoredsymtable = class(TSymtable)
        private
           init_final_check_done : boolean;
+          deref_built : boolean;
+          derefimpl_built : boolean;
           procedure _needs_init_final(sym:TObject;arg:pointer);
           procedure do_init_final_check;
           procedure check_forward(sym:TObject;arg:pointer);
@@ -73,6 +78,8 @@ interface
           procedure checklabels;
           function  needs_init_final : boolean; virtual;
           function  has_non_trivial_init:boolean;virtual;
+          function is_derefimpl_built: boolean;
+          function is_deref_built: boolean;
           procedure testfordefaultproperty(sym:TObject;arg:pointer);
           procedure register_children;
        end;
@@ -697,6 +704,15 @@ implementation
         ppufile.writeentry(ibendsyms);
       end;
 
+    function tstoredsymtable.is_deref_built: boolean;
+    begin
+      Result:=deref_built;
+    end;
+
+    function tstoredsymtable.is_derefimpl_built: boolean;
+    begin
+      Result:=derefimpl_built;
+    end;
 
     procedure tstoredsymtable.buildderef;
       var
@@ -716,6 +732,7 @@ implementation
             sym:=tstoredsym(SymList[i]);
             sym.buildderef;
           end;
+        deref_built:=True;
       end;
 
 
@@ -730,6 +747,7 @@ implementation
             def:=tstoreddef(DefList[i]);
             def.buildderefimpl;
           end;
+        derefimpl_built:=True;
       end;
 
 
@@ -3264,9 +3282,79 @@ implementation
         end;
 
       var
+        orgcontextobjdef,
+        orgsymownerdef,
         symownerdef : tabstractrecorddef;
         nonlocalst : tsymtable;
         isspezproc : boolean;
+
+      function check_strict_private:boolean;
+        begin
+          result:=assigned(curstruct) and
+                  is_owned_by(curstruct,symownerdef);
+        end;
+
+      function check_strict_protected:boolean;
+
+        function owner_hierarchy_related(nested,check:tabstractrecorddef):boolean;
+          var
+            owner:tabstractrecorddef;
+          begin
+            result:=true;
+            repeat
+              if def_is_related(nested,check) then
+                exit;
+              if nested.owner.symtabletype in [recordsymtable,objectsymtable] then
+                nested:=tabstractrecorddef(nested.owner.defowner)
+              else
+                break;
+            until not assigned(nested);
+            result:=false;
+          end;
+
+        begin
+          result:=(
+                    { access from nested class (specialization case) }
+                    assigned(curstruct) and
+                    is_owned_by(curstruct,symownerdef)
+                  ) or
+                  (
+                    { access from nested class (non-specialization case) }
+                    (orgsymownerdef<>symownerdef) and
+                    assigned(curstruct) and
+                    is_owned_by(curstruct,orgsymownerdef)
+                  ) or
+                  (
+                    { access from child class (specialization case) }
+                    assigned(contextobjdef) and
+                    assigned(curstruct) and
+                    owner_hierarchy_related(contextobjdef,symownerdef) and
+                    def_is_related(curstruct,contextobjdef)
+                  ) or
+                  (
+                    { access from child class (non-specialization case) }
+                    assigned(orgcontextobjdef) and
+                    (
+                      (orgcontextobjdef<>contextobjdef) or
+                      (orgsymownerdef<>symownerdef)
+                    ) and
+                    assigned(curstruct) and
+                    owner_hierarchy_related(orgcontextobjdef,orgsymownerdef) and
+                    def_is_related(curstruct,orgcontextobjdef)
+                  ) or
+                  (
+                    { helpers can access strict protected symbols }
+                    is_objectpascal_helper(contextobjdef) and
+                    def_is_related(tobjectdef(contextobjdef).extendeddef,symownerdef)
+                  ) or
+                  (
+                    { same as above, but from context of call node inside
+                      helper method }
+                    is_objectpascal_helper(curstruct) and
+                    def_is_related(tobjectdef(curstruct).extendeddef,symownerdef)
+                  );
+        end;
+
       begin
         result:=false;
 
@@ -3275,6 +3363,8 @@ implementation
            not (symst.symtabletype in [objectsymtable,recordsymtable]) then
           internalerror(200810285);
         symownerdef:=tabstractrecorddef(symst.defowner);
+        orgsymownerdef:=symownerdef;
+        orgcontextobjdef:=contextobjdef;
         { for specializations we need to check the visibility of the generic,
           not the specialization (at least when comparing outside of the
           specialization }
@@ -3282,12 +3372,14 @@ implementation
           begin
             if not (symownerdef.genericdef.typ in [objectdef,recorddef]) then
               internalerror(2024020901);
+            orgsymownerdef:=symownerdef;
             symownerdef:=tabstractrecorddef(symownerdef.genericdef);
           end;
         if assigned(contextobjdef) and (df_specialization in contextobjdef.defoptions) then
           begin
             if not (contextobjdef.genericdef.typ in [objectdef,recorddef]) then
               internalerror(2024020902);
+            orgcontextobjdef:=contextobjdef;
             contextobjdef:=tabstractrecorddef(contextobjdef.genericdef);
           end;
         if assigned(current_structdef) and (df_specialization in current_structdef.defoptions) then
@@ -3315,7 +3407,8 @@ implementation
             begin
               { private symbols are allowed when we are in the same
                 module as they are defined }
-              result:=(
+              result:=check_strict_private or
+                      (
                        (nonlocalst.symtabletype in [globalsymtable,staticsymtable]) and
                        is_current_unit(nonlocalst)
                       ) or
@@ -3349,50 +3442,42 @@ implementation
             end;
           vis_strictprivate :
             begin
-              result:=assigned(curstruct) and
-                      is_owned_by(curstruct,symownerdef);
+              result:=check_strict_private;
             end;
           vis_strictprotected :
             begin
-               result:=(
-                         { access from nested class }
-                         assigned(curstruct) and
-                         is_owned_by(curstruct,symownerdef)
-                       ) or
-                       (
-                         { access from child class }
-                         assigned(contextobjdef) and
-                         assigned(curstruct) and
-                         def_is_related(contextobjdef,symownerdef) and
-                         def_is_related(curstruct,contextobjdef)
-                       ) or
-                       (
-                         { helpers can access strict protected symbols }
-                         is_objectpascal_helper(contextobjdef) and
-                         def_is_related(tobjectdef(contextobjdef).extendeddef,symownerdef)
-                       ) or
-                       (
-                         { same as above, but from context of call node inside
-                           helper method }
-                         is_objectpascal_helper(curstruct) and
-                         def_is_related(tobjectdef(curstruct).extendeddef,symownerdef)
-                       );
+              result:=check_strict_protected;
             end;
           vis_protected :
             begin
               { protected symbols are visible in the module that defines them and
                 also visible to related objects. The related object must be defined
                 in the current module }
-              result:=(
+              result:=check_strict_protected or
+                      (
                        (
                         (nonlocalst.symtabletype in [globalsymtable,staticsymtable]) and
                         is_current_unit(nonlocalst)
                        ) or
                        (
+                        { context object is inside the current unit and related to
+                          the symbol owner (specialization case) }
                         assigned(contextobjdef) and
                         (contextobjdef.owner.symtabletype in [globalsymtable,staticsymtable,ObjectSymtable,recordsymtable,localsymtable]) and
                         is_current_unit(contextobjdef.owner) and
                         def_is_related(contextobjdef,symownerdef)
+                       ) or
+                       (
+                        { context object is inside the current unit and related to
+                          the symbol owner (non-specialization case) }
+                        assigned(orgcontextobjdef) and
+                        (
+                          (orgcontextobjdef<>contextobjdef) or
+                          (orgsymownerdef<>symownerdef)
+                        ) and
+                        (orgcontextobjdef.owner.symtabletype in [globalsymtable,staticsymtable,ObjectSymtable,recordsymtable,localsymtable]) and
+                        is_current_unit(orgcontextobjdef.owner) and
+                        def_is_related(orgcontextobjdef,orgsymownerdef)
                        ) or
                        ( // the case of specialize inside the generic declaration and nested types
                         (nonlocalst.symtabletype in [objectsymtable,recordsymtable]) and
@@ -3406,11 +3491,6 @@ implementation
                         (
                           not assigned(curstruct) and
                           (symownerdef.owner.iscurrentunit)
-                        ) or
-                        (
-                          { helpers can access protected symbols }
-                          is_objectpascal_helper(contextobjdef) and
-                          def_is_related(tobjectdef(contextobjdef).extendeddef,symownerdef)
                         )
                        ) or
                        { access from a generic method that belongs to the class

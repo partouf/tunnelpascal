@@ -541,6 +541,22 @@ Implementation
                     begin
                       if MatchOperand(taicpu(next_hp).oper[0]^, taicpu(p).oper[0]^.reg) then
                         begin
+                          { mov r0,r1; mov r1,r1 - remove second MOV here so
+                            so "RedundantMovProcess 2b" doesn't get erroneously
+                            applied }
+                          if MatchOperand(taicpu(next_hp).oper[0]^, taicpu(next_hp).oper[1]^.reg) then
+                            begin
+                              DebugMsg(SPeepholeOptimization + 'Mov2None 2a done', next_hp);
+
+                              if (next_hp = hp1) then
+                                { Don't let hp1 become a dangling pointer }
+                                hp1 := nil;
+
+                              asml.Remove(next_hp);
+                              next_hp.Free;
+                              Continue;
+                            end;
+
                           { Found another mov that writes entirely to the register }
                           if RegUsedBetween(taicpu(p).oper[0]^.reg, p, next_hp) then
                             begin
@@ -1660,7 +1676,15 @@ Implementation
                   taicpu(p).oppostfix := PF_None;
                   taicpu(p).loadreg(0, taicpu(p).oper[1]^.reg);
                   taicpu(p).loadoper(1, taicpu(p).oper[2]^);
-                  taicpu(p).ops := 2;
+                  if (taicpu(p).ops = 4) then
+                    begin
+                      { Make sure any shifter operator is also transferred }
+                      taicpu(p).loadshifterop(2, taicpu(p).oper[3]^.shifterop^);
+                      taicpu(p).ops := 3;
+                    end
+                  else
+                    taicpu(p).ops := 2;
+
                   DebugMsg(SPeepholeOptimization + 'AND; CMP -> TST', p);
                 end
               else
