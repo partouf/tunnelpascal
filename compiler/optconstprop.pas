@@ -350,7 +350,16 @@ unit optconstprop;
                            (tloadnode(l).symtable.symtabletype=staticsymtable)
                           )
                          )) or
-                        (l.nodetype = temprefn)) and
+                         { Don't propagate if the node is a tempref used as a
+                           function result.  This causes problems with inline
+                           functions (Internal Error 200307043) }
+                         ((l.nodetype = temprefn) and
+                           (
+                             PPropagateInfo(arg)^.pure_function or
+                             not (nf_is_funcret in l.flags)
+                           )
+                         )
+                       ) and
                        (is_constintnode(a.right) or
                         is_constboolnode(a.right) or
                         is_constcharnode(a.right) or
