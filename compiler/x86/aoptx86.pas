@@ -228,6 +228,8 @@ unit aoptx86;
         function TryCmpCMovOpts(var p, hp1: tai) : Boolean;
         function TryJccStcClcOpt(var p, hp1: tai): Boolean;
 
+        class function SignedWrap(const value: TCGInt; bitsize: Byte): TCGInt; static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
       end;
@@ -2971,6 +2973,8 @@ unit aoptx86;
                           ExcludeRegFromUsedRegs(p_TargetReg, TmpUsedRegs);
                           AllocRegBetween(p_TargetReg, hp2, p, TmpUsedRegs);
                         end;
+
+                      UpdateUsedRegs(tai(p.Next));
                       RemoveCurrentp(p, hp1);
 
                       { If the Func was another MOV instruction, we might get
@@ -5843,12 +5847,20 @@ unit aoptx86;
       end;
 
 
+    class function TX86AsmOptimizer.SignedWrap(const value: TCGInt; bitsize: Byte): TCGInt; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      begin
+        bitsize := 64 - bitsize; { Shift amount }
+        Result := SarInt64(TCGInt(QWord(value) shl bitsize), bitsize);
+      end;
+
+
     function TX86AsmOptimizer.OptPass1Add(var p : tai) : boolean;
       var
         hp1, hp2: tai;
         ActiveReg: TRegister;
         OldOffset: asizeint;
         ThisConst: TCGInt;
+        Adjacent: Boolean;
 
       function RegDeallocated: Boolean;
         begin
@@ -5928,75 +5940,93 @@ unit aoptx86;
               MatchInstruction(hp1,A_ADD,A_SUB,[taicpu(p).opsize]) and
               (taicpu(hp1).oper[1]^.reg = ActiveReg) then
               begin
-                if taicpu(hp1).oper[0]^.typ = top_const then
+                { Make doubly sure the flags aren't in use because the order of additions may affect them }
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.next));
+                hp2 := p;
+                Adjacent := True;
+
+                while not (cs_opt_level3 in current_settings.optimizerswitches) and
+                  GetNextInstruction(hp2, hp2) and (hp2 <> hp1) do
                   begin
-                    { Merge add const1,%reg; add/sub const2,%reg to add const1+/-const2,%reg }
-                    if taicpu(hp1).opcode = A_ADD then
-                      ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val
-                    else
-                      ThisConst := taicpu(p).oper[0]^.val - taicpu(hp1).oper[0]^.val;
+                    UpdateUsedRegs(TmpUsedRegs, tai(hp2.next));
+                    Adjacent := False;
+                  end;
 
-                    Result := True;
-
-                    { Handle any overflows }
-                    case taicpu(p).opsize of
-                      S_B:
-                        taicpu(p).oper[0]^.val := ThisConst and $FF;
-                      S_W:
-                        taicpu(p).oper[0]^.val := ThisConst and $FFFF;
-                      S_L:
-                        taicpu(p).oper[0]^.val := ThisConst and $FFFFFFFF;
-{$ifdef x86_64}
-                      S_Q:
-                        if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
-                          { Overflow; abort }
-                          Result := False
-                        else
-                          taicpu(p).oper[0]^.val := ThisConst;
-{$endif x86_64}
-                      else
-                        InternalError(2021102610);
-                    end;
-
-                    { Result may get set to False again if the combined immediate overflows for S_Q sizes }
-                    if Result then
-                      begin
-                        if (taicpu(p).oper[0]^.val < 0) and
-                          (
-                            ((taicpu(p).opsize = S_B) and (taicpu(p).oper[0]^.val <> -128)) or
-                            ((taicpu(p).opsize = S_W) and (taicpu(p).oper[0]^.val <> -32768)) or
-                            ((taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and (taicpu(p).oper[0]^.val <> -2147483648))
-                          ) then
-                          begin
-                            DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB -> SUB',p);
-                            taicpu(p).opcode := A_SUB;
-                            taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
-                          end
-                        else
-                          DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB -> ADD',p);
-                        RemoveInstruction(hp1);
-                      end;
-                  end
-                else
+                if Adjacent or not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
                   begin
-                    { Make doubly sure the flags aren't in use because the order of additions may affect them }
-                    TransferUsedRegs(TmpUsedRegs);
-                    UpdateUsedRegs(TmpUsedRegs, tai(p.next));
-                    hp2 := p;
-
-                    while not (cs_opt_level3 in current_settings.optimizerswitches) and
-                      GetNextInstruction(hp2, hp2) and (hp2 <> hp1) do
-                      UpdateUsedRegs(TmpUsedRegs, tai(hp2.next));
-
-                    if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                    if taicpu(hp1).oper[0]^.typ = top_const then
                       begin
-                        { Move the constant addition to after the reg/ref addition to improve optimisation }
-                        DebugMsg(SPeepholeOptimization + 'Add/sub swap 1a done',p);
-                        Asml.Remove(p);
-                        Asml.InsertAfter(p, hp1);
-                        p := hp1;
+                        { Merge add const1,%reg; add/sub const2,%reg to add const1+/-const2,%reg }
+                        if taicpu(hp1).opcode = A_ADD then
+                          ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val
+                        else
+                          ThisConst := taicpu(p).oper[0]^.val - taicpu(hp1).oper[0]^.val;
+
                         Result := True;
-                        Exit;
+
+                        { Handle any overflows }
+                        case taicpu(p).opsize of
+                          S_B:
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 8);
+                          S_W:
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 16);
+                          S_L:
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 32);
+{$ifdef x86_64}
+                          S_Q:
+                            if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
+                              { Overflow; abort }
+                              Result := False
+                            else
+                              taicpu(p).oper[0]^.val := ThisConst;
+{$endif x86_64}
+                          else
+                            InternalError(2021102610);
+                        end;
+
+                        if Result then
+                          begin
+                            { If the flags are in use, make sure the resultant
+                              opcode matches the second instruction so the
+                              overflow flag isn't affected }
+                            if (taicpu(p).oper[0]^.val < 0) or RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) and
+                              (
+                                (taicpu(p).oper[0]^.val > -128) or { Numbers between -128 and 0 can be encoded as signed bytes }
+                                ((taicpu(p).opsize = S_B) and (taicpu(p).oper[0]^.val <> -128)) or
+                                ((taicpu(p).opsize = S_W) and (taicpu(p).oper[0]^.val <> -32768)) or
+                                ((taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and (taicpu(p).oper[0]^.val <> -2147483648))
+                              ) then
+                              begin
+                                DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB -> SUB',p);
+                                taicpu(p).opcode := A_SUB;
+                                taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
+                              end
+                            else if (taicpu(p).oper[0]^.val = 0) then
+                              begin
+                                DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB = 0 -> NOP',p);
+                                RemoveInstruction(hp1);
+                                RemoveCurrentP(p);
+                                Exit;
+                              end
+                            else
+                              DebugMsg(SPeepholeOptimization + 'ADD; ADD/SUB -> ADD',p);
+                            RemoveInstruction(hp1);
+                          end;
+                      end
+                    else
+                      begin
+                        { Flags must not be in use because the order of additions may affect them }
+                        if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                          begin
+                            { Move the constant addition to after the reg/ref addition to improve optimisation }
+                            DebugMsg(SPeepholeOptimization + 'Add/sub swap 1a done',p);
+                            Asml.Remove(p);
+                            Asml.InsertAfter(p, hp1);
+                            p := hp1;
+                            Result := True;
+                            Exit;
+                          end;
                       end;
                   end;
               end;
@@ -6939,6 +6969,8 @@ unit aoptx86;
         ActiveReg: TRegister;
         OldOffset: asizeint;
         ThisConst: TCGInt;
+        Adjacent: Boolean;
+
 
       function RegDeallocated: Boolean;
         begin
@@ -7012,74 +7044,102 @@ unit aoptx86;
                 Assigned(hp1) or
                 GetNextInstructionUsingReg(p,hp1, ActiveReg)
               ) and
-              MatchInstruction(hp1,A_SUB,[taicpu(p).opsize]) and
+              MatchInstruction(hp1,A_ADD,A_SUB,[taicpu(p).opsize]) and
               (taicpu(hp1).oper[1]^.reg = ActiveReg) then
               begin
-                if taicpu(hp1).oper[0]^.typ = top_const then
+                { Make doubly sure the flags aren't in use because the order of additions may affect them }
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.next));
+                hp2 := p;
+                Adjacent := True;
+
+                while not (cs_opt_level3 in current_settings.optimizerswitches) and
+                  GetNextInstruction(hp2, hp2) and (hp2 <> hp1) do
                   begin
-                    { Merge add const1,%reg; add const2,%reg to add const1+const2,%reg }
-                    ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val;
-                    Result := True;
+                    UpdateUsedRegs(TmpUsedRegs, tai(hp2.next));
+                    Adjacent := False;
+                  end;
 
-                    { Handle any overflows }
-                    case taicpu(p).opsize of
-                      S_B:
-                        taicpu(p).oper[0]^.val := ThisConst and $FF;
-                      S_W:
-                        taicpu(p).oper[0]^.val := ThisConst and $FFFF;
-                      S_L:
-                        taicpu(p).oper[0]^.val := ThisConst and $FFFFFFFF;
-{$ifdef x86_64}
-                      S_Q:
-                        if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
-                          { Overflow; abort }
-                          Result := False
-                        else
-                          taicpu(p).oper[0]^.val := ThisConst;
-{$endif x86_64}
-                      else
-                        InternalError(2021102611);
-                    end;
-
-                    { Result may get set to False again if the combined immediate overflows for S_Q sizes }
-                    if Result then
-                      begin
-                        if (taicpu(p).oper[0]^.val < 0) and
-                          (
-                            ((taicpu(p).opsize = S_B) and (taicpu(p).oper[0]^.val <> -128)) or
-                            ((taicpu(p).opsize = S_W) and (taicpu(p).oper[0]^.val <> -32768)) or
-                            ((taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and (taicpu(p).oper[0]^.val <> -2147483648))
-                          ) then
-                          begin
-                            DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> ADD',p);
-                            taicpu(p).opcode := A_SUB;
-                            taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
-                          end
-                        else
-                          DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> SUB',p);
-                        RemoveInstruction(hp1);
-                      end;
-                  end
-                else
+                if Adjacent or not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
                   begin
-                    { Make doubly sure the flags aren't in use because the order of subtractions may affect them }
-                    TransferUsedRegs(TmpUsedRegs);
-                    UpdateUsedRegs(TmpUsedRegs, tai(p.next));
-                    hp2 := p;
-
-                    while not (cs_opt_level3 in current_settings.optimizerswitches) and
-                      GetNextInstruction(hp2, hp2) and (hp2 <> hp1) do
-                      UpdateUsedRegs(TmpUsedRegs, tai(hp2.next));
-
-                    if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                    if taicpu(hp1).oper[0]^.typ = top_const then
                       begin
-                        { Move the constant subtraction to after the reg/ref addition to improve optimisation }
-                        DebugMsg(SPeepholeOptimization + 'Add/sub swap 1b done',p);
-                        Asml.Remove(p);
-                        Asml.InsertAfter(p, hp1);
-                        p := hp1;
+                        { Merge sub const1,%reg; add/sub const2,%reg to sub const1+/-const2,%reg }
+                        if taicpu(hp1).opcode = A_SUB then
+                          ThisConst := taicpu(p).oper[0]^.val + taicpu(hp1).oper[0]^.val
+                        else
+                          ThisConst := taicpu(p).oper[0]^.val - taicpu(hp1).oper[0]^.val;
+
                         Result := True;
-                        Exit;
+
+                        { Handle any overflows }
+                        case taicpu(p).opsize of
+                          S_B:
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 8);
+                          S_W:
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 16);
+                          S_L:
+                            taicpu(p).oper[0]^.val := SignedWrap(ThisConst, 32);
+{$ifdef x86_64}
+                          S_Q:
+                            if (ThisConst > $7FFFFFFF) or (ThisConst < -2147483648) then
+                              { Overflow; abort }
+                              Result := False
+                            else
+                              taicpu(p).oper[0]^.val := ThisConst;
+{$endif x86_64}
+                          else
+                            InternalError(2021102611);
+                        end;
+
+                        { Result may get set to False again if the combined immediate overflows for S_Q sizes }
+                        if Result then
+                          begin
+                            { If the flags are in use, make sure the resultant
+                              opcode matches the second instruction so the
+                              overflow flag isn't affected }
+                            if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                              begin
+                                if (taicpu(p).oper[0]^.val < 0) and
+                                  (
+                                    (taicpu(p).oper[0]^.val > -128) or { Numbers between -128 and 0 can be encoded as signed bytes }
+                                    ((taicpu(p).opsize = S_B) and (taicpu(p).oper[0]^.val <> -128)) or
+                                    ((taicpu(p).opsize = S_W) and (taicpu(p).oper[0]^.val <> -32768)) or
+                                    ((taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and (taicpu(p).oper[0]^.val <> -2147483648))
+                                  ) then
+                                  begin
+                                    DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> ADD',p);
+                                    taicpu(p).opcode := A_ADD;
+                                    taicpu(p).oper[0]^.val := -taicpu(p).oper[0]^.val;
+                                  end
+                                else if (taicpu(p).oper[0]^.val = 0) then
+                                  begin
+                                    DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB = 0 -> NOP',p);
+                                    RemoveInstruction(hp1);
+                                    RemoveCurrentP(p);
+                                    Exit;
+                                  end
+                                else
+                                  DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> SUB',p);
+                              end
+                            else
+                              DebugMsg(SPeepholeOptimization + 'SUB; ADD/SUB -> SUB (flags in use)',p);
+                            RemoveInstruction(hp1);
+                          end;
+                      end
+                    else
+                      begin
+                        { Flags must not be in use because the order of subtractions may affect them }
+                        if not RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+                          begin
+                            { Move the constant subtraction to after the reg/ref addition to improve optimisation }
+                            DebugMsg(SPeepholeOptimization + 'Add/sub swap 1b done',p);
+                            Asml.Remove(p);
+                            Asml.InsertAfter(p, hp1);
+                            p := hp1;
+                            Result := True;
+                            Exit;
+                          end;
                       end;
                   end;
               end;
@@ -10210,8 +10270,9 @@ unit aoptx86;
             taicpu(hp1).oper[0]^.reg := taicpu(p).oper[0]^.reg;
             DebugMsg(SPeepholeOptimization + 'mov %reg1,%reg2; movzx/sx %reg2,%reg3 -> mov %reg1,%reg2;movzx/sx %reg1,%reg3',p);
 
-            { Don't remove the MOV command without first checking that reg2 isn't used afterwards,
-              or unless supreg(reg3) = supreg(reg2)). [Kit] }
+            if not Result then
+              { Don't forget the backward optimisation }
+              FuncMov2Func(p, hp1);
 
             TransferUsedRegs(TmpUsedRegs);
             UpdateUsedRegs(TmpUsedRegs, tai(p.next));
@@ -10513,6 +10574,7 @@ unit aoptx86;
                     RemoveInstruction(hp2);
 
                     Include(OptsToCheck, aoc_ForceNewIteration);
+                    Exit;
 (*
 {$ifdef x86_64}
                   end
@@ -10562,8 +10624,51 @@ unit aoptx86;
                     RemoveInstruction(hp2);
 
                     Include(OptsToCheck, aoc_ForceNewIteration);
+                    Exit;
 {$endif x86_64}
 *)
+                  end;
+              end
+            else if (taicpu(p).oper[0]^.typ = top_reg) and
+              (taicpu(p).oper[1]^.typ = top_reg) and
+              IsXCHGAcceptable and
+              { XCHG doesn't support 8-byte registers }
+              (taicpu(p).opsize <> S_B) and
+              MatchInstruction(hp1, A_MOV, []) and
+              MatchOpType(taicpu(hp1),top_reg,top_reg) and
+              (taicpu(hp1).oper[1]^.reg = taicpu(p).oper[0]^.reg) and
+              not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) and
+              GetNextInstruction(hp1, hp2) and
+              MatchInstruction(hp2, A_MOV, []) and
+              { Don't need to call MatchOpType for hp2 because the operand matches below cover for it }
+              MatchOperand(taicpu(hp2).oper[0]^, taicpu(p).oper[1]^.reg) and
+              MatchOperand(taicpu(hp2).oper[1]^, taicpu(hp1).oper[0]^.reg) then
+              begin
+                { mov %reg1,%reg2
+                  mov %reg3,%reg1        ->  xchg %reg3,%reg1
+                  mov %reg2,%reg3
+                  (%reg2 not used afterwards)
+
+                  Note that xchg takes 3 cycles to execute, and generally mov's take
+                  only one cycle apiece, but the first two mov's can be executed in
+                  parallel, only taking 2 cycles overall.  Older processors should
+                  therefore only optimise for size. [Kit]
+                }
+                TransferUsedRegs(TmpUsedRegs);
+                UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+                UpdateUsedRegs(TmpUsedRegs, tai(hp1.Next));
+
+                if not RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp2, TmpUsedRegs) then
+                  begin
+                    DebugMsg(SPeepholeOptimization + 'MovMovMov2XChg', p);
+                    AllocRegBetween(taicpu(hp2).oper[1]^.reg, p, hp1, UsedRegs);
+                    taicpu(hp1).opcode := A_XCHG;
+
+                    RemoveCurrentP(p, hp1);
+                    RemoveInstruction(hp2);
+
+                    Result := True;
+                    Exit;
                   end;
               end;
 {$ifdef x86_64}
@@ -10676,6 +10781,105 @@ unit aoptx86;
           begin
             Result := True;
             Exit;
+          end;
+
+        if { Everything from this point on requires the destination to be a register }
+          (taicpu(p).oper[1]^.typ <> top_reg) or
+          (
+            { GetNextInstructionUsingReg only gets the next instruction on -O2
+              and below, so don't bother calling  GetNextInstructionUsingReg in
+              this case, since it will just return what hp1 is already set to. }
+            (cs_opt_level3 in current_settings.optimizerswitches) and
+            not GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[1]^.reg)
+          ) then
+          Exit;
+
+        if (taicpu(p).oper[0]^.typ = top_reg) and
+          (taicpu(p).opsize in [S_L{$ifdef x86_64}, S_Q{$endif x86_64}]) and
+          MatchInstruction(hp1,A_ADD,A_SUB,[taicpu(p).opsize]) and
+          (taicpu(hp1).oper[1]^.typ = top_reg) and
+          (taicpu(hp1).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
+          not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) then
+          begin
+            { Change:
+                movl/q %reg1,%reg2      movl/q %reg1,%reg2
+                addl/q $x,%reg2         subl/q $x,%reg2
+              To:
+                leal/q x(%reg1),%reg2   leal/q -x(%reg1),%reg2
+            }
+            TransferUsedRegs(TmpUsedRegs);
+
+            hp3 := p;
+            repeat
+              UpdateUsedRegs(TmpUsedRegs, tai(hp3.Next));
+            until not GetNextInstruction(hp3, hp3) or (hp3 = hp1);
+
+            repeat
+              if (taicpu(hp1).oper[0]^.typ = top_const) and
+                { be lazy, checking separately for sub would be slightly better }
+                (abs(taicpu(hp1).oper[0]^.val)<=$7fffffff) then
+                begin
+                  if TryMovArith2Lea(hp1) then
+                    begin
+                      Result := True;
+                      Exit;
+                    end
+                end
+              else if not RegInOp(taicpu(p).oper[1]^.reg, taicpu(hp1).oper[0]^) and
+                { See if there's another add or sub afterwards that can be merged }
+                GetNextInstructionUsingReg(hp1, hp2, taicpu(p).oper[1]^.reg) and
+                MatchInstruction(hp2,A_ADD,A_SUB,[taicpu(p).opsize]) and
+                (taicpu(hp2).oper[1]^.typ = top_reg) and
+                (taicpu(hp2).oper[1]^.reg = taicpu(p).oper[1]^.reg) and
+                not RegModifiedBetween(taicpu(p).oper[0]^.reg, hp1, hp2) then
+                begin
+                  { we have a potential candidate, so update TmpUsedRegs and
+                    check the optimisation again - repeat as many times as
+                    necessary until we find something that is invalid }
+
+                  hp3 := hp1;
+                  repeat
+                    UpdateUsedRegs(TmpUsedRegs, tai(hp3.Next));
+                  until not GetNextInstruction(hp3, hp3) or (hp3 = hp2);
+
+                  hp1 := hp2;
+
+                  Continue;
+                end;
+
+              Break;
+            until False;
+          end
+        else if (taicpu(p).oper[0]^.typ = top_reg) and
+{$ifdef x86_64}
+          MatchInstruction(hp1,A_MOVZX,A_MOVSX,A_MOVSXD,[]) and
+{$else x86_64}
+          MatchInstruction(hp1,A_MOVZX,A_MOVSX,[]) and
+{$endif x86_64}
+          MatchOpType(taicpu(hp1),top_reg,top_reg) and
+          (taicpu(hp1).oper[0]^.reg = taicpu(p).oper[1]^.reg) and
+          not RegModifiedBetween(taicpu(p).oper[0]^.reg, p, hp1) then
+          { mov reg1, reg2                mov reg1, reg2
+            movzx/sx reg2, reg3      to   movzx/sx reg1, reg3}
+          begin
+            taicpu(hp1).oper[0]^.reg := taicpu(p).oper[0]^.reg;
+            DebugMsg(SPeepholeOptimization + 'mov %reg1,%reg2; movzx/sx %reg2,%reg3 -> mov %reg1,%reg2;movzx/sx %reg1,%reg3',p);
+
+            { Don't remove the MOV command without first checking that reg2 isn't used afterwards,
+              or unless supreg(reg3) = supreg(reg2)). [Kit] }
+
+            TransferUsedRegs(TmpUsedRegs);
+            UpdateUsedRegs(TmpUsedRegs, tai(p.next));
+
+            if (getsupreg(taicpu(p).oper[1]^.reg) = getsupreg(taicpu(hp1).oper[1]^.reg)) or
+              not RegUsedAfterInstruction(taicpu(p).oper[1]^.reg, hp1, TmpUsedRegs)
+            then
+              begin
+                RemoveCurrentP(p, hp1);
+                Result:=true;
+              end;
+
+            exit;
           end;
       end;
 
@@ -16508,6 +16712,10 @@ unit aoptx86;
                       { Stop searching at an unconditional jump }
                       Break;
 
+                    if RegLoadedWithNewValue(NR_DEFAULTFLAGS, hp1) then
+                      { Flags completely overwritten - safe endpoint }
+                      Break;
+
                     if not
                       (
                         MatchInstruction(hp1, A_ADC, A_SBB, []) and
@@ -16528,18 +16736,42 @@ unit aoptx86;
                   begin
                     NewCond := C_None;
 
-                    case taicpu(hp2).condition of
-                      C_A, C_NBE:
-                        NewCond := C_BE;
-                      C_B, C_C, C_NAE:
-                        NewCond := C_AE;
-                      C_AE, C_NB, C_NC:
-                        NewCond := C_B;
-                      C_BE, C_NA:
-                        NewCond := C_A;
-                      else
-                        { No change needed };
-                    end;
+                    { Invert the carry bits in the conditions, but the
+                      meaning of the zero flag depends on the operation }
+                    if Opposite = A_ADD then
+                      begin
+                        { If a sub becomes an add, the zero flag is NOT an
+                          overflow }
+                        case taicpu(hp2).condition of
+                          C_A, C_NBE:
+                            NewCond := C_B;
+                          C_B, C_C, C_NAE:
+                            NewCond := C_A;
+                          C_AE, C_NB, C_NC:
+                            NewCond := C_BE;
+                          C_BE, C_NA:
+                            NewCond := C_AE;
+                          else
+                            { No change needed };
+                        end;
+                      end
+                    else
+                      begin
+                        { If an add becomes a sub, the zero flag is an
+                          overflow }
+                        case taicpu(hp2).condition of
+                          C_A, C_NBE:
+                            NewCond := C_BE;
+                          C_B, C_C, C_NAE:
+                            NewCond := C_AE;
+                          C_AE, C_NB, C_NC:
+                            NewCond := C_B;
+                          C_BE, C_NA:
+                            NewCond := C_A;
+                          else
+                            { No change needed };
+                        end;
+                      end;
 
                     if NewCond <> C_None then
                       begin
