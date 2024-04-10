@@ -173,43 +173,43 @@ Const
 {$ENDIF}
 
 { Min/max determination }
-function MinIntValue(const Data: array of Integer): Integer;
-function MaxIntValue(const Data: array of Integer): Integer;
+function MinIntValue(const Data: array of Integer): Integer; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function MaxIntValue(const Data: array of Integer): Integer; {$ifdef FPC_HAS_PURE}pure;{$endif}
 
 { Extra, not present in Delphi, but used frequently  }
-function Min(a, b: Integer): Integer;inline; overload;
-function Max(a, b: Integer): Integer;inline; overload;
+function Min(a, b: Integer): Integer;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Max(a, b: Integer): Integer;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 { this causes more trouble than it solves
-function Min(a, b: Cardinal): Cardinal; overload;
-function Max(a, b: Cardinal): Cardinal; overload;
+function Min(a, b: Cardinal): Cardinal; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Max(a, b: Cardinal): Cardinal; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 }
-function Min(a, b: Int64): Int64;inline; overload;
-function Max(a, b: Int64): Int64;inline; overload;
-function Min(a, b: QWord): QWord;inline; overload;
-function Max(a, b: QWord): QWord;inline; overload;
+function Min(a, b: Int64): Int64;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Max(a, b: Int64): Int64;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Min(a, b: QWord): QWord;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Max(a, b: QWord): QWord;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_SINGLE}
-function Min(a, b: Single): Single;inline; overload;
-function Max(a, b: Single): Single;inline; overload;
+function Min(a, b: Single): Single;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Max(a, b: Single): Single;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_SINGLE}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function Min(a, b: Double): Double;inline; overload;
-function Max(a, b: Double): Double;inline; overload;
+function Min(a, b: Double): Double;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Max(a, b: Double): Double;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function Min(a, b: Extended): Extended;inline; overload;
 function Max(a, b: Extended): Extended;inline; overload;
 {$endif FPC_HAS_TYPE_EXTENDED}
 
-function InRange(const AValue, AMin, AMax: Integer): Boolean;inline; overload;
-function InRange(const AValue, AMin, AMax: Int64): Boolean;inline; overload;
+function InRange(const AValue, AMin, AMax: Integer): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function InRange(const AValue, AMin, AMax: Int64): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function InRange(const AValue, AMin, AMax: Double): Boolean;inline;  overload;
+function InRange(const AValue, AMin, AMax: Double): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 
-function EnsureRange(const AValue, AMin, AMax: Integer): Integer;inline;  overload;
-function EnsureRange(const AValue, AMin, AMax: Int64): Int64;inline;  overload;
+function EnsureRange(const AValue, AMin, AMax: Integer): Integer;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function EnsureRange(const AValue, AMin, AMax: Int64): Int64;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function EnsureRange(const AValue, AMin, AMax: Double): Double;inline;  overload;
+function EnsureRange(const AValue, AMin, AMax: Double): Double;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 
 
@@ -220,18 +220,18 @@ procedure DivMod(Dividend: LongInt; Divisor: LongInt; var Result, Remainder: Lon
 
 { Floating point modulo}
 {$ifdef FPC_HAS_TYPE_SINGLE}
-function FMod(const a, b: Single): Single;inline;overload;
+function FMod(const a, b: Single): Single;inline;overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_SINGLE}
 
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function FMod(const a, b: Double): Double;inline;overload;
+function FMod(const a, b: Double): Double;inline;overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function FMod(const a, b: Extended): Extended;inline;overload;
+function FMod(const a, b: Extended): Extended;inline;overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_EXTENDED}
 
-operator mod(const a,b:float) c:float;inline;
+operator mod(const a,b:float) c:float;inline; {$ifdef FPC_HAS_PURE}pure;{$endif}
 
 // Sign functions
 Type
@@ -242,78 +242,78 @@ const
   ZeroValue = 0;
   PositiveValue = High(TValueSign);
 
-function Sign(const AValue: Integer): TValueSign;inline; overload;
-function Sign(const AValue: Int64): TValueSign;inline; overload;
+function Sign(const AValue: Integer): TValueSign;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function Sign(const AValue: Int64): TValueSign;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_SINGLE}
-function Sign(const AValue: Single): TValueSign;inline; overload;
+function Sign(const AValue: Single): TValueSign;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
-function Sign(const AValue: Double): TValueSign;inline; overload;
+function Sign(const AValue: Double): TValueSign;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function Sign(const AValue: Extended): TValueSign;inline; overload;
+function Sign(const AValue: Extended): TValueSign;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 
-function IsZero(const A: Single; Epsilon: Single): Boolean; overload;
-function IsZero(const A: Single): Boolean;inline; overload;
+function IsZero(const A: Single; Epsilon: Single): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function IsZero(const A: Single): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function IsZero(const A: Double; Epsilon: Double): Boolean; overload;
-function IsZero(const A: Double): Boolean;inline; overload;
+function IsZero(const A: Double; Epsilon: Double): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function IsZero(const A: Double): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function IsZero(const A: Extended; Epsilon: Extended): Boolean; overload;
-function IsZero(const A: Extended): Boolean;inline; overload;
+function IsZero(const A: Extended; Epsilon: Extended): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
+function IsZero(const A: Extended): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_EXTENDED}
 
-function IsNan(const d : Single): Boolean; overload;
+function IsNan(const d : Single): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function IsNan(const d : Double): Boolean; overload;
+function IsNan(const d : Double): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function IsNan(const d : Extended): Boolean; overload;
+function IsNan(const d : Extended): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_EXTENDED}
 
-function IsInfinite(const d : Single): Boolean; overload;
+function IsInfinite(const d : Single): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function IsInfinite(const d : Double): Boolean; overload;
+function IsInfinite(const d : Double): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_DOUBLE}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function IsInfinite(const d : Extended): Boolean; overload;
+function IsInfinite(const d : Extended): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif FPC_HAS_TYPE_EXTENDED}
 
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function SameValue(const A, B: Extended): Boolean;inline; overload;
+function SameValue(const A, B: Extended): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function SameValue(const A, B: Double): Boolean;inline; overload;
+function SameValue(const A, B: Double): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
-function SameValue(const A, B: Single): Boolean;inline; overload;
+function SameValue(const A, B: Single): Boolean;inline; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function SameValue(const A, B: Extended; Epsilon: Extended): Boolean; overload;
+function SameValue(const A, B: Extended; Epsilon: Extended): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function SameValue(const A, B: Double; Epsilon: Double): Boolean; overload;
+function SameValue(const A, B: Double; Epsilon: Double): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
-function SameValue(const A, B: Single; Epsilon: Single): Boolean; overload;
+function SameValue(const A, B: Single; Epsilon: Single): Boolean; overload; {$ifdef FPC_HAS_PURE}pure;{$endif}
 
 type
   TRoundToRange = -37..37;
 
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function RoundTo(const AValue: Double; const Digits: TRoundToRange): Double;
+function RoundTo(const AValue: Double; const Digits: TRoundToRange): Double; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function RoundTo(const AVAlue: Extended; const Digits: TRoundToRange): Extended;
+function RoundTo(const AVAlue: Extended; const Digits: TRoundToRange): Extended; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_SINGLE}
-function RoundTo(const AValue: Single; const Digits: TRoundToRange): Single;
+function RoundTo(const AValue: Single; const Digits: TRoundToRange): Single; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_SINGLE}
-function SimpleRoundTo(const AValue: Single; const Digits: TRoundToRange = -2): Single;
+function SimpleRoundTo(const AValue: Single; const Digits: TRoundToRange = -2): Single; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_DOUBLE}
-function SimpleRoundTo(const AValue: Double; const Digits: TRoundToRange = -2): Double;
+function SimpleRoundTo(const AValue: Double; const Digits: TRoundToRange = -2): Double; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-function SimpleRoundTo(const AValue: Extended; const Digits: TRoundToRange = -2): Extended;
+function SimpleRoundTo(const AValue: Extended; const Digits: TRoundToRange = -2): Extended; {$ifdef FPC_HAS_PURE}pure;{$endif}
 {$endif}
 
 
@@ -588,10 +588,10 @@ function LnXP1(x : float) : float;
 
 function Power(base,exponent : float) : float;
 { base^exponent }
-function IntPower(base : float;exponent : longint) : float;
+function IntPower(base : float;exponent : longint) : float; {$ifdef FPC_HAS_PURE}pure;{$endif}
 
-operator ** (base,exponent : float) e: float; inline;
-operator ** (base,exponent : int64) res: int64;
+operator ** (base,exponent : float) e: float; inline; {$ifdef FPC_HAS_PURE}pure;{$endif}
+operator ** (base,exponent : int64) res: int64; {$ifdef FPC_HAS_PURE}pure;{$endif}
 
 { number converting }
 
