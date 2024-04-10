@@ -119,19 +119,19 @@ procedure float_raise(i: TFPUExceptionMask);
   {$endif}
 {$endif}
 
-    function Pi : ValReal;[internproc:fpc_in_pi_real];
-    function Abs(d : ValReal) : ValReal;[internproc:fpc_in_abs_real];
-    function Sqr(d : ValReal) : ValReal;[internproc:fpc_in_sqr_real];
-    function Sqrt(d : ValReal) : ValReal;[internproc:fpc_in_sqrt_real];
-    function ArcTan(d : ValReal) : ValReal;[internproc:fpc_in_arctan_real];
-    function Ln(d : ValReal) : ValReal;[internproc:fpc_in_ln_real];
-    function Sin(d : ValReal) : ValReal;[internproc:fpc_in_sin_real];
-    function Cos(d : ValReal) : ValReal;[internproc:fpc_in_cos_real];
-    function Exp(d : ValReal) : ValReal;[internproc:fpc_in_exp_real];
-    function Round(d : ValReal) : int64;[internproc:fpc_in_round_real];
-    function Frac(d : ValReal) : ValReal;[internproc:fpc_in_frac_real];
-    function Int(d : ValReal) : ValReal;[internproc:fpc_in_int_real];
-    function Trunc(d : ValReal) : int64;[internproc:fpc_in_trunc_real];
+    function Pi : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_pi_real];
+    function Abs(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_abs_real];
+    function Sqr(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_sqr_real];
+    function Sqrt(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_sqrt_real];
+    function ArcTan(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_arctan_real];
+    function Ln(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_ln_real];
+    function Sin(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_sin_real];
+    function Cos(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_cos_real];
+    function Exp(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_exp_real];
+    function Round(d : ValReal) : int64;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_round_real];
+    function Frac(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_frac_real];
+    function Int(d : ValReal) : ValReal;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_int_real];
+    function Trunc(d : ValReal) : int64;{$ifdef USEPURE}pure;{$endif}[internproc:fpc_in_trunc_real];
 
 {$ifdef SUPPORT_EXTENDED}
     function FPower10(val: Extended; Power: Longint): Extended;
