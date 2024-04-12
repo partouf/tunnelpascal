@@ -406,6 +406,33 @@ end;
 
 {$endif}
 
+{ on 32 bit systems, we should use the 64 bit time calls }
+{$if (sizeof(time_t)<=4)}
+  { mipsel-android doesn't have them as it is not part of newer android versions anymode }
+  {$if not(defined(ANDROID) and defined(CPUMIPSEL))}
+    {$define USE_TIME64}
+  {$endif  not(defined(ANDROID) and defined(CPUMIPSEL))}
+{$endif (sizeof(clong)<=4)}
+
+Function  FpFUtimens   (handle: cint;constref times: TTimespecArr):cint;
+var
+  tsa: Array[0..1] of timespec;
+begin
+{$ifdef USE_TIME64}
+  FpFUtimens:=do_syscall(syscall_nr_utimensat_time64,handle,TSysParam(nil),TSysParam(@times),0);
+  if (FpFUtimens>=0) or (fpgeterrno<>ESysENOSYS) then
+    exit;
+  { try 32 bit fall back }
+  tsa[0].tv_sec := times[0].tv_sec;
+  tsa[0].tv_nsec := times[0].tv_nsec;
+  tsa[1].tv_sec := times[1].tv_sec;
+  tsa[1].tv_nsec := times[1].tv_nsec;
+  FpFUtimens:=do_syscall(syscall_nr_utimensat,handle,TSysParam(nil),TSysParam(@tsa),0);
+{$else USE_TIME64}
+  FpFUtimens:=do_syscall(syscall_nr_utimensat,handle,TSysParam(nil),TSysParam(@times),0);
+{$endif USE_TIME64}
+end;
+
 
 {$ifndef FPC_BASEUNIX_HAS_FPPIPE}
 Function fppipe(var fildes : tfildes):cint;

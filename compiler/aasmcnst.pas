@@ -1027,6 +1027,9 @@ implementation
        else
          prelist.concat(tai_label.Create(tasmlabel(asmsym)));
 
+       { Newly referenced symbol }
+       asmsym.increfs;
+
        if tcalo_weak in options then
          prelist.concat(tai_directive.Create(asd_weak_definition,asmsym.name));
        { insert the symbol information before the data }
@@ -1475,7 +1478,6 @@ implementation
              so we keep the difference depending on whether the original was
              allocated via getstatic/getlocal/getglobal datalabel) }
            startlab:=tasmlabel.create(current_asmdata.AsmSymbolDict,startlab.name+'$strlab',startlab.bind,startlab.typ);
-           startlab.increfs;
          end;
        { sanity check }
        if result.ofs<>string_symofs then
@@ -1744,7 +1746,6 @@ implementation
                { allocate a separate label for the start of the data (see
                  emit_string_const_common() for explanation) }
                startlab:=tasmlabel.create(current_asmdata.AsmSymbolDict,startlab.name+'$strlab',startlab.bind,startlab.typ);
-               startlab.increfs;
              end
            else
              internalerror(2015031502);
@@ -1809,7 +1810,6 @@ implementation
              so we keep the difference depending on whether the original was
              allocated via getstatic/getlocal/getglobal datalabel) }
            startlab:=tasmlabel.create(current_asmdata.AsmSymbolDict,startlab.name+'$dynarrlab',startlab.bind,startlab.typ);
-           startlab.increfs;
          end;
        { sanity check }
        if result.ofs<>dynarray_symofs then
@@ -2208,12 +2208,13 @@ implementation
      var
        resourcestrrec: trecorddef;
      begin
-       if cs.consttyp<>constresourcestring then
+       if not (cs.consttyp in [constresourcestring,constwresourcestring]) then
          internalerror(2014062102);
        if fqueue_offset<>0 then
          internalerror(2014062103);
        { warning: update if/when the type of resource strings changes }
        case cs.consttyp of
+         constwresourcestring,
          constresourcestring:
            begin
              resourcestrrec:=trecorddef(search_system_type('TRESOURCESTRINGRECORD').typedef);

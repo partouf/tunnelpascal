@@ -1963,8 +1963,19 @@ begin
 end;
 
 class function TFile.OpenText(const aPath: string): TStreamReader;
-begin
 
+var
+  F : TFileStream;
+  
+begin
+  Result:=Nil;
+  F:=TFilestream.Create(aPath,fmOpenRead or fmShareDenyWrite);
+  try  
+    Result := TStreamReader.Create(F,BUFFER_SIZE,True);
+  except
+    F.Free;
+    Raise;
+  end
 end;
 
 class function TFile.OpenWrite(const aPath: string): TFileStream;
@@ -2144,7 +2155,8 @@ begin
   Result      :=[];
   if (FindFirst(IntPath + aSearchPattern, TFile.FileAttributesToInteger(SearchAttributes), SearchRec) = 0) then
     repeat
-      if (aSearchOption = TSearchOption.soAllDirectories) and ((SearchRec.Attr and {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.faDirectory) <> 0) then
+      if (aSearchOption = TSearchOption.soAllDirectories) and ((SearchRec.Attr and {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.faDirectory) <> 0)
+         and (SearchRec.Name <> '.') and (SearchRec.Name <> '..') then
         Result:=Result + GetFilesAndDirectories(IntPath + SearchRec.Name, aSearchPattern, aSearchOption, SearchAttributes, aPredicate)
       else if FilterPredicate(aPath, SearchRec) then
         Result:=Result + [IntPath + SearchRec.Name];
@@ -2199,6 +2211,7 @@ var
 begin
   Result:=false;
   CurSrcDir:=ExpandFileName(DirectoryName);
+  CurSrcDir:=IncludeTrailingPathDelimiter(CurSrcDir);
   if FindFirst(CurSrcDir+AllFilesMask,DeleteMask,FileInfo)=0 then
     Try
       repeat

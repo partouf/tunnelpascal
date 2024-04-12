@@ -142,7 +142,7 @@ var
 begin
   Terminate;
   // quick check parameters
-  ErrorMsg:=CheckOptions('ced::f:g:hi:m:n:o:pt:u:vw:x:', [
+  ErrorMsg:=CheckOptions('ced::f:g:hi:m:n:o:pt:u:vw:x:r', [
     'help',
     'constexternal',
     'dicttoclass::',
@@ -158,15 +158,14 @@ begin
     'unitname:',
     'verbose',
     'webidlversion:',
-    'extra:'
+    'extra:',
+    'chrome'
     ]);
   if (ErrorMsg<>'') or HasOption('h','help') then
     begin
+    ErrorMsg:='Missing input filename';
     WriteHelp(ErrorMsg);
-    if ErrorMsg<>'' then
-      Halt(1)
-    else
-      Exit;
+    Exit();
     end;
 
   // first read outputformat and create FWebIDLToPas
@@ -197,7 +196,7 @@ begin
     TWebIDLToPas2js(FWebIDLToPas).DictionaryClassParent:=GetOptionValue('d','dicttoclass');
 
   CheckBaseOption(coExpandUnionTypeArgs,'e','expandunionargs');
-
+  CheckBaseOption(coChromeWindow,'r','chrome');
   // -f ?
 
   A:=GetOptionValue('g','globals');
@@ -210,6 +209,11 @@ begin
     FWebIDLToPas.GlobalVars.CommaText:=A;
 
   InputFileName:=GetOptionValue('i','input');
+  if (InputFileName='') then
+  begin
+    WriteHelp('Missing input filename');
+    Exit();
+  end;
 
   if HasOption('m','implementation') then
     FWebIDLToPas.IncludeImplementationCode.LoadFromFile(GetOptionValue('m','implementation'));

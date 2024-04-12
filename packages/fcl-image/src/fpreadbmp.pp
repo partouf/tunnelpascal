@@ -33,9 +33,9 @@ unit FPReadBMP;
 interface
 
 {$IFDEF FPC_DOTTEDUNITS}
-uses FpImage, System.Classes, System.SysUtils, FpImage.Common.Bitmap;
+uses FpImage, System.Types, System.Classes, System.SysUtils, FpImage.Common.Bitmap;
 {$ELSE FPC_DOTTEDUNITS}
-uses FpImage, classes, sysutils, BMPcomn;
+uses FpImage, types, classes, sysutils, BMPcomn;
 {$ENDIF FPC_DOTTEDUNITS}
 
 type
@@ -68,6 +68,7 @@ type
       // required by TFPCustomImageReader
       procedure InternalRead  (Stream:TStream; Img:TFPCustomImage); override;
       function  InternalCheck (Stream:TStream) : boolean; override;
+      class function  InternalSize  (Stream:TStream) : TPoint; override;
     public
       constructor Create; override;
       destructor Destroy; override;
@@ -144,22 +145,9 @@ end;
   highest in the color, so we must shr (5-(8-6))=3, and we have XXXX XX00.
   A negative value means "shift left"  }
 function TFPReaderBMP.ShiftCount(Mask : longword) : shortint;
-var tmp : shortint;
 begin
-  tmp:=0;
-  if Mask=0 then
-  begin
-    Result:=0;
-    exit;
-  end;
-
-  while (Mask mod 2)=0 do { rightmost bit is 0 }
-  begin
-    inc(tmp);
-    Mask:= Mask shr 1;
-  end;
-  tmp:=tmp-(8-popcnt(byte(Mask and $FF)));
-  Result:=tmp;
+  Result:=BsfDWord(Mask or ord(Mask = 0) shl 8); { Also makes the function return 0 on Mask = 0. }
+  Result:=Result-(8-popcnt(byte(Mask shr Result)));
 end;
 
 function TFPReaderBMP.ExpandColor(value : longword) : TFPColor;
@@ -527,6 +515,32 @@ begin
    {$ENDIF}
     Result := BFH.bfType = BMmagic; // Just check magic number
     end;
+end;
+
+class function TFPReaderBMP.InternalSize (Stream: TStream): TPoint;
+var
+  fileHdr: TBitmapFileHeader;
+  infoHdr: TBitmapInfoHeader;
+  n: Int64;
+  StartPos: Int64;
+begin
+  Result := Point(0, 0);
+
+  StartPos := Stream.Position;
+  try
+    n := Stream.Read(fileHdr, SizeOf(fileHdr));
+    if n <> SizeOf(fileHdr) then exit;
+    if {$IFDEF ENDIAN_BIG}swap(fileHdr.bfType){$ELSE}fileHdr.bfType{$ENDIF} <> BMmagic then exit;
+    n := Stream.Read(infoHdr, SizeOf(infoHdr));
+    if n <> SizeOf(infoHdr) then exit;
+    {$IFDEF ENDIAN_BIG}
+    Result := Point(swap(infoHdr.Width), swap(infoHdr.Height));
+    {$ELSE}
+    Result := Point(infoHdr.Width, infoHdr.Height);
+    {$ENDIF}
+  finally
+    Stream.Position := StartPos;
+  end;
 end;
 
 initialization

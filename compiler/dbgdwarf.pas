@@ -1630,12 +1630,14 @@ implementation
           slen : asizeuint;
           arr : tasmlabel;
         begin
+{$push}
+{$R-}{$Q-}
           { fix length of openshortstring }
           slen:=aword(def.len);
           if (slen=0) or
              (slen>maxlen) then
             slen:=maxlen;
-
+{$pop}
           { create a structure with two elements }
           if not(tf_dwarf_only_local_labels in target_info.flags) then
             current_asmdata.getglobaldatalabel(arr)
@@ -2662,6 +2664,7 @@ implementation
         i,
         size: aint;
         usedef: tdef;
+	b : byte;
       begin
         { These are default values of parameters. These should be encoded
           via DW_AT_default_value, not as a separate sym. Moreover, their
@@ -2700,6 +2703,7 @@ implementation
                 usedef:=clongstringtype;
             end;
           constresourcestring,
+          constwresourcestring,
           constwstring:
             usedef:=nil;
           else
@@ -2742,11 +2746,15 @@ implementation
               size:=sym.constdef.size;
               while (i<size) do
                 begin
-                  current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit((pbyte(sym.value.valueptr+i)^)));
+                  b:=pbyte(sym.value.valueptr+i)^;
+                  if (target_info.endian<>source_info.endian) then
+                    b:=reverse_byte(b);
+		  current_asmdata.asmlists[al_dwarf_info].concat(tai_const.create_8bit(b));
                   inc(i);
                 end;
             end;
           constwstring,
+          constwresourcestring,
           constresourcestring:
             begin
               { write dummy for now }

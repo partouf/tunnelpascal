@@ -265,6 +265,7 @@ begin
   inherited Create;
 {$ifdef FPC_HAS_FEATURE_THREADING}
     InterlockedIncrement(ThreadQueueLockCounter);
+    FThreadQueueLockCounted := true; { Guard against exception in descendant’s Create. }
 {$endif}
   if FExternalThread then
 {$ifdef FPC_HAS_FEATURE_THREADING}
@@ -289,7 +290,7 @@ begin
   RemoveQueuedEvents(Self);
   DoneSynchronizeEvent;
 {$ifdef FPC_HAS_FEATURE_THREADING}
-  if InterlockedDecrement(ThreadQueueLockCounter)=0 then
+  if FThreadQueueLockCounted and (InterlockedDecrement(ThreadQueueLockCounter)=0) then
     DoneCriticalSection(ThreadQueueLock);
 {$endif}
   { set CurrentThreadVar to Nil? }
@@ -433,6 +434,13 @@ procedure TThread.DoneSynchronizeEvent;
     FSynchronizeEntry := Nil;
   end;
 
+
+
+class function TThread.CurrentIsMain : Boolean;
+
+begin
+  Result:=TThread.Current.ThreadID=MainThreadID;
+end;
 
 class procedure TThread.Synchronize(AThread: TThread; AMethod: TThreadMethod);
   var
@@ -891,12 +899,33 @@ end;
 
 
 {$ifndef HAS_TTHREAD_GETSYSTEMTIMES}
-class procedure TThread.GetSystemTimes(out aSystemTimes: TSystemTimes);
+class function TThread.GetSystemTimes(out aSystemTimes: TSystemTimes) : Boolean;
 begin
   { by default we just return a zeroed out record }
   FillChar(aSystemTimes, SizeOf(aSystemTimes), 0);
+  Result:=False;
 end;
 {$endif}
+
+class function TThread.GetCPUUsage(var Previous: TSystemTimes): Integer;
+
+var
+  Act : TSystemTimes;
+  Load,Idle: QWord;
+  
+begin
+  Result:=0;
+  if not GetSystemTimes(Act) then 
+    exit;
+  Load:=(Act.UserTime-Previous.UserTime) +
+        (Act.KernelTime-Previous.KernelTime) +
+        (Act.NiceTime-Previous.NiceTime);
+  Idle:=Act.IdleTime-Previous.IdleTime;
+  Previous:=Act;
+  if (Load<>0) and (Load>Idle) then
+    Result:=100*Trunc(1-(Idle/Load));
+end;
+
 
 
 class function TThread.GetTickCount: LongWord;
@@ -1434,6 +1463,14 @@ function FindGlobalComponent(const Name: string): TComponent;
       end;
   end;
 
+function IsUniqueGlobalComponentName(const aName: string): Boolean;
+
+begin
+  if Assigned(IsUniqueGlobalComponentNameProc) then
+    Result:=IsUniqueGlobalComponentNameProc(aName)
+  else 
+    Result:=Not Assigned(FindGlobalComponent(aName));
+end;
 
 procedure RegisterInitComponentHandler(ComponentClass: TComponentClass;   Handler: TInitComponentHandler);
 Var
@@ -2699,7 +2736,29 @@ begin
   Output.FixupResourceHeader(FixupInfo);      // Insert real resource data size
 end;
 
+function TestStreamFormat(const Stream: TStream): TStreamOriginalFormat;
 
+const
+  StartChars = [#9, #10, #13, #11, 'o', 'O','i','I',' '];
+
+var
+  aPos: Int64;
+  Sig: Packed Array[0..3] of byte;
+  IntSig : Longint absolute sig;
+  
+begin
+  Result:=sofUnknown;
+  aPos:=Stream.Position;
+  IntSig:=0;
+  Stream.Read(Sig,SizeOf(Sig));
+  Stream.Seek(aPos,soBeginning);
+  if (Sig[0]=$FF) or (IntSig=LongInt(FilerSignature)) or (IntSig=LongInt(FilerSignature1)) or (IntSig=0) then
+    Result:=sofBinary
+  else if (AnsiChar(Sig[0]) in StartChars) then
+    Result:=sofText
+  else if (Sig[0]=$EF) and (Sig[1]=$BB) and (Sig[2]=$BF) then
+    Result:=sofUTF8Text;
+end;
 
 { Utility routines }
 

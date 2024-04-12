@@ -1236,8 +1236,18 @@ unit nx86add;
 
     function tx86addnode.pass_1: tnode;
       begin
+        { only pass_1 might set the resultdef as it could be set to nil by some previous
+          code transformation. As we need a valid left/right.resultdef later on, ensure
+          a valid result def is set, see also issue #40727 }
+        if not(assigned(left.resultdef)) then
+          typecheckpass(left);
+        if not(assigned(right.resultdef)) then
+          typecheckpass(right);
+
         { on x86, we do not support fpu registers, so in case of operations using the x87, it
-          is normally useful, not to put the operands into registers which would be mm register }
+          is normally useful, not to put the operands into registers which would be mm register
+
+          this should be called before pass_1 so we have a proper expectloc }
         if ((left.resultdef.typ=floatdef) or (right.resultdef.typ=floatdef)) and
           (not(use_vectorfpu(left.resultdef)) and not(use_vectorfpu(right.resultdef)) and
            not(use_vectorfpu(resultdef))) then
@@ -1976,7 +1986,7 @@ unit nx86add;
                    secondpass(left);
 
                    { Skip the not node completely }
-                   Include(right.flags, nf_do_not_execute);
+                   Include(right.transientflags, tnf_do_not_execute);
                    secondpass(tnotnode(right).left);
 
                    { allocate registers }
@@ -2051,8 +2061,8 @@ unit nx86add;
                    secondpass(left);
 
                    { Skip the subtract and shift nodes completely }
-                   Include(right.flags, nf_do_not_execute);
-                   Include(taddnode(right).left.flags, nf_do_not_execute);
+                   Include(right.transientflags, tnf_do_not_execute);
+                   Include(taddnode(right).left.transientflags, tnf_do_not_execute);
 
                    { Helps avoid all the awkward typecasts }
                    indexnode := tshlshrnode(taddnode(right).left).right;
@@ -2063,7 +2073,7 @@ unit nx86add;
                      begin
                        { Convert to the 32-bit type }
                        indexnode.resultdef := resultdef;
-                       node_reset_flags(indexnode,[nf_pass1_done]);
+                       node_reset_flags(indexnode,[],[tnf_pass1_done]);
 
                        { We should't be getting any new errors }
                        if do_firstpass(indexnode) then
@@ -2240,7 +2250,7 @@ unit nx86add;
       begin
         if (nodetype in [orn,andn]) and
            (not(cs_full_boolean_eval in current_settings.localswitches) or
-          (nf_short_bool in flags)) then
+          (anf_short_bool in addnodeflags)) then
           inherited second_addboolean
         else if is_64bit(left.resultdef) then
           inherited
