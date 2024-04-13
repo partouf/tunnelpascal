@@ -97,18 +97,21 @@ interface
        MathQNaN : tcompdoublerec = (bytes : (0,0,252,255,0,0,0,0));
        MathInf : tcompdoublerec = (bytes : (0,0,240,127,0,0,0,0));
        MathNegInf : tcompdoublerec = (bytes : (0,0,240,255,0,0,0,0));
+       MathNegZero : tcompdoublerec = (bytes : (0,0,0,128,0,0,0,0));
        MathPi : tcompdoublerec =  (bytes : (251,33,9,64,24,45,68,84));
 {$else}
 {$ifdef FPC_LITTLE_ENDIAN}
        MathQNaN : tcompdoublerec = (bytes : (0,0,0,0,0,0,252,255));
        MathInf : tcompdoublerec = (bytes : (0,0,0,0,0,0,240,127));
        MathNegInf : tcompdoublerec = (bytes : (0,0,0,0,0,0,240,255));
+       MathNegZero : tcompdoublerec = (bytes : (0,0,0,0,0,0,0,128));
        MathPi : tcompdoublerec = (bytes : (24,45,68,84,251,33,9,64));
        MathPiExtended : tcompextendedrec = (bytes : (53,194,104,33,162,218,15,201,0,64));
 {$else FPC_LITTLE_ENDIAN}
        MathQNaN : tcompdoublerec = (bytes : (255,252,0,0,0,0,0,0));
        MathInf : tcompdoublerec = (bytes : (127,240,0,0,0,0,0,0));
        MathNegInf : tcompdoublerec = (bytes : (255,240,0,0,0,0,0,0));
+       MathNegZero : tcompdoublerec = (bytes : (128,0,0,0,0,0,0,0));
        MathPi : tcompdoublerec =  (bytes : (64,9,33,251,84,68,45,24));
        MathPiExtended : tcompextendedrec = (bytes : (64,0,201,15,218,162,33,104,194,53));
 {$endif FPC_LITTLE_ENDIAN}
