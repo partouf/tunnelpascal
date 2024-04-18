@@ -240,7 +240,9 @@ unit nx86add;
 
               if not comparison then
                 cg.a_reg_dealloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+              cg.MarkActualParameters(current_asmdata.CurrAsmList, nil);
               cg.a_call_name(current_asmdata.CurrAsmList,'FPC_OVERFLOW',false);
+              cg.TrashVolatileRegisters(current_asmdata.CurrAsmList, nil);
               cg.a_label(current_asmdata.CurrAsmList,hl4);
             end;
          end;

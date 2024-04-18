@@ -257,7 +257,9 @@ implementation
                     list.concat(ai);
                   end;
 
+                MarkActualParameters(list, nil);
                 a_call_name(list,'FPC_OVERFLOW',false);
+                TrashVolatileRegisters(list, nil);
                 a_label(list,l);
               end;
             OP_SUB:
@@ -292,7 +294,9 @@ implementation
                     list.concat(ai);
                   end;
 
+                MarkActualParameters(list, nil);
                 a_call_name(list,'FPC_OVERFLOW',false);
+                TrashVolatileRegisters(list, nil);
                 a_label(list,l);
               end;
             OP_IMUL:
@@ -309,7 +313,9 @@ implementation
 
                 a_cmp_reg_reg_label(list,OS_INT,OC_EQ,tmpreg,tmpreg0,l);
 
+                MarkActualParameters(list, nil);
                 a_call_name(list,'FPC_OVERFLOW',false);
+                TrashVolatileRegisters(list, nil);
                 a_label(list,l);
               end;
             OP_MUL:
@@ -323,7 +329,9 @@ implementation
 
                 a_cmp_reg_reg_label(list,OS_INT,OC_EQ,tmpreg,NR_X0,l);
 
+                MarkActualParameters(list, nil);
                 a_call_name(list,'FPC_OVERFLOW',false);
+                TrashVolatileRegisters(list, nil);
                 a_label(list,l);
               end;
             OP_IDIV:
@@ -337,7 +345,9 @@ implementation
 
                 a_cmp_reg_reg_label(list,OS_INT,OC_NE,tmpreg,NR_X0,l);
 
+                MarkActualParameters(list, nil);
                 a_call_name(list,'FPC_OVERFLOW',false);
+                TrashVolatileRegisters(list, nil);
                 a_label(list,l);
               end;
             else
@@ -373,7 +383,9 @@ implementation
         paramanager.freecgpara(list, paraloc1);
         alloccpuregisters(list, R_INTREGISTER, paramanager.get_volatile_registers_int(pocall_default));
         alloccpuregisters(list, R_FPUREGISTER, paramanager.get_volatile_registers_fpu(pocall_default));
-        a_call_name(list, 'FPC_MOVE', false);
+        MarkActualParameters(list, nil);
+        a_call_name(list,'FPC_MOVE',false);
+        TrashVolatileRegisters(list, nil);
         dealloccpuregisters(list, R_FPUREGISTER, paramanager.get_volatile_registers_fpu(pocall_default));
         dealloccpuregisters(list, R_INTREGISTER, paramanager.get_volatile_registers_int(pocall_default));
         paraloc3.done;

@@ -2371,7 +2371,9 @@ unit cgcpu;
           begin
             cg.getcpuregister(list,NR_AX);
             cg.a_load_const_reg(list,OS_16, localsize,NR_AX);
+            cg.MarkActualParameters(list,nil);
             cg.a_call_name(list,'FPC_STACKCHECK_I8086',false);
+            cg.TrashVolatileRegisters(list,nil);
             cg.ungetcpuregister(list, NR_AX);
           end;
         if localsize>0 then

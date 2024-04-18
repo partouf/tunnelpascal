@@ -885,6 +885,22 @@ implementation
                end;
              ppn:=tcgcallparanode(ppn.right);
            end;
+
+         { Mark the registers that are being used for actual parameters }
+         ppn:=tcgcallparanode(left);
+         while assigned(ppn) do
+           begin
+             if (ppn.left.nodetype<>nothingn) and
+               not can_skip_para_push(ppn.parasym) then
+                 begin
+                   callerparaloc := ppn.parasym.paraloc[callerside].location;
+                   if (callerparaloc^.loc in [LOC_REGISTER, LOC_FPUREGISTER, LOC_MMREGISTER]) then
+                     current_asmdata.CurrAsmList.concat(tai_regalloc.actualparam(callerparaloc^.register));
+                 end;
+
+             ppn:=tcgcallparanode(ppn.right);
+           end;
+
          setlength(paralocs,procdefinition.paras.count);
          for i:=0 to procdefinition.paras.count-1 do
            paralocs[i]:=@tparavarsym(procdefinition.paras[i]).paraloc[callerside];
@@ -1238,6 +1254,16 @@ implementation
                 retloc:=hlcg.a_call_reg(current_asmdata.CurrAsmList,callpvdef,pvreg,paralocs);
               extra_post_call_code;
            end;
+
+         { Mark the volatile registers as trashed (function result registers
+           will also be considered trashed, but remain allocated) }
+         if cg.uses_registers(R_MMREGISTER) then
+           cg.trashcpuregisters(current_asmdata.CurrAsmList,R_MMREGISTER,regs_to_save_mm);
+         if cg.uses_registers(R_FPUREGISTER) then
+           cg.trashcpuregisters(current_asmdata.CurrAsmList,R_FPUREGISTER,regs_to_save_fpu);
+         if cg.uses_registers(R_ADDRESSREGISTER) then
+           cg.trashcpuregisters(current_asmdata.CurrAsmList,R_ADDRESSREGISTER,regs_to_save_address);
+         cg.trashcpuregisters(current_asmdata.CurrAsmList,R_INTREGISTER,regs_to_save_int);
 
          { free the resources allocated for the parameters }
          if assigned(left) then

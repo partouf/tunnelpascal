@@ -174,7 +174,9 @@ implementation
                paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
                paraloc1.done;
                hlcg.allocallcpuregisters(current_asmdata.CurrAsmList);
+               cg.MarkActualParameters(current_asmdata.CurrAsmList,pd);
                hlcg.a_call_name(current_asmdata.CurrAsmList,pd,'FPC_CHECKPOINTER',[],nil,false);
+               cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,pd);
                hlcg.deallocallcpuregisters(current_asmdata.CurrAsmList);
                system.include(current_settings.moduleswitches,cs_checkpointer_called);
              end;

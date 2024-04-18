@@ -141,7 +141,9 @@ interface
            current_asmdata.getjumplabel(hl4);
            cg.a_jmp_flags(current_asmdata.CurrAsmList,F_AE,hl4);
            cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
+           cg.MarkActualParameters(current_asmdata.CurrAsmList, nil);
            cg.a_call_name(current_asmdata.CurrAsmList,'FPC_OVERFLOW',false);
+           cg.TrashVolatileRegisters(current_asmdata.CurrAsmList, nil);
            cg.a_label(current_asmdata.CurrAsmList,hl4);
          end;
         { Free RDX,RAX }

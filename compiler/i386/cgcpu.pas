@@ -603,12 +603,16 @@ unit cgcpu;
                     { Mark EBX as used in the proc }
                     include(rg[R_INTREGISTER].used_in_proc,RS_EBX);
                     current_module.requires_ebx_pic_helper:=true;
+                    MarkActualParameters(list,nil);
                     a_call_name_static(list,'fpc_geteipasebx');
+                    TrashVolatileRegisters(list,nil);
                   end
                 else
                   begin
                     current_module.requires_ecx_pic_helper:=true;
+                    MarkActualParameters(list,nil);
                     a_call_name_static(list,'fpc_geteipasecx');
+                    TrashVolatileRegisters(list,nil);
                   end;
                 list.concat(taicpu.op_sym_ofs_reg(A_ADD,S_L,current_asmdata.RefAsmSymbol('_GLOBAL_OFFSET_TABLE_',AT_DATA),0,tmpreg));
                 list.concat(taicpu.op_reg_reg(A_MOV,S_L,tmpreg,current_procinfo.got));
@@ -625,7 +629,9 @@ unit cgcpu;
                   according to Apple's benchmarking -- and all Intel Macs
                   have at least a Core Solo (furthermore, the i386 - Pentium 1
                   don't have a return stack buffer) }
+                MarkActualParameters(list,nil);
                 a_call_name_static(list,current_procinfo.CurrGOTLabel.name);
+                TrashVolatileRegisters(list,nil);
                 a_label(list,current_procinfo.CurrGotLabel);
                 list.concat(taicpu.op_reg(A_POP,S_L,current_procinfo.got))
               end;

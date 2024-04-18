@@ -357,8 +357,10 @@ implementation
                cg.a_reg_dealloc(current_asmdata.CurrAsmList,hreg_tv_rec);
              paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
              cg.allocallcpuregisters(current_asmdata.CurrAsmList);
+             cg.MarkActualParameters(current_asmdata.CurrAsmList,tprocvardef(pvd));
              { result is the address of the threadvar }
              respara:=hlcg.a_call_reg(current_asmdata.CurrAsmList,tprocvardef(pvd),hregister,[@paraloc1]);
+             cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,tprocvardef(pvd));
              paraloc1.done;
              cg.deallocallcpuregisters(current_asmdata.CurrAsmList);
 

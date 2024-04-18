@@ -1792,7 +1792,9 @@ unit cgcpu;
             ai.condition:=C_EQ;
             list.concat(ai);
             alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+            cg.MarkActualParameters(list,nil);
             cg.a_call_name(list,'FPC_THROWFPUEXCEPTION',false);
+            cg.TrashVolatileRegisters(list,nil);
             dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
             a_label(list,l);
             if clear then
@@ -1926,7 +1928,9 @@ unit cgcpu;
         if target_info.system = system_arm_linux then
           begin
             list.concat(taicpu.op_regset(A_PUSH,R_INTREGISTER,R_SUBWHOLE,[RS_R14]));
+            cg.MarkActualParameters(list,nil);
             a_call_name(list,'__gnu_mcount_nc',false);
+            cg.TrashVolatileRegisters(list,nil);
           end
         else
           internalerror(2014091201);
@@ -2689,7 +2693,9 @@ unit cgcpu;
         paramanager.freecgpara(list,paraloc1);
         alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
         alloccpuregisters(list,R_FPUREGISTER,paramanager.get_volatile_registers_fpu(pocall_default));
+        cg.MarkActualParameters(list,nil);
         a_call_name(list,'FPC_MOVE',false);
+        cg.TrashVolatileRegisters(list,nil);
         dealloccpuregisters(list,R_FPUREGISTER,paramanager.get_volatile_registers_fpu(pocall_default));
         dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
         paraloc3.done;
@@ -3089,7 +3095,9 @@ unit cgcpu;
             internalerror(200409281);
         end;
 
+        cg.MarkActualParameters(list,nil);
         a_call_name(list,'FPC_OVERFLOW',false);
+        cg.TrashVolatileRegisters(list,nil);
         a_label(list,hl);
       end;
 
@@ -3419,7 +3427,9 @@ unit cgcpu;
         if pi_needs_tls in current_procinfo.flags then
           begin
             list.concat(tai_regalloc.alloc(NR_R0,nil));
+            cg.MarkActualParameters(list,nil);
             a_call_name(list,'fpc_read_tp',false);
+            cg.TrashVolatileRegisters(list,nil);
             a_load_reg_reg(list,OS_ADDR,OS_ADDR,NR_R0,current_procinfo.tlsoffset);
             list.concat(tai_regalloc.dealloc(NR_R0,nil));
           end;

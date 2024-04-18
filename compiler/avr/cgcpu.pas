@@ -2281,7 +2281,9 @@ unit cgcpu;
 
                     list.concat(taicpu.op_reg(A_CLR,NR_R1));
 
+                    MarkActualParameters(list,nil);
                     a_call_name(list,'FPC_OVERFLOW',false);
+                    TrashVolatileRegisters(list,nil);
 
                     a_label(list,no_overflow);
 
@@ -2312,7 +2314,11 @@ unit cgcpu;
                 paramanager.freecgpara(list,paraloc2);
                 paramanager.freecgpara(list,paraloc1);
                 alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+
+                MarkActualParameters(list,nil);
                 a_call_name(list,upper(name),false);
+                TrashVolatileRegisters(list,nil);
+
                 dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
                 cg.a_reg_alloc(list,NR_R24);
                 cg.a_load_reg_reg(list,OS_8,OS_8,NR_R24,dst);
@@ -2409,7 +2415,11 @@ unit cgcpu;
                 paramanager.freecgpara(list,paraloc2);
                 paramanager.freecgpara(list,paraloc1);
                 alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+
+                MarkActualParameters(list,nil);
                 a_call_name(list,upper(name),false);
+                TrashVolatileRegisters(list,nil);
+
                 dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
                 cg.a_reg_alloc(list,NR_R24);
                 cg.a_reg_alloc(list,NR_R25);
@@ -2676,7 +2686,9 @@ unit cgcpu;
         paramanager.freecgpara(list,paraloc2);
         paramanager.freecgpara(list,paraloc1);
         alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+        MarkActualParameters(list,nil);
         a_call_name_static(list,'FPC_MOVE');
+        TrashVolatileRegisters(list,nil);
         dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
         paraloc3.done;
         paraloc2.done;

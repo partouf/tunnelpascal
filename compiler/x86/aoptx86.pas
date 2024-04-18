@@ -91,6 +91,14 @@ unit aoptx86;
         }
         function GetNextInstructionUsingRegTrackingUse(Current: tai; out Next: tai; reg: TRegister): Boolean;
         function RegModifiedByInstruction(Reg: TRegister; p1: tai): boolean; override;
+
+        { returns True if the register is volatile as far as the callee is
+          concerned (i.e. reg isn't preserved across the call) }
+        class function RegTrashedByCall(reg: TRegister;p: taicpu): boolean; static;
+
+        { returns True if the register is used by a CALL instruction either as
+          an actual parameter or in its reference }
+        class function RegUsedByCall(reg: TRegister;p: taicpu): boolean; static;
       private
         function SkipSimpleInstructions(var hp1: tai): Boolean;
 
@@ -800,6 +808,77 @@ unit aoptx86;
     end;
 
 
+  class function TX86AsmOptimizer.RegTrashedByCall(reg: TRegister;p: taicpu): boolean;
+    var
+      hp1: tai;
+    begin
+      if p.opcode <> A_CALL then
+        InternalError(2023111501);
+
+      if SuperRegistersEqual(Reg, NR_DEFAULTFLAGS) then
+        { Flags always trashed }
+        Exit(True);
+
+      { Note, while the stack and frame pointers are used and modified, they
+        should always be reset to their original values and so are not trashed }
+
+      Result := False;
+
+      { Look forwards for a tai_regalloc of type "ra_trashed" }
+      hp1 := tai(p.Next);
+      while Assigned(hp1) and (hp1.typ in SkipInstr) do
+        begin
+          if (hp1.typ = ait_regalloc) then
+            begin
+              if (tai_regalloc(hp1).ratype = ra_trashed) and
+                SuperRegistersEqual(Reg, tai_regalloc(hp1).reg) then
+                { Reg is volatile as far as the callee is concerned, so the
+                  register has reached the end of its life }
+                Exit(True);
+            end;
+
+          hp1 := tai(hp1.Next);
+        end;
+    end;
+
+
+  class function TX86AsmOptimizer.RegUsedByCall(reg: TRegister;p: taicpu): boolean;
+    var
+      hp1: tai;
+    begin
+      if p.opcode <> A_CALL then
+        InternalError(2023111502);
+
+      if RegInOp(Reg, p.oper[0]^) then
+        Exit(True);
+
+      if SuperRegistersEqual(Reg, NR_DEFAULTFLAGS) then
+        { Flags always used }
+        Exit(True);
+
+      { Note, while the stack and frame pointers are used, they should always
+        be reset to their original values and their exact values shouldn't
+        affect their operation }
+
+      Result := False;
+
+      { Look backwards for a tai_regalloc of type "ra_actualparam" }
+      hp1 := tai(p.Previous);
+      while Assigned(hp1) and (hp1.typ in SkipInstr) do
+        begin
+          if (hp1.typ = ait_regalloc) then
+            begin
+              if (tai_regalloc(hp1).ratype = ra_actualparam) and
+                SuperRegistersEqual(Reg, tai_regalloc(hp1).reg) then
+                { Reg is an actual parameter for the procedure call }
+                Exit(True);
+            end;
+
+          hp1 := tai(hp1.Previous);
+        end;
+    end;
+
+
   function TX86AsmOptimizer.InstructionLoadsFromReg(const reg: TRegister;const hp: tai): boolean;
     begin
       Result:=RegReadByInstruction(reg,hp);
@@ -817,7 +896,8 @@ unit aoptx86;
       p := taicpu(hp);
       case p.opcode of
         A_CALL:
-          regreadbyinstruction := true;
+          RegReadByInstruction := RegUsedByCall(Reg, taicpu(p));
+
         A_IMUL:
           case p.ops of
             1:
@@ -1044,6 +1124,12 @@ unit aoptx86;
       if p1.typ<>ait_instruction then
         exit;
 
+      if taicpu(p1).opcode = A_CALL then
+        Exit(
+          RegUsedByCall(Reg, taicpu(p1)) or
+          RegTrashedByCall(Reg, taicpu(p1))
+        );
+
       if (Ch_All in insprop[taicpu(p1).opcode].Ch) then
         exit(true);
 
@@ -1200,13 +1286,8 @@ unit aoptx86;
 
         case taicpu(p1).opcode of
           A_CALL:
-            { We could potentially set Result to False if the register in
-              question is non-volatile for the subroutine's calling convention,
-              but this would require detecting the calling convention in use and
-              also assuming that the routine doesn't contain malformed assembly
-              language, for example... so it could only be done under -O4 as it
-              would be considered a side-effect. [Kit] }
-            Result := True;
+            Result := RegTrashedByCall(Reg, taicpu(p1));
+
           A_MOVSD:
             { special handling for SSE MOVSD }
             if (taicpu(p1).ops>0) then
@@ -1879,6 +1960,13 @@ unit aoptx86;
 
         { Handle special cases first }
         case p.opcode of
+          A_CALL:
+            { We can consider the register to have a completely new value if it
+              isn't used as an actual parameter or in the reference, and is
+              trashed.
+            }
+            Result := not RegUsedByCall(Reg, p) and RegTrashedByCall(Reg, p);
+
           A_MOV, A_MOVZX, A_MOVSX, A_LEA, A_VMOVSS, A_VMOVSD, A_VMOVAPD,
           A_VMOVAPS, A_VMOVQ, A_MOVSS, A_MOVSD, A_MOVQ, A_MOVAPD, A_MOVAPS:
             begin

@@ -177,10 +177,13 @@ unit rgobj;
         { Get the register specified.}
         procedure getcpuregister(list:TAsmList;r:Tregister);virtual;
         procedure ungetcpuregister(list:TAsmList;r:Tregister);virtual;
+        procedure trashcpuregister(list:TAsmList;r:Tregister);virtual;
         { Get multiple registers specified.}
         procedure alloccpuregisters(list:TAsmList;const r:Tcpuregisterset);virtual;
         { Free multiple registers specified.}
         procedure dealloccpuregisters(list:TAsmList;const r:Tcpuregisterset);virtual;
+        { Mark multiple registers specified as trashed.}
+        procedure trashcpuregisters(list:TAsmList;const r:Tcpuregisterset);virtual;
         function uses_registers:boolean;virtual;
         procedure add_reg_instruction(instr:Tai;r:tregister;aweight:longint);
         procedure add_move_instruction(instr:Taicpu);
@@ -573,6 +576,14 @@ unit rgobj;
       end;
 
 
+    procedure trgobj.trashcpuregister(list:TAsmList;r:Tregister);
+      begin
+        if (getsupreg(r)>=first_imaginary) then
+          InternalError(2004020903);
+        list.concat(Tai_regalloc.trash(r));
+      end;
+
+
     procedure trgobj.getcpuregister(list:TAsmList;r:Tregister);
       var
         supreg:Tsuperregister;
@@ -587,9 +598,8 @@ unit rgobj;
 
 
     procedure trgobj.alloccpuregisters(list:TAsmList;const r:Tcpuregisterset);
-
-    var i:cardinal;
-
+    var
+      i:cardinal;
     begin
       for i:=0 to first_imaginary-1 do
         if i in r then
@@ -598,13 +608,22 @@ unit rgobj;
 
 
     procedure trgobj.dealloccpuregisters(list:TAsmList;const r:Tcpuregisterset);
-
-    var i:cardinal;
-
+    var
+      i:cardinal;
     begin
       for i:=0 to first_imaginary-1 do
         if i in r then
           ungetcpuregister(list,newreg(regtype,i,defaultsub));
+    end;
+
+
+    procedure trgobj.trashcpuregisters(list:TAsmList;const r:Tcpuregisterset);
+    var
+      i:cardinal;
+    begin
+      for i:=0 to first_imaginary-1 do
+        if i in r then
+          trashcpuregister(list,newreg(regtype,i,defaultsub));
     end;
 
     const
@@ -2263,14 +2282,7 @@ unit rgobj;
                   begin
                     if (getregtype(reg)=regtype) then
                       begin
-                        { Only alloc/dealloc is needed for the optimizer, remove
-                          other regalloc }
-                        if not(ratype in [ra_alloc,ra_dealloc]) then
-                          begin
-                            remove_ai(list,p);
-                            continue;
-                          end
-                        else
+                        if ratype in [ra_alloc,ra_dealloc] then
                           begin
                             u:=reginfo[getsupreg(reg)].colour;
                             include(used_in_proc,u);
@@ -2288,6 +2300,13 @@ unit rgobj;
                               internalerror(2015040501);
 {$endif}
                             setsupreg(reg,u);
+                          end
+                        else if not(ratype in [ra_actualparam,ra_trashed]) then
+                          begin
+                            { Only alloc/dealloc/actual/trashed is needed for
+                              the optimizer, remove other regalloc }
+                            remove_ai(list,p);
+                            continue;
                           end;
                       end;
                   end;

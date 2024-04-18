@@ -233,7 +233,9 @@ implementation
       reference_reset_base(href, voidstackpointertype, NR_STACK_POINTER_REG, -MINIMUM_STACKFRAME_SIZE, ctempposinvalid, 8, []);
       list.concat(taicpu.op_reg_ref({$ifdef cpu64bitaddr}A_STDU{$else}A_STWU{$endif}, NR_STACK_POINTER_REG, href));
 
+      cg.MarkActualParameters(list, nil);
       cg.a_call_name(list,externalname,false);
+      cg.TrashVolatileRegisters(list, nil);
 
       list.concat(taicpu.op_reg_reg_const(A_ADDI, NR_STACK_POINTER_REG, NR_STACK_POINTER_REG, MINIMUM_STACKFRAME_SIZE));
 

@@ -241,7 +241,9 @@ begin
   if right.nodetype <> ordconstn then begin
     current_asmdata.getjumplabel(hl);
     current_asmdata.CurrAsmList.concat(taicpu.op_cond_sym(A_BC,zerocond,hl));
+    cg.MarkActualParameters(current_asmdata.CurrAsmList, nil);
     cg.a_call_name(current_asmdata.CurrAsmList,'FPC_DIVBYZERO',false);
+    cg.TrashVolatileRegisters(current_asmdata.CurrAsmList, nil);
     cg.a_label(current_asmdata.CurrAsmList,hl);
   end;
   { unsigned division/module can only overflow in case of division by zero

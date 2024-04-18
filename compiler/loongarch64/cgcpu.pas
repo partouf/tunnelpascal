@@ -1179,7 +1179,9 @@ implementation
                 end;
                 ai.is_jmp:=true;
                 list.concat(ai);
+              MarkActualParameters(list,nil);
               a_call_name(list,'FPC_OVERFLOW',false);
+              TrashVolatileRegisters(list,nil);
               a_label(list,l);
             end
           else if op in [OP_ADD,OP_SUB,OP_MUL,OP_IMUL,OP_IDIV] then
@@ -1263,7 +1265,9 @@ implementation
               end;
               ai.is_jmp:=true;
               list.concat(ai);
+              MarkActualParameters(list,nil);
               a_call_name(list,'FPC_OVERFLOW',false);
+              TrashVolatileRegisters(list,nil);
               a_label(list,l);
             end;
           OP_SUB:
@@ -1362,7 +1366,9 @@ implementation
                 end;
               ai.is_jmp:=true;
               list.concat(ai);
+              MarkActualParameters(list,nil);
               a_call_name(list,'FPC_OVERFLOW',false);
+              TrashVolatileRegisters(list,nil);
               a_label(list,l);
             end;
           OP_MUL:
@@ -1400,7 +1406,9 @@ implementation
                 end;
               ai.is_jmp:=true;
               list.concat(ai);
+              MarkActualParameters(list,nil);
               a_call_name(list,'FPC_OVERFLOW',false);
+              TrashVolatileRegisters(list,nil);
               a_label(list,l);
             end;
           OP_IDIV:
@@ -1442,7 +1450,9 @@ implementation
                   list.concat(ai);
                 end;
 
-              a_call_name(list,'FPC_OVERFLOW',false);
+                MarkActualParameters(list,nil);
+                a_call_name(list,'FPC_OVERFLOW',false);
+                TrashVolatileRegisters(list,nil);
               a_label(list,l);
             end;
         else

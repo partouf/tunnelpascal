@@ -1093,7 +1093,9 @@ implementation
         paramanager.freecgpara(list, paraloc1);
         alloccpuregisters(list, R_INTREGISTER, paramanager.get_volatile_registers_int(pocall_default));
         alloccpuregisters(list, R_FPUREGISTER, paramanager.get_volatile_registers_fpu(pocall_default));
+        MarkActualParameters(list, nil);
         a_call_name(list, 'FPC_MOVE', false);
+        TrashVolatileRegisters(list, nil);
         dealloccpuregisters(list, R_FPUREGISTER, paramanager.get_volatile_registers_fpu(pocall_default));
         dealloccpuregisters(list, R_INTREGISTER, paramanager.get_volatile_registers_int(pocall_default));
         paraloc3.done;

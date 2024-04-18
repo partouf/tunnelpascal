@@ -1721,7 +1721,9 @@ implementation
           else
             internalerror(2014112304);
         end;
+        cg.MarkActualParameters(list,nil);
         a_call_name(list,'FPC_OVERFLOW',false);
+        cg.TrashVolatileRegisters(list,nil);
         a_label(list,hl);
       end;
 
@@ -2190,7 +2192,9 @@ implementation
         paramanager.freecgpara(list,paraloc1);
         alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
         alloccpuregisters(list,R_MMREGISTER,paramanager.get_volatile_registers_mm(pocall_default));
+        cg.MarkActualParameters(list,nil);
         a_call_name(list,'FPC_MOVE',false);
+        cg.TrashVolatileRegisters(list,nil);
         dealloccpuregisters(list,R_MMREGISTER,paramanager.get_volatile_registers_mm(pocall_default));
         dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
         paraloc3.done;
@@ -2667,7 +2671,9 @@ implementation
             list.concat(ai);
             a_label(list,l1);
             alloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
+            cg.MarkActualParameters(list,nil);
             cg.a_call_name(list,'FPC_THROWFPUEXCEPTION',false);
+            cg.TrashVolatileRegisters(list,nil);
             dealloccpuregisters(list,R_INTREGISTER,paramanager.get_volatile_registers_int(pocall_default));
             a_label(list,l2);
             if clear then
@@ -2681,7 +2687,9 @@ implementation
         if target_info.system = system_aarch64_linux then
           begin
             list.concat(taicpu.op_reg_reg(A_MOV,NR_X0,NR_X30));
+            cg.MarkActualParameters(list,nil);
             a_call_name(list,'_mcount',false);
+            cg.TrashVolatileRegisters(list,nil);
           end
         else
           internalerror(2020021901);

@@ -221,7 +221,9 @@ implementation
             cg.a_reg_alloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
             cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,OS_32,OC_NE,0,tr,hl);
             cg.a_reg_dealloc(current_asmdata.CurrAsmList, NR_DEFAULTFLAGS);
+            cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
             cg.a_call_name(current_asmdata.CurrAsmList,'FPC_OVERFLOW',false);
+            cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
             cg.a_label(current_asmdata.CurrAsmList,hl);
           end;
       end;
@@ -453,7 +455,9 @@ implementation
                       paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,pd,1,paraloc1);
                       cg.a_load_const_cgpara(current_asmdata.CurrAsmList,OS_S32,aint(200),paraloc1);
                       paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
+                      cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
                       cg.a_call_name(current_asmdata.CurrAsmList,'FPC_HANDLEERROR',false);
+                      cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
                       paraloc1.done;
                       cg.a_label(current_asmdata.CurrAsmList,hl);
                     end;

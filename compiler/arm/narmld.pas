@@ -105,6 +105,7 @@ implementation
 
                       { we have to go the ugly way so we can set addr_tlscall }
                       cg.allocallcpuregisters(current_asmdata.CurrAsmList);
+                      cg.MarkActualParameters(current_asmdata.CurrAsmList,nil);
                       cg.a_call_name(current_asmdata.CurrAsmList,gvs.mangledname,false);
                       with taicpu(current_asmdata.CurrAsmList.Last) do
                         begin
@@ -112,6 +113,7 @@ implementation
                             Internalerror(2019092902);
                           oper[0]^.ref^.refaddr:=addr_tlscall;
                         end;
+                      cg.TrashVolatileRegisters(current_asmdata.CurrAsmList,nil);
                       cg.deallocallcpuregisters(current_asmdata.CurrAsmList);
 
                       cg.getcpuregister(current_asmdata.CurrAsmList,NR_R0);

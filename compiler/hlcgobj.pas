@@ -4949,7 +4949,11 @@ implementation
          if not(current_module.islibrary) then
            begin
              if tf_init_final_units_by_calls in target_info.flags then
-               cg.a_call_name(list,'FPC_INIT_FUNC_TABLE',false)
+               begin
+                 cg.MarkActualParameters(list, nil);
+                 cg.a_call_name(list,'FPC_INIT_FUNC_TABLE',false);
+                 cg.TrashVolatileRegisters(list, nil);
+               end
              else
                g_call_system_proc(list,'fpc_initializeunits',[],nil).resetiftemp;
            end
@@ -5653,7 +5657,9 @@ implementation
   function thlcgobj.g_call_system_proc_intern(list: TAsmList; pd: tprocdef; const paras: array of pcgpara; forceresdef: tdef): tcgpara;
     begin
       allocallcpuregisters(list);
+      cg.MarkActualParameters(list,pd);
       result:=a_call_name(list,pd,pd.mangledname,paras,forceresdef,false);
+      cg.TrashVolatileRegisters(list,pd);
       deallocallcpuregisters(list);
     end;
 
