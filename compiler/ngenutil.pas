@@ -230,6 +230,8 @@ implementation
 
 
   class function tnodeutils.initialize_data_node(p:tnode; force: boolean):tnode;
+    var
+      hsym: tprocsym;
     begin
       { prevent initialisation of hidden syms that were moved to
         parentfpstructs: the original symbol isn't used anymore, the version
@@ -265,6 +267,12 @@ implementation
                   ctypeconvnode.create_internal(p,search_system_type('TVARDATA').typedef),
                 nil));
             end
+          else if is_rtti_managed_type_with_directly_callable_mop(p.resultdef, mop_initialize) then
+            begin
+              hsym := tprocsym(p.resultdef.getsymtable(gs_record).Find('initialize'));
+              result := ccallnode.create(ccallparanode.create(p, nil),
+                     hsym,hsym.owner,nil,[cnf_ignore_visibility],nil);
+            end
           else
             begin
               result:=ccallnode.createintern('fpc_initialize',
@@ -283,6 +291,7 @@ implementation
   class function tnodeutils.finalize_data_node(p:tnode):tnode;
     var
       hs : string;
+      hsym : tprocsym;
     begin
       { see comment in initialize_data_node above }
       if (target_info.system in systems_fpnestedstruct) and
@@ -320,6 +329,12 @@ implementation
                 ccallparanode.create(
                   ctypeconvnode.create_internal(p,search_system_type('TVARDATA').typedef),
                 nil));
+            end
+          else if is_rtti_managed_type_with_directly_callable_mop(p.resultdef, mop_finalize) then
+            begin
+              hsym := tprocsym(p.resultdef.getsymtable(gs_record).Find('finalize'));
+              result := ccallnode.create(ccallparanode.create(p, nil),
+                     hsym,hsym.owner,nil,[cnf_ignore_visibility],nil);
             end
           else
             result:=ccallnode.createintern('fpc_finalize',

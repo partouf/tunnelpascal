@@ -926,6 +926,7 @@ implementation
         hdef: tdef;
         hs: string;
         needrtti: boolean;
+        hsym: tprocsym;
       begin
          result:=nil;
          expectloc:=LOC_VOID;
@@ -986,14 +987,23 @@ implementation
             not is_const(left) and
             not(target_info.system in systems_garbage_collected_managed_types) then
          begin
-           hp:=ccallparanode.create(caddrnode.create_internal(
-                  crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
-               ccallparanode.create(ctypeconvnode.create_internal(
-                 caddrnode.create_internal(left),voidpointertype),
-               ccallparanode.create(ctypeconvnode.create_internal(
-                 caddrnode.create_internal(right),voidpointertype),
-               nil)));
-           result:=ccallnode.createintern('fpc_copy_proc',hp);
+           if is_rtti_managed_type_with_directly_callable_mop(left.resultdef, mop_copy) then
+             begin
+               hsym := tprocsym(left.resultdef.getsymtable(gs_record).Find('copy'));
+               hp := ccallparanode.create(left, ccallparanode.create(right, nil));
+               result := ccallnode.create(hp,hsym,hsym.owner,nil,[cnf_ignore_visibility],nil);
+             end
+           else
+             begin
+               hp:=ccallparanode.create(caddrnode.create_internal(
+                      crttinode.create(tstoreddef(left.resultdef),initrtti,rdt_normal)),
+                   ccallparanode.create(ctypeconvnode.create_internal(
+                     caddrnode.create_internal(left),voidpointertype),
+                   ccallparanode.create(ctypeconvnode.create_internal(
+                     caddrnode.create_internal(right),voidpointertype),
+                   nil)));
+               result:=ccallnode.createintern('fpc_copy_proc',hp);
+             end;
            firstpass(result);
            left:=nil;
            right:=nil;
