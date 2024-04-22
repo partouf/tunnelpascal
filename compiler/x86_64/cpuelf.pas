@@ -399,7 +399,7 @@ implementation
 
   procedure TElfExeOutputx86_64.DoRelocationFixup(objsec:TObjSection);
     var
-      i,zero:longint;
+      i:longint;
       objreloc: TObjRelocation;
       address,
       relocval : aint;
@@ -418,8 +418,7 @@ implementation
             RELOC_ZERO:
               begin
                 data.Seek(objreloc.dataoffset);
-                zero:=0;
-                data.Write(zero,4);
+                longint(data.writeptr(4)^):=0;
                 continue;
               end;
             else

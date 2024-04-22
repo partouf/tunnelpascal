@@ -551,6 +551,7 @@ implementation
          typ     : byte;
          aux     : byte;
        end;
+       pcoffsymbol=^coffsymbol;
        coffbigobjsymbol=packed record
          Name               : record
                                 case boolean of
@@ -563,6 +564,7 @@ implementation
          StorageClass       : byte;
          NumberOfAuxSymbols : byte;
        end;
+       pcoffbigobjsymbol=^coffbigobjsymbol;
 
        { This is defined in rtl/win/sysos.inc source }
        tlsdirectory=packed record
@@ -1352,7 +1354,7 @@ const pemagic : array[0..3] of byte = (
 
     procedure TCoffExeOutput.DoRelocationFixup(objsec:TObjSection);
       var
-        i,zero,address_size : longint;
+        i,address_size : longint;
         objreloc : TObjRelocation;
         address,
         relocval : aint;
@@ -1376,8 +1378,7 @@ const pemagic : array[0..3] of byte = (
               RELOC_ZERO:
                 begin
                   data.Seek(objreloc.dataoffset);
-                  zero:=0;
-                  data.Write(zero,4);
+                  longint(data.writeptr(4)^):=0;
                   continue;
                 end;
 {$ifdef cpu64bitaddr}
@@ -1768,8 +1769,8 @@ const pemagic : array[0..3] of byte = (
 
     procedure TCoffObjOutput.write_symbol(const name:string;value:aword;section:longint;typ,aux:byte);
       var
-        sym : coffsymbol;
-        bosym : coffbigobjsymbol;
+        sym : pcoffsymbol;
+        bosym : pcoffbigobjsymbol;
         strpos : longword;
       begin
         { symbolname }
@@ -1784,43 +1785,42 @@ const pemagic : array[0..3] of byte = (
 
         if bigobj then
           begin
-            fillchar(bosym,sizeof(bosym),0);
+            bosym:=FCoffSyms.writeptr(sizeof(coffbigobjsymbol));
+            fillchar(bosym^,sizeof(coffbigobjsymbol),0);
             if length(name)>8 then
-              bosym.name.offset.offset:=strpos
+              bosym^.name.offset.offset:=strpos
             else
-              move(name[1],bosym.name.shortname,length(name));
-            bosym.value:=value;
-            bosym.SectionNumber:=longword(section);
-            bosym.StorageClass:=typ;
-            bosym.NumberOfAuxSymbols:=aux;
+              move(name[1],bosym^.name.shortname,length(name));
+            bosym^.value:=value;
+            bosym^.SectionNumber:=longword(section);
+            bosym^.StorageClass:=typ;
+            bosym^.NumberOfAuxSymbols:=aux;
             inc(symidx);
-	    MaybeSwap(bosym);
-            FCoffSyms.write(bosym,sizeof(bosym));
+	    MaybeSwap(bosym^);
           end
         else
           begin
             if section>$7fff then
               internalerror(2017020302);
-            FillChar(sym,sizeof(sym),0);
+            sym:=FCoffSyms.writeptr(sizeof(coffsymbol));
+            FillChar(sym^,sizeof(coffsymbol),0);
             if length(name)>8 then
-              sym.strpos:=strpos
+              sym^.strpos:=strpos
             else
-              move(name[1],sym.name,length(name));
-            sym.value:=value;
-            sym.section:=section;
-            sym.typ:=typ;
-            sym.aux:=aux;
+              move(name[1],sym^.name,length(name));
+            sym^.value:=value;
+            sym^.section:=section;
+            sym^.typ:=typ;
+            sym^.aux:=aux;
             inc(symidx);
-	    MaybeSwap(sym);
-            FCoffSyms.write(sym,sizeof(sym));
+	    MaybeSwap(sym^);
           end;
       end;
 
 
     procedure TCoffObjOutput.section_write_symbol(p:TObject;arg:pointer);
       var
-        secrec : coffsectionrec;
-        padding : word;
+        secrec : pcoffsectionrec;
       begin
         with TCoffObjSection(p) do
           begin
@@ -1834,20 +1834,19 @@ const pemagic : array[0..3] of byte = (
               PE binutils and causes warnings with DJGPP binutils. }
             write_symbol(name,mempos,index,COFF_SYM_LOCAL,1);
             { AUX }
-            fillchar(secrec,sizeof(secrec),0);
-            secrec.len:=Size;
+            secrec:=FCoffSyms.writeptr(sizeof(coffsectionrec));
+            fillchar(secrec^,sizeof(coffsectionrec),0);
+            secrec^.len:=Size;
             if ObjRelocations.count<65535 then
-              secrec.nrelocs:=ObjRelocations.count
+              secrec^.nrelocs:=ObjRelocations.count
             else
-              secrec.nrelocs:=65535;
+              secrec^.nrelocs:=65535;
             inc(symidx);
-	    MaybeSwap(secrec);
-            FCoffSyms.write(secrec,sizeof(secrec));
+	    MaybeSwap(secrec^);
             { aux recs have the same size as symbols, so we need to add two
               Byte of padding in case of a Big Obj Coff }
-            padding:=0;
             if bigobj then
-              FCoffSyms.write(padding,sizeof(padding));
+              word(FCoffSyms.writeptr(sizeof(word))^):=0;
           end;
       end;
 
@@ -2399,8 +2398,7 @@ const pemagic : array[0..3] of byte = (
         strname   : string;
         auxrec    : array[0..sizeof(coffsymbol)-1] of byte;
         boauxrec  : array[0..sizeof(coffbigobjsymbol)-1] of byte;
-        psecrec   : pcoffsectionrec;
-        secrec    : coffsectionrec;
+        secrec    : pcoffsectionrec;
         objsec    : TObjSection;
         secidx    : longint;
         symvalue  : longword;
@@ -2549,20 +2547,26 @@ const pemagic : array[0..3] of byte = (
                 begin
                   if bigobj then
                     begin
-                      FCoffSyms.Read(boauxrec,sizeof(boauxrec));
-                      psecrec:=pcoffsectionrec(@boauxrec[0]);
-		      secrec:=psecrec^;
-		      MaybeSwap(secrec);
+                      secrec:=FCoffSyms.readptr(sizeof(coffbigobjsymbol));
+                      if source_info.endian<>target_info.endian then
+                        begin
+                          pcoffbigobjsymbol(@boauxrec)^:=pcoffbigobjsymbol(secrec)^;
+                          secrec:=pcoffsectionrec(@boauxrec);
+                          MaybeSwap(secrec^);
+                        end;
                     end
                   else
                     begin
-                      FCoffSyms.Read(auxrec,sizeof(auxrec));
-                      psecrec:=pcoffsectionrec(@auxrec);
-		      secrec:=psecrec^;
-		      MaybeSwap(secrec);
+                      secrec:=FCoffSyms.readptr(sizeof(coffsymbol));
+                      if source_info.endian<>target_info.endian then
+                        begin
+                          pcoffsymbol(@auxrec)^:=pcoffsymbol(secrec)^;
+                          secrec:=pcoffsectionrec(@auxrec);
+                          MaybeSwap(secrec^);
+                        end;
                     end;
 
-                  case secrec.select of
+                  case secrec^.select of
                     IMAGE_COMDAT_SELECT_NODUPLICATES:
                       comdatsel:=oscs_none;
                     IMAGE_COMDAT_SELECT_ANY:
@@ -2577,14 +2581,14 @@ const pemagic : array[0..3] of byte = (
                       comdatsel:=oscs_largest;
                     else begin
                       comdatsel:=oscs_none;
-                      Message2(link_e_comdat_select_unsupported,inttostr(secrec.select),objsym.objsection.name);
+                      Message2(link_e_comdat_select_unsupported,inttostr(secrec^.select),objsym.objsection.name);
                     end;
                   end;
 
                   if comdatsel in [oscs_associative,oscs_exact_match] then
                     { only temporary }
                     Comment(V_Error,'Associative or exact match COMDAT sections are not yet supported (symbol: '+objsym.objsection.Name+')')
-                  else if (comdatsel=oscs_associative) and (secrec.assoc=0) then
+                  else if (comdatsel=oscs_associative) and (secrec^.assoc=0) then
                     Message1(link_e_comdat_associative_section_expected,objsym.objsection.name)
                   else if (objsym.objsection.ComdatSelection<>oscs_none) and (comdatsel<>oscs_none) and (objsym.objsection.ComdatSelection<>comdatsel) then
                     Message2(link_e_comdat_not_matching,objsym.objsection.Name,objsym.Name)
@@ -2592,9 +2596,9 @@ const pemagic : array[0..3] of byte = (
                     begin
                       objsym.objsection.ComdatSelection:=comdatsel;
 
-                      if (secrec.assoc<>0) and not assigned(objsym.objsection.AssociativeSection) then
+                      if (secrec^.assoc<>0) and not assigned(objsym.objsection.AssociativeSection) then
                         begin
-                          objsym.objsection.AssociativeSection:=GetSection(secrec.assoc);
+                          objsym.objsection.AssociativeSection:=GetSection(secrec^.assoc);
                           if not assigned(objsym.objsection.AssociativeSection) then
                             Message1(link_e_comdat_associative_section_not_found,objsym.objsection.Name);
                         end;
@@ -2607,9 +2611,9 @@ const pemagic : array[0..3] of byte = (
               for i:=1 to auxcount do
                begin
                  if bigobj then
-                   FCoffSyms.Read(boauxrec,sizeof(boauxrec))
+                   FCoffSyms.readptr(sizeof(coffbigobjsymbol))
                  else
-                   FCoffSyms.Read(auxrec,sizeof(auxrec));
+                   FCoffSyms.readptr(sizeof(coffsymbol));
                  inc(symidx);
                end;
               inc(symidx);
@@ -3688,7 +3692,7 @@ const pemagic : array[0..3] of byte = (
         len:=p-hdrpos;
         if source_info.endian<>target_info.endian then
           len:=SwapEndian(len);
-        internalObjData.CurrObjSec.Data.write(len,4);
+        longint(internalObjData.CurrObjSec.Data.writeptr(4)^):=len;
         internalObjData.CurrObjSec.Data.seek(p);
         hdrpos:=longword(-1);
       end;

@@ -433,20 +433,17 @@ type
 ********************************************}
 
      type
-       { can't use sizeof(integer) because it crashes gdb }
-       tdynamicblockdata=array[0..1024*1024-1] of byte;
-
        pdynamicblock = ^tdynamicblock;
        tdynamicblock = record
          pos,
          size,
          used : longword;
          Next : pdynamicblock;
-         data : tdynamicblockdata;
+         data : array[0..0] of byte;
        end;
 
      const
-       dynamicblockbasesize = sizeof(tdynamicblock)-sizeof(tdynamicblockdata);
+       dynamicblockbasesize = sizeof(tdynamicblock)-sizeof(tdynamicblock.data);
        mindynamicblocksize = 8*sizeof(pointer);
 
      type
@@ -458,7 +455,20 @@ type
          FMaxBlocksize  : longword;
          FFirstblock,
          FLastblock  : pdynamicblock;
+
+         { Buffer for disjoint readptr/writeptr. }
+         FPendingBuf : pointer;
+         { <>0 means that flushpendingwrite needs to be called (only FPosn can be read safely without checking this). }
+         FPendingWrite,
+         { Allocation size of FPendingBuf. }
+         FPendingAlloc: longword;
+
          procedure grow;
+         procedure clear;
+         function reallocatependingbuf(len:longword):pointer;
+         { Must be called before almost each operation, can be shortcutted with "if FPendingWrite<>0" for speed. }
+         procedure flushpendingwrite;
+         function getfirstblock: PDynamicBlock;
        public
          constructor Create(Ablocksize:longword);
          destructor  Destroy;override;
@@ -467,13 +477,16 @@ type
          procedure align(i:longword);
          procedure seek(i:longword);
          function  read(var d;len:longword):longword;
+         { allows zero-copy read through pointer }
+         function  readptr(len:longword):pointer;
          procedure write(const d;len:longword);
+         { allows zero-copy write through pointer }
+         function  writeptr(len:longword):pointer;
          procedure writestr(const s:string); {$ifdef CCLASSESINLINE}inline;{$endif}
          procedure readstream(f:TCStream;maxlen:longword);
          procedure writestream(f:TCStream);
          function  equal(other:tdynamicarray):boolean;
-         property  CurrBlockSize : longword read FCurrBlocksize;
-         property  FirstBlock : PDynamicBlock read FFirstBlock;
+         property  FirstBlock : PDynamicBlock read getfirstblock;
          property  Pos : longword read FPosn;
        end;
 
@@ -2597,20 +2610,15 @@ end;
 
 
     destructor tdynamicarray.destroy;
-      var
-        hp : pdynamicblock;
       begin
-        while assigned(FFirstblock) do
-         begin
-           hp:=FFirstblock;
-           FFirstblock:=FFirstblock^.Next;
-           Freemem(hp);
-         end;
+        clear;
       end;
 
 
     function  tdynamicarray.size:longword;
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         if assigned(FLastblock) then
          size:=FLastblock^.pos+FLastblock^.used
         else
@@ -2619,19 +2627,8 @@ end;
 
 
     procedure tdynamicarray.reset;
-      var
-        hp : pdynamicblock;
       begin
-        while assigned(FFirstblock) do
-         begin
-           hp:=FFirstblock;
-           FFirstblock:=FFirstblock^.Next;
-           Freemem(hp);
-         end;
-        FPosn:=0;
-        FPosnblock:=nil;
-        FFirstblock:=nil;
-        FLastblock:=nil;
+        clear;
         grow;
       end;
 
@@ -2642,18 +2639,18 @@ end;
         OptBlockSize,
         IncSize : integer;
       begin
-        if CurrBlockSize<FMaxBlocksize then
+        if FCurrBlockSize<FMaxBlocksize then
           begin
             IncSize := mindynamicblocksize;
             if FCurrBlockSize > 255 then
               Inc(IncSize, FCurrBlockSize shr 2);
             inc(FCurrBlockSize,IncSize);
           end;
-        if CurrBlockSize>FMaxBlocksize then
+        if FCurrBlockSize>FMaxBlocksize then
           FCurrBlockSize:=FMaxBlocksize;
         { Calculate the most optimal size so there is no alignment overhead
           lost in the heap manager }
-        OptBlockSize:=cutils.Align(CurrBlockSize+dynamicblockbasesize,16)-dynamicblockbasesize-sizeof(ptrint);
+        OptBlockSize:=cutils.Align(FCurrBlockSize+dynamicblockbasesize,16)-dynamicblockbasesize-sizeof(ptrint);
         Getmem(nblock,OptBlockSize+dynamicblockbasesize);
         if not assigned(FFirstblock) then
          begin
@@ -2674,10 +2671,73 @@ end;
       end;
 
 
+    procedure tdynamicarray.clear;
+      var
+        hp : pdynamicblock;
+      begin
+        FreeMem(FPendingBuf);
+        while assigned(FFirstblock) do
+         begin
+           hp:=FFirstblock;
+           FFirstblock:=FFirstblock^.Next;
+           Freemem(hp);
+         end;
+        FPosn:=0;
+        FPosnblock:=nil;
+        FFirstblock:=nil;
+        FLastblock:=nil;
+        FPendingBuf:=nil;
+        FPendingWrite:=0;
+        FPendingAlloc:=0;
+      end;
+
+
+    function tdynamicarray.reallocatependingbuf(len:longword):pointer;
+      begin
+        if len<=FPendingAlloc then
+          result:=FPendingBuf
+        else
+          begin
+            FreeMem(FPendingBuf);
+            FPendingBuf:=nil;
+            FPendingAlloc:=0;
+            { Need at least 'len', but add some margin, hopefully avoiding further reallocations of FPendingBuf. }
+            len:=24+len+len div 4;
+            result:=GetMem(len);
+            FPendingBuf:=result;
+            FPendingAlloc:=len;
+          end;
+      end;
+
+
+    procedure tdynamicarray.flushpendingwrite;
+      var
+        len : longword;
+      begin
+        if FPendingWrite<>0 then
+          begin
+            len:=FPendingWrite;
+            FPendingWrite:=0;
+            FPosn:=FPosn-len;
+            self.write(FPendingBuf^,len);
+          end;
+      end;
+
+
+    function tdynamicarray.getfirstblock: PDynamicBlock;
+      begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
+        result:=FFirstBlock;
+      end;
+
+
     procedure tdynamicarray.align(i:longword);
       var
         j : longword;
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         j:=(FPosn mod i);
         if j<>0 then
          begin
@@ -2697,6 +2757,8 @@ end;
 
     procedure tdynamicarray.seek(i:longword);
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         if (i<FPosnblock^.pos) or (i>=FPosnblock^.pos+FPosnblock^.size) then
          begin
            { set FPosnblock correct if the size is bigger then
@@ -2730,21 +2792,25 @@ end;
       var
         p : pchar;
         i,j : longword;
+        posnb : pdynamicblock;
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         p:=pchar(@d);
         while (len>0) do
          begin
-           i:=FPosn-FPosnblock^.pos;
-           if i+len>=FPosnblock^.size then
+           posnb:=FPosnblock;
+           i:=FPosn-posnb^.pos;
+           if i+len>=posnb^.size then
             begin
-              j:=FPosnblock^.size-i;
-              move(p^,FPosnblock^.data[i],j);
+              j:=posnb^.size-i;
+              move(p^,pbyte(posnb^.data)[i],j);
               inc(p,j);
               inc(FPosn,j);
               dec(len,j);
-              FPosnblock^.used:=FPosnblock^.size;
-              if assigned(FPosnblock^.Next) then
-               FPosnblock:=FPosnblock^.Next
+              posnb^.used:=posnb^.size;
+              if assigned(posnb^.Next) then
+               FPosnblock:=posnb^.Next
               else
                begin
                  grow;
@@ -2753,15 +2819,40 @@ end;
             end
            else
             begin
-              move(p^,FPosnblock^.data[i],len);
+              move(p^,pbyte(posnb^.data)[i],len);
               inc(p,len);
               inc(FPosn,len);
-              i:=FPosn-FPosnblock^.pos;
-              if i>FPosnblock^.used then
-               FPosnblock^.used:=i;
+              i:=FPosn-posnb^.pos;
+              if i>posnb^.used then
+               posnb^.used:=i;
               len:=0;
             end;
          end;
+      end;
+
+
+    function tdynamicarray.writeptr(len:longword):pointer;
+      var
+        i,ipluslen : longword;
+        posnb : pdynamicblock;
+      begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
+        posnb:=FPosnblock;
+        i:=FPosn-posnb^.pos;
+        ipluslen:=i+len;
+        FPosn:=FPosn+len;
+        if ipluslen<posnb^.size then
+          begin
+            result:=pbyte(posnb^.data)+i;
+            if ipluslen>posnb^.used then
+              posnb^.used:=ipluslen;
+          end
+        else
+          begin
+            result:=reallocatependingbuf(len);
+            FPendingWrite:=len;
+          end;
       end;
 
 
@@ -2775,35 +2866,59 @@ end;
       var
         p : pchar;
         i,j,res : longword;
+        posnb : pdynamicblock;
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         res:=0;
         p:=pchar(@d);
         while (len>0) do
          begin
-           i:=FPosn-FPosnblock^.pos;
-           if i+len>=FPosnblock^.used then
+           posnb:=FPosnblock;
+           i:=FPosn-posnb^.pos;
+           j:=posnb^.used-i;
+           if len>=j then
             begin
-              j:=FPosnblock^.used-i;
-              move(FPosnblock^.data[i],p^,j);
+              move(pbyte(posnb^.data)[i],p^,j);
               inc(p,j);
               inc(FPosn,j);
               inc(res,j);
               dec(len,j);
-              if assigned(FPosnblock^.Next) then
-               FPosnblock:=FPosnblock^.Next
+              if assigned(posnb^.Next) then
+               FPosnblock:=posnb^.Next
               else
                break;
             end
            else
             begin
-              move(FPosnblock^.data[i],p^,len);
+              move(pbyte(posnb^.data)[i],p^,len);
               inc(p,len);
               inc(FPosn,len);
               inc(res,len);
-              len:=0;
+              break;
             end;
          end;
         read:=res;
+      end;
+
+
+    function tdynamicarray.readptr(len:longword):pointer;
+      var
+        i : longword;
+        posnb : pdynamicblock;
+      begin
+        posnb:=FPosnblock;
+        i:=FPosn-posnb^.pos;
+        if i+len<posnb^.used then
+          begin
+            result:=pbyte(posnb^.data)+i;
+            FPosn:=FPosn+len;
+          end
+        else
+          begin
+            result:=reallocatependingbuf(len);
+            read(result^,len);
+          end;
       end;
 
 
@@ -2811,11 +2926,13 @@ end;
       var
         i,left : longword;
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         repeat
           left:=FPosnblock^.size-FPosnblock^.used;
           if left>maxlen then
            left:=maxlen;
-          i:=f.Read(FPosnblock^.data[FPosnblock^.used],left);
+          i:=f.Read(pbyte(FPosnblock^.data)[FPosnblock^.used],left);
           dec(maxlen,i);
           inc(FPosnblock^.used,i);
           if FPosnblock^.used=FPosnblock^.size then
@@ -2836,6 +2953,8 @@ end;
       var
         hp : pdynamicblock;
       begin
+        if FPendingWrite<>0 then
+          flushpendingwrite;
         hp:=FFirstblock;
         while assigned(hp) do
          begin
@@ -2857,6 +2976,10 @@ end;
       begin
         if not assigned(other) then
           exit(false);
+        if FPendingWrite<>0 then
+          flushpendingwrite;
+        if other.FPendingWrite<>0 then
+          other.flushpendingwrite;
         if size<>other.size then
           exit(false);
         blockthis:=Firstblock;
@@ -2869,7 +2992,7 @@ end;
             remthis:=blockthis^.used-ofsthis;
             remother:=blockother^.used-ofsother;
             len:=min(remthis,remother);
-            if not CompareMem(@blockthis^.data[ofsthis],@blockother^.data[ofsother],len) then
+            if not CompareMem(pbyte(blockthis^.data)+ofsthis,pbyte(blockother^.data)+ofsother,len) then
               exit(false);
             inc(ofsthis,len);
             inc(ofsother,len);
