@@ -11,7 +11,7 @@
 {$IFDEF HAVE_STRXFRM_L}
 
 {$IFDEF TYPE}
-  {$IFDEF POSIX}
+  {$IF DEFINED(POSIX)}
   (*
    * XSLT_LOCALE_POSIX:
    * Macro indicating to use POSIX locale extensions
