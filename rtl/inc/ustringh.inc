@@ -50,6 +50,14 @@ procedure UnicodeCharLenToStrVar(Src : PUnicodeChar;Len : SizeInt;out Dest : Uni
 procedure UnicodeCharLenToStrVar(Src : PUnicodeChar;Len : SizeInt;out Dest : AnsiString);
 procedure UnicodeCharToStrVar(S : PUnicodeChar;out Dest : AnsiString);
 
+function UnicodeFromLocaleChars(CodePage, Flags: Cardinal; LocaleStr: PAnsiChar;
+  LocaleStrLen: SizeInt; UnicodeStr: PWideChar; UnicodeStrLen: SizeInt): SizeInt; overload;
+
+function UnicodeFromLocaleChars(const LocaleName: AnsiString; Flags: Cardinal;
+  LocaleStr: PAnsiChar; LocaleStrLen: SizeInt; UnicodeStr: PWideChar;
+  UnicodeStrLen: SizeInt): SizeInt; overload;
+
+
 procedure DefaultUnicode2AnsiMove(source:punicodechar;var dest:RawByteString;cp : TSystemCodePage;len:SizeInt);
 procedure DefaultAnsi2UnicodeMove(source:pansichar;cp : TSystemCodePage;var dest:unicodestring;len:SizeInt);
 
@@ -142,6 +150,11 @@ function UTF8Decode(const s : RawByteString): UnicodeString;
 function UTF8ToString(const s : RawByteString): UnicodeString;inline;
 function UTF8ToString(const S: ShortString): unicodestring;
 function UTF8ToString(const S: PAnsiChar): unicodestring;
+// Delphi compatibility overloads...
+function UTF8ToUnicodeString(const s : RawByteString): UnicodeString;inline;
+function UTF8ToUnicodeString(const S: ShortString): unicodestring;inline;
+function UTF8ToUnicodeString(const S: PAnsiChar): unicodestring;inline;
+
 { byte and ansichar are the same on the JVM, and "array of" and "pointer to"
   are as well }
 {$ifndef CPUJVM}
@@ -172,3 +185,12 @@ function StringCodePage(const S : UnicodeString): TSystemCodePage; overload;
 Function ToSingleByteFileSystemEncodedFileName(const Str: UnicodeString): RawByteString;
 Function ToSingleByteFileSystemEncodedFileName(const arr: array of widechar): RawByteString;
 Function ToSingleByteFileSystemEncodedFileName(const Str: RawByteString): RawByteString;
+
+Type
+  TLocaleNameToCodePageCallBack = Procedure (const localename : shortstring; out codepage : TSystemCodePage; aHandled : Boolean);
+  
+
+Var
+  LocaleNameToCodePageCallBack : TLocaleNameToCodePageCallBack;
+  
+Function LocaleNameToCodePage(const localename : shortstring; out codepage : TSystemCodePage) : Boolean;

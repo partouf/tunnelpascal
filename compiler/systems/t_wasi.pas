@@ -77,8 +77,12 @@ type
   TInternalLinkerWasi=class(tinternallinker)
   protected
     procedure DefaultLinkScript;override;
+
+    function GetDataSize(aExeOutput: TExeOutput): QWord;override;
   public
     constructor create;override;
+
+    procedure InitSysInitUnitName;override;
   end;
 
 
@@ -283,8 +287,28 @@ end;
 { TInternalLinkerWasi }
 
 procedure TInternalLinkerWasi.DefaultLinkScript;
+var
+  s: TCmdStr;
 begin
-  {TODO}
+  while not ObjectFiles.Empty do
+  begin
+    s:=ObjectFiles.GetFirst;
+    if s<>'' then
+      LinkScript.Concat('READOBJECT ' + maybequoted(s));
+  end;
+
+  LinkScript.Concat('EXESECTION .wasm_globals');
+  LinkScript.Concat('  SYMBOL __stack_pointer');
+  LinkScript.Concat('  OBJSECTION .wasm_globals.*');
+  LinkScript.Concat('ENDEXESECTION');
+
+  ScriptAddGenericSections('.wasm_tags,.text,.rodata,.data,.bss,.debug_frame,.debug_info,.debug_line,.debug_abbrev,.debug_aranges,.debug_ranges,.debug_str');
+end;
+
+function TInternalLinkerWasi.GetDataSize(aExeOutput: TExeOutput): QWord;
+begin
+  Result:=aExeOutput.findexesection('.rodata').size +
+          aExeOutput.findexesection('.data').size;
 end;
 
 constructor TInternalLinkerWasi.create;
@@ -294,10 +318,19 @@ begin
   CObjInput:=TWasmObjInput;
 end;
 
+procedure TInternalLinkerWasi.InitSysInitUnitName;
+begin
+  if current_module.islibrary then
+    sysinitunit:='si_dll'
+  else
+    sysinitunit:='si_prc';
+end;
+
 initialization
   RegisterTarget(system_wasm32_wasi_info);
   RegisterImport(system_wasm32_wasi, timportlibwasi);
   RegisterExport(system_wasm32_wasi, texportlibwasi);
+  RegisterLinker(ld_int_wasi,TInternalLinkerWasi);
   RegisterLinker(ld_wasi, tlinkerwasi);
 
 end.

@@ -247,7 +247,8 @@ const
   { 118 } 'Linux-MIPS64el',
   { 119 } 'FreeRTos-RiscV32',
   { 120 } 'Linux-LoongArch64',
-  { 121 } 'iPhoneSim-AArch64'
+  { 121 } 'iPhoneSim-AArch64',
+  { 122 } 'Human68k-m68k'
   );
 
 const
@@ -478,7 +479,9 @@ type
   end;
 
 type
+  t_ppu_endian = (ppu_unknown_endian, ppu_little_endian, ppu_big_endian );
   tppudumpfile = class(tppufile)
+    internal_endian : t_ppu_endian;
   protected
     procedure RaiseAssertion(Code: Longint); override;
   end;
@@ -520,11 +523,6 @@ type
     case byte of
       0: (bytes: Array[0..9] of byte);
       1: (words: Array[0..4] of word);
-{$ifdef FPC_LITTLE_ENDIAN}
-      2: (cards: Array[0..1] of cardinal; w: word);
-{$else not FPC_LITTLE_ENDIAN}
-      2: (w:word; cards: Array[0..1] of cardinal);
-{$endif not FPC_LITTLE_ENDIAN}
   end;
 const
   maxDigits = 17;
@@ -536,7 +534,8 @@ const
     exp : smallint;
     d : double;
     i : longint;
-    mantval : qword;
+    e_qw, mantval : qword;
+    e_w : word;
   begin
     if ppufile.change_endian then
       begin
@@ -551,16 +550,21 @@ const
         exit;
       end;
     { extended, format (MSB): 1 Sign bit, 15 bit exponent, 64 bit mantissa }
-    sign := (e.w and $8000) <> 0;
-    expMaximal := (e.w and $7fff) = 32767;
-    exp:=(e.w and $7fff) - 16383 - 63;
-    fraczero := (e.cards[0] = 0) and
-                    ((e.cards[1] and $7fffffff) = 0);
-{$ifdef FPC_LITTLE_ENDIAN}
-    mantval := qword(e.cards[0]) or (qword(e.cards[1]) shl 32);
-{$else not FPC_LITTLE_ENDIAN}
-    mantval := (qword(e.cards[0]) shl 32) or qword(e.cards[1]);
-{$endif not FPC_LITTLE_ENDIAN}
+    if (ppufile.internal_endian=ppu_big_endian) then
+      begin
+        e_w:=pword(@(e.bytes[0]))^;
+        e_qw:=unaligned(pqword(@(e.bytes[2]))^);
+      end
+    else
+      begin
+        e_w:=pword(@(e.bytes[8]))^;
+        e_qw:=pqword(@(e.bytes[0]))^;
+      end;
+    sign := (e_w and $8000) <> 0;
+    expMaximal := (e_w and $7fff) = 32767;
+    exp:=(e_w and $7fff) - 16383 - 63;
+    fraczero := ((e_qw and qword($7fffffffffffffff)) = 0);
+    mantval:=e_qw;
     if expMaximal then
       if fraczero then
         if sign then
@@ -600,7 +604,7 @@ const
           system.str(d,temp);
         end;
       end;
-
+    temp:=temp+' w=$'+hexstr(e_w,4)+',qw=$'+hexstr(e_qw,16);
     result:=temp;
   end;
 {$POP}
@@ -854,6 +858,8 @@ type
   end;
 const
   flagopts=8;
+  mask_big_endian = $4;
+  mask_little_endian = $1000;
   flagopt : array[1..flagopts] of tflagopt=(
     (mask: $4    ;str:'big_endian'),
 //    (mask: $10   ;str:'browser'),
@@ -873,6 +879,7 @@ var
 begin
   s:='';
   ntflags:=flags;
+  ppufile.internal_endian:=ppu_unknown_endian;
   if flags<>0 then
    begin
      first:=true;
@@ -884,7 +891,25 @@ begin
          else
            s:=s+', ';
          s:=s+flagopt[i].str;
-         ntflags:=ntflags and (not flagopt[i].mask);
+         if flagopt[i].mask=mask_big_endian then
+           begin
+             if (ppufile.internal_endian<>ppu_unknown_endian) then
+               begin
+                 s:=s+' endianess explicitly set twice';
+                 SetHasErrors;
+               end;
+             ppufile.internal_endian:=ppu_big_endian;
+           end;
+         if flagopt[i].mask=mask_little_endian then
+           begin
+             if (ppufile.internal_endian<>ppu_unknown_endian) then
+               begin
+                 s:=s+' endianess explicitly set twice';
+                 SetHasErrors;
+               end;
+             ppufile.internal_endian:=ppu_little_endian;
+           end;
+          ntflags:=ntflags and (not flagopt[i].mask);
        end;
    end
   else
@@ -892,6 +917,11 @@ begin
   if ntflags<>0 then
     begin
       s:=s+' unknown '+hexstr(ntflags,8);
+      SetHasErrors;
+    end;
+  if (ppufile.internal_endian=ppu_unknown_endian) then
+    begin
+      s:=s+' endianess not explicitly set';
       SetHasErrors;
     end;
   PPUFlags2Str:=s;
@@ -2347,7 +2377,7 @@ const
         'Assemble on target OS', {cs_asemble_on_target}
         'Use a memory model to support >2GB static data on 64 Bit target', {cs_large}
         'Generate UF2 binary', {cs_generate_uf2}
-	'Link using ld.lld GNU compatible LLVM linker' {cs_link_lld}
+        'Link using ld.lld GNU compatible LLVM linker' {cs_link_lld}
        );
     localswitchname : array[tlocalswitch] of string[50] =
        { Switches which can be changed locally }
@@ -2709,7 +2739,7 @@ begin
                     stbi:=tbi;
                     tokenreadsettings(new_settings, copy_size);
                     tbi:=stbi+copy_size;
-                    if CompareByte(new_settings,prev_settings,sizeof(new_settings))<>0 then
+                    if CompareByte(new_settings,prev_settings,copy_size)<>0 then
                       begin
                         dump_new_settings;
                         writeln;
@@ -2722,8 +2752,13 @@ begin
                   end;
                 ST_LOADMESSAGES:
                   begin
+                    inc(tbi);
                     mesgnb:=gettokenbufsizeint;;
                     writeln([space,mesgnb,' messages: ']);
+                    if (tbi+2*sizeof(longint)*mesgnb>tokenbufsize) then
+                      begin
+                        WriteError('!! Error: number of messages incompatible with token buffer size');
+                      end;
                     for nb:=1 to mesgnb do
                       begin
                         msgvalue:=gettokenbuflongint;
@@ -2773,7 +2808,12 @@ begin
       if tbi<tokenbufsize then
         write(',');
     end;
-  writeln;
+  if (tbi>tokenbufsize) then
+    begin
+      WriteError('!! Error: read past of token buffer size');
+    end
+  else
+    writeln;
   StrAppend(genstr,linestr);
   writeln(['##',genstr,'##']);
 end;
@@ -3291,6 +3331,67 @@ begin
 end;
 
 
+procedure readextendedrtti;
+type
+  tvisopt=record
+    mask : trtti_visibility;
+    str  : string[10];
+  end;
+const
+  visopt : array[0..ord(high(trtti_visibility))] of tvisopt=(
+     (mask:rv_private;    str:'Private'),
+     (mask:rv_protected;  str:'Protected'),
+     (mask:rv_public;     str:'Public'),
+     (mask:rv_published;  str:'Published')
+  );
+type
+  toptionopt=record
+    mask : trtti_option;
+    str  : string[10];
+  end;
+const
+  voptionopt : array[0..ord(high(trtti_option))] of toptionopt=(
+     (mask:ro_methods;    str:'Methods'),
+     (mask:ro_fields;     str:'Fields'),
+     (mask:ro_properties; str:'Properties')
+  );
+var
+  clause: string;
+  visibilities: trtti_visibilities;
+  first: boolean;
+  i, ro: integer;
+begin
+  clause:='';
+  case trtti_clause(ppufile.getbyte) of
+    rtc_none: clause:='None';
+    rtc_inherit: clause:='Inherit';
+    rtc_explicit: clause:='Explicit';
+  end;
+  writeln([space,'       Clause : ',clause]);
+
+  for ro:=0 to high(voptionopt) do
+    begin
+      ppufile.getset(tppuset1(visibilities));
+      if visibilities<>[] then
+        begin
+          write([space,'       ',voptionopt[ro].str,' : ']);
+          first:=true;
+          for i:=0 to high(visopt) do
+            if visopt[i].mask in visibilities then
+              begin
+                if first then
+                  first:=false
+                else
+                  write(', ');
+                write(visopt[i].str);
+              end;
+          if not first then
+            writeln;
+        end;
+    end;
+end;
+
+
 procedure readprocimploptions(const space: string; out implprocoptions: timplprocoptions);
 type
   tpiopt=record
@@ -3767,6 +3868,8 @@ begin
                          if j>1 then
                           write(',');
                          b:=getbyte;
+                         if ppufile.change_endian then
+                           b:=reverse_byte(b);
                          write(hexstr(b,2));
                          constdef.VSet[i*j-1]:=b;
                        end;
@@ -4468,6 +4571,8 @@ begin
              writeln([space,'   Import lib/pkg : ',getstring]);
              write  ([space,'          Options : ']);
              readobjectdefoptions(objdef);
+             writeln([space,'    Extended RTTI : ']);
+             readextendedrtti;
              if (df_copied_def in defoptions) then
                begin
                  Include(TPpuRecordDef(def).Options, ooCopied);
@@ -4506,6 +4611,8 @@ begin
              writeln([space,'   Import lib/pkg : ',getstring]);
              write  ([space,'          Options : ']);
              readobjectdefoptions(objdef);
+             writeln([space,'    Extended RTTI : ']);
+             readextendedrtti;
              otb:=getbyte;
              write  ([space,'             Type : ']);
              case tobjecttyp(otb) of

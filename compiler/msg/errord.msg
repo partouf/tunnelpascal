@@ -6,7 +6,7 @@
 #   Based on errore.msg of git commit f364bb6b + 1, 29 Jul, 2023
 #
 #   This file is part of the Free Pascal Compiler
-#   Copyright (c) 1998-2023 by the Free Pascal Development team
+#   Copyright (c) 1998-2024 by the Free Pascal Development team
 #
 #   See the file COPYING.v2, included in this distribution,
 #   for details about the copyright.
@@ -3882,7 +3882,7 @@ package_u_ppl_filename=13029_U_PPL Dateiname $1
 #
 option_logo=11023_[
 Free Pascal Compiler Version $FPCFULLVERSION [$FPCDATE] fÅr $FPCTARGET
-Copyright (c) 1993-2023 Florian KlÑmpfl und andere
+Copyright (c) 1993-2024 Florian KlÑmpfl und andere
 ]
 
 #
@@ -4061,7 +4061,7 @@ Z*2Az80asm_Assembliere mit Hilfe von z80asm
 **2bl_Erzeuge Info zu lokalen Symbolen
 **1B_Erzeuge alle Module (Build)
 **1C<x>_Optionen fÅr Code-Erzeugung:
-**2C3<x>_Schalte ieee-PrÅfung von Konstanten ein
+**2C3<x>_Schalte IEEE-PrÅfung von Konstanten ein
 **2Ca<x>_WÑhle ABI aus; fpc -i oder fpc -ia geben die mîglichen Werte aus
 **2Cb_Erzeuge Code fÅr die "big-endian"-Variante der Zielarchitektur
 **2Cc<x>_Setze "default calling convention" zu <x>

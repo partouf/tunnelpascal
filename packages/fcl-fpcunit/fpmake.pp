@@ -30,7 +30,7 @@ begin
     P.Email := '';
     P.Description := 'Unit testing system inspired by JUnit of Free Component Libraries (FCL), FPC''s OOP library.';
     P.NeedLibC:= false;
-    P.OSes := P.OSes - [embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql];
+    P.OSes := P.OSes - [embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -122,6 +122,8 @@ begin
           AddUnit('xmltestreport');
           AddUnit('latextestreport');
           AddUnit('plaintestreport');
+          AddUnit('junittestreport');
+          AddUnit('testregistry');
         end;
     T:=P.Targets.AddUnit('simpletestrunner.pas');
       with T.Dependencies do

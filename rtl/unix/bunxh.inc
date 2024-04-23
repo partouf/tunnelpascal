@@ -16,7 +16,7 @@
 Type TGrpArr = Array [0..0] of TGid;            { C style array workarounds}
      pGrpArr = ^TGrpArr;
      TFilDes = Array [0..1] of cInt;
-     pFilDes = ^TFilDes;
+     pFilDes = ^TFilDes;    
 
 // if you are looking for macro definitions or non C template overloaded versions, they are moved to bunxovlh.inc
 
@@ -34,6 +34,7 @@ Type TGrpArr = Array [0..0] of TGid;            { C style array workarounds}
     Function  FpChmod      (path : PAnsiChar; Mode : TMode): cInt;
     Function  FpChown      (path : PAnsiChar; owner : TUid; group : TGid): cInt;
     Function  FpUtime      (path : PAnsiChar; times : putimbuf): cInt;
+    Function  FpFUtimens   (handle: cint;constref times: TTimespecArr):cint;
 {$if defined(freebsd)}
     Function  FpPipe       (var fildes : tfildes; flags : cInt=0):cInt;
 {$else}

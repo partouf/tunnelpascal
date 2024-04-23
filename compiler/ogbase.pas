@@ -343,12 +343,14 @@ interface
        constructor create(AList:TFPHashObjectList;const Aname:string;Aalign:longint;Aoptions:TObjSectionOptions);virtual;
        destructor  destroy;override;
        function  write(const d;l:TObjSectionOfs):TObjSectionOfs;
+       procedure writeInt8(v: int8);
        procedure writeInt16LE(v: int16);
        procedure writeInt16BE(v: int16);
        procedure writeInt32LE(v: int32);
        procedure writeInt32BE(v: int32);
        procedure writeInt64LE(v: int64);
        procedure writeInt64BE(v: int64);
+       procedure writeUInt8(v: uint8);
        procedure writeUInt16LE(v: uint16);
        procedure writeUInt16BE(v: uint16);
        procedure writeUInt32LE(v: uint32);
@@ -456,12 +458,14 @@ interface
        procedure alloc(len:TObjSectionOfs);
        procedure allocalign(len:longint);
        procedure writebytes(const Data;len:TObjSectionOfs);
+       procedure writeInt8(v: int8);
        procedure writeInt16LE(v: int16);
        procedure writeInt16BE(v: int16);
        procedure writeInt32LE(v: int32);
        procedure writeInt32BE(v: int32);
        procedure writeInt64LE(v: int64);
        procedure writeInt64BE(v: int64);
+       procedure writeUInt8(v: uint8);
        procedure writeUInt16LE(v: uint16);
        procedure writeUInt16BE(v: uint16);
        procedure writeUInt32LE(v: uint32);
@@ -1075,6 +1079,12 @@ implementation
       end;
 
 
+    procedure TObjSection.writeInt8(v: int8);
+      begin
+        write(v,1);
+      end;
+
+
     procedure TObjSection.writeInt16LE(v: int16);
       begin
 {$ifdef FPC_BIG_ENDIAN}
@@ -1126,6 +1136,12 @@ implementation
         v:=SwapEndian(v);
 {$endif FPC_LITTLE_ENDIAN}
         write(v,8);
+      end;
+
+
+    procedure TObjSection.writeUInt8(v: uint8);
+      begin
+        write(v,1);
       end;
 
 
@@ -1414,6 +1430,8 @@ implementation
           {debug_abbrev} [oso_Data,oso_debug],
           {debug_aranges} [oso_Data,oso_debug],
           {debug_ranges} [oso_Data,oso_debug],
+          {debug_loc} [oso_Data,oso_debug],
+          {debug_loclists} [oso_Data,oso_debug],
           {fpc} [oso_Data,oso_load,oso_write],
           {toc} [oso_Data,oso_load],
           {init} [oso_Data,oso_load,oso_executable],
@@ -1469,6 +1487,8 @@ implementation
               end;
           end;
         result:=secoptions[atype];
+        if (target_info.system in systems_wasm) and (atype=sec_bss) then
+          Result:=Result+[oso_data,oso_sparse_data];
 {$ifdef OMFOBJSUPPORT}
         { in the huge memory model, BSS data is actually written in the regular
           FAR_DATA segment of the module }
@@ -1705,6 +1725,12 @@ implementation
       end;
 
 
+    procedure TObjData.writeInt8(v: int8);
+      begin
+        writebytes(v,1);
+      end;
+
+
     procedure TObjData.writeInt16LE(v: int16);
       begin
 {$ifdef FPC_BIG_ENDIAN}
@@ -1756,6 +1782,12 @@ implementation
         v:=SwapEndian(v);
 {$endif FPC_LITTLE_ENDIAN}
         writebytes(v,8);
+      end;
+
+
+    procedure TObjData.writeUInt8(v: uint8);
+      begin
+        writebytes(v,1);
       end;
 
 
@@ -3709,6 +3741,10 @@ implementation
             refobjsec:=objreloc.objsection
           else if assigned(objreloc.group) then
             refgrp:=objreloc.group
+{$ifdef WASM}
+          else if objreloc.ftype=Ord(RELOC_TYPE_INDEX_LEB) then
+            {nothing}
+{$endif WASM}
           else
             internalerror(200603316);
           if assigned(exemap) then
@@ -3721,6 +3757,10 @@ implementation
                 exemap.Add('  References '+refobjsec.fullname)
               else if assigned(refgrp) then
                 exemap.Add('  References '+refgrp.Name)
+{$ifdef WASM}
+              else if objreloc.ftype=Ord(RELOC_TYPE_INDEX_LEB) then
+                {nothing}
+{$endif WASM}
               else
                 internalerror(2006033111);
             end;

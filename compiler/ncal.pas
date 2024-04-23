@@ -36,7 +36,7 @@ interface
        nstate,
        {$endif state_tracking}
        symbase,symtype,symsym,symdef,symtable,
-       pgentype;
+       pgentype,compinnr;
 
     type
        tcallnodeflag = (
@@ -92,6 +92,7 @@ interface
           function  pass1_normal:tnode;
           procedure register_created_object_types;
           function get_expect_loc: tcgloc;
+          function  handle_compilerproc: tnode;
 
        protected
           function safe_call_self_node: tnode;
@@ -159,6 +160,10 @@ interface
           { varargs parasyms }
           varargsparas : tvarargsparalist;
 
+          { If an inline node is transmuted into a call node, this is the index of
+            the original internal routine }
+          intrinsiccode : TInlineNumber;
+
           { separately specified resultdef for some compilerprocs (e.g.
             you can't have a function with an "array of char" resultdef
             the RTL) (JM)
@@ -173,6 +178,7 @@ interface
           constructor create(l:tnode; v : tprocsym;st : TSymtable; mp: tnode; callflags:tcallnodeflags;sc:tspecializationcontext);virtual;
           constructor create_procvar(l,r:tnode);
           constructor createintern(const name: string; params: tnode);
+          constructor createfromintrinsic(const intrinsic: TInlineNumber; const name: string; params: tnode);
           constructor createinternfromunit(const fromunit, procname: string; params: tnode);
           constructor createinternres(const name: string; params: tnode; res:tdef);
           constructor createinternresfromunit(const fromunit, procname: string; params: tnode; res:tdef);
@@ -196,6 +202,7 @@ interface
           procedure insertintolist(l : tnodelist);override;
           function  pass_1 : tnode;override;
           function  pass_typecheck:tnode;override;
+          function  simplify(forinline : boolean) : tnode;override;
        {$ifdef state_tracking}
           function track_state_pass(exec_known:boolean):boolean;override;
        {$endif state_tracking}
@@ -206,6 +213,7 @@ interface
 {$endif DEBUG_NODE_XML}
           function  para_count:longint;
           function  required_para_count:longint;
+          function  GetParaFromIndex(const Index: Integer): TCallParaNode;
           { checks if there are any parameters which end up at the stack, i.e.
             which have LOC_REFERENCE and set pi_has_stackparameter if this applies }
           procedure check_stack_parameters;
@@ -242,6 +250,9 @@ interface
           fparacopyback: tnode;
           callparaflags : tcallparaflags;
           parasym       : tparavarsym;
+          { The original order of the parameters prior to the "order_parameters"
+            call, or -1 if not yet configured }
+          originalindex: Integer;
           { only the processor specific nodes need to override this }
           { constructor                                             }
           constructor create(expr,next : tnode);virtual;
@@ -317,7 +328,7 @@ implementation
       systems,
       verbose,globals,fmodule,ppu,
       aasmbase,aasmdata,
-      symconst,defutil,defcmp,compinnr,
+      symconst,defutil,defcmp,
       htypechk,pass_1,
       ncnv,nflw,nld,ninl,nadd,ncon,nmem,nset,nobjc,
       pgenutil,
@@ -947,6 +958,7 @@ implementation
            internalerror(200305091);
          expr.fileinfo:=fileinfo;
          callparaflags:=[];
+         originalindex:=-1;
          if expr.nodetype = typeconvn then
            ttypeconvnode(expr).warn_pointer_to_signed:=false;
       end;
@@ -1010,6 +1022,7 @@ implementation
            initcopy:=fparainit.getcopy;
          n:=tcallparanode(inherited dogetcopy);
          n.callparaflags:=callparaflags;
+         n.originalindex:=originalindex;
          n.parasym:=parasym;
          n.fparainit:=initcopy;
          if assigned(fparacopyback) then
@@ -1211,11 +1224,11 @@ implementation
                     if is_array_of_const(parasym.vardef) then
                      begin
                        { force variant array }
-                       include(left.flags,nf_forcevaria);
+                       include(tarrayconstructornode(left).arrayconstructornodeflags,acnf_forcevaria);
                      end
                     else
                      begin
-                       include(left.flags,nf_novariaallowed);
+                       include(tarrayconstructornode(left).arrayconstructornodeflags,acnf_novariaallowed);
                        { now that the resultting type is know we can insert the required
                          typeconvs for the array constructor }
                        if parasym.vardef.typ=arraydef then
@@ -1538,6 +1551,7 @@ implementation
          funcretnode:=nil;
          paralength:=-1;
          varargsparas:=nil;
+         intrinsiccode:=Default(TInlineNumber);
          if assigned(current_structdef) and
             assigned(mp) and
             assigned(current_procinfo) then
@@ -1581,6 +1595,13 @@ implementation
             (srsym.typ<>procsym) then
            Message1(cg_f_unknown_compilerproc,name);
          create(params,tprocsym(srsym),srsym.owner,nil,[],nil);
+       end;
+
+
+     constructor tcallnode.createfromintrinsic(const intrinsic: TInlineNumber; const name: string; params: tnode);
+       begin
+         createintern(name, params);
+         intrinsiccode := intrinsic;
        end;
 
 
@@ -1692,6 +1713,7 @@ implementation
         symtableproc:=nil;
         ppufile.getderef(procdefinitionderef);
         ppufile.getset(tppuset4(callnodeflags));
+        intrinsiccode:=TInlineNumber(ppufile.getword);
       end;
 
 
@@ -1707,6 +1729,7 @@ implementation
         ppufile.putderef(symtableprocentryderef);
         ppufile.putderef(procdefinitionderef);
         ppufile.putset(tppuset4(callnodeflags));
+        ppufile.putword(word(intrinsiccode));
       end;
 
 
@@ -1797,7 +1820,8 @@ implementation
         n.procdefinition:=procdefinition;
         n.typedef := typedef;
         n.callnodeflags := callnodeflags;
-        n.pushedparasize:=pushedparasize;
+        n.pushedparasize := pushedparasize;
+        n.intrinsiccode := intrinsiccode;
         if assigned(callinitblock) then
           n.callinitblock:=tblocknode(callinitblock.dogetcopy)
         else
@@ -1889,6 +1913,9 @@ implementation
               WriteLn(T, PrintNodeIndention, '<procname>', symtableprocentry.name, '</procname>')
           end;
 
+        if intrinsiccode <> Default(TInlineNumber) then
+          WriteLn(T, PrintNodeIndention, '<intrinsiccode>', intrinsiccode, '</intrinsiccode>');
+
         if assigned(methodpointer) then
           begin
             WriteLn(T, PrintNodeIndention, '<methodpointer>');
@@ -1941,6 +1968,9 @@ implementation
             else
               writeln(t,printnodeindention,'proc = <nil>');
           end;
+
+        if intrinsiccode <> Default(TInlineNumber) then
+          writeln(t,printnodeindention,'intrinsiccode = ', intrinsiccode);
 
         if assigned(methodpointer) then
           begin
@@ -2076,6 +2106,39 @@ implementation
               inc(result);
             ppn:=tcallparanode(ppn.right);
           end;
+      end;
+
+
+    function tcallnode.GetParaFromIndex(const Index: Integer): TCallParaNode;
+      var
+        hp : TCallParaNode;
+        Count: Integer;
+      begin
+        Result := nil;
+        Count := 0;
+
+        hp := TCallParaNode(left);
+        repeat
+          { If the original indices have not yet been set, just go by the order
+            they appear in the node tree }
+          if hp.originalindex = -1 then
+            begin
+              if Count = Index then
+                begin
+                  Result := hp;
+                  Exit;
+                end;
+
+              Inc(Count);
+            end
+          else if hp.originalindex = Index then
+            begin
+              Result := hp;
+              Exit;
+            end;
+
+          hp := TCallParaNode(hp.right);
+        until not Assigned(hp);
       end;
 
 
@@ -2665,6 +2728,213 @@ implementation
       end;
 
 
+    function tcallnode.handle_compilerproc: tnode;
+      var
+        para: TCallParaNode;
+        maxlennode, outnode, valnode: TNode;
+        MaxStrLen: Int64;
+        StringLiteral, name: string;
+        ValOutput: TConstExprInt;
+        ValCode: Longint;
+        NewStatements: TStatementNode;
+        si : ShortInt;
+        b: Byte;
+        i: SmallInt;
+        w: Word;
+        li: LongInt;
+        dw: DWord;
+        i64: Int64;
+        qw: QWord;
+      begin
+        result := nil;
+        case intrinsiccode of
+          in_str_x_string:
+            begin
+              { rare optimization opportunity which takes some extra time,
+                so check only at level 3+ }
+              if not(cs_opt_level3 in current_settings.optimizerswitches) then
+                exit;
+              { If n is a constant, attempt to convert, for example:
+                  "Str(5, Output);" to "Output := '5';" }
+
+              { Format of the internal function (also for fpc_shortstr_uint) is:
+                $fpc_shortstr_sint(Int64;Int64;out OpenString;<const Int64>); }
+
+              { Remember the parameters are in reverse order - the leftmost one
+                can usually be ignored }
+              para := GetParaFromIndex(1);
+              if Assigned(para) then
+                begin
+                  { Output variable }
+                  outnode := para.left;
+                  para := GetParaFromIndex(2);
+
+                  if Assigned(para) then
+                    begin
+                      { Maximum length }
+                      maxlennode := para.left;
+                      if is_integer(maxlennode.resultdef) then
+                        begin
+                          para := GetParaFromIndex(3);
+
+                          while (maxlennode.nodetype = typeconvn) and (ttypeconvnode(maxlennode).convtype in [tc_equal, tc_int_2_int]) do
+                            begin
+                              maxlennode := ttypeconvnode(maxlennode).left;
+                            end;
+
+                          if Assigned(para) and is_constintnode(maxlennode) then
+                            begin
+                              { Numeric value }
+                              valnode := para.left;
+                              if is_integer(valnode.resultdef) and not Assigned(GetParaFromIndex(4)) then
+                                begin
+                                  while (valnode.nodetype = typeconvn) and (ttypeconvnode(valnode).convtype in [tc_equal, tc_int_2_int]) do
+                                    begin
+                                      valnode := ttypeconvnode(valnode).left;
+                                    end;
+
+                                  if is_constintnode(valnode) then
+                                    begin
+                                      MaxStrLen := TOrdConstNode(maxlennode).value.svalue;
+
+                                      { If we've gotten this far, we can convert the node into a direct assignment }
+                                      StringLiteral := tostr(tordconstnode(valnode).value);
+                                      if MaxStrLen <> -1 then
+                                        SetLength(StringLiteral, Integer(MaxStrLen));
+
+                                      result := cassignmentnode.create(
+                                        outnode.getcopy,
+                                        cstringconstnode.createstr(StringLiteral)
+                                      );
+                                    end;
+                                end;
+                            end;
+                        end;
+                    end;
+                end;
+            end;
+          in_val_x:
+            begin
+              { rare optimization opportunity which takes some extra time,
+                so check only at level 3+ }
+              if not(cs_opt_level3 in current_settings.optimizerswitches) then
+                exit;
+              { If the input is a constant, attempt to convert, for example:
+                  "Val('5', Output, Code);" to "Output := 5; Code := 0;" }
+
+              { Format of the internal function fpc_val_sint_*str) is:
+                fpc_val_sint_*str(SizeInt; *String; out ValSInt): ValSInt; }
+
+              { Remember the parameters are in reverse order - the leftmost one
+                is the integer data size can usually be ignored.
+
+                For fpc_val_uint_*str variants, the data size is not present as
+                of FPC 3.2.0
+
+                Para indices:
+                * 0 = Code output (present even if omitted in original code)
+                * 1 = String input
+                * 2 = Data size
+              }
+              para := GetParaFromIndex(0);
+              if Assigned(para) then
+                begin
+                  outnode := para.left;
+                  para := GetParaFromIndex(1);
+                  if Assigned(para) then
+                    begin
+                      valnode:=para.left;
+                      name:=tprocdef(procdefinition).fullprocname(true);
+                      if is_conststringnode(valnode) and
+                        { we can handle only the fpc_val_sint helpers so far }
+                        ((copy(name,1,13)='$fpc_val_sint') or (copy(name,1,13)='$fpc_val_uint')) then
+                        begin
+                          ValOutput.signed := is_signed(ResultDef);
+
+                          case Longint(tordconstnode(GetParaFromIndex(2).paravalue).value.svalue) of
+                            1:
+                              if ValOutput.signed then
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, si, ValCode);
+                                  ValOutput.svalue:=si;
+                                end
+                              else
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, b, ValCode);
+                                  ValOutput.uvalue:=b;
+                                end;
+                            2:
+                              if ValOutput.signed then
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, i, ValCode);
+                                  ValOutput.svalue:=i;
+                                end
+                              else
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, w, ValCode);
+                                  ValOutput.uvalue:=w;
+                                end;
+                            4:
+                              if ValOutput.signed then
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, li, ValCode);
+                                  ValOutput.svalue:=li;
+                                end
+                              else
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, dw, ValCode);
+                                  ValOutput.uvalue:=dw;
+                                end;
+                            8:
+                              if ValOutput.signed then
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, i64, ValCode);
+                                  ValOutput.svalue:=i64;
+                                end
+                              else
+                                begin
+                                  Val(TStringConstNode(valnode).value_str, qw, ValCode);
+                                  ValOutput.uvalue:=qw;
+                                end;
+                            else
+                              Internalerror(2024011402);
+                          end;
+
+                          { Due to the way the node tree works, we have to insert
+                            the assignment to the Code output within the
+                            assignment to the value output (function result),
+                            so use a block node for that}
+
+                          Result := internalstatements(NewStatements);
+
+                          { Create a node for writing the Code output }
+                          addstatement(
+                            NewStatements,
+                            CAssignmentNode.Create_Internal(
+                              outnode.getcopy(), { The original will get destroyed }
+                              COrdConstNode.Create(ValCode, outnode.ResultDef, False)
+                            )
+                          );
+
+                          { Now actually create the function result }
+                          case resultdef.typ of
+                            orddef:
+                              valnode := COrdConstNode.Create(ValOutput, resultdef, False);
+                            else
+                              Internalerror(2024011401);
+                          end;
+                          addstatement(NewStatements, valnode);
+                          { Result will now undergo firstpass }
+                        end;
+                    end;
+                end;
+            end;
+          else
+            ;
+        end;
+      end;
+
+
     function tcallnode.safe_call_self_node: tnode;
       begin
         if not assigned(call_self_node) then
@@ -3196,7 +3466,7 @@ implementation
                 funcretnode:=aktassignmentnode.left.getcopy;
                 include(funcretnode.flags,nf_is_funcret);
                 { notify the assignment node that the assignment can be removed }
-                include(aktassignmentnode.flags,nf_assign_done_in_right);
+                include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
               end
             else
               begin
@@ -4200,7 +4470,7 @@ implementation
              (procdefinition.parast.symtablelevel<=current_procinfo.procdef.parast.symtablelevel) and
              (procdefinition.parast.symtablelevel>normal_function_level) and
              (current_procinfo.procdef.parast.symtablelevel>normal_function_level) then
-           current_procinfo.add_captured_sym(tprocdef(procdefinition).procsym,fileinfo);
+           current_procinfo.add_captured_sym(tprocdef(procdefinition).procsym,procdefinition,fileinfo);
 
          finally
            aktcallnode:=oldcallnode;
@@ -4208,17 +4478,36 @@ implementation
       end;
 
 
+    function tcallnode.simplify(forinline : boolean) : tnode;
+      begin
+        { See if there's any special handling we can do based on the intrinsic code }
+        if (intrinsiccode <> Default(TInlineNumber)) then
+          result := handle_compilerproc
+        else
+          result := nil;
+      end;
+
+
     procedure tcallnode.order_parameters;
       var
         hp,hpcurr,hpnext,hpfirst,hpprev : tcallparanode;
         currloc : tcgloc;
+        indexcount: Integer;
       begin
+        indexcount:=0;
         hpfirst:=nil;
         hpcurr:=tcallparanode(left);
         { cache all info about parameters containing stack tainting calls,
           since we will need it a lot below and calculting it can be expensive }
         while assigned(hpcurr) do
           begin
+            { Also remember the original parameter order for the sake of
+              tcallnode.simplify }
+            if hpcurr.originalindex = -1 then
+              begin
+                hpcurr.originalindex := indexcount;
+                Inc(indexcount);
+              end;
             hpcurr.init_contains_stack_tainting_call_cache;
             hpcurr:=tcallparanode(hpcurr.right);
           end;
@@ -5222,7 +5511,7 @@ implementation
                 if FindUnitSymtable(tloadnode(n).symtable).moduleid<>current_module.moduleid then
                   current_module.addimportedsym(sym);
               end
-            else if (sym.typ=constsym) and (tconstsym(sym).consttyp=constresourcestring) then
+            else if (sym.typ=constsym) and (tconstsym(sym).consttyp in [constwresourcestring,constresourcestring]) then
               begin
                 if tloadnode(n).symtableentry.owner.moduleid<>current_module.moduleid then
                   current_module.addimportedsym(sym);
@@ -5313,7 +5602,7 @@ implementation
 
         typecheckpass(tnode(inlineblock));
         doinlinesimplify(tnode(inlineblock));
-        node_reset_flags(tnode(inlineblock),[nf_pass1_done]);
+        node_reset_flags(tnode(inlineblock),[],[tnf_pass1_done]);
         firstpass(tnode(inlineblock));
         result:=inlineblock;
 

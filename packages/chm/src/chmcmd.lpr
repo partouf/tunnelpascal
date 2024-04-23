@@ -111,7 +111,7 @@ var
   alloweddetaillevel : integer = 0;     // show if msg.detaillevel<=allowdetaillevel
   htmlscan           : THtmlScanEnum = Scandefault;
 
-procedure OnError (Project: TChmProject;errorkind:TChmProjectErrorKind;msg:String;detailevel:integer=0);
+procedure OnError (Project: TChmProject;errorkind:TChmProjectErrorKind;msg:rtlString;detailevel:integer=0);
 begin
   if (detailevel<=alloweddetaillevel) or (errorkind < chmnote) then
     if errorkind<>chmnone then
@@ -182,7 +182,7 @@ var
 
 begin
   InitOptions;
-  Writeln(stderr,'chmcmd, a CHM compiler. (c) 2010-2019 Free Pascal core.');
+  Writeln(stderr,'chmcmd, a CHM compiler. (c) 2010-2024 Free Pascal core.');
   Writeln(Stderr);
   repeat
     c:=getlongopts('h',@theopts[1],optionindex);

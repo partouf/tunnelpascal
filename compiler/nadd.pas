@@ -32,12 +32,21 @@ interface
       node,symtype;
 
     type
+       TAddNodeFlag = (
+         anf_has_pointerdiv,
+         { the node shall be short boolean evaluated, this flag has priority over localswitches }
+         anf_short_bool
+       );
+
+       TAddNodeFlags = set of TAddNodeFlag;
+
        taddnode = class(tbinopnode)
        private
           resultrealdefderef: tderef;
           function pass_typecheck_internal:tnode;
        public
           resultrealdef : tdef;
+          addnodeflags : TAddNodeFlags;
           constructor create(tt : tnodetype;l,r : tnode);override;
           constructor create_internal(tt:tnodetype;l,r:tnode);
           constructor ppuload(t:tnodetype;ppufile:tcompilerppufile);override;
@@ -52,6 +61,9 @@ interface
     {$ifdef state_tracking}
           function track_state_pass(exec_known:boolean):boolean;override;
     {$endif}
+    {$ifdef DEBUG_NODE_XML}
+          procedure XMLPrintNodeInfo(var T: Text); override;
+    {$endif DEBUG_NODE_XML}
          protected
           { override the following if you want to implement }
           { parts explicitely in the code generator (JM)    }
@@ -140,7 +152,8 @@ implementation
       {$ifdef state_tracking}
       nstate,
       {$endif}
-      cpuinfo;
+      cpuinfo,
+      ppu;
 
 
 {*****************************************************************************
@@ -179,8 +192,8 @@ implementation
     constructor taddnode.create(tt : tnodetype;l,r : tnode);
       begin
          inherited create(tt,l,r);
+         addnodeflags:=[];
       end;
-
 
     constructor taddnode.create_internal(tt:tnodetype;l,r:tnode);
       begin
@@ -192,6 +205,7 @@ implementation
     constructor taddnode.ppuload(t: tnodetype; ppufile: tcompilerppufile);
       begin
         inherited ppuload(t, ppufile);
+        ppufile.getset(tppuset1(addnodeflags));
         ppufile.getderef(resultrealdefderef);
       end;
 
@@ -199,7 +213,8 @@ implementation
     procedure taddnode.ppuwrite(ppufile: tcompilerppufile);
       begin
         inherited ppuwrite(ppufile);
-         ppufile.putderef(resultrealdefderef);
+        ppufile.putset(tppuset1(addnodeflags));
+        ppufile.putderef(resultrealdefderef);
       end;
 
 
@@ -392,10 +407,12 @@ implementation
       function is_range_test(nodel, noder: taddnode; out value: tnode; var cl,cr: Tconstexprint): boolean;
         const
           is_upper_test: array[ltn..gten] of boolean = (true,true,false,false);
-          inclusive_adjust: array[boolean,ltn..gten] of integer = ((-1,0,1,0),
-                                                                   (1,0,-1,0));
+          inclusive_adjust: array[boolean,boolean,ltn..gten] of integer = (((-1,0,1,0),
+                                                                            (1,0,-1,0)),
+                                                                           ((0,-1,0,1),
+                                                                            (0,1,0,-1)));
         var
-          swapl, swapr: Boolean;
+          swapl, swapr, inverted_range: Boolean;
           valuer: tnode;
           t: Tconstexprint;
         begin
@@ -434,12 +451,21 @@ implementation
           if not value.isequal(valuer) then
             exit;
 
+          { This is based on De Morgan's theorem, namely that
+            "A and B" = "not ((not A) or (not B))" }
+          inverted_range:=(nodetype=orn);
+          if inverted_range then
+            begin
+              swapl:=not swapl;
+              swapr:=not swapr;
+            end;
+
           { this could be simplified too, but probably never happens }
           if (is_upper_test[nodel.nodetype] xor swapl)=(is_upper_test[noder.nodetype] xor swapr) then
             exit;
 
-          cl:=cl+inclusive_adjust[swapl,nodel.nodetype];
-          cr:=cr+inclusive_adjust[swapr,noder.nodetype];
+          cl:=cl+inclusive_adjust[inverted_range,swapl,nodel.nodetype];
+          cr:=cr+inclusive_adjust[inverted_range,swapr,noder.nodetype];
 
           if is_upper_test[nodel.nodetype] xor swapl then
             begin
@@ -661,12 +687,12 @@ implementation
              (allowenumop(nodetype) or (nf_internal in flags))
             ) or
             (
-             (lt = pointerconstn) and
+             (lt in [pointerconstn,niln]) and
              is_constintnode(right) and
              (nodetype in [addn,subn])
             ) or
             (
-             (rt = pointerconstn) and
+             (rt in [pointerconstn,niln]) and
              is_constintnode(left) and
              (nodetype=addn)
             ) or
@@ -683,26 +709,9 @@ implementation
              t:=nil;
 
              { load values }
-             case lt of
-               ordconstn:
-                 lv:=tordconstnode(left).value;
-               pointerconstn:
-                 lv:=tpointerconstnode(left).value;
-               niln:
-                 lv:=0;
-               else
-                 internalerror(2002080202);
-             end;
-             case rt of
-               ordconstn:
-                 rv:=tordconstnode(right).value;
-               pointerconstn:
-                 rv:=tpointerconstnode(right).value;
-               niln:
-                 rv:=0;
-               else
-                 internalerror(2002080203);
-             end;
+             lv:=get_int_value(left);
+             rv:=get_int_value(right);
+
              { type checking already took care of multiplying      }
              { integer constants with pointeddef.size if necessary }
              case nodetype of
@@ -715,7 +724,7 @@ implementation
                        { Recover }
                        t:=genintconstnode(0)
                      end
-                   else if (lt=pointerconstn) or (rt=pointerconstn) then
+                   else if is_constpointernode(left) or is_constpointernode(right) then
                      t := cpointerconstnode.create(qword(v),resultdef)
                    else
                      if is_integer(ld) then
@@ -736,15 +745,15 @@ implementation
                      { pointer-pointer results in an integer }
                      if (rt=pointerconstn) then
                        begin
-                         if not(nf_has_pointerdiv in flags) then
+                         if not(anf_has_pointerdiv in addnodeflags) then
                            internalerror(2008030101);
-                         t := cpointerconstnode.create(qword(v),resultdef)
+                         t:=cpointerconstnode.create(qword(v),resultdef)
                        end
                      else
-                       t := cpointerconstnode.create(qword(v),resultdef)
+                       t:=cpointerconstnode.create(qword(v),resultdef)
                    else
                      if is_integer(ld) then
-                       t := create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
+                       t:=create_simplified_ord_const(v,resultdef,forinline,cs_check_overflow in localswitches)
                      else
                        t:=cordconstnode.create(v,resultdef,(ld.typ<>enumdef));
                  end;
@@ -901,8 +910,15 @@ implementation
         { Deal with anti-commutative subtraction }
         if (nodetype = subn) then
           begin
+            { transform -1-x into not(x) }
+            if is_signed(rd) and is_constintnode(left) and (tordconstnode(left).value=-1)  then
+              begin
+                result:=cnotnode.create(right.getcopy);
+                exit;
+              end
+
             { change "0 - val" to "-val" }
-            if is_constintnode(left) and (is_integer(right.resultdef) or is_pointer(right.resultdef)) then
+            else if is_constintnode(left) and (is_integer(right.resultdef) or is_pointer(right.resultdef)) then
               begin
                 if (tordconstnode(left).value = 0) then
                   result := ctypeconvnode.create_internal(cunaryminusnode.create(right.getcopy),right.resultdef);
@@ -916,6 +932,13 @@ implementation
                 result:=caddnode.create(muln,cmoddivnode.create(divn,left,tmoddivnode(right).right.getcopy),tmoddivnode(right).right);
                 left:=nil;
                 tmoddivnode(right).right:=nil;
+                exit;
+              end
+
+            { transform -x-1 into not(x) }
+            else if is_signed(ld) and is_constintnode(right) and (tordconstnode(right).value=1) and (left.nodetype=unaryminusn) then
+              begin
+                result:=cnotnode.create(tunaryminusnode(left).left.getcopy);
                 exit;
               end;
           end;
@@ -1540,7 +1563,7 @@ implementation
                 { transform unsigned comparisons of (v>=x) and (v<=y)
                   into (v-x)<=(y-x)
                 }
-                if (nodetype=andn) and
+                if (nodetype in [andn,orn]) and
                    (left.nodetype in [ltn,lten,gtn,gten]) and
                    (right.nodetype in [ltn,lten,gtn,gten]) and
                    (not might_have_sideeffects(left)) and
@@ -1552,9 +1575,19 @@ implementation
                     hdef:=get_unsigned_inttype(vl.resultdef);
                     vl:=ctypeconvnode.create_internal(vl.getcopy,hdef);
 
-                    result:=caddnode.create_internal(lten,
+                    { If the condition is of the inverted form (v<x) or (v>y),
+                      we have to invert the conditional result as well, since
+                      the above nodes return True for if v is within the range
+                      (we're merging "not ((v-x)<=(y-x))" into "(v-x)>(y-x)") }
+                    if (nodetype=orn) then
+                      nt:=gtn
+                    else
+                      nt:=lten;
+
+                    result:=caddnode.create_internal(nt,
                               ctypeconvnode.create_internal(caddnode.create_internal(subn,vl,cordconstnode.create(cl,hdef,false)),hdef),
                               cordconstnode.create(cr-cl,hdef,false));
+
                     exit;
                   end;
 
@@ -1657,7 +1690,7 @@ implementation
                             begin
                               { we need to copy the whole tree to force another pass_1 }
                               include(localswitches,cs_full_boolean_eval);
-                              exclude(flags,nf_short_bool);
+                              exclude(addnodeflags,anf_short_bool);
                               result:=getcopy;
                               exit;
                             end;
@@ -1704,6 +1737,56 @@ implementation
                    exit
 {$endif jvm}
                    ;
+              end;
+
+            {
+              compile x < length(arr) as x <= high(arr)
+              compile x >= length(arr) as x > high(arr)
+
+              tested by tests/webtbs/tw40292.pp
+            }
+            if (nodetype in [ltn,gten]) and
+              (right.nodetype=inlinen) and (tinlinenode(right).inlinenumber=in_length_x) and
+              ((is_dynamic_array(tinlinenode(right).left.resultdef)) or
+               (is_open_array(tinlinenode(right).left.resultdef))
+              ) then
+              begin
+                case nodetype of
+                  ltn:
+                    result:=caddnode.create(lten,left,cinlinenode.create(in_high_x,false,tinlinenode(right).left));
+                  gten:
+                    result:=caddnode.create(gtn,left,cinlinenode.create(in_high_x,false,tinlinenode(right).left));
+                  else
+                    Internalerror(2024041701);
+                end;
+                left:=nil;
+                tinlinenode(right).left:=nil;
+                exit;
+              end;
+
+            {
+              compile length(arr) > x as high(arr) >= x
+              compile length(arr) <= x as high(arr) < x
+
+              tested by tests/webtbs/tw40292.pp
+            }
+            if (nodetype in [lten,gtn]) and
+              (left.nodetype=inlinen) and (tinlinenode(left).inlinenumber=in_length_x) and
+              ((is_dynamic_array(tinlinenode(left).left.resultdef)) or
+               (is_open_array(tinlinenode(left).left.resultdef))
+              ) then
+              begin
+                case nodetype of
+                  gtn:
+                    result:=caddnode.create(gten,cinlinenode.create(in_high_x,false,tinlinenode(left).left),right);
+                  lten:
+                    result:=caddnode.create(ltn,cinlinenode.create(in_high_x,false,tinlinenode(left).left),right);
+                  else
+                    Internalerror(2024041701);
+                end;
+                right:=nil;
+                tinlinenode(left).left:=nil;
+                exit;
               end;
 
             { using sqr(x) for reals instead of x*x might reduces register pressure and/or
@@ -1856,7 +1939,7 @@ implementation
                         else
                           nt:=equaln;
                         result:=caddnode.create(nt,t,cordconstnode.create(0,vl.resultdef,false));
-                        Include(flags, nf_do_not_execute);
+                        Include(transientflags,tnf_do_not_execute);
                         if t=left then
                           left:=nil
                         else
@@ -1874,6 +1957,7 @@ implementation
         n: taddnode;
       begin
         n:=taddnode(inherited dogetcopy);
+        n.addnodeflags:=addnodeflags;
         n.resultrealdef:=resultrealdef;
         result:=n;
       end;
@@ -1937,7 +2021,7 @@ implementation
             end;
 
           var
-            elem : tnode;
+            constr : tnode;
             para : tcallparanode;
             isarrconstrl,
             isarrconstrr : boolean;
@@ -1966,14 +2050,14 @@ implementation
             if isarrconstrl then
               begin
                 index:=0;
-                elem:=tarrayconstructornode(left).left;
-                tarrayconstructornode(left).left:=nil;
+                constr:=left;
+                left:=nil;
               end
             else
               begin
                 index:=high(asizeint);
-                elem:=tarrayconstructornode(right).left;
-                tarrayconstructornode(right).left:=nil;
+                constr:=right;
+                right:=nil;
               end;
 
             { we use the fact that insert() caps the index to avoid a copy }
@@ -1982,10 +2066,10 @@ implementation
                     ccallparanode.create(
                       aktassignmentnode.left.getcopy,
                       ccallparanode.create(
-                        elem,nil)));
+                        constr,nil)));
 
             result:=cinlinenode.create(in_insert_x_y_z,false,para);
-            include(aktassignmentnode.flags,nf_assign_done_in_right);
+            include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
           end;
 
       begin
@@ -2237,7 +2321,7 @@ implementation
            begin
               { set for & and | operations in macpas mode: they only work on }
               { booleans, and always short circuit evaluation                }
-              if (nf_short_bool in flags) then
+              if (anf_short_bool in addnodeflags) then
                 begin
                   if not is_boolean(ld) then
                     begin
@@ -2759,11 +2843,11 @@ implementation
                     else
                       CGMessage3(type_e_operator_not_supported_for_types,node2opstr(nodetype),ld.typename,rd.typename);
 
-                    if not(nf_has_pointerdiv in flags) and
+                    if not(anf_has_pointerdiv in addnodeflags) and
                       (tpointerdef(rd).pointeddef.size>1) then
                       begin
                         hp:=getcopy;
-                        include(hp.flags,nf_has_pointerdiv);
+                        include(taddnode(hp).addnodeflags, anf_has_pointerdiv);
                         result:=cmoddivnode.create(divn,hp,
                           cordconstnode.create(tpointerdef(rd).pointeddef.size,tpointerdef(rd).pointer_subtraction_result_type,false));
                       end;
@@ -3385,7 +3469,7 @@ implementation
                             'fpc_'+tstringdef(resultdef).stringtypname+'_concat',
                             para
                           );
-                  include(aktassignmentnode.flags,nf_assign_done_in_right);
+                  include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
                   firstpass(result);
                 end
               else
@@ -3529,7 +3613,7 @@ implementation
               left:=nil;
               right:=nil;
 
-              include(aktassignmentnode.flags,nf_assign_done_in_right);
+              include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
               firstpass(result);
             end
           else
@@ -3565,8 +3649,10 @@ implementation
         tempn: tnode;
         newstatement : tstatementnode;
         temp    : ttempcreatenode;
+        no_temp: Boolean;
       begin
         result:=nil;
+
         case nodetype of
           equaln,unequaln,lten,gten:
             begin
@@ -3600,40 +3686,31 @@ implementation
             end;
           addn:
             begin
+              { can we directly write into the result? }
+              no_temp:=assigned(aktassignmentnode) and
+                (aktassignmentnode.right=self) and
+                (aktassignmentnode.left.resultdef=self.resultdef) and
+                valid_for_var(aktassignmentnode.left,false);
+
               { optimize first loading of a set }
               if (right.nodetype=setelementn) and
                   not(assigned(tsetelementnode(right).right)) and
                   is_emptyset(left) then
                 begin
-                  result:=internalstatements(newstatement);
-
-                  { create temp for result }
-                  temp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
-                  addstatement(newstatement,temp);
-
                   { adjust for set base }
                   tsetelementnode(right).left:=caddnode.create(subn,
                     ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
                     cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
 
-                  addstatement(newstatement,ccallnode.createintern('fpc_varset_create_element',
-                    ccallparanode.create(ctemprefnode.create(temp),
-                    ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
-                    ccallparanode.create(tsetelementnode(right).left,nil))))
-                  );
-
-                  { the last statement should return the value as
-                    location and type, this is done be referencing the
-                    temp and converting it first from a persistent temp to
-                    normal temp }
-                  addstatement(newstatement,ctempdeletenode.create_normal_temp(temp));
-                  addstatement(newstatement,ctemprefnode.create(temp));
-
-                  tsetelementnode(right).left := nil;
-                end
-              else
-                begin
-                  if right.nodetype=setelementn then
+                  if no_temp then
+                    begin
+                      result:=ccallnode.createintern('fpc_varset_create_element',
+                        ccallparanode.create(aktassignmentnode.left.getcopy,
+                        ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
+                        ccallparanode.create(tsetelementnode(right).left,nil))));
+                      include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
+                    end
+                  else
                     begin
                       result:=internalstatements(newstatement);
 
@@ -3641,43 +3718,116 @@ implementation
                       temp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
                       addstatement(newstatement,temp);
 
-                      { adjust for set base }
-                      tsetelementnode(right).left:=caddnode.create(subn,
-                        ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
-                        cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
+                      addstatement(newstatement,ccallnode.createintern('fpc_varset_create_element',
+                        ccallparanode.create(ctemprefnode.create(temp),
+                        ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
+                        ccallparanode.create(tsetelementnode(right).left,nil))))
+                      );
 
-                      { add a range or a single element? }
-                      if assigned(tsetelementnode(right).right) then
-                        begin
-                          { adjust for set base }
-                          tsetelementnode(right).right:=caddnode.create(subn,
-                            ctypeconvnode.create_internal(tsetelementnode(right).right,sinttype),
-                            cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
-                          addstatement(newstatement,ccallnode.createintern('fpc_varset_set_range',
-                            ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
-                            ccallparanode.create(tsetelementnode(right).right,
-                            ccallparanode.create(tsetelementnode(right).left,
-                            ccallparanode.create(ctemprefnode.create(temp),
-                            ccallparanode.create(left,nil))))))
-                          );
-                        end
-                      else
-                        addstatement(newstatement,ccallnode.createintern('fpc_varset_set',
-                          ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
-                          ccallparanode.create(ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
-                          ccallparanode.create(ctemprefnode.create(temp),
-                          ccallparanode.create(left,nil)))))
-                        );
-                      { remove reused parts from original node }
-                      tsetelementnode(right).right:=nil;
-                      tsetelementnode(right).left:=nil;
-                      left:=nil;
                       { the last statement should return the value as
                         location and type, this is done be referencing the
                         temp and converting it first from a persistent temp to
                         normal temp }
                       addstatement(newstatement,ctempdeletenode.create_normal_temp(temp));
                       addstatement(newstatement,ctemprefnode.create(temp));
+                    end;
+                  tsetelementnode(right).left:=nil;
+                end
+              else
+                begin
+                  if right.nodetype=setelementn then
+                    begin
+                      if no_temp then
+                        begin
+                          { add a range or a single element? }
+                          if assigned(tsetelementnode(right).right) then
+                            begin
+                              { adjust for set base }
+                              tsetelementnode(right).left:=caddnode.create(subn,
+                                ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
+                                cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
+
+                              { adjust for set base }
+                              tsetelementnode(right).right:=caddnode.create(subn,
+                                ctypeconvnode.create_internal(tsetelementnode(right).right,sinttype),
+                                cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
+
+                              result:=ccallnode.createintern('fpc_varset_set_range',
+                                ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
+                                ccallparanode.create(tsetelementnode(right).right,
+                                ccallparanode.create(tsetelementnode(right).left,
+                                ccallparanode.create(aktassignmentnode.left.getcopy,
+                                ccallparanode.create(left,nil))))));
+                            end
+                          else
+                            begin
+                              { s:=s+[element]; ? }
+                              if left.isequal(aktassignmentnode.left) then
+                                result:=cinlinenode.createintern(in_include_x_y,false,ccallparanode.create(aktassignmentnode.left.getcopy,
+                                  ccallparanode.create(ctypeconvnode.create_internal(tsetelementnode(right).left,tsetdef(resultdef).elementdef),nil)))
+                              else
+                                begin
+                                  { adjust for set base }
+                                  tsetelementnode(right).left:=caddnode.create(subn,
+                                    ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
+                                    cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
+
+                                  result:=ccallnode.createintern('fpc_varset_set',
+                                    ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
+                                    ccallparanode.create(ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
+                                    ccallparanode.create(aktassignmentnode.left.getcopy,
+                                    ccallparanode.create(left,nil)))));
+                                end;
+                            end;
+
+                          include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
+                        end
+                      else
+                        begin
+                          { adjust for set base }
+                          tsetelementnode(right).left:=caddnode.create(subn,
+                            ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
+                            cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
+
+                          result:=internalstatements(newstatement);
+
+                          { create temp for result }
+                          temp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
+                          addstatement(newstatement,temp);
+
+                          { add a range or a single element? }
+                          if assigned(tsetelementnode(right).right) then
+                            begin
+                              { adjust for set base }
+                              tsetelementnode(right).right:=caddnode.create(subn,
+                                ctypeconvnode.create_internal(tsetelementnode(right).right,sinttype),
+                                cordconstnode.create(tsetdef(resultdef).setbase,sinttype,false));
+                              addstatement(newstatement,ccallnode.createintern('fpc_varset_set_range',
+                                ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
+                                ccallparanode.create(tsetelementnode(right).right,
+                                ccallparanode.create(tsetelementnode(right).left,
+                                ccallparanode.create(ctemprefnode.create(temp),
+                                ccallparanode.create(left,nil))))))
+                              );
+                            end
+                          else
+                            addstatement(newstatement,ccallnode.createintern('fpc_varset_set',
+                              ccallparanode.create(cordconstnode.create(resultdef.size,sinttype,false),
+                              ccallparanode.create(ctypeconvnode.create_internal(tsetelementnode(right).left,sinttype),
+                              ccallparanode.create(ctemprefnode.create(temp),
+                              ccallparanode.create(left,nil)))))
+                            );
+                          { the last statement should return the value as
+                            location and type, this is done be referencing the
+                            temp and converting it first from a persistent temp to
+                            normal temp }
+                          addstatement(newstatement,ctempdeletenode.create_normal_temp(temp));
+                          addstatement(newstatement,ctemprefnode.create(temp));
+                        end;
+                      { remove reused parts from original node }
+                      tsetelementnode(right).right:=nil;
+                      tsetelementnode(right).left:=nil;
+                      left:=nil;
                     end
                   else
                     call_varset_helper('fpc_varset_add_sets');
@@ -3742,7 +3892,7 @@ implementation
                             'fpc_dynarray_concat',
                             para
                           );
-                  include(aktassignmentnode.flags,nf_assign_done_in_right);
+                  include(aktassignmentnode.assignmentnodeflags,anf_assign_done_in_right);
                   firstpass(result);
                 end
               else
@@ -4272,9 +4422,6 @@ implementation
         end;
 
       var
-{$ifdef addstringopt}
-         hp      : tnode;
-{$endif addstringopt}
          rd,ld   : tdef;
          i,i2    : longint;
          lt,rt   : tnodetype;
@@ -4358,6 +4505,17 @@ implementation
                    end;
                end;
            end;
+
+        { get rid of adding empty sets generated by set constructors (s+([]+[..]))
+
+          this needs to be done before firstpass, else the set additions get already converted into calls }
+        if (resultdef.typ=setdef) and (nodetype=addn) and (right.nodetype=addn) and (is_emptyset(taddnode(right).left)) then
+          begin
+            result:=caddnode.create(addn,left,taddnode(right).right);
+            left:=nil;
+            taddnode(right).right:=nil;
+            exit;
+          end;
 
          { first do the two subtrees }
          firstpass(left);
@@ -4755,5 +4913,27 @@ implementation
         end;
     end;
 {$endif}
+{$ifdef DEBUG_NODE_XML}
+    procedure TAddNode.XMLPrintNodeInfo(var T: Text);
+      var
+        i: TAddNodeFlag;
+        First: Boolean;
+      begin
+        inherited XMLPrintNodeInfo(T);
+        First := True;
+        for i in addnodeflags do
+          begin
+            if First then
+              begin
+                Write(T, ' addnodeflags="', i);
+                First := False;
+              end
+            else
+              Write(T, ',', i)
+          end;
+        if not First then
+          Write(T, '"');
+      end;
+{$endif DEBUG_NODE_XML}
 
 end.

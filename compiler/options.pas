@@ -2175,6 +2175,8 @@ begin
       target_unsup_features:=[f_threading];
     system_m68k_atari:
       target_unsup_features:=[f_threading];
+    system_m68k_human68k:
+      target_unsup_features:=[f_threading,f_dynlibs];
     { classic amiga has dynamic libraries, but they cannot be integrated in the
       normal dynlibs infrastructure due to architectural differences, so therefore
       lets disable the feature. }
@@ -2201,8 +2203,8 @@ begin
      include(init_settings.globalswitches,cs_link_vlink);
 {$endif}
 {$ifdef m68k}
-   { always enable vlink as default linker for the Sinclair QL and Atari }
-   if (target_info.system in [system_m68k_sinclairql,system_m68k_atari]) and
+   { always enable vlink as default linker for the Sinclair QL, Atari, and Human 68k }
+   if (target_info.system in [system_m68k_sinclairql,system_m68k_atari,system_m68k_human68k]) and
       not LinkerSetExplicitly then
      include(init_settings.globalswitches,cs_link_vlink);
 {$endif m68k}
@@ -4756,9 +4758,8 @@ procedure read_arguments(cmd:TCmdStr);
       {$endif i8086 or avr}
       { abs(long) is handled internally on all CPUs }
         def_system_macro('FPC_HAS_INTERNAL_ABS_LONG');
-      {$if defined(i8086) or defined(i386) or defined(x86_64) or defined(powerpc64) or defined(aarch64)}
+      { abs(int64) is handled internally on all CPUs }
         def_system_macro('FPC_HAS_INTERNAL_ABS_INT64');
-      {$endif i8086 or i386 or x86_64 or powerpc64 or aarch64}
 
         def_system_macro('FPC_HAS_UNICODESTRING');
         def_system_macro('FPC_RTTI_PACKSET1');
@@ -5189,7 +5190,10 @@ begin
       ((option.paratargetasm=as_none) and (target_info.endian<>source_info.endian)) then
    begin
      if ((option.paratargetasm=as_none) and (target_info.endian<>source_info.endian)) then
-       Message(option_switch_bin_to_src_assembler_cross_endian)
+       begin
+         if not ((target_info.assem = target_info.assemextern) or (target_info.assem = as_none)) then
+           Message(option_switch_bin_to_src_assembler_cross_endian);
+       end
      else
        Message(option_switch_bin_to_src_assembler);
 {$ifdef llvm}
@@ -5365,7 +5369,7 @@ begin
         else
           begin
             if (not(FPUARM_HAS_VFP_EXTENSION in fpu_capabilities[init_settings.fputype]))
-	       or (target_info.system = system_arm_ios) then
+              or (target_info.system = system_arm_ios) then
               begin
                 Message(option_illegal_fpu_eabihf);
                 StopOptions(1);
@@ -5511,7 +5515,8 @@ begin
           end;
       end;
     system_m68k_atari,
-    system_m68k_sinclairql:
+    system_m68k_sinclairql,
+    system_m68k_human68k:
       begin
         if not option.CPUSetExplicitly then
           init_settings.cputype:=cpu_mc68000;

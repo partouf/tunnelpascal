@@ -63,6 +63,9 @@ begin
 end;
 {$ENDIF}
 
+var
+  mask : TFPUExceptionMask;
+
 initialization
 {$IFDEF NO_EXTERNAL_VARS}
   LoadExternalVariables;
@@ -78,8 +81,12 @@ initialization
  * between the version it was compiled for and the actual shared
  * library used.
  *)
+  mask:=GetExceptionMask;
+  SetExceptionMask([exInvalidOp,exDenormalized,exZeroDivide,exOverflow,exUnderflow,exPrecision]);
+
   LIBXML_TEST_VERSION;
 
+  SetExceptionMask(mask);
 (*
  * overloading the error functions
  *)

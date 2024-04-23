@@ -97,6 +97,9 @@ uses
 {$ifdef haiku}
   ,i_haiku
 {$endif haiku}
+{$ifdef human68k}
+  ,i_human68k
+{$endif human68k}
 {$ifdef linux}
   ,i_linux
 {$endif linux}
@@ -149,6 +152,7 @@ uses
 {$ifdef aix}
   ,i_aix
 {$endif aix}
+  ,ctask
   ,globtype;
 
 function Compile(const cmd:TCmdStr):longint;
@@ -156,6 +160,8 @@ function Compile(const cmd:TCmdStr):longint;
 implementation
 
 uses
+  finput,
+  fppu,
   aasmcpu;
 
 {$if defined(MEMDEBUG)}
@@ -193,6 +199,7 @@ begin
   DoneGlobals;
   DoneFileUtils;
   donetokens;
+  DoneTaskHandler;
 end;
 
 
@@ -230,6 +237,7 @@ begin
   InitAsm;
   InitWpo;
 
+  InitTaskHandler;
   CompilerInitedAfterArgs:=true;
 end;
 
@@ -258,6 +266,8 @@ var
 {$endif SHOWUSEDMEM}
   ExceptionMask : TFPUExceptionMask;
   totaltime : real;
+  m : tppumodule;
+
 begin
   try
     try
@@ -288,7 +298,18 @@ begin
         parser.preprocess(inputfilepath+inputfilename)
        else
   {$endif PREPROCWRITE}
-        parser.compile(inputfilepath+inputfilename);
+         begin
+         m:=tppumodule.create(Nil,'',inputfilepath+inputfilename,false);
+         m.state:=ms_compile;
+         m.is_initial:=true;
+         { We need to add the initial module manually to the list of units }
+         addloadedunit(m);
+         main_module:=m;
+         m.state:=ms_compile;
+         task_handler.addmodule(m);
+         task_handler.processqueue;
+         end;
+
 
        { Show statistics }
        if status.errorcount=0 then
@@ -341,6 +362,9 @@ begin
           { in case of 50 errors, this could cause another exception,
             suppress this exception
           }
+{$ifdef DUMP_EXCEPTION_BACKTRACE}
+          DumpExceptionBackTrace(stderr);
+{$endif DUMP_EXCEPTION_BACKTRACE}
           Message(general_f_compilation_aborted);
         except
           on ECompilerAbort do

@@ -525,7 +525,7 @@ implementation
 
     uses
        { global }
-       verbose,
+       verbose,cmsgs,
        { target }
        systems,
        { symtable }
@@ -573,6 +573,7 @@ implementation
           constreal,
           constset,
           constresourcestring,
+          constwresourcestring,
           constwstring,
           constguid: begin
             if value1.len<>value2.len then
@@ -590,22 +591,34 @@ implementation
 
 
     procedure check_hints(const srsym: tsym; const symoptions: tsymoptions; const deprecatedmsg : pshortstring;filepos:tfileposinfo);
+      var
+        def : tdef;
+        name : tmsgstr;
       begin
         if not assigned(srsym) then
           internalerror(200602051);
+        if symoptions*[sp_hint_deprecated,sp_hint_experimental,sp_hint_platform,sp_hint_library,sp_hint_unimplemented]<>[] then
+          begin
+            name:=srsym.realname;
+            def:=tdef(srsym.owner.defowner);
+            if assigned(def) then
+              name:=def.typesymbolprettyname+'.'+name;
+          end
+        else
+          name:='';
         if sp_hint_deprecated in symoptions then
           if (sp_has_deprecated_msg in symoptions) and (deprecatedmsg <> nil) then
-            MessagePos2(filepos,sym_w_deprecated_symbol_with_msg,srsym.realname,deprecatedmsg^)
+            MessagePos2(filepos,sym_w_deprecated_symbol_with_msg,name,deprecatedmsg^)
           else
-            MessagePos1(filepos,sym_w_deprecated_symbol,srsym.realname);
+            MessagePos1(filepos,sym_w_deprecated_symbol,name);
         if sp_hint_experimental in symoptions then
-          MessagePos1(filepos,sym_w_experimental_symbol,srsym.realname);
+          MessagePos1(filepos,sym_w_experimental_symbol,name);
         if sp_hint_platform in symoptions then
-          MessagePos1(filepos,sym_w_non_portable_symbol,srsym.realname);
+          MessagePos1(filepos,sym_w_non_portable_symbol,name);
         if sp_hint_library in symoptions then
-          MessagePos1(filepos,sym_w_library_symbol,srsym.realname);
+          MessagePos1(filepos,sym_w_library_symbol,name);
         if sp_hint_unimplemented in symoptions then
-          MessagePos1(filepos,sym_w_non_implemented_symbol,srsym.realname);
+          MessagePos1(filepos,sym_w_non_implemented_symbol,name);
       end;
 
 {****************************************************************************
@@ -2663,6 +2676,28 @@ implementation
          pc : pchar;
          pw : pcompilerwidestring;
          i  : longint;
+
+         procedure do_widestring_const;
+         var
+            i  : longint;
+         begin
+           initwidestring(pw);
+           setlengthwidestring(pw,ppufile.getlongint);
+           { don't use getdata, because the compilerwidechars may have to
+             be byteswapped
+           }
+{$if sizeof(tcompilerwidechar) = 2}
+           for i:=0 to pw^.len-1 do
+             pw^.data[i]:=ppufile.getword;
+{$elseif sizeof(tcompilerwidechar) = 4}
+           for i:=0 to pw^.len-1 do
+             pw^.data[i]:=cardinal(ppufile.getlongint);
+{$else}
+          {$error Unsupported tcompilerwidechar size}
+{$endif}
+           pcompilerwidestring(value.valueptr):=pw;
+         end;
+
       begin
          inherited ppuload(constsym,ppufile);
          constdef:=nil;
@@ -2681,31 +2716,22 @@ implementation
              end;
            constwstring :
              begin
-               initwidestring(pw);
-               setlengthwidestring(pw,ppufile.getlongint);
-               { don't use getdata, because the compilerwidechars may have to
-                 be byteswapped
-               }
-{$if sizeof(tcompilerwidechar) = 2}
-               for i:=0 to pw^.len-1 do
-                 pw^.data[i]:=ppufile.getword;
-{$elseif sizeof(tcompilerwidechar) = 4}
-               for i:=0 to pw^.len-1 do
-                 pw^.data[i]:=cardinal(ppufile.getlongint);
-{$else}
-              {$error Unsupported tcompilerwidechar size}
-{$endif}
-               pcompilerwidestring(value.valueptr):=pw;
+               do_widestring_const;
              end;
            conststring,
            constresourcestring :
+              begin
+              ppufile.getderef(constdefderef);
+              value.len:=ppufile.getlongint;
+              getmem(pc,value.len+1);
+              ppufile.getdata(pc^,value.len);
+              pc[value.len]:=#0;
+              value.valueptr:=pc;
+              end;
+           constwresourcestring :
              begin
                ppufile.getderef(constdefderef);
-               value.len:=ppufile.getlongint;
-               getmem(pc,value.len+1);
-               ppufile.getdata(pc^,value.len);
-               pc[value.len]:=#0;
-               value.valueptr:=pc;
+               do_widestring_const;
              end;
            constreal :
              begin
@@ -2747,7 +2773,8 @@ implementation
           conststring,
           constresourcestring :
             freemem(pchar(value.valueptr),value.len+1);
-          constwstring :
+          constwstring,
+          constwresourcestring:
             donewidestring(pcompilerwidestring(value.valueptr));
           constreal :
             dispose(pbestreal(value.valueptr));
@@ -2764,7 +2791,7 @@ implementation
       begin
         inherited;
         case consttyp  of
-          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid:
+          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constwresourcestring,constguid:
             constdefderef.build(constdef);
           constwstring:
             ;
@@ -2777,7 +2804,7 @@ implementation
     procedure tconstsym.deref;
       begin
         case consttyp of
-          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constguid:
+          constnil,constord,constreal,constpointer,constset,conststring,constresourcestring,constwresourcestring,constguid:
             constdef:=tdef(constdefderef.resolve);
           constwstring:
             constdef:=carraydef.getreusable(cwidechartype,getlengthwidestring(pcompilerwidestring(value.valueptr)));
@@ -2788,6 +2815,15 @@ implementation
 
 
     procedure tconstsym.ppuwrite(ppufile:tcompilerppufile);
+
+      procedure do_widestring_const;
+
+      begin
+        ppufile.putlongint(getlengthwidestring(pcompilerwidestring(value.valueptr)));
+        ppufile.putdata(pcompilerwidestring(value.valueptr)^.data^,pcompilerwidestring(value.valueptr)^.len*sizeof(tcompilerwidechar));
+      end;
+
+
       begin
          inherited ppuwrite(ppufile);
          ppufile.putbyte(byte(consttyp));
@@ -2807,15 +2843,18 @@ implementation
            constwstring :
              begin
                { no need to store the def, we can reconstruct it }
-               ppufile.putlongint(getlengthwidestring(pcompilerwidestring(value.valueptr)));
-               ppufile.putdata(pcompilerwidestring(value.valueptr)^.data^,pcompilerwidestring(value.valueptr)^.len*sizeof(tcompilerwidechar));
+               do_widestring_const;
              end;
-           conststring,
-           constresourcestring :
+           conststring,constresourcestring:
+             begin
+             ppufile.putderef(constdefderef);
+             ppufile.putlongint(value.len);
+             ppufile.putdata(pchar(value.valueptr)^,value.len);
+             end;
+            constwresourcestring:
              begin
                ppufile.putderef(constdefderef);
-               ppufile.putlongint(value.len);
-               ppufile.putdata(pchar(value.valueptr)^,value.len);
+               do_widestring_const
              end;
            constreal :
              begin
@@ -2848,6 +2887,7 @@ implementation
             ;
           conststring,
           constresourcestring,
+          constwresourcestring,
           constwstring:
             begin
               WriteLn(T, PrintNodeIndention, '<length>', value.len, '</length>');
@@ -2871,7 +2911,7 @@ implementation
 
         WriteLn(T, PrintNodeIndention, '<visibility>', visibility, '</visibility>');
 
-        if not (consttyp in [conststring, constresourcestring, constwstring]) then
+        if not (consttyp in [conststring, constresourcestring, constwresourcestring, constwstring]) then
           { constdef.size will return an internal error for string
             constants because constdef is an open array internally }
           WriteLn(T, PrintNodeIndention, '<size>', constdef.size, '</size>');

@@ -6,8 +6,8 @@ program nodepas2js;
 uses
   JS, NodeJSApp,
   Classes, SysUtils,
-  Pas2jsFileUtils, Pas2jsLogger,
-  Pas2jsCompiler, Pas2JSFSCompiler, Pas2JSCompilerCfg;
+  Pas2jsFileUtils, Pas2jsLogger, Pas2jsCompiler,
+  Pas2JSFSCompiler, {Pas2JSCompilerPP, }Pas2JSCompilerCfg;
 
 type
 
@@ -83,3 +83,4 @@ begin
   Application.Run;
   Application.Free;
 end.
+

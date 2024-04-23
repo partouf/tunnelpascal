@@ -48,6 +48,7 @@
   add_graph(ADirectory+IncludeTrailingPathDelimiter('graph'));
   add_gtk1(ADirectory+IncludeTrailingPathDelimiter('gtk1'));
   add_gtk2(ADirectory+IncludeTrailingPathDelimiter('gtk2'));
+  add_h68units(ADirectory+IncludeTrailingPathDelimiter('h68units'));
   add_hash(ADirectory+IncludeTrailingPathDelimiter('hash'));
   add_hermes(ADirectory+IncludeTrailingPathDelimiter('hermes'));
   add_httpd13(ADirectory+IncludeTrailingPathDelimiter('httpd13'));
@@ -154,4 +155,5 @@
   add_gitlab(ADirectory+IncludeTrailingPathDelimiter('gitlab'));
   add_fcl_css(ADirectory+IncludeTrailingPathDelimiter('fcl-css'));
   add_gstreamer(ADirectory+IncludeTrailingPathDelimiter('gstreamer'));
+  add_testinsight(ADirectory+IncludeTrailingPathDelimiter('testinsight'));
   

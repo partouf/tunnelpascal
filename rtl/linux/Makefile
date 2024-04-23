@@ -5,7 +5,7 @@ default: all
 MAKEFILETARGETS=i386-linux m68k-linux powerpc-linux sparc-linux x86_64-linux arm-linux powerpc64-linux armeb-linux mips-linux mipsel-linux mips64-linux mips64el-linux aarch64-linux sparc64-linux riscv32-linux riscv64-linux xtensa-linux loongarch64-linux
 BSDs = freebsd netbsd openbsd darwin dragonfly
 UNIXs = linux $(BSDs) solaris qnx haiku aix
-LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari
+LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari human68k
 OSNeedsComspecToRunBatch = go32v2 watcom
 FORCE:
 .PHONY: FORCE
@@ -548,6 +548,7 @@ PROFILEUNIT=DOSApi.Profile
 RASPI2UNIT=EmbeddedApi.raspi2
 RASPI3UNIT=EmbeddedApi.raspi3
 RASPIUARTUNIT=EmbeddedApi.raspiuart
+RP2040UNIT=EmbeddedApi.rp2040
 RTLCONSTSUNIT=System.RtlConsts
 SAM3X8EUNIT=EmbeddedApi.sam3x8e
 SAMD51P19AUNIT=EmbeddedApi.samd51p19a
@@ -795,6 +796,7 @@ PROFILEUNIT=profile
 RASPI2UNIT=raspi2
 RASPI3UNIT=raspi3
 RASPIUARTUNIT=raspiuart
+RP2040UNIT=rp2040
 RTLCONSTSUNIT=rtlconsts
 SAM3X8EUNIT=sam3x8e
 SAMD51P19AUNIT=samd51p19a
@@ -906,6 +908,9 @@ SYSCALL_DEPS_OS=$(ARCH)/syscallh.inc $(RTL)/sparcgen/sysnr.inc
 else
 SYSCALL_DEPS_OS=$(ARCH)/syscallh.inc $(ARCH)/sysnr.inc
 endif
+endif
+ifneq ($(filter -dFPC_USE_LIBC,$(OPT) $(CROSSOPT)),)
+  SYSCALL_DEPS_OS+=$(OBJPASUNIT)$(PPUEXT)
 endif
 SYSUTILSDIR=$(UNIXINC)
 SYSUTILS_DEPS_OS=$(SYSUTILS_UNIX_DEPS) $(LINUXUNIT)$(PPUEXT)
@@ -2880,7 +2885,7 @@ uachar$(PPUEXT): $(UACHAR_DEPS)
 	$(COMPILER) $(UACHAR_OPT) $<
 OBJPAS_DEPS= $(OBJPASDIR)/objpas.pp $(INC)/except.inc \
 	     $(SYSTEMUNIT)$(PPUEXT) \
-	     $(OBJPAS_DEPS_OS) $(OBJPAS_DEPS_SPU)
+	     $(OBJPAS_DEPS_OS) $(OBJPAS_DEPS_CPU)
 objpas$(PPUEXT): $(OBJPAS_DEPS)
 	$(COMPILER) $(OBJPAS_OPT) -Fi$(OBJPASDIR) $<
 MACPAS_DEPS=$(INC)/macpas.pp \
@@ -2987,6 +2992,10 @@ UnixApi.CP$(PPUEXT) : $(NSINC)/UnixApi.CP.pp $(UNIXCP_DEPS)
 	$(COMPILER) $(UNIXCP_OPT) $<
 ifeq ($(filter -dFPC_USE_LIBC,$(FPCOPT)),)
   LINUX_DEPS_OS+=$(SYSCALLUNIT)$(PPUEXT)
+else
+ifneq ($(filter $(CPU_TARGET),i386 x86_64),)
+  LINUX_DEPS_OS+=$(SYSCALLUNIT)$(PPUEXT)
+endif
 endif
 LINUX_DEPS=$(OSDIR)/linux.pp \
 	   $(BASEUNIXUNIT)$(PPUEXT) $(UNIXTYPEUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
@@ -3664,3 +3673,5 @@ SI_G_DEPS=si_g.pp si_intf.inc $(SYSNRINC) $(ARCH)/si_g.inc $(SYSTEMUNIT)$(PPUEXT
 	  $(SI_G_DEPS_OS) $(SI_G_DEPS_CPU)
 si_g$(PPUEXT) : $(SI_G_DEPS)
 	$(COMPILER) $<
+buildrtl$(PPUEXT): buildrtl.pp $(SYSTEMUNIT)$(PPUEXT) $(OBJPASUNIT)$(PPUEXT) $(HEAPTRCUNIT)$(PPUEXT)
+	$(COMPILER) -Fi$(OBJPASDIR)/sysutils -Fi$(OBJPASDIR)/classes -Fu$(PROCINC) -Fu$(UNIXINC) -Fu$(RTL)/charmaps -I$(INC) -Fu$(INC) -Fu$(OBJPASDIR) buildrtl

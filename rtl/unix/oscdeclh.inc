@@ -55,6 +55,7 @@ const
     Function  FpChmod      (path : PAnsiChar; Mode : TMode): cInt; cdecl; external clib name 'chmod';
     Function  FpChown   (path : PAnsiChar; owner : TUid; group : TGid): cInt; cdecl; external clib name 'chown';
     Function  FPUtime(path:PAnsiChar;times:putimbuf):cint; cdecl; external clib name 'utime';
+    Function  FPFUtimens(handle: cint;constref times: TTimespecArr):cint; cdecl; external clib name 'futimens';
     Function  FpPipe       (var fildes : tfildes):cInt; cdecl;external clib name 'pipe';
     function  FpDup     (oldd:cint):cint; cdecl; external clib name 'dup';
     function  FpDup2    (oldd:cint;newd:cint):cint; cdecl; external clib name 'dup2';

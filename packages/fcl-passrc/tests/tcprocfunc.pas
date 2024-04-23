@@ -69,6 +69,8 @@ type
     Procedure TestFunctionOneOutArg;
     procedure TestProcedureOneConstRefArg;
     Procedure TestFunctionOneConstRefArg;
+    procedure TestFunctionOneConstRefAttributeArg;
+    procedure TestFunctionOneConstRefAttributeArgReversed;
     procedure TestProcedureTwoArgs;
     Procedure TestFunctionTwoArgs;
     procedure TestProcedureTwoArgsSeparate;
@@ -187,7 +189,6 @@ type
     procedure TestOperatorNames;
     Procedure TestAssignOperatorAfterObject;
     Procedure TestFunctionNoResult;
-    Procedure TestExternalFunctionFinal;
     Procedure TestFunctionSyscallSingleNumber;
     Procedure TestFunctionSyscallDoubleNumber;
     Procedure TestFunctionSysCallSysTrapIdentifier;
@@ -516,7 +517,7 @@ begin
   AssertArg(ProcType,0,'B',argDefault,'^Integer','');
 end;
 
-procedure TTestProcedureFunction.TestFunctionPointerResult;
+procedure TTestProcedureFunction.TestFUnctionPointerResult;
 begin
   ParseFunction('()','^LongInt');
   AssertFunc([],[],ccDefault,0);
@@ -556,6 +557,24 @@ begin
   AssertFunc([],[],ccDefault,1);
   AssertArg(FuncType,0,'B',argConst,'Integer','');
 end;
+
+
+procedure TTestProcedureFunction.TestFunctionOneConstRefAttributeArg;
+begin
+  Parser.CurrentModeswitches:=Parser.CurrentModeswitches+[msPrefixedAttributes];
+  ParseFunction('([ref] Const B : Integer)');
+  AssertFunc([],[],ccDefault,1);
+  AssertArg(FuncType,0,'B',argConstRef,'Integer','');
+end;
+
+procedure TTestProcedureFunction.TestFunctionOneConstRefAttributeArgReversed;
+begin
+  Parser.CurrentModeswitches:=Parser.CurrentModeswitches+[msPrefixedAttributes];
+  ParseFunction('(Const [ref] B : Integer)');
+  AssertFunc([],[],ccDefault,1);
+  AssertArg(FuncType,0,'B',argConstRef,'Integer','');
+end;
+
 
 procedure TTestProcedureFunction.TestProcedureOneOutArg;
 begin
@@ -869,19 +888,19 @@ end;
 procedure TTestProcedureFunction.TestCallingConventionSysCallExecbase;
 begin
   ParseProcedure('; syscall _execBase 123');
-  AssertProc([],[],ccSysCall,0);
+  AssertProc([pmExternal],[],ccSysCall,0);
 end;
 
 procedure TTestProcedureFunction.TestCallingConventionSysCallUtilitybase;
 begin
   ParseProcedure('; syscall _utilityBase 123');
-  AssertProc([],[],ccSysCall,0);
+  AssertProc([pmExternal],[],ccSysCall,0);
 end;
 
 procedure TTestProcedureFunction.TestCallingConventionSysCallConsoleDevice;
 begin
   ParseProcedure('; syscall ConsoleDevice 123');
-  AssertProc([],[],ccSysCall,0);
+  AssertProc([pmExternal],[],ccSysCall,0);
 end;
 
 procedure TTestProcedureFunction.TestFunctionDiscardResult;
@@ -1491,36 +1510,34 @@ begin
 end;
 
 
-Procedure TTestProcedureFunction.TestExternalFunctionFinal;
 
-begin
-  // class external 'XYZ' name 'ABC'
-  //  function Something : Someresult; final;
-  // end; 
-  Fail('To be implemented');
-end;
-
-
-Procedure TTestProcedureFunction.TestFunctionSyscallSingleNumber;
+procedure TTestProcedureFunction.TestFunctionSyscallSingleNumber;
 begin
   // function Something : Someresult; syscall 12
-  Fail('To be implemented');
+  AddDeclaration('function A : Integer; syscall 12');
+  ParseFunction;
+  AssertFunc([pmExternal],[],ccSysCall,0);
 end;
 
 
-Procedure TTestProcedureFunction.TestFunctionSyscallDoubleNumber;
+procedure TTestProcedureFunction.TestFunctionSyscallDoubleNumber;
 
 begin
   // function Something : Someresult; syscall 12 13
-  Fail('To be implemented');
+  AddDeclaration('function A : Integer; syscall 12 13');
+  ParseFunction;
+  AssertFunc([pmExternal],[],ccSysCall,0);
 end;
 
 
-Procedure TTestProcedureFunction.TestFunctionSysCallSysTrapIdentifier;
+procedure TTestProcedureFunction.TestFunctionSysCallSysTrapIdentifier;
 
 begin
   // function Something : Someresult; syscall systrapNNN
-  Fail('To be implemented');
+//  Fail('To be implemented');
+  AddDeclaration('function A : Integer; syscall systrap12');
+  ParseFunction;
+  AssertFunc([pmExternal],[],ccSysCall,0);
 end;
 
 

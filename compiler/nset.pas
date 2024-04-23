@@ -350,6 +350,7 @@ implementation
         t : tnode;
       begin
          result:=nil;
+
          { constant evaluation }
          if (left.nodetype=ordconstn) then
            begin
@@ -397,6 +398,15 @@ implementation
            not(might_have_sideeffects(left,[mhs_exceptions])) then
            begin
              t:=cordconstnode.create(1, pasbool1type, true);
+             typecheckpass(t);
+             result:=t;
+             exit;
+           end
+         { ... in [] is always false }
+         else if is_emptyset(right) and
+           not(might_have_sideeffects(left,[mhs_exceptions])) then
+           begin
+             t:=cordconstnode.create(1, pasbool1type, false);
              typecheckpass(t);
              result:=t;
              exit;
@@ -958,7 +968,7 @@ implementation
                    caddnode.create_internal(equaln,left.getcopy,cordconstnode.create(flabels^._low,left.resultdef,false)),
                    pcaseblock(blocks[flabels^.blockid])^.statement,elseblock);
                end
-             else
+             else if not(might_have_sideeffects(left,[mhs_exceptions])) and (node_complexity(left)<=1) then
                begin
                  result:=cifnode.create_internal(
                    caddnode.create_internal(andn,
@@ -966,6 +976,30 @@ implementation
                      caddnode.create_internal(lten,left.getcopy,cordconstnode.create(flabels^._high,left.resultdef,false))
                    ),
                    pcaseblock(blocks[flabels^.blockid])^.statement,elseblock);
+               end
+             else
+               begin
+                 init_block:=internalstatements(stmt);
+                 tempcaseexpr:=ctempcreatenode.create(
+                   left.resultdef,left.resultdef.size,tt_persistent,true);
+                 temp_cleanup:=ctempdeletenode.create(tempcaseexpr);
+                 typecheckpass(tnode(tempcaseexpr));
+
+                 addstatement(stmt,tempcaseexpr);
+                 addstatement(stmt,cassignmentnode.create(
+                   ctemprefnode.create(tempcaseexpr),left.getcopy));
+
+                 left:=ctemprefnode.create(tempcaseexpr);
+                 typecheckpass(left);
+
+                 addstatement(stmt,cifnode.create_internal(
+                   caddnode.create_internal(andn,
+                     caddnode.create_internal(gten,left.getcopy,cordconstnode.create(flabels^._low,left.resultdef,false)),
+                     caddnode.create_internal(lten,left.getcopy,cordconstnode.create(flabels^._high,left.resultdef,false))
+                   ),
+                   pcaseblock(blocks[flabels^.blockid])^.statement,elseblock));
+                 addstatement(stmt,temp_cleanup);
+                 result:=init_block;
                end;
              elseblock:=nil;
              pcaseblock(blocks[flabels^.blockid])^.statement:=nil;

@@ -57,14 +57,14 @@ unit scandir;
     uses
       SysUtils,
       cutils,cfileutl,
-      globals,widestr,cpuinfo,
+      globals,widestr,cpuinfo,tokens,
       verbose,comphook,ppu,
       scanner,switches,
       fmodule,
       defutil,
       dirparse,link,
       syscinfo,
-      symconst,symtable,symbase,symtype,symsym,
+      symconst,symtable,symbase,symtype,symsym,symdef,
       rabase;
 
 {*****************************************************************************
@@ -221,7 +221,7 @@ unit scandir;
     procedure dir_align;
       var
         hs : string;
-        b : byte;
+        b : longint;
       begin
         current_scanner.skipspace;
         if not(c in ['0'..'9']) then
@@ -253,12 +253,7 @@ unit scandir;
          begin
            b:=current_scanner.readval;
            case b of
-             1 : current_settings.packrecords:=1;
-             2 : current_settings.packrecords:=2;
-             4 : current_settings.packrecords:=4;
-             8 : current_settings.packrecords:=8;
-            16 : current_settings.packrecords:=16;
-            32 : current_settings.packrecords:=32;
+             1,2,4,8,16,32 : current_settings.packrecords:=b;
            else
             Message1(scan_e_illegal_pack_records,tostr(b));
            end;
@@ -556,7 +551,7 @@ unit scandir;
 
     procedure dir_stackchecking;
       begin
-        do_delphiswitch('T');
+        do_delphiswitch('S');
       end;
 
     procedure dir_fputype;
@@ -1140,22 +1135,22 @@ unit scandir;
     procedure dir_packenum;
       var
         hs : string;
+        v : longint;
       begin
         current_scanner.skipspace;
         if not(c in ['0'..'9']) then
          begin
            hs:=current_scanner.readid;
            if (hs='NORMAL') or (hs='DEFAULT') then
-            current_settings.packenum:=4
+            recordpendingpackenum(4)
            else
             Message1(scan_e_illegal_pack_enum, hs);
          end
         else
          begin
-           case current_scanner.readval of
-            1 : current_settings.packenum:=1;
-            2 : current_settings.packenum:=2;
-            4 : current_settings.packenum:=4;
+           v:=current_scanner.readval;
+           case v of
+            1,2,4 : recordpendingpackenum(v);
            else
             Message1(scan_e_illegal_pack_enum, pattern);
            end;
@@ -1174,6 +1169,7 @@ unit scandir;
     procedure dir_packrecords;
       var
         hs : string;
+        v : longint;
       begin
         { can't change packrecords setting on managed vm targets }
         if target_info.system in systems_managed_vm then
@@ -1184,22 +1180,18 @@ unit scandir;
            hs:=current_scanner.readid;
            { C has the special recordalignmax of C_alignment }
            if (hs='C') then
-            current_settings.packrecords:=C_alignment
+            recordpendingpackrecords(C_alignment)
            else
             if (hs='NORMAL') or (hs='DEFAULT') then
-             current_settings.packrecords:=default_settings.packrecords
+             recordpendingpackrecords(default_settings.packrecords)
            else
             Message1(scan_e_illegal_pack_records,hs);
          end
         else
          begin
-           case current_scanner.readval of
-             1 : current_settings.packrecords:=1;
-             2 : current_settings.packrecords:=2;
-             4 : current_settings.packrecords:=4;
-             8 : current_settings.packrecords:=8;
-            16 : current_settings.packrecords:=16;
-            32 : current_settings.packrecords:=32;
+           v:=current_scanner.readval;
+           case v of
+             1,2,4,8,16,32 : recordpendingpackrecords(v);
            else
             Message1(scan_e_illegal_pack_records,pattern);
            end;
@@ -1210,23 +1202,22 @@ unit scandir;
     procedure dir_packset;
       var
         hs : string;
+        v : longint;
       begin
         current_scanner.skipspace;
         if not(c in ['1','2','4','8']) then
          begin
            hs:=current_scanner.readid;
            if (hs='FIXED') or (hs='DEFAULT') OR (hs='NORMAL') then
-            current_settings.setalloc:=0               {Fixed mode, sets are 4 or 32 bytes}
+            recordpendingsetalloc(0) {Fixed mode, sets are 4 or 32 bytes}
            else
             Message(scan_e_only_packset);
          end
         else
          begin
-           case current_scanner.readval of
-            1 : current_settings.setalloc:=1;
-            2 : current_settings.setalloc:=2;
-            4 : current_settings.setalloc:=4;
-            8 : current_settings.setalloc:=8;
+           v:=current_scanner.readval;
+           case v of
+            1,2,4,8 : recordpendingsetalloc(v);
            else
             Message(scan_e_only_packset);
            end;
@@ -1261,10 +1252,10 @@ unit scandir;
           { Reset verbosity and forget previous pmeesage }
           RestoreLocalVerbosity(nil);
           current_settings.pmessage:=nil;
-          { Do not yet activate these changes, as otherwise
-            you get problem idf you put a $pop just right after
-            a addition for instance fro which you explicitly truned the overflow check
-            out by using $Q- after a $push PM 2012-08-29 }
+          { Do not activate these changes yet, as otherwise
+            you get a problem if you put a $pop just right after
+            a addition for instance for which you explicitly turned the overflow check
+            off by using $Q- after a $push PM 2012-08-29 }
           // flushpendingswitchesstate;
         end;
     end;
@@ -1373,6 +1364,93 @@ unit scandir;
           Message(scan_e_resourcefiles_not_supported);
       end;
 
+    procedure dir_rtti;
+
+      function read_rtti_options: trtti_visibilities;
+        var
+          sym: ttypesym;
+          value: tnormalset;
+        begin
+          result:=[];
+          sym:=search_system_type('TVISIBILITYCLASSES');
+          if current_scanner.readpreprocset(tsetdef(sym.typedef),value,'RTTI') then
+            begin
+              result:=prtti_visibilities(@value)^;
+              // if the set was empty we need to read the next id
+              if result=[] then
+                begin
+                  current_scanner.skipspace;
+                  current_scanner.readid
+                end;
+            end;
+        end;
+
+      var
+        dir: trtti_directive;
+        option: trtti_option;
+        options: array[trtti_option] of boolean;
+      begin
+        { the system unit has not yet loaded which means the directive is misplaced}
+        if systemunit=nil then
+          begin
+            Message(scan_e_misplaced_rtti_directive);
+            exit;
+          end;
+
+        dir:=default(trtti_directive);
+
+        options[ro_fields]:=false;
+        options[ro_methods]:=false;
+        options[ro_properties]:=false;
+
+        { read the clause }
+        current_scanner.skipspace;
+        current_scanner.readid;
+        case pattern of
+          'INHERIT':
+            dir.clause:=rtc_inherit;
+          'EXPLICIT':
+            dir.clause:=rtc_explicit;
+          otherwise
+            Message(scan_e_invalid_rtti_clause);
+        end;
+
+        { read the visibility options}
+        current_scanner.skipspace;
+        current_scanner.readid;
+        { the inherit clause doesn't require any options but explicit does }
+        if (pattern='') and (dir.clause=rtc_explicit) then
+          Message(scan_e_incomplete_rtti_clause);
+        while pattern<>'' do
+          begin
+            case pattern of
+              'METHODS':
+                option:=ro_methods;
+              'PROPERTIES':
+                option:=ro_properties;
+              'FIELDS':
+                option:=ro_fields;
+              otherwise
+                begin
+                  if current_scanner.preproc_token=_ID then
+                    Message1(scan_e_invalid_rtti_option,pattern);
+                  break;
+                end;
+            end;
+            { the option has already been used }
+            if options[option] then
+              begin
+                Message1(scan_e_duplicate_rtti_option,pattern);
+                break;
+              end;
+            dir.options[option]:=read_rtti_options;
+            options[option]:=true;
+          end;
+
+        { set the directive in the module }
+        current_module.rtti_directive:=dir;
+      end;
+
     procedure dir_saturation;
       begin
         do_localswitch(cs_mmx_saturation);
@@ -1446,7 +1524,7 @@ unit scandir;
       begin
         if not (target_info.system in systems_all_windows) then
           Message(scan_w_setpeuserversion_not_support);
-        if (compile_level<>1) then
+        if (not current_module.is_initial) then
           Message(scan_n_only_exe_version)
         else
           do_version(peuserversionmajor,peuserversionminor,dummyrev,dummystr,false,SetPEUserVersionSetExplicitely);
@@ -1459,7 +1537,7 @@ unit scandir;
       begin
         if not (target_info.system in systems_all_windows) then
           Message(scan_w_setpeosversion_not_support);
-        if (compile_level<>1) then
+        if (not current_module.is_initial) then
           Message(scan_n_only_exe_version)
         else
           do_version(peosversionmajor,peosversionminor,dummyrev,dummystr,false,SetPEOSVersionSetExplicitely);
@@ -1472,7 +1550,7 @@ unit scandir;
       begin
         if not (target_info.system in systems_all_windows) then
           Message(scan_w_setpesubsysversion_not_support);
-        if (compile_level<>1) then
+        if (not current_module.is_initial) then
           Message(scan_n_only_exe_version)
         else
           do_version(pesubsysversionmajor,pesubsysversionminor,dummyrev,dummystr,false,SetPESubSysVersionSetExplicitely);
@@ -1624,7 +1702,7 @@ unit scandir;
             Message(scan_n_version_not_support);
             exit;
           end;
-        if (compile_level<>1) then
+        if (not current_module.is_initial) then
           Message(scan_n_only_exe_version)
         else
           begin
@@ -2082,6 +2160,7 @@ unit scandir;
         AddDirective('PROFILE',directive_all, @dir_profile);
         AddDirective('PUSH',directive_all, @dir_push);
         AddDirective('R',directive_all, @dir_resource);
+        AddDirective('RTTI',directive_all, @dir_rtti);
         AddDirective('RANGECHECKS',directive_all, @dir_rangechecks);
         AddDirective('REFERENCEINFO',directive_all, @dir_referenceinfo);
         AddDirective('REGION',directive_all, @dir_region);

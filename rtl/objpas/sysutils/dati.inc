@@ -96,7 +96,8 @@ end;
 
 function TimeStampToMSecs(const TimeStamp: TTimeStamp): Int64;
 begin
-  result := TimeStamp.Time + timestamp.date * msecsperday;
+  //  Int64() typecast fixes issues 40522 and 40568 on 32-bit.
+  result := TimeStamp.Time + Int64(timestamp.date) * msecsperday;
 end;
 
 Function TryEncodeDate(Year,Month,Day : Word; Out Date : TDateTime) : Boolean;
@@ -1293,7 +1294,11 @@ begin
   else
     StoreFormat('C', 0, False);
   ResultBuffer[ResultLen] := #0;
-  result := StrPas(@ResultBuffer);
+  {$IF SIZEOF(CHAR)=1}
+    result := StrPas(PAnsiChar(@ResultBuffer));
+  {$ELSE}
+    result := StrPas(PWideChar(@ResultBuffer));
+  {$ENDIF}
   if (DateTime < 0) and (fdoInterval in Options) then
     result := '-' + result;
 end ;

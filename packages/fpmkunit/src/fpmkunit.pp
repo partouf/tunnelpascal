@@ -166,7 +166,7 @@ Type
     win64,wince,gba,nds,embedded,symbian,haiku,iphonesim,
     aix,java,android,nativent,msdos,wii,aros,dragonfly,
     win16,freertos,zxspectrum,msxdos,ios,amstradcpc,sinclairql,
-    wasi
+    wasi,human68k
   );
   TOSes = Set of TOS;
 
@@ -239,7 +239,7 @@ Const
   AllBSDOSes      = [FreeBSD,NetBSD,OpenBSD,Darwin,iphonesim,ios,dragonfly];
   AllWindowsOSes  = [Win32,Win64,WinCE];
   AllAmigaLikeOSes = [Amiga,MorphOS,AROS];
-  AllLimit83fsOses = [go32v2,os2,emx,watcom,msdos,win16,atari];
+  AllLimit83fsOses = [go32v2,os2,emx,watcom,msdos,win16,atari,human68k];
 
   AllSmartLinkLibraryOSes = [Linux,msdos,win16,palmos]; // OSes that use .a library files for smart-linking
   AllImportLibraryOSes = AllWindowsOSes + [os2,emx,netwlibc,netware,watcom,go32v2,macosclassic,nativent,msdos,win16];
@@ -292,7 +292,8 @@ Const
     { ios }     ( false, false, false, false, false, false,  true, false, false, false, false, false, false, false,   false, false, true , false, false,  false,  false,   false, false, false),
     {amstradcpc}( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, true,  false),
     {sinclairql}( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
-    { wasi }    ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, true,  false,  false,  false,   false, false, false)
+    { wasi }    ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, true,  false,  false,  false,   false, false, false),
+    { human68k }( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false)
   );
 
   // Useful
@@ -4471,7 +4472,11 @@ Var
   I : Integer;
 begin
   OB:=IncludeTrailingPathDelimiter(GetBinOutputDir(aTarget));
+  if Not DirectoryExists(OB) then
+    OB:='';
   OU:=IncludeTrailingPathDelimiter(GetUnitsOutputDir(aTarget));
+  if not DirectoryExists(OU) then
+    OU:='';
   List.Add(GetUnitConfigOutputFilename(aTarget));
   List.Add(ManifestFile);
   AddConditionalStrings(Self, List,CleanFiles,aTarget);
@@ -10298,50 +10303,66 @@ begin
   aOS:=aTarget.OS;
   If not(aCPU in CPUs) or not(AOS in OSes) then
     exit;
-  List.Add(APrefixU + ObjectFileName);
-  List.Add(APrefixU + LTOFileName);
-  If (TargetType in [ttUnit,ttImplicitUnit,ttExampleUnit, ttCleanOnlyUnit]) then
+  if aPrefixU<>'' then
     begin
-      List.Add(APrefixU + UnitFileName);
-      if (AOS in AllSmartLinkLibraryOSes) and FileExists(APrefixU + GetUnitLibFileName(AOS)) then
-        List.Add(APrefixU + GetUnitLibFileName(AOS));
-      if (AOS in AllImportLibraryOSes) and FileExists(APrefixU + GetImportLibFilename(AOS)) then
-        List.Add(APrefixU + GetImportLibFilename(AOS));
-    end
-  else If (TargetType in [ttProgram,ttExampleProgram]) then
+    List.Add(APrefixU + ObjectFileName);
+    List.Add(APrefixU + LTOFileName);
+    end;
+  Case TargetType of
+  ttUnit,ttImplicitUnit,ttExampleUnit, ttCleanOnlyUnit:
+      if aPrefixU<>'' then
+        begin
+        List.Add(APrefixU + UnitFileName);
+        if (AOS in AllSmartLinkLibraryOSes) and FileExists(APrefixU + GetUnitLibFileName(AOS)) then
+          List.Add(APrefixU + GetUnitLibFileName(AOS));
+        if (AOS in AllImportLibraryOSes) and FileExists(APrefixU + GetImportLibFilename(AOS)) then
+          List.Add(APrefixU + GetImportLibFilename(AOS));
+        end;
+  ttProgram,ttExampleProgram:
     begin
+    if (aPrefixB<>'') then
+      begin
       List.Add(APrefixB + GetProgramFileName(AOS));
-      if FileExists(APrefixB + GetProgramDebugFileName(AOS)) then
-        List.Add(APrefixB + GetProgramDebugFileName(AOS));
+        if FileExists(APrefixB + GetProgramDebugFileName(AOS)) then
+          List.Add(APrefixB + GetProgramDebugFileName(AOS));
+      end;
+    if (aPrefixU<>'') then
+      begin
       if (AOS in AllImportLibraryOSes) and FileExists(APrefixU + GetImportLibFilename(AOS)) then
         List.Add(APrefixU + GetImportLibFilename(AOS));
-    end
-  else If (TargetType in [ttSharedLibrary]) then
+      end;
+    end;
+  ttSharedLibrary:
+    if (APrefixB<>'') then
     begin
       List.Add(APrefixB + GetLibraryFileName(AOS));
       if FileExists(APrefixB + GetLibraryDebugFileName(AOS)) then
         List.Add(APrefixB + GetLibraryDebugFileName(AOS));
     end;
-  If ResourceStrings then
+  end; { case }
+  if (APrefixU<>'') then
     begin
-      // choose between 2 possible resource files
-      if FileExists(APrefixU + RSJFileName) then
-        List.Add(APrefixU + RSJFileName)
-      else
-        List.Add(APrefixU + RSTFileName);
-    end
-  else
-    begin
-      if FileExists(APrefixU + RSJFileName) then
-        begin
-          Installer.Log(VlDebug,Format(SDbgUnregisteredResource,[APrefixU + RSJFileName]));
-          List.Add(APrefixU + RSJFileName);
-        end
-      else if FileExists(APrefixU + RSTFileName) then
-        begin
-          Installer.Log(VlDebug,Format(SDbgUnregisteredResource,[APrefixU + RSTFileName]));
+    If ResourceStrings  then
+      begin
+        // choose between 2 possible resource files
+        if FileExists(APrefixU + RSJFileName) then
+          List.Add(APrefixU + RSJFileName)
+        else
           List.Add(APrefixU + RSTFileName);
-        end;
+      end
+    else
+      begin
+        if FileExists(APrefixU + RSJFileName) then
+          begin
+            Installer.Log(VlDebug,Format(SDbgUnregisteredResource,[APrefixU + RSJFileName]));
+            List.Add(APrefixU + RSJFileName);
+          end
+        else if FileExists(APrefixU + RSTFileName) then
+          begin
+            Installer.Log(VlDebug,Format(SDbgUnregisteredResource,[APrefixU + RSTFileName]));
+            List.Add(APrefixU + RSTFileName);
+          end;
+       end;
      end;
   // Maybe add later ?  AddConditionalStrings(List,CleanFiles);
 end;

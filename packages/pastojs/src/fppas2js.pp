@@ -1340,7 +1340,8 @@ const
     msOmitRTTI,
     msMultiHelpers,
     msImplicitFunctionSpec,
-    msMultilineStrings];
+    msMultilineStrings,
+    msDelphiMultilineStrings];
 
   bsAllPas2jsBoolSwitchesReadOnly = [
     bsLongStrings
@@ -5881,6 +5882,7 @@ var
   C: TClass;
 begin
   Result:=inherited;
+
   Params:=TParamsExpr(Expr);
   Param:=Params.Params[1];
   ComputeElement(Param,ParamResolved,[]);
@@ -5894,6 +5896,7 @@ begin
     if (C=TPasEnumType) or (C=TPasRangeType) then
       Result:=cExact
     end;
+
   if Result=cIncompatible then
     exit(CheckRaiseTypeArgNo(20181214142349,2,Param,ParamResolved,
          'enum variable',RaiseOnError));
@@ -8812,7 +8815,7 @@ begin
     Case El.Kind of
       pekIdent : Result:=GetPasIdentValueType(El.Name,AContext);
       pekNumber : Result:=jstNumber;
-      pekString : Result:=jstString;
+      pekString,pekStringMultiLine : Result:=jstString;
       pekSet : Result:=jstUNDEFINED;
       pekNil : Result:=jstNull;
       pekBoolConst : Result:=jstBoolean;
@@ -8859,10 +8862,15 @@ begin
     if Expr is TPrimitiveExpr then
       begin
       Prim:=TPrimitiveExpr(Expr);
-      if Prim.Kind=pekString then
-        Result:=Prim.Value
+      case Prim.Kind of
+      pekString:
+        begin
+        Result:=Prim.Value;
+        Result:={$IFDEF pas2js}DeQuoteString{$ELSE}AnsiDequotedStr{$ENDIF}(Result,'''');
+        end;
       else
         RaiseNotSupported(Prim,AContext,20170215124733);
+      end;
       end
     else
       RaiseNotSupported(Expr,AContext,20170322121331);
@@ -9240,13 +9248,8 @@ begin
           C:=TJSBitwiseXOrExpression; // no logical xor in JS. bitwise works for boolean too
         end;
       eopPower:
-        begin
-        Call:=CreateCallExpression(El);
-        Call.Expr:=CreatePrimitiveDotExpr('Math.pow',El);
-        Call.AddArg(A);
-        Call.AddArg(B);
-        Result:=Call;
-        end;
+        // convert pascal ** to js **
+        C:=TJSPowerExpression;
       else
         if C=nil then
           DoError(20161024191244,nBinaryOpcodeNotSupported,sBinaryOpcodeNotSupported,[OpcodeStrings[El.OpCode]],El);
@@ -10347,6 +10350,11 @@ begin
         S:={$IFDEF pas2js}DeQuoteString{$ELSE}AnsiDequotedStr{$ENDIF}(El.Value,'''');
         Result:=CreateLiteralString(El,S);
         end;
+      //writeln('TPasToJSConverter.ConvertPrimitiveExpression Result="',TJSLiteral(Result).Value.AsString,'" ',GetObjName(AContext.Resolver));
+      end;
+    pekStringMultiLine:
+      begin
+      Result:=CreateLiteralJSString(El,StrToJSString(El.Value));
       //writeln('TPasToJSConverter.ConvertPrimitiveExpression Result="',TJSLiteral(Result).Value.AsString,'" ',GetObjName(AContext.Resolver));
       end;
     pekNumber:
@@ -15128,7 +15136,7 @@ begin
         ReleaseEvalValue(Value);
       end;
       end
-    else if (C=TPasClassType) or (C=TPasPointerType) then
+    else if (C=TPasClassType) or (C=TPasPointerType) or (C=TPasClassOfType) then
       begin
       Result:=CreateLiteralNull(El);
       exit;
@@ -16342,14 +16350,19 @@ function TPasToJSConverter.ConvertExtClassType(El: TPasClassType;
 //     jsclass: "Object"
 //   });
 var
+  A: Integer;
   TIObj: TJSObjectLiteral;
   Call: TJSCallExpression;
   TIProp: TJSObjectLiteralElement;
   ClassScope: TPas2JSClassScope;
   AncestorType: TPasClassType;
   aResolver: TPas2JSResolver;
+  St: TJSStatementList;
+  MemberElement: TPasElement;
+
 begin
   Result:=nil;
+
   if not El.IsExternal then
     RaiseNotSupported(El,AContext,20191027183236);
 
@@ -16386,7 +16399,20 @@ begin
     TIProp:=TIObj.Elements.AddElement;
     TIProp.Name:=TJSString(GetBIName(pbivnRTTIExtClass_JSClass));
     TIProp.Expr:=CreateLiteralString(El,TPasClassType(El).ExternalName);
-    Result:=Call;
+    St:=TJSStatementList(CreateElement(TJSStatementList,El));
+    St.A := Call;
+    Result:=St;
+
+    for A := 0 to Pred(El.Members.Count) do
+    begin
+      MemberElement := TPasElement(El.Members[A]);
+      if (MemberElement is TPasClassType) and not (TPasClassType(MemberElement).IsForward) then
+      begin
+        St.B := ConvertExtClassType(TPasClassType(MemberElement), AContext);
+
+        St := St.B as TJSStatementList;
+      end;
+    end;
   finally
     if Result=nil then
       Call.Free;
@@ -19059,15 +19085,6 @@ function TPasToJSConverter.CreateArrayInit(ArrayType: TPasArrayType;
   var
     NextArrType: TPasArrayType;
     NextRgIndex: integer;
-    IsLastRange: boolean;
-
-    function ConvertSubExpr(SubExpr: TPasExpr): TJSElement;
-    begin
-      if IsLastRange then
-        Result:=ConvertExpression(SubExpr,AContext)
-      else
-        Result:=ConvertArrayExpr(NextArrType,NextRgIndex,SubExpr);
-    end;
 
     function ConvertSubValues(ExprArray: TPasExprArray): TJSArrayLiteral;
     var
@@ -19102,7 +19119,6 @@ function TPasToJSConverter.CreateArrayInit(ArrayType: TPasArrayType;
     aResolver: TPas2JSResolver;
   begin
     Result:=nil;
-    IsLastRange:=false;
     NextArrType:=CurArrType;
     NextRgIndex:=RgIndex+1;
     if RgIndex>=length(CurArrType.Ranges)-1 then
@@ -19116,7 +19132,7 @@ function TPasToJSConverter.CreateArrayInit(ArrayType: TPasArrayType;
         NextRgIndex:=0;
         end
       else
-        IsLastRange:=true;
+        ; //IsLastRange:=true;
       end;
     if CurExpr.ClassType=TArrayValues then
       begin
@@ -23876,7 +23892,7 @@ begin
     {$IFDEF VerbosePas2JS}
     writeln('TPasToJSConverter.ConvertForStatement LoopType=',El.LoopType){%H-};
     {$ENDIF}
-    RaiseNotSupported(El,AContext,20171110141937);
+    RaiseNotSupported(El,AContext,20171110141937){%H-};
   end;
 
   // get function context
@@ -24997,7 +25013,9 @@ begin
           Lit.Value.AsNumber:=0
         else if bt in btAllJSFloats then
           Lit.Value.CustomValue:='0.0'
-        else if bt in btAllJSStringAndChars then
+        else if bt in btAllJSChars then
+          Lit.Value.AsString := #0
+        else if bt in btAllJSStrings then
           Lit.Value.AsString:=''
         else if bt in btAllJSBooleans then
           Lit.Value.AsBoolean:=false

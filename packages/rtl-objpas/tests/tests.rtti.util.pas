@@ -48,6 +48,8 @@ function GetInstValue(aValue: TObject): TValue;
 function GetPointerValue(aValue: Pointer): TValue;
 function GetIntValue(aValue: SizeInt): TValue;
 function GetAnsiString(const aValue: AnsiString): TValue;
+function GetUnicodeString(const aValue: UnicodeString): TValue;
+function GetWideString(const aValue: WideString): TValue;
 function GetShortString(const aValue: ShortString): TValue;
 function GetSingleValue(aValue: Single): TValue;
 function GetDoubleValue(aValue: Double): TValue;
@@ -241,15 +243,15 @@ begin
     {$ifdef fpc}
       tkObject,
     {$endif}
-      tkMethod,
-      tkVariant: begin
+      tkMethod:
+      begin
         if aValue1.DataSize = aValue2.DataSize then
           Result := CompareMem(aValue1.GetReferenceToRawData, aValue2.GetReferenceToRawData, aValue1.DataSize)
         else
           Result := False;
-      end
-      else
-        Result := False;
+      end;
+      tkVariant:
+        Result := aValue1.AsVariant = aValue2.AsVariant;
     end;
   end else
     Result := False;
@@ -282,6 +284,16 @@ end;
 function GetAnsiString(const aValue: AnsiString): TValue;
 begin
   Result := TValue.{$ifdef fpc}specialize{$endif}From<AnsiString>(aValue);
+end;
+
+function GetUnicodeString(const aValue: UnicodeString): TValue;
+begin
+  Result := TValue.{$ifdef fpc}specialize{$endif}From<UnicodeString>(aValue);
+end;
+
+function GetWideString(const aValue: WideString): TValue;
+begin
+  Result := TValue.{$ifdef fpc}specialize{$endif}From<WideString>(aValue);
 end;
 
 function GetShortString(const aValue: ShortString): TValue;

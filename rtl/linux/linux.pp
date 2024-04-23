@@ -551,21 +551,8 @@ Type
 
   function statx(dfd: cint; filename: PAnsiChar; flags,mask: cuint; var buf: tstatx):cint; {$ifdef FPC_USE_LIBC} cdecl; weakexternal name 'statx'; {$ENDIF}
 
-Type
-   kernel_time64_t = clonglong;
-
-   kernel_timespec = record
-     tv_sec  : kernel_time64_t;
-     tv_nsec : clonglong;
-   end;
-   pkernel_timespec = ^kernel_timespec;
-
-   tkernel_timespecs = array[0..1] of kernel_timespec;
-
-{$ifndef android}
-Function utimensat(dfd: cint; path:PAnsiChar;const times:tkernel_timespecs;flags:cint):cint; {$ifdef FPC_USE_LIBC} cdecl; external name 'utimensat'; {$ENDIF}
-Function futimens(fd: cint; const times:tkernel_timespecs):cint; {$ifdef FPC_USE_LIBC} cdecl; external name 'futimens'; {$ENDIF}
-{$endif android}
+Function utimensat(dfd: cint; path:PAnsiChar;const times:TTimespecArr;flags:cint):cint; {$ifdef FPC_USE_LIBC} cdecl; external name 'utimensat'; {$ENDIF}
+Function futimens(fd: cint; const times:TTimespecArr):cint; {$ifdef FPC_USE_LIBC} cdecl; external name 'futimens'; {$ENDIF}
 
 implementation
 
@@ -886,13 +873,19 @@ begin
   statx:=do_syscall(syscall_nr_statx,TSysParam(dfd),TSysParam(filename),TSysParam(flags),TSysParam(mask),TSysParam(@buf));
 end;
 
+{ on 32 bit systems, we should use the 64 bit time calls }
+{$if (sizeof(time_t)<=4)}
+  { mipsel-android doesn't have them as it is not part of newer android versions anymode }
+  {$if not(defined(ANDROID) and defined(CPUMIPSEL))}
+    {$define USE_TIME64}
+  {$endif  not(defined(ANDROID) and defined(CPUMIPSEL))}
+{$endif (sizeof(clong)<=4)}
 
-{$ifndef android}
-Function utimensat(dfd: cint; path:PAnsiChar;const times:tkernel_timespecs;flags:cint):cint;
+Function utimensat(dfd: cint; path:PAnsiChar;const times:TTimespecArr;flags:cint):cint;
 var
   tsa: Array[0..1] of timespec;
 begin
-{$if sizeof(clong)<=4}
+{$ifdef USE_TIME64}
   utimensat:=do_syscall(syscall_nr_utimensat_time64,dfd,TSysParam(path),TSysParam(@times),0);
   if (utimensat>=0) or (fpgeterrno<>ESysENOSYS) then
     exit;
@@ -902,17 +895,17 @@ begin
   tsa[1].tv_sec := times[1].tv_sec;
   tsa[1].tv_nsec := times[1].tv_nsec;
   utimensat:=do_syscall(syscall_nr_utimensat,dfd,TSysParam(path),TSysParam(@tsa),0);
-{$else sizeof(clong)<=4}
+{$else USE_TIME64}
   utimensat:=do_syscall(syscall_nr_utimensat,dfd,TSysParam(path),TSysParam(@times),0);
-{$endif sizeof(clong)<=4}
+{$endif USE_TIME64}
 end;
 
 
-Function futimens(fd: cint; const times:tkernel_timespecs):cint;
+Function futimens(fd: cint; const times:TTimespecArr):cint;
 var
   tsa: Array[0..1] of timespec;
 begin
-{$if sizeof(clong)<=4}
+{$ifdef USE_TIME64}
   futimens:=do_syscall(syscall_nr_utimensat_time64,fd,TSysParam(nil),TSysParam(@times),0);
   if (futimens>=0) or (fpgeterrno<>ESysENOSYS) then
     exit;
@@ -922,11 +915,11 @@ begin
   tsa[1].tv_sec := times[1].tv_sec;
   tsa[1].tv_nsec := times[1].tv_nsec;
   futimens:=do_syscall(syscall_nr_utimensat,fd,TSysParam(nil),TSysParam(@tsa),0);
-{$else sizeof(clong)<=4}
+{$else USE_TIME64}
   futimens:=do_syscall(syscall_nr_utimensat,fd,TSysParam(nil),TSysParam(@times),0);
-{$endif sizeof(clong)<=4}
+{$endif USE_TIME64}
 end;
-{$endif android}
+
 {$endif not FPC_USE_LIBC}
 
 end.

@@ -84,6 +84,8 @@ const
   nResourceFileNotFound = 1034;
   nErrInvalidMultiLineLineEnding = 1035;
   nWarnIgnoringLinkLib = 1036;
+  nErrInvalidIndent = 1037;
+  nErrMultilineNonWhiteSpaceBeforeClosing = 1038;
 
 // resourcestring patterns of messages
 resourcestring
@@ -125,6 +127,8 @@ resourcestring
   SNoResourceSupport = 'No support for resources of type "%s"';
   SErrInvalidMultiLineLineEnding = 'Invalid multilinestring line ending type: use one of CR/LF/CRLF/SOURCE/PLATFORM' ;
   SWarnIgnoringLinkLib = 'Ignoring LINKLIB directive %s -> %s (Options: %s)';
+  SErrInvalidIndent = ' Inconsistent indent characters';
+  SErrMultilineNonWhiteSpaceBeforeClosing = 'There should be no white-space characters before closing quotes of the text block';
 
 type
   {$IFDEF PAS2JS}
@@ -162,7 +166,8 @@ type
     tkWhitespace,
     tkComment,
     tkIdentifier,
-    tkString,
+    tkString, // string literal including quotes, e.g. 'a'#13^M''''
+    tkStringMultiLine, // string literal in raw format
     tkNumber,
     tkChar, // ^A .. ^Z
     // Simple (one-character) tokens
@@ -212,6 +217,7 @@ type
     tkconst,
     tkconstref,
     tkconstructor,
+    tkcontains,
     tkdestructor,
     tkdispinterface,
     tkdiv,
@@ -251,12 +257,14 @@ type
     tkor,
     tkotherwise,
     tkpacked,
+    tkPackage,
     tkprocedure,
     tkprogram,
     tkproperty,
     tkraise,
     tkrecord,
     tkrepeat,
+    tkrequires,
     tkResourceString,
     tkself,
     tkset,
@@ -338,7 +346,9 @@ type
 
     msExternalClass,       { pas2js: Allow external class definitions }
     msOmitRTTI,            { pas2js: treat class section 'published' as 'public' and typeinfo does not work on symbols declared with this switch }
-    msMultiLineStrings     { pas2js: Multiline strings }
+    msMultiLineStrings,     { pas2js: Multiline strings }
+    msDelphiMultiLineStrings, { Delpi-compatible multiline strings }
+    msInlineVars              { Allow inline var declarations }
     );
   TModeSwitches = Set of TModeSwitch;
 
@@ -504,9 +514,7 @@ type
     {$ENDIF}
     FPos : Integer;
   public
-    {$ifdef HasStreams}
     Procedure InitFromStream(AStream : TStream);
-    {$endif}
     Procedure InitFromString(const s: TPasScannerString);
     function IsEOF: Boolean; override;
     function ReadLine: TPasScannerString; override;
@@ -591,7 +599,6 @@ type
   end;
 {$ENDIF}
 
-  {$ifdef fpc}
   { TStreamResolver }
 
   TStreamResolver = class(TBaseFileResolver)
@@ -614,7 +621,7 @@ type
     Property OwnsStreams : Boolean Read FOwnsStreams write SetOwnsStreams;
     Property Streams: TStringList read FStreams;
   end;
-  {$endif}
+
 
 const
   CondDirectiveBool: array[boolean] of TPasScannerString = (
@@ -765,6 +772,7 @@ type
         State: TWarnMsgState;
       end;
       TWarnMsgNumberStateArr = array of TWarnMsgNumberState;
+    procedure HandleTextBlock(const AParam: TPasScannerString);
   private
     FAllowedBoolSwitches: TBoolSwitches;
     FAllowedModeSwitches: TModeSwitches;
@@ -854,8 +862,10 @@ type
     procedure AddFile(aFilename: TPasScannerString); virtual;
     function GetMacroName(const Param: TPasScannerString): TPasScannerString;
     procedure SetCurMsg(MsgType: TMessageType; MsgNumber: integer; Const Fmt : TPasScannerString; Args : Array of const);
+    procedure SetCurMsg(MsgType: TMessageType; MsgNumber: integer; Const Msg : TPasScannerString);
     Procedure DoLog(MsgType: TMessageType; MsgNumber: integer; Const Msg : TPasScannerString; SkipSourceInfo : Boolean = False);overload;
     Procedure DoLog(MsgType: TMessageType; MsgNumber: integer; Const Fmt : TPasScannerString; Args : Array of const;SkipSourceInfo : Boolean = False);overload;
+    procedure ErrorAt(MsgNumber: integer; const Msg: TPasScannerString; aRow,ACol : Integer);overload;
     procedure Error(MsgNumber: integer; const Msg: TPasScannerString);overload;
     procedure Error(MsgNumber: integer; const Fmt: TPasScannerString; Args: array of const);overload;
     procedure PushSkipMode;
@@ -904,6 +914,7 @@ type
     procedure PopStackItem; virtual;
     function DoFetchTextToken: TToken; // including quotes
     function DoFetchMultilineTextToken: TToken; // back ticks are converted to apostrophs, unindented
+    function DoFetchDelphiMultiLineTextToken(QuoteLen: Integer): TToken;
     function DoFetchToken: TToken;
     procedure ClearFiles;
     Procedure ClearMacros;
@@ -925,6 +936,7 @@ type
     procedure OpenFile(AFilename: TPasScannerString);
     procedure FinishedModule; virtual; // called by parser after end.
     function FormatPath(const aFilename: String): String; virtual;
+    Procedure DisablePackageTokens;
     procedure SetNonToken(aToken : TToken);
     procedure UnsetNonToken(aToken : TToken);
     procedure SetTokenOption(aOption : TTokenoption);
@@ -1007,7 +1019,8 @@ const
     'Whitespace',
     'Comment',
     'Identifier',
-    'TPasScannerString',
+    'String',
+    'StringMultiLine',
     'Number',
     'Character',
     '(',
@@ -1054,6 +1067,7 @@ const
     'const',
     'constref',
     'constructor',
+    'contains',
     'destructor',
     'dispinterface',
     'div',
@@ -1093,12 +1107,14 @@ const
     'or',
     'otherwise',
     'packed',
+    'package',
     'procedure',
     'program',
     'property',
     'raise',
     'record',
     'repeat',
+    'requires',
     'resourcestring',
     'self',
     'set',
@@ -1179,7 +1195,9 @@ const
     'ANONYMOUSFUNCTIONS',
     'EXTERNALCLASS',
     'OMITRTTI',
-    'MULTILINESTRINGS'
+    'MULTILINESTRINGS',
+    'DELPHIMULTILINESTRINGS',
+    'INLINEVARS'
     );
 
   LetterSwitchNames: array['A'..'Z'] of TPasScannerString=(
@@ -1267,7 +1285,8 @@ const
      msOut,msDefaultPara,msDuplicateNames,msHintDirective,
      msProperty,msDefaultInline,msExcept,msAdvancedRecords,msTypeHelpers,
      msPrefixedAttributes,msArrayOperators,msImplicitFunctionSpec,
-     msFunctionReferences,msAnonymousFunctions
+     msFunctionReferences,msAnonymousFunctions,msDelphiMultiLineStrings,
+     msInlineVars
      ];
 
   DelphiUnicodeModeSwitches = delphimodeswitches + [msSystemCodePage,msDefaultUnicodestring];
@@ -1322,7 +1341,8 @@ const
   Digits = ['0'..'9'];
   Letters = ['a'..'z','A'..'Z'];
   HexDigits = ['0'..'9','a'..'f','A'..'F'];
-  
+  SingleQuote = #39;
+
 Var
   SortedTokens : array of TToken;
   LowerCaseTokens  : Array[ttoken] of TPasScannerString;
@@ -2822,8 +2842,26 @@ end;
 
 { TStreamLineReader }
 
-{$ifdef HasStreams}
+
 Procedure TStreamLineReader.InitFromStream(AStream : TStream);
+
+{$IFDEF PAS2JS}
+  function BufferToString(aBuffer: TBytes): String;
+
+  var
+    a : TJSUint16Array;
+    i,len: Integer;
+
+  begin
+    Result:=''; // Silence warning
+    len:=Length(aBuffer);
+    a:=TJSUint16Array.New(Len);
+    for I:=0 to Len-1 do
+      a[i]:=aBuffer[i];
+    if a<>nil then
+      Result:=String(TJSFunction(@TJSString.fromCharCode).apply(nil,TJSValueDynArray(JSValue(a))));
+  end;
+{$ENDIF}
 
 Var
   B : TBytes;
@@ -2831,11 +2869,20 @@ Var
 begin
   SetLength(B{%H-},AStream.Size);
   if Length(B)>0 then
+    {$ifdef pas2js}
+    AStream.Read(B,length(B));
+    {$ELSE}
     AStream.Read(B[0],length(B));
+    {$ENDIF}
+  {$IFNDEF PAS2JS}
   FContent:=TEncoding.Default.GetAnsiString(B);
+  {$ELSE}
+  FContent:=BufferToString(B);
+  {$ENDIF}
+
   FPos:=0;
 end;
-{$endif}
+
 
 procedure TStreamLineReader.InitFromString(const s: TPasScannerString);
 begin
@@ -3174,7 +3221,6 @@ begin
 end;
 {$ENDIF}
 
-{$ifdef fpc}
 { TStreamResolver }
 
 procedure TStreamResolver.SetOwnsStreams(AValue: Boolean);
@@ -3214,11 +3260,16 @@ procedure TStreamResolver.Clear;
 
 Var
   I : integer;
+  Obj : TObject;
 begin
   if OwnsStreams then
     begin
     For I:=0 to FStreams.Count-1 do
-      Fstreams.Objects[i].Free;
+      begin
+      Obj:=Fstreams.Objects[i];
+      Fstreams.Objects[i]:=nil;
+      Obj.Free;
+      end;
     end;
   FStreams.Clear;
 end;
@@ -3285,7 +3336,7 @@ function TStreamResolver.FindIncludeFile(const AName: String): TLineReader;
 begin
   Result:=FindStreamReader(AName,True);
 end;
-{$endif}
+
 
 { ---------------------------------------------------------------------
   TPascalScanner
@@ -3441,6 +3492,11 @@ begin
     Result:=OnFormatPath(aFilename)
   else
     Result:=aFilename;
+end;
+
+procedure TPascalScanner.DisablePackageTokens;
+begin
+  FNonTokens:=FNonTokens+[tkContains,tkPackage,tkrequires];
 end;
 
 procedure TPascalScanner.SetNonToken(aToken: TToken);
@@ -3756,11 +3812,16 @@ begin
   until false;
 end;
 
-procedure TPascalScanner.Error(MsgNumber: integer; const Msg: TPasScannerString);
+procedure TPascalScanner.ErrorAt(MsgNumber: integer; const Msg: TPasScannerString; aRow, ACol: Integer);
 begin
   SetCurMsg(mtError,MsgNumber,Msg,[]);
   raise EScannerError.CreateFmt('%s(%d,%d) Error: %s',
-    [FormatPath(CurFilename),CurRow,CurColumn,FLastMsg]);
+    [FormatPath(CurFilename),aRow,aCol,FLastMsg]);
+end;
+
+procedure TPascalScanner.Error(MsgNumber: integer; const Msg: TPasScannerString);
+begin
+  ErrorAt(MsgNumber,Msg,CurRow,CurColumn);
 end;
 
 procedure TPascalScanner.Error(MsgNumber: integer; const Fmt: TPasScannerString;
@@ -4098,6 +4159,158 @@ begin
       Break;
     end;
   until false;
+end;
+
+function TPascalScanner.DoFetchDelphiMultiLineTextToken(QuoteLen : Integer): TToken;
+// works similar to DoFetchTextToken, except changes indentation
+
+var
+  s: TPasScannerString;
+  CurLF : TPasScannerString;
+  Lines : Array of String;
+  l, I, SpaceCount, QuoteCount, WhiteSpaces, CurLineCount , Cnt: Integer;
+  HasNonWhiteSpace: Boolean;
+
+  Procedure AddToLines;
+
+  var
+    L : Integer;
+
+  begin
+    L:=Length(Lines);
+    if CurLineCount=L then
+      SetLength(Lines,L*2+10);
+    Lines[CurLineCount]:=FCurLine;
+    Inc(CurLineCount);
+  end;
+
+  Function LocalFetchLine : Boolean;
+
+  begin
+    // Writeln('Curtokenstring : >>',FCurTokenString,'<<');
+    Result:=Self.FetchLine;
+    if not Result then
+      Error(nErrOpenString,SErrOpenString);
+    // Writeln('Current line is now : ',FCurLine);
+    {$IFDEF UsePChar}
+    FTokenPos:=PAnsiChar(FCurLine);
+    {$ELSE}
+    s:=FCurLine;
+    l:=length(s);
+    {$ENDIF}
+  end;
+
+begin
+  Lines:=[];
+  CurLineCount:=0;
+  Result:=tkEOF;
+  FCurTokenString := '';
+  // On entry, we know that the current position is the start of the multiline quoted string.
+  // the strings are added as-is.
+  repeat
+    QuoteCount:=0;
+    WhiteSpaces:=0;
+    if not LocalFetchLine then
+      exit(tkEOF);
+    // Skip whitespace, but count, as the last line defines the unindented WhiteSpaces.
+    {$IFDEF USEPCHAR}
+    While (FTokenPos[0]=' ') do
+    {$ELSE}
+    While (FTokenPos<=l) and (s[FTokenPos]=' ') do
+    {$ENDIF}
+      begin
+      Inc(FTokenPos);
+      Inc(WhiteSpaces);
+      end;
+    // check for the end sequence of quotes
+    HasNonWhiteSpace:=false;
+    repeat
+      {$IFDEF USEPCHAR}
+      case FTokenPos[0] of
+      #0:
+        break;
+      {$ELSE}
+      if FTokenPos>l then
+        break;
+      case s[FTokenPos] of
+      {$ENDIF}
+      SingleQuote:
+        begin
+          repeat
+            inc(FTokenPos);
+            inc(QuoteCount);
+          {$IFDEF UsePChar}
+          until (FTokenPos[0]<>SingleQuote) or (QuoteCount=QuoteLen);
+          {$ELSE}
+          until (FTokenPos>l) or (s[FTokenPos]<>SingleQuote) or (QuoteCount=QuoteLen);
+          {$ENDIF}
+          if QuoteCount=QuoteLen then
+            begin
+            if HasNonWhiteSpace then
+              Error(nErrMultilineNonWhiteSpaceBeforeClosing,sErrMultilineNonWhiteSpaceBeforeClosing);
+            break;
+            end;
+          HasNonWhiteSpace:=true;
+        end;
+      else
+        HasNonWhiteSpace:=true;
+        inc(FTokenPos);
+      end;
+    until false;
+    if QuoteCount<>QuoteLen then
+      AddToLines // another multiline
+    else
+      break;
+  Until false;
+  // Note: the last line defines the needed whitespaces of all lines
+
+  CurLF:=GetMultiLineStringLineEnd(FCurSourceFile);
+
+  // unindent
+  Cnt:=0;
+  For I:=0 to CurLineCount-1 do
+    begin
+    // cut whitespaces
+    s:=Lines[I];
+    SpaceCount:=0;
+    l:=length(s);
+    while (SpaceCount<l) and (s[SpaceCount+1]=' ') do
+      inc(SpaceCount);
+    if SpaceCount=l then
+      begin
+      // empty line
+      s:='';
+      end
+    else if SpaceCount<WhiteSpaces then
+      ErrorAt(nErrInvalidIndent,SErrInvalidIndent,CurRow-CurLineCount+I,SpaceCount)
+    else
+      s:=copy(s,WhiteSpaces+1,l);
+    Lines[I]:=s;
+    if I>0 then
+      inc(Cnt,length(CurLF));
+    inc(Cnt,length(s));
+    end;
+
+  // build final string
+  SetLength(FCurTokenString,Cnt);
+  Cnt:=0;
+  For I:=0 to CurLineCount-1 do
+    begin
+    s:=Lines[I];
+    l:=length(s);
+    if l>0 then
+      begin
+      System.Move(s[1],FCurTokenString[Cnt+1],l);
+      inc(Cnt,l);
+      end;
+    if I<CurLineCount-1 then
+      begin
+      l:=length(CurLF);
+      System.Move(CurLF[1],FCurTokenString[Cnt+1],l);
+      inc(Cnt,l);
+      end;
+    end;
+  Result:=tkStringMultiLine;
 end;
 
 procedure TPascalScanner.PushStackItem;
@@ -5029,6 +5242,8 @@ begin
         DoBoolDirective(bsRangeChecks);
       'SCOPEDENUMS':
         DoBoolDirective(bsScopedEnums);
+      'TEXTBLOCK':
+        HandleTextBlock(Param);
       'TYPEDADDRESS':
         DoBoolDirective(bsTypedAddress);
       'TYPEINFO':
@@ -5154,6 +5369,29 @@ begin
   MultilineStringsTrimLeft:=I;
 end;
 
+procedure TPascalScanner.HandleTextBlock(const AParam: TPasScannerString);
+
+Var
+  S : TEOLStyle;
+  P : integer;
+  Parm : TPasScannerString;
+
+begin
+  Parm:=UpperCase(Trim(aParam));
+  P:=Pos(' ',Parm);
+  if P>1 then
+    Parm:=Copy(Parm,1,P-1);
+  Case Parm of
+    'CR' : s:=elCR;
+    'LF' : s:=elLF;
+    'CRLF' : s:=elCRLF;
+    'NATIVE' : s:=elPlatform;
+  else
+    Error(nErrInvalidMultiLineLineEnding,sErrInvalidMultiLineLineEnding);
+  end;
+  MultilineStringsEOLStyle:=S;
+end;
+
 procedure TPascalScanner.HandleMultilineStringLineEnding(const AParam: TPasScannerString);
 
 Var
@@ -5178,8 +5416,8 @@ var
   {$ifdef UsePChar}
   TokenStart: PAnsiChar;
   OldLength: integer;
-  Ch: AnsiChar;
   LE: String[2];
+  I : Integer;
   {$else}
   TokenStart: Integer;
   s: String;
@@ -5214,14 +5452,14 @@ begin
       begin
       SectionLength:=FTokenPos - TokenStart;
       {$ifdef UsePChar}
-      SetLength(FCurTokenString, OldLength + SectionLength + length(LineEnding)); // Corrected JC
+      SetLength(FCurTokenString, OldLength + SectionLength + length(LE)); // Corrected JC
       if SectionLength > 0 then
         Move(TokenStart^, FCurTokenString[OldLength + 1],SectionLength);
       Inc(OldLength, SectionLength);
-      for Ch in LE do
+      for I:=1 to Length(LE) do
         begin
         Inc(OldLength);
-        FCurTokenString[OldLength] := Ch;
+        FCurTokenString[OldLength] := LE[i];
         end;
       {$else}
       FCurTokenString:=FCurTokenString+copy(FCurLine,TokenStart,SectionLength)+LineEnding; // Corrected JC
@@ -5275,7 +5513,7 @@ var
   {$ifdef UsePChar}
   TokenStart: PAnsiChar;
   OldLength: integer;
-  Ch: AnsiChar;
+  I : Integer;
   LE: String[2];
   {$else}
   TokenStart: Integer;
@@ -5301,6 +5539,9 @@ begin
   {$ifdef UsePChar}
   LE:=LineEnding;
   OldLength := 0;
+  {$else}
+  s:=FCurLine;
+  l:=length(FCurLine);
   {$endif}
   NestingLevel := 0;
   repeat
@@ -5308,16 +5549,16 @@ begin
       begin
       SectionLength := FTokenPos - TokenStart;
       {$ifdef UsePChar}
-      SetLength(FCurTokenString, OldLength + SectionLength + length(LineEnding)); // Corrected JC
+      SetLength(FCurTokenString, OldLength + SectionLength + length(LE)); // Corrected JC
       if SectionLength > 0 then
         Move(TokenStart^, FCurTokenString[OldLength + 1],SectionLength);
 
       // Corrected JC: Append the correct lineending
       Inc(OldLength, SectionLength);
-      for Ch in LE do
+      for I:=1 to length(LE) do
         begin
           Inc(OldLength);
-          FCurTokenString[OldLength] := Ch;
+          FCurTokenString[OldLength] := LE[i];
         end;
       {$else}
       FCurTokenString:=FCurTokenString+copy(FCurLine,TokenStart,SectionLength)+LineEnding; // Corrected JC
@@ -5356,7 +5597,7 @@ begin
   {$endif}
   Inc(FTokenPos);
   Result := tkComment;
-  if (Copy(CurTokenString,1,1)='$') then
+  if (length(CurTokenString)>0) and (CurTokenString[1]='$') then
     Result:=HandleDirective(CurTokenString)
   else
     DoHandleComment(Self, CurTokenString)
@@ -5367,7 +5608,7 @@ function TPascalScanner.DoFetchToken: TToken;
 var
   TokenStart: {$ifdef UsePChar}PAnsiChar{$else}integer{$endif};
   i: TToken;
-  SectionLength,  Index: Integer;
+  QuoteLen, SectionLength, Index: Integer;
   {$ifdef UsePChar}
   //
   {$else}
@@ -5396,6 +5637,41 @@ var
     {$endif}
   end;
 
+  {$ifdef UsePChar}
+  Function IsDelphiMultiLine (out QuoteLen : integer): Boolean;
+  var
+    P : PAnsiChar;
+  begin
+    P:=FTokenPos;
+    QuoteLen:=0;
+    While P[0]<>#0 do
+      begin
+      inc(QuoteLen);
+      if P[0]<>SingleQuote then
+        Exit(false);
+      Inc(P);
+      end;
+    Result:=(P[0]=#0) and (QuoteLen>2) and ((QuoteLen mod 2) = 1);
+  end;
+  {$ELSE}
+  Function IsDelphiMultiLine(out Quotelen : integer) : Boolean;
+  var
+    P : Integer;
+  begin
+    P:=FTokenPos;
+    QuoteLen:=0;
+    While (P<=L) do
+      begin
+      inc(QuoteLen);
+      if (S[P]<>SingleQuote) then
+        Exit(false);
+      Inc(P);
+      end;
+    // Accessing single char is more expensive than a copy
+    Result:=(P>L) and (QuoteLen>2) and ((QuoteLen mod 2) = 1);
+  end;
+  {$ENDIF}
+
 begin
   FCurtokenEscaped:=False;
   TokenStart:={$ifdef UsePChar}nil{$else}0{$endif};
@@ -5405,6 +5681,7 @@ begin
       begin
       Result := tkEOF;
       FCurToken := Result;
+      FCurTokenString := '';
       exit;
       end;
   FCurTokenString := '';
@@ -5456,8 +5733,13 @@ begin
             end;
       until not ({$ifdef UsePChar}FTokenPos[0]{$else}s[FTokenPos]{$endif}=#9);
       end;
-    '#', '''':
+    '#':
       Result:=DoFetchTextToken;
+    '''':
+      if (msDelphiMultiLineStrings in CurrentModeSwitches) and IsDelphiMultiLine(Quotelen) then
+        Result:=DoFetchDelphiMultiLineTextToken(Quotelen)
+      else
+        Result:=DoFetchTextToken;
     '`' :
       begin
       If not (msMultiLineStrings in CurrentModeSwitches) then
@@ -6180,6 +6462,7 @@ begin
     end;
 end;
 
+
 procedure TPascalScanner.SetOptions(AValue: TPOptions);
 
 Var
@@ -6319,6 +6602,16 @@ begin
   FLastMsgPattern := Fmt;
   FLastMsg := SafeFormat(Fmt,Args);
   CreateMsgArgs(FLastMsgArgs,Args);
+end;
+
+procedure TPascalScanner.SetCurMsg(MsgType: TMessageType; MsgNumber: integer; const Msg: TPasScannerString);
+begin
+  FLastMsgType := MsgType;
+  FLastMsgNumber := MsgNumber;
+  FLastMsgPattern := '';
+  FLastMsgArgs:=[];
+  FLastMsg := Msg;
+
 end;
 
 function TPascalScanner.AddDefine(const aName: TPasScannerString; Quiet: boolean): boolean;

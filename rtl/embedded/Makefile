@@ -5,7 +5,7 @@ default: all
 MAKEFILETARGETS=i386-embedded m68k-embedded powerpc-embedded sparc-embedded x86_64-embedded arm-embedded powerpc64-embedded avr-embedded armeb-embedded mipsel-embedded i8086-embedded aarch64-embedded wasm32-embedded riscv32-embedded riscv64-embedded xtensa-embedded z80-embedded
 BSDs = freebsd netbsd openbsd darwin dragonfly
 UNIXs = linux $(BSDs) solaris qnx haiku aix
-LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari
+LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari human68k
 OSNeedsComspecToRunBatch = go32v2 watcom
 FORCE:
 .PHONY: FORCE
@@ -2649,7 +2649,7 @@ uachar$(PPUEXT): $(UACHAR_DEPS)
 	$(COMPILER) $(UACHAR_OPT) $<
 OBJPAS_DEPS= $(OBJPASDIR)/objpas.pp $(INC)/except.inc \
 	     $(SYSTEMUNIT)$(PPUEXT) \
-	     $(OBJPAS_DEPS_OS) $(OBJPAS_DEPS_SPU)
+	     $(OBJPAS_DEPS_OS) $(OBJPAS_DEPS_CPU)
 objpas$(PPUEXT): $(OBJPAS_DEPS)
 	$(COMPILER) $(OBJPAS_OPT) -Fi$(OBJPASDIR) $<
 MACPAS_DEPS=$(INC)/macpas.pp \
@@ -2756,6 +2756,10 @@ UnixApi.CP$(PPUEXT) : $(NSINC)/UnixApi.CP.pp $(UNIXCP_DEPS)
 	$(COMPILER) $(UNIXCP_OPT) $<
 ifeq ($(filter -dFPC_USE_LIBC,$(FPCOPT)),)
   LINUX_DEPS_OS+=$(SYSCALLUNIT)$(PPUEXT)
+else
+ifneq ($(filter $(CPU_TARGET),i386 x86_64),)
+  LINUX_DEPS_OS+=$(SYSCALLUNIT)$(PPUEXT)
+endif
 endif
 LINUX_DEPS=$(OSDIR)/linux.pp \
 	   $(BASEUNIXUNIT)$(PPUEXT) $(UNIXTYPEUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \

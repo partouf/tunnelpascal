@@ -25,13 +25,14 @@ begin
     P.Email := '';
     P.Description := 'Standalone CHM reader and writer library';
     P.NeedLibC:= false;
-    P.OSes := P.OSes - [embedded,nativent,msdos,win16,macosclassic,palmos,atari,zxspectrum,msxdos,amstradcpc,watcom,sinclairql];
+    P.OSes := P.OSes - [embedded,nativent,msdos,win16,macosclassic,palmos,atari,zxspectrum,msxdos,amstradcpc,watcom,sinclairql,human68k];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
     D:=P.Dependencies.Add('fcl-xml');
     D:=P.Dependencies.Add('fcl-base');
     D:=P.Dependencies.Add('rtl-generics');
+    D:=P.Dependencies.Add('rtl-objpas');
 
     P.SourcePath.Add('src');
     P.IncludePath.Add('src');
@@ -117,10 +118,8 @@ begin
         end;
 
 //    P.ProgramPath.Add('src');
-//    T:=P.Targets.AddProgram('chmls.lpr');
-//    T:=P.Targets.AddProgram('chmcmd.lpr');
-
-
+    T:=P.Targets.AddProgram('chmls.lpr');
+    T:=P.Targets.AddProgram('chmcmd.lpr');
 
     P.NamespaceMap:='namespaces.lst';
 

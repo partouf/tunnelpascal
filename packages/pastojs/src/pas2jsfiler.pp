@@ -226,7 +226,9 @@ const
     'AnonymousFunctions',
     'ExternalClass',
     'OmitRTTI',
-    'MultilineStrings'
+    'MultilineStrings',
+    'DelphiMultilineStrings',
+    'InlineVars'
     ); // Dont forget to update ModeSwitchToInt !
 
   PCUDefaultBoolSwitches: TBoolSwitches = [
@@ -352,6 +354,7 @@ const
     'Ident',
     'Number',
     'String',
+    'StringMultiLine',
     'Set',
     'Nil',
     'Bool',
@@ -1678,6 +1681,7 @@ begin
     msMultiHelpers: Result:=49;
     msImplicitFunctionSpec: Result:=50;
     msMultiLineStrings: Result:=51;
+    msDelphiMultiLineStrings: Result:=52;
   end;
 end;
 

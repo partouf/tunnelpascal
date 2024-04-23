@@ -3,8 +3,11 @@ program testcompat;
 {$mode objfpc}{$H+}
 
 uses
-  {$IFDEF UNIX}cwstring,{$ENDIF}
-  Classes, consoletestrunner, tcnetencoding, tciotuils, utmessagemanager, utcdevices, utcanalytics, utcimagelist;
+  {$IFDEF UNIX}cwstring, cthreads,{$ENDIF}
+  Classes, consoletestrunner, tcnetencoding, tciotuils, 
+  utmessagemanager, utcdevices, utcanalytics, utcimagelist, 
+  utcnotifications, utcjson, utcpush, utchash, utcregex, 
+  utcregexapi, utthreading, utccredentials;
 
 type
 

@@ -52,12 +52,12 @@ type
     Function BaseUnits: String; override;
     // Auxiliary routines
     procedure GetOptions(L: TStrings; Full: boolean); override;
-    function GetTypeName(const aTypeName: String; ForTypeDef: Boolean=False
+    function GetPascalTypeName(const aTypeName: String; ForTypeDef: Boolean=False
       ): String; override;
     function GetInterfaceDefHead(Intf: TIDLInterfaceDefinition): String;
       override;
     // Code generation routines. Return the number of actually written defs.
-    function WriteFunctionDefinition(aParent: TIDLInterfaceDefinition; aDef: TIDLFunctionDefinition): Boolean;
+    function WriteFunctionDefinition(aParent: TIDLStructuredDefinition; aDef: TIDLFunctionDefinition): Boolean;
       override;
     function WritePrivateReadOnlyFields(aParent: TIDLDefinition; aList: TIDLDefinitionList): Integer;
       override;
@@ -115,7 +115,7 @@ begin
   L.Add('Extended Options: '+Pas2jsConversionOptionsToStr(Pas2jsOptions));
 end;
 
-function TWebIDLToPas2js.GetTypeName(const aTypeName: String;
+function TWebIDLToPas2js.GetPascalTypeName(const aTypeName: String;
   ForTypeDef: Boolean): String;
 
   Function UsePascalType(Const aPascalType: string): String;
@@ -146,7 +146,7 @@ begin
     'USVString',
     'ByteString': Result:=UsePascalType('String');
   else
-    Result:=inherited GetTypeName(aTypeName,ForTypeDef);
+    Result:=inherited GetPascalTypeName(aTypeName,ForTypeDef);
   end;
 end;
 
@@ -159,13 +159,13 @@ begin
   if Assigned(Intf.ParentInterface) then
     aParentName:=GetName(Intf.ParentInterface)
   else
-    aParentName:=GetTypeName(Intf.ParentName);
+    aParentName:=GetPascalTypeName(Intf.ParentName);
   if aParentName<>'' then
     Result:=Result+' ('+aParentName+')';
 end;
 
 function TWebIDLToPas2js.WriteFunctionDefinition(
-  aParent: TIDLInterfaceDefinition; aDef: TIDLFunctionDefinition): Boolean;
+  aParent: TIDLStructuredDefinition; aDef: TIDLFunctionDefinition): Boolean;
 
 Var
   FN,RT,Suff,Args: String;

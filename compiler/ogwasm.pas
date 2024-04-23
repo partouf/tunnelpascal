@@ -41,6 +41,39 @@ interface
     type
       TWasmObjSymbolExtraData = class;
 
+      TGlobalInitializer = record
+        case typ:TWasmBasicType of
+          wbt_i32: (init_i32: Int32);
+          wbt_i64: (init_i64: Int64);
+          wbt_f32: (init_f32: Single);
+          wbt_f64: (init_f64: Double);
+      end;
+
+      { TWasmObjSymbolLinkingData }
+
+      TWasmObjSymbolLinkingData = class
+      public
+        ImportModule: string;
+        ImportName: string;
+
+        FuncType: TWasmFuncType;
+        ExeFunctionIndex: Integer;
+        ExeIndirectFunctionTableIndex: Integer;
+        ExeTypeIndex: Integer;
+
+        ExeTagIndex: Integer;
+
+        GlobalType: TWasmBasicType;
+        GlobalIsMutable: Boolean;
+        GlobalInitializer: TGlobalInitializer;
+
+        IsExported: Boolean;
+        ExportName: ansistring;
+
+        constructor Create;
+        destructor Destroy;override;
+      end;
+
       { TWasmObjSymbol }
 
       TWasmObjSymbol = class(TObjSymbol)
@@ -50,7 +83,9 @@ interface
         TagIndex: Integer;
         AliasOf: string;
         ExtraData: TWasmObjSymbolExtraData;
+        LinkingData: TWasmObjSymbolLinkingData;
         constructor create(AList:TFPHashObjectList;const AName:string);override;
+        destructor Destroy;override;
         function IsAlias: Boolean;
       end;
 
@@ -60,7 +95,15 @@ interface
       public
         TypeIndex: Integer;
         Addend: LongInt;
+
+        { used during linking }
+        FuncType: TWasmFuncType;
+        ExeTypeIndex: Integer;
+        IsFunctionOffsetI32: Boolean;
+
         constructor CreateTypeIndex(ADataOffset:TObjSectionOfs; ATypeIndex: Integer);
+        constructor CreateFuncType(ADataOffset:TObjSectionOfs; AFuncType: TWasmFuncType);
+        destructor Destroy;override;
       end;
 
       { TWasmObjSymbolExtraData }
@@ -93,11 +136,27 @@ interface
         function IsDebug: Boolean;
       end;
 
+      { TWasmFuncTypeTable }
+
+      TWasmFuncTypeTable = class
+      private
+        FFuncTypes: array of TWasmFuncType;
+        function GetCount: Integer;
+        function GetItem(Index: Integer): TWasmFuncType;
+      public
+        destructor Destroy; override;
+
+        function AddOrGetFuncType(wft: TWasmFuncType): integer;
+        procedure WriteTo(d: tdynamicarray);
+        property Count: Integer read GetCount;
+        property Items[Index: Integer]: TWasmFuncType read GetItem; default;
+      end;
+
       { TWasmObjData }
 
       TWasmObjData = class(TObjData)
       private
-        FFuncTypes: array of TWasmFuncType;
+        FFuncTypes: TWasmFuncTypeTable;
         FObjSymbolsExtraDataList: TFPHashObjectList;
         FLastFuncName: string;
 
@@ -109,7 +168,6 @@ interface
         function sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;override;
         procedure writeReloc(Data:TRelocDataInt;len:aword;p:TObjSymbol;Reloctype:TObjRelocationType);override;
         function AddOrCreateObjSymbolExtraData(const symname:TSymStr): TWasmObjSymbolExtraData;
-        function AddFuncType(wft: TWasmFuncType): integer;
         function globalref(asmsym:TAsmSymbol):TObjSymbol;
         function ExceptionTagRef(asmsym:TAsmSymbol):TObjSymbol;
         procedure DeclareGlobalType(gt: tai_globaltype);
@@ -120,6 +178,7 @@ interface
         procedure DeclareImportName(ain: tai_import_name);
         procedure DeclareLocal(al: tai_local);
         procedure symbolpairdefine(akind: TSymbolPairKind;const asym, avalue: string);override;
+        property FuncTypes: TWasmFuncTypeTable read FFuncTypes;
       end;
 
       { TWasmObjOutput }
@@ -150,17 +209,8 @@ interface
         FWasmSections: array [TWasmSectionID] of tdynamicarray;
         FWasmCustomSections: array [TWasmCustomSectionType] of tdynamicarray;
         FWasmLinkingSubsections: array [low(TWasmLinkingSubsectionType)..high(TWasmLinkingSubsectionType)] of tdynamicarray;
-        procedure WriteUleb(d: tdynamicarray; v: uint64);
-        procedure WriteUleb(w: TObjectWriter; v: uint64);
-        procedure WriteSleb(d: tdynamicarray; v: int64);
-        procedure WriteByte(d: tdynamicarray; b: byte);
-        procedure WriteName(d: tdynamicarray; const s: string);
         procedure WriteWasmSection(wsid: TWasmSectionID);
         procedure WriteWasmCustomSection(wcst: TWasmCustomSectionType);
-        procedure CopyDynamicArray(src, dest: tdynamicarray; size: QWord);
-        procedure WriteZeros(dest: tdynamicarray; size: QWord);
-        procedure WriteWasmResultType(dest: tdynamicarray; wrt: TWasmResultType);
-        procedure WriteWasmBasicType(dest: tdynamicarray; wbt: TWasmBasicType);
         function IsExternalFunction(sym: TObjSymbol): Boolean;
         function IsExportedFunction(sym: TWasmObjSymbol): Boolean;
         procedure WriteFunctionLocals(dest: tdynamicarray; ed: TWasmObjSymbolExtraData);
@@ -184,9 +234,10 @@ interface
 
       TWasmObjInput = class(TObjInput)
       private
-        function ReadUleb(r: TObjectReader; out v: uint64): boolean;
+        FFuncTypes: array of TWasmFuncType;
       public
         constructor create;override;
+        destructor Destroy;override;
         class function CanReadObjData(AReader:TObjectreader):boolean;override;
         function ReadObjData(AReader:TObjectreader;out ObjData:TObjData):boolean;override;
       end;
@@ -194,9 +245,46 @@ interface
       { TWasmExeOutput }
 
       TWasmExeOutput = class(TExeOutput)
+      private
+        FImports: TFPHashObjectList;
+        FFuncTypes: TWasmFuncTypeTable;
+
+        FFunctionImports: array of record
+          ModName: ansistring;
+          Name: ansistring;
+          TypeIdx: uint32;
+        end;
+
+        FTagImports: array of record
+        end;
+
+        FIndirectFunctionTable: array of record
+          FuncIdx: Integer;
+        end;
+
+        FWasmSections: array [TWasmSectionID] of tdynamicarray;
+        FWasmCustomSections: array [TWasmCustomSectionType] of tdynamicarray;
+        FStackPointerSym: TWasmObjSymbol;
+        FMinMemoryPages: Integer;
+        procedure WriteWasmSection(wsid: TWasmSectionID);
+        procedure WriteWasmSectionIfNotEmpty(wsid: TWasmSectionID);
+        procedure WriteWasmCustomSection(wcst: TWasmCustomSectionType);
+        procedure PrepareImports;
+        procedure PrepareFunctions;
+        procedure PrepareTags;
+        function AddOrGetIndirectFunctionTableIndex(FuncIdx: Integer): integer;
+        procedure SetStackPointer;
+        procedure WriteExeSectionToDynArray(exesec: TExeSection; dynarr: tdynamicarray);
       protected
         function writeData:boolean;override;
         procedure DoRelocationFixup(objsec:TObjSection);override;
+      public
+        constructor create;override;
+        destructor destroy;override;
+        procedure GenerateLibraryImports(ImportLibraryList:TFPHashObjectList);override;
+        procedure AfterUnusedSectionRemoval;override;
+        procedure MemPos_ExeSection(const aname:string);override;
+        procedure Load_Symbol(const aname: string);override;
       end;
 
       { TWasmAssembler }
@@ -208,7 +296,10 @@ interface
 implementation
 
     uses
-      verbose,version,globals;
+      cutils,verbose,version,globals,ogmap;
+
+    const
+      StackPointerSymStr='__stack_pointer';
 
     procedure WriteUleb5(d: tdynamicarray; v: uint64);
       var
@@ -268,6 +359,116 @@ implementation
               b:=b or 128;
             d.write(b,1);
           end;
+      end;
+    procedure WriteUleb(d: tdynamicarray; v: uint64);
+      var
+        b: byte;
+      begin
+        repeat
+          b:=byte(v) and 127;
+          v:=v shr 7;
+          if v<>0 then
+            b:=b or 128;
+          d.write(b,1);
+        until v=0;
+      end;
+
+    procedure WriteUleb(w: TObjectWriter; v: uint64);
+      var
+        b: byte;
+      begin
+        repeat
+          b:=byte(v) and 127;
+          v:=v shr 7;
+          if v<>0 then
+            b:=b or 128;
+          w.write(b,1);
+        until v=0;
+      end;
+
+    procedure WriteSleb(d: tdynamicarray; v: int64);
+      var
+        b: byte;
+        Done: Boolean=false;
+      begin
+        repeat
+          b:=byte(v) and 127;
+          v:=SarInt64(v,7);
+          if ((v=0) and ((b and 64)=0)) or ((v=-1) and ((b and 64)<>0)) then
+            Done:=true
+          else
+            b:=b or 128;
+          d.write(b,1);
+        until Done;
+      end;
+
+    function UlebEncodingSize(v: uint64): Integer;
+      var
+        b: byte;
+      begin
+        Result:=0;
+        repeat
+          b:=byte(v) and 127;
+          v:=v shr 7;
+          if v<>0 then
+            b:=b or 128;
+          Inc(Result);
+        until v=0;
+      end;
+
+{$ifdef FPC_LITTLE_ENDIAN}
+    procedure WriteF32LE(d: tdynamicarray; v: Single);
+      begin
+        d.write(v,4);
+      end;
+
+    procedure WriteF64LE(d: tdynamicarray; v: Double);
+      begin
+        d.write(v,8);
+      end;
+{$else FPC_LITTLE_ENDIAN}
+    procedure WriteF32LE(d: tdynamicarray; v: Single);
+      var
+        tmpI: UInt32;
+      begin
+        Move(v,tmpI,4);
+        tmpI:=SwapEndian(tmpI);
+        d.write(tmpI,4);
+      end;
+
+    procedure WriteF64LE(d: tdynamicarray; v: Double);
+      var
+        tmpI: UInt64;
+      begin
+        Move(v,tmpI,8);
+        tmpI:=SwapEndian(tmpI);
+        d.write(tmpI,8);
+      end;
+{$endif FPC_LITTLE_ENDIAN}
+
+    procedure WriteByte(d: tdynamicarray; b: byte);
+      begin
+        d.write(b,1);
+      end;
+
+    procedure WriteName(d: tdynamicarray; const s: string);
+      begin
+        WriteUleb(d,Length(s));
+        d.writestr(s);
+      end;
+
+    procedure WriteWasmBasicType(dest: tdynamicarray; wbt: TWasmBasicType);
+      begin
+        WriteByte(dest,encode_wasm_basic_type(wbt));
+      end;
+
+    procedure WriteWasmResultType(dest: tdynamicarray; wrt: TWasmResultType);
+      var
+        i: Integer;
+      begin
+        WriteUleb(dest,Length(wrt));
+        for i:=low(wrt) to high(wrt) do
+          WriteWasmBasicType(dest,wrt[i]);
       end;
 
     function ReadUleb(d: tdynamicarray): uint64;
@@ -362,6 +563,59 @@ implementation
         d.write(q,4);
       end;
 
+    procedure CopyDynamicArray(src, dest: tdynamicarray; size: QWord);
+      var
+        buf: array [0..4095] of byte;
+        bs: Integer;
+      begin
+        while size>0 do
+          begin
+            if size<SizeOf(buf) then
+              bs:=Integer(size)
+            else
+              bs:=SizeOf(buf);
+            src.read(buf,bs);
+            dest.write(buf,bs);
+            dec(size,bs);
+          end;
+      end;
+
+    procedure WriteZeros(dest: tdynamicarray; size: QWord);
+      var
+        buf : array[0..1023] of byte;
+        bs: Integer;
+      begin
+        fillchar(buf,sizeof(buf),0);
+        while size>0 do
+          begin
+            if size<SizeOf(buf) then
+              bs:=Integer(size)
+            else
+              bs:=SizeOf(buf);
+            dest.write(buf,bs);
+            dec(size,bs);
+          end;
+      end;
+
+
+{****************************************************************************
+                         TWasmObjSymbolLinkingData
+****************************************************************************}
+
+    constructor TWasmObjSymbolLinkingData.Create;
+      begin
+        ExeFunctionIndex:=-1;
+        ExeIndirectFunctionTableIndex:=-1;
+        ExeTypeIndex:=-1;
+        ExeTagIndex:=-1;
+      end;
+
+    destructor TWasmObjSymbolLinkingData.Destroy;
+      begin
+        FuncType.Free;
+        inherited Destroy;
+      end;
+
 {****************************************************************************
                              TWasmObjRelocation
 ****************************************************************************}
@@ -375,6 +629,27 @@ implementation
         ObjSection:=nil;
         ftype:=ord(RELOC_TYPE_INDEX_LEB);
         TypeIndex:=ATypeIndex;
+        FuncType:=nil;
+        ExeTypeIndex:=-1;
+      end;
+
+    constructor TWasmObjRelocation.CreateFuncType(ADataOffset: TObjSectionOfs; AFuncType: TWasmFuncType);
+      begin
+        DataOffset:=ADataOffset;
+        Symbol:=nil;
+        OrgSize:=0;
+        Group:=nil;
+        ObjSection:=nil;
+        ftype:=ord(RELOC_TYPE_INDEX_LEB);
+        TypeIndex:=-1;
+        ExeTypeIndex:=-1;
+        FuncType:=TWasmFuncType.Create(AFuncType);
+      end;
+
+    destructor TWasmObjRelocation.Destroy;
+      begin
+        FuncType.Free;
+        inherited Destroy;
       end;
 
 {****************************************************************************
@@ -390,6 +665,13 @@ implementation
         TagIndex:=-1;
         AliasOf:='';
         ExtraData:=nil;
+        LinkingData:=TWasmObjSymbolLinkingData.Create;
+      end;
+
+    destructor TWasmObjSymbol.Destroy;
+      begin
+        LinkingData.Free;
+        inherited Destroy;
       end;
 
     function TWasmObjSymbol.IsAlias: Boolean;
@@ -448,6 +730,61 @@ implementation
       end;
 
 {****************************************************************************
+                             TWasmFuncTypeTable
+****************************************************************************}
+
+    function TWasmFuncTypeTable.GetCount: Integer;
+      begin
+        Result:=Length(FFuncTypes);
+      end;
+
+    function TWasmFuncTypeTable.GetItem(Index: Integer): TWasmFuncType;
+      begin
+        if (Index<Low(FFuncTypes)) or (Index>High(FFuncTypes)) then
+          internalerror(2023123101);
+        Result:=FFuncTypes[Index];
+      end;
+
+    destructor TWasmFuncTypeTable.Destroy;
+      var
+        i: Integer;
+      begin
+        for i:=low(FFuncTypes) to high(FFuncTypes) do
+          begin
+            FFuncTypes[i].free;
+            FFuncTypes[i]:=nil;
+          end;
+      end;
+
+    function TWasmFuncTypeTable.AddOrGetFuncType(wft: TWasmFuncType): integer;
+      var
+        i: Integer;
+      begin
+        for i:=low(FFuncTypes) to high(FFuncTypes) do
+          if wft.Equals(FFuncTypes[i]) then
+            exit(i);
+
+        result:=Length(FFuncTypes);
+        SetLength(FFuncTypes,result+1);
+        FFuncTypes[result]:=TWasmFuncType.Create(wft);
+      end;
+
+    procedure TWasmFuncTypeTable.WriteTo(d: tdynamicarray);
+      var
+        types_count, i: Integer;
+      begin
+        types_count:=Count;
+        WriteUleb(d,types_count);
+        for i:=0 to types_count-1 do
+          with Items[i] do
+            begin
+              WriteByte(d,$60);
+              WriteWasmResultType(d,params);
+              WriteWasmResultType(d,results);
+            end;
+      end;
+
+{****************************************************************************
                                 TWasmObjData
 ****************************************************************************}
 
@@ -495,7 +832,7 @@ implementation
           '.stabstr',
           '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
           '.eh_frame',
-          '.debug_frame','.debug_info','.debug_line','.debug_abbrev','.debug_aranges','.debug_ranges',
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev','.debug_aranges','.debug_ranges','.debug_loc','.debug_loclists',
           '.fpc',
           '.toc',
           '.init',
@@ -589,6 +926,7 @@ implementation
         CObjSection:=TWasmObjSection;
         CObjSymbol:=TWasmObjSymbol;
         FObjSymbolsExtraDataList:=TFPHashObjectList.Create;
+        FFuncTypes:=TWasmFuncTypeTable.Create;
       end;
 
     destructor TWasmObjData.destroy;
@@ -596,11 +934,7 @@ implementation
         i: Integer;
       begin
         FObjSymbolsExtraDataList.Free;
-        for i:=low(FFuncTypes) to high(FFuncTypes) do
-          begin
-            FFuncTypes[i].free;
-            FFuncTypes[i]:=nil;
-          end;
+        FFuncTypes.Free;
         inherited destroy;
       end;
 
@@ -729,19 +1063,6 @@ implementation
           result:=TWasmObjSymbolExtraData.Create(FObjSymbolsExtraDataList,symname);
       end;
 
-    function TWasmObjData.AddFuncType(wft: TWasmFuncType): integer;
-      var
-        i: Integer;
-      begin
-        for i:=low(FFuncTypes) to high(FFuncTypes) do
-          if wft.Equals(FFuncTypes[i]) then
-            exit(i);
-
-        result:=Length(FFuncTypes);
-        SetLength(FFuncTypes,result+1);
-        FFuncTypes[result]:=TWasmFuncType.Create(wft);
-      end;
-
     function TWasmObjData.globalref(asmsym: TAsmSymbol): TObjSymbol;
       begin
         if assigned(asmsym) then
@@ -789,7 +1110,7 @@ implementation
         ObjSymExtraData: TWasmObjSymbolExtraData;
       begin
         FLastFuncName:=ft.funcname;
-        i:=AddFuncType(ft.functype);
+        i:=FFuncTypes.AddOrGetFuncType(ft.functype);
         ObjSymExtraData:=AddOrCreateObjSymbolExtraData(ft.funcname);
         ObjSymExtraData.TypeIdx:=i;
       end;
@@ -802,7 +1123,7 @@ implementation
       begin
         ObjSymExtraData:=AddOrCreateObjSymbolExtraData(tt.tagname);
         ft:=TWasmFuncType.Create([],tt.params);
-        i:=AddFuncType(ft);
+        i:=FFuncTypes.AddOrGetFuncType(ft);
         ft.free;
         ObjSymExtraData.ExceptionTagTypeIdx:=i;
       end;
@@ -853,59 +1174,6 @@ implementation
                                TWasmObjOutput
 ****************************************************************************}
 
-    procedure TWasmObjOutput.WriteUleb(d: tdynamicarray; v: uint64);
-      var
-        b: byte;
-      begin
-        repeat
-          b:=byte(v) and 127;
-          v:=v shr 7;
-          if v<>0 then
-            b:=b or 128;
-          d.write(b,1);
-        until v=0;
-      end;
-
-    procedure TWasmObjOutput.WriteUleb(w: TObjectWriter; v: uint64);
-      var
-        b: byte;
-      begin
-        repeat
-          b:=byte(v) and 127;
-          v:=v shr 7;
-          if v<>0 then
-            b:=b or 128;
-          w.write(b,1);
-        until v=0;
-      end;
-
-    procedure TWasmObjOutput.WriteSleb(d: tdynamicarray; v: int64);
-      var
-        b: byte;
-        Done: Boolean=false;
-      begin
-        repeat
-          b:=byte(v) and 127;
-          v:=SarInt64(v,7);
-          if ((v=0) and ((b and 64)=0)) or ((v=-1) and ((b and 64)<>0)) then
-            Done:=true
-          else
-            b:=b or 128;
-          d.write(b,1);
-        until Done;
-      end;
-
-    procedure TWasmObjOutput.WriteByte(d: tdynamicarray; b: byte);
-      begin
-        d.write(b,1);
-      end;
-
-    procedure TWasmObjOutput.WriteName(d: tdynamicarray; const s: string);
-      begin
-        WriteUleb(d,Length(s));
-        d.writestr(s);
-      end;
-
     procedure TWasmObjOutput.WriteWasmSection(wsid: TWasmSectionID);
       var
         b: byte;
@@ -924,54 +1192,6 @@ implementation
         Writer.write(b,1);
         WriteUleb(Writer,FWasmCustomSections[wcst].size);
         Writer.writearray(FWasmCustomSections[wcst]);
-      end;
-
-    procedure TWasmObjOutput.CopyDynamicArray(src, dest: tdynamicarray; size: QWord);
-      var
-        buf: array [0..4095] of byte;
-        bs: Integer;
-      begin
-        while size>0 do
-          begin
-            if size<SizeOf(buf) then
-              bs:=Integer(size)
-            else
-              bs:=SizeOf(buf);
-            src.read(buf,bs);
-            dest.write(buf,bs);
-            dec(size,bs);
-          end;
-      end;
-
-    procedure TWasmObjOutput.WriteZeros(dest: tdynamicarray; size: QWord);
-      var
-        buf : array[0..1023] of byte;
-        bs: Integer;
-      begin
-        fillchar(buf,sizeof(buf),0);
-        while size>0 do
-          begin
-            if size<SizeOf(buf) then
-              bs:=Integer(size)
-            else
-              bs:=SizeOf(buf);
-            dest.write(buf,bs);
-            dec(size,bs);
-          end;
-      end;
-
-    procedure TWasmObjOutput.WriteWasmResultType(dest: tdynamicarray; wrt: TWasmResultType);
-      var
-        i: Integer;
-      begin
-        WriteUleb(dest,Length(wrt));
-        for i:=low(wrt) to high(wrt) do
-          WriteWasmBasicType(dest,wrt[i]);
-      end;
-
-    procedure TWasmObjOutput.WriteWasmBasicType(dest: tdynamicarray; wbt: TWasmBasicType);
-      begin
-        WriteByte(dest,encode_wasm_basic_type(wbt));
       end;
 
     function TWasmObjOutput.IsExternalFunction(sym: TObjSymbol): Boolean;
@@ -1441,7 +1661,6 @@ implementation
         objsec: TWasmObjSection;
         segment_count: Integer = 0;
         cur_seg_ofs: qword = 0;
-        types_count,
         imports_count, NextImportFunctionIndex, NextFunctionIndex,
         code_section_nr, data_section_nr,
         debug_abbrev_section_nr,debug_info_section_nr,debug_str_section_nr,
@@ -1493,15 +1712,7 @@ implementation
               Inc(export_functions_count);
           end;
 
-        types_count:=Length(FData.FFuncTypes);
-        WriteUleb(FWasmSections[wsiType],types_count);
-        for i:=0 to types_count-1 do
-          with FData.FFuncTypes[i] do
-            begin
-              WriteByte(FWasmSections[wsiType],$60);
-              WriteWasmResultType(FWasmSections[wsiType],params);
-              WriteWasmResultType(FWasmSections[wsiType],results);
-            end;
+        FData.FFuncTypes.WriteTo(FWasmSections[wsiType]);
 
         for i:=0 to Data.ObjSectionList.Count-1 do
           begin
@@ -2105,28 +2316,22 @@ implementation
                                TWasmObjInput
 ****************************************************************************}
 
-    function TWasmObjInput.ReadUleb(r: TObjectReader; out v: uint64): boolean;
-      var
-        b: byte;
-        shift:integer;
-      begin
-        result:=false;
-        b:=0;
-        v:=0;
-        shift:=0;
-        repeat
-          if not r.read(b,1) then
-            exit;
-          v:=v or (uint64(b and 127) shl shift);
-          inc(shift,7);
-        until (b and 128)=0;
-        result:=true;
-      end;
-
     constructor TWasmObjInput.create;
       begin
         inherited create;
         cobjdata:=TWasmObjData;
+      end;
+
+    destructor TWasmObjInput.Destroy;
+      var
+        i: Integer;
+      begin
+        for i:=low(FFuncTypes) to high(FFuncTypes) do
+          begin
+            FFuncTypes[i].free;
+            FFuncTypes[i]:=nil;
+          end;
+        inherited Destroy;
       end;
 
     class function TWasmObjInput.CanReadObjData(AReader: TObjectreader): boolean;
@@ -2151,25 +2356,1644 @@ implementation
 
     function TWasmObjInput.ReadObjData(AReader: TObjectreader; out ObjData: TObjData): boolean;
 
+      type
+        TLimits = record
+          Min, Max: uint32;
+          HasMax: Boolean;
+        end;
+
+      var
+        SectionIndex: Integer = -1;
+        SectionId: Byte;
+        SectionSize: uint32;
+        SectionStart: LongInt;
+        CheckSectionBounds: Boolean;
+
+        TypeSectionRead: Boolean = false;
+        ImportSectionRead: Boolean = false;
+        FunctionSectionRead: Boolean = false;
+        GlobalSectionRead: Boolean = false;
+        ExportSectionRead: Boolean = false;
+        ElementSectionRead: Boolean = false;
+        TagSectionRead: Boolean = false;
+        CodeSectionRead: Boolean = false;
+        DataSectionRead: Boolean = false;
+        DataCountSectionRead: Boolean = false;
+
+        SegmentInfoSectionRead: Boolean = false;
+        SymbolTableSectionRead: Boolean = false;
+
+        CodeSectionIndex: Integer = -1;
+        DataSectionIndex: Integer = -1;
+        DebugSectionIndex: array [TWasmCustomDebugSectionType] of Integer = (-1,-1,-1,-1,-1,-1,-1);
+
+        FuncTypes: array of record
+          IsImport: Boolean;
+          ImportName: ansistring;
+          ImportModName: ansistring;
+          typidx: uint32;
+          IsExported: Boolean;
+          ExportName: ansistring;
+        end;
+        FuncTypeImportsCount: uint32;
+
+        TableTypes: array of record
+          IsImport: Boolean;
+          ImportName: ansistring;
+          ImportModName: ansistring;
+          reftype: TWasmBAsicType;
+          limits: TLimits;
+          IsExported: Boolean;
+          ExportName: ansistring;
+        end;
+        TableTypeImportsCount: uint32;
+
+        MemTypes: array of record
+          IsImport: Boolean;
+          ImportName: ansistring;
+          ImportModName: ansistring;
+          limits: TLimits;
+          IsExported: Boolean;
+          ExportName: ansistring;
+        end;
+        MemTypeImportsCount: uint32;
+
+        GlobalTypes: array of record
+          IsImport: Boolean;
+          ImportName: ansistring;
+          ImportModName: ansistring;
+          valtype: TWasmBasicType;
+          IsMutable: Boolean;
+          IsExported: Boolean;
+          ExportName: ansistring;
+          GlobalInit: TGlobalInitializer;
+        end;
+        GlobalTypeImportsCount: uint32;
+
+        TagTypes: array of record
+          IsImport: Boolean;
+          ImportName: ansistring;
+          ImportModName: ansistring;
+          TagAttr: Byte;
+          TagTypeIdx: uint32;
+          IsExported: Boolean;
+          ExportName: ansistring;
+        end;
+        TagTypeImportsCount: uint32;
+
+        CodeSegments: array of record
+          CodeSectionOffset: uint32;
+          CodeSize: uint32;
+          DataPos: LongInt;
+          SegName: ansistring;
+          SegIsExported: Boolean;
+        end;
+
+        DataSegments: array of record
+          DataSectionOffset: uint32;
+          Active: Boolean;
+          MemIdx: uint32;
+          Len: uint32;
+          Offset: int32;
+          DataPos: LongInt;
+          SegName: ansistring;
+          SegAlignment: uint32;
+          SegFlags: uint32;
+        end;
+
+        SymbolTable: array of record
+          SymFlags: uint32;
+          TargetSection: uint32;
+          SymIndex: uint32;
+          SymOffset: uint32;
+          SymSize: uint32;
+          SymKind: TWasmSymbolType;
+          SymName: ansistring;
+          ObjSym: TWasmObjSymbol;
+          ObjSec: TWasmObjSection;
+        end;
+
+        { meaning of first index: }
+        {   table 0 is code relocs }
+        {   table 1 is data relocs }
+        {   tables 2.. are custom section relocs for debug sections }
+        RelocationTable: array of array of record
+          RelocType: TWasmRelocationType;
+          RelocOffset: uint32;
+          RelocIndex: uint32;
+          RelocAddend: int32;
+        end;
+
       function ReadSection: Boolean;
-        var
-          SectionId: Byte;
-          SectionSize: uint64;
+
+        function read(out b;len:longint):boolean;
+          begin
+            result:=false;
+            if not CheckSectionBounds or ((AReader.Pos+len)<=(SectionStart+SectionSize)) then
+              result:=AReader.read(b,len)
+            else
+              begin
+                { trying to read beyond the end of the section }
+                AReader.read(b,SectionStart+SectionSize-AReader.Pos);
+                result:=false;
+              end;
+          end;
+
+        function ReadUleb(out v: uint64): boolean;
+          var
+            b: byte;
+            shift:integer;
+          begin
+            result:=false;
+            b:=0;
+            v:=0;
+            shift:=0;
+            repeat
+              if not read(b,1) then
+                exit;
+              v:=v or (uint64(b and 127) shl shift);
+              inc(shift,7);
+            until (b and 128)=0;
+            result:=true;
+          end;
+
+        function ReadUleb32(out v: uint32): boolean;
+          var
+            vv: uint64;
+          begin
+            result:=false;
+            v:=default(uint32);
+            if not ReadUleb(vv) then
+              exit;
+            if vv>high(uint32) then
+              exit;
+            v:=vv;
+            result:=true;
+          end;
+
+        function ReadSleb(out v: int64): boolean;
+          var
+            b: byte;
+            shift:integer;
+          begin
+            result:=false;
+            b:=0;
+            v:=0;
+            shift:=0;
+            repeat
+              if not read(b,1) then
+                exit;
+              v:=v or (uint64(b and 127) shl shift);
+              inc(shift,7);
+            until (b and 128)=0;
+{$ifopt Q+}
+{$define overflowon}
+{$Q-}
+{$endif}
+{$ifopt R+}
+{$define rangeon}
+{$R-}
+{$endif}
+            if (b and 64)<>0 then
+              v:=v or (high(uint64) shl shift);
+            result:=true;
+          end;
+{$ifdef overflowon}
+{$Q+}
+{$undef overflowon}
+{$endif}
+{$ifdef rangeon}
+{$R+}
+{$undef rangeon}
+{$endif}
+
+        function ReadSleb32(out v: int32): boolean;
+          var
+            vv: int64;
+          begin
+            result:=false;
+            v:=default(int32);
+            if not ReadSleb(vv) then
+              exit;
+            if (vv>high(int32)) or (vv<low(int32)) then
+              exit;
+            v:=vv;
+            result:=true;
+          end;
+
+        function ReadName(out v: ansistring): boolean;
+          var
+            len: uint32;
+          begin
+            result:=false;
+            if not ReadUleb32(len) then
+              exit;
+            SetLength(v,len);
+            if len>0 then
+              result:=read(v[1],len)
+            else
+              result:=true;
+          end;
+
+        function ReadCustomSection: Boolean;
+
+          function ReadRelocationSection: Boolean;
+            var
+              TargetSection, RelocCount: uint32;
+              i: Integer;
+              RelocTableIndex: Integer;
+              ds: TWasmCustomDebugSectionType;
+            begin
+              Result:=False;
+              if not ReadUleb32(TargetSection) then
+                begin
+                  InputError('Error reading the index of the target section of a relocation section');
+                  exit;
+                end;
+              if TargetSection=CodeSectionIndex then
+                RelocTableIndex:=0
+              else if TargetSection=DataSectionIndex then
+                RelocTableIndex:=1
+              else
+                begin
+                  RelocTableIndex:=-1;
+                  for ds:=Low(DebugSectionIndex) to High(DebugSectionIndex) do
+                    if DebugSectionIndex[ds]=TargetSection then
+                      begin
+                        RelocTableIndex:=2+(Ord(ds)-Ord(Low(TWasmCustomDebugSectionType)));
+                        break;
+                      end;
+                  if RelocTableIndex=-1 then
+                    begin
+                      InputError('Relocation found for a custom section, that is not supported');
+                      exit;
+                    end;
+                end;
+              if not ReadUleb32(RelocCount) then
+                begin
+                  InputError('Error reading the relocation entries count from a relocation section');
+                  exit;
+                end;
+              SetLength(RelocationTable[RelocTableIndex],RelocCount);
+              for i:=0 to RelocCount-1 do
+                with RelocationTable[RelocTableIndex,i] do
+                  begin
+                    if not Read(RelocType,1) then
+                      begin
+                        InputError('Error reading the relocation type of a relocation entry');
+                        exit;
+                      end;
+                    if not (RelocType in [R_WASM_FUNCTION_INDEX_LEB,
+                                          R_WASM_MEMORY_ADDR_LEB,
+                                          R_WASM_TABLE_INDEX_SLEB,
+                                          R_WASM_MEMORY_ADDR_SLEB,
+                                          R_WASM_SECTION_OFFSET_I32,
+                                          R_WASM_TABLE_INDEX_I32,
+                                          R_WASM_FUNCTION_OFFSET_I32,
+                                          R_WASM_MEMORY_ADDR_I32,
+                                          R_WASM_TYPE_INDEX_LEB,
+                                          R_WASM_GLOBAL_INDEX_LEB,
+                                          R_WASM_TAG_INDEX_LEB]) then
+                      begin
+                        InputError('Unsupported relocation type: ' + tostr(Ord(RelocType)));
+                        exit;
+                      end;
+                    if not ReadUleb32(RelocOffset) then
+                      begin
+                        InputError('Error reading the relocation offset of a relocation entry');
+                        exit;
+                      end;
+                    if not ReadUleb32(RelocIndex) then
+                      begin
+                        InputError('Error reading the relocation index of a relocation entry');
+                        exit;
+                      end;
+                    if RelocType in [R_WASM_FUNCTION_OFFSET_I32,R_WASM_SECTION_OFFSET_I32,R_WASM_MEMORY_ADDR_LEB,R_WASM_MEMORY_ADDR_SLEB,R_WASM_MEMORY_ADDR_I32] then
+                      begin
+                        if not ReadSleb32(RelocAddend) then
+                          begin
+                            InputError('Error reading the relocation addend of a relocation entry');
+                            exit;
+                          end;
+                      end;
+                    if (RelocType in [
+                          R_WASM_SECTION_OFFSET_I32,
+                          R_WASM_FUNCTION_INDEX_LEB,
+                          R_WASM_TABLE_INDEX_SLEB,
+                          R_WASM_TABLE_INDEX_I32,
+                          R_WASM_MEMORY_ADDR_LEB,
+                          R_WASM_MEMORY_ADDR_SLEB,
+                          R_WASM_MEMORY_ADDR_I32,
+                          R_WASM_FUNCTION_OFFSET_I32,
+                          R_WASM_GLOBAL_INDEX_LEB]) and (RelocIndex>High(SymbolTable)) then
+                      begin
+                        InputError('Relocation index outside the bounds of the symbol table');
+                        exit;
+                      end;
+                    if (RelocType=R_WASM_TYPE_INDEX_LEB) and (RelocIndex>High(FFuncTypes)) then
+                      begin
+                        InputError('Relocation index of R_WASM_TYPE_INDEX_LEB outside the bounds of the func types, defined in the func section of the module');
+                        exit;
+                      end;
+                    if (RelocType=R_WASM_SECTION_OFFSET_I32) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_SECTION) then
+                      begin
+                        InputError('R_WASM_SECTION_OFFSET_I32 must point to a SYMTAB_SECTION symbol');
+                        exit;
+                      end;
+                    if (RelocType=R_WASM_GLOBAL_INDEX_LEB) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_GLOBAL) then
+                      begin
+                        InputError('Relocation must point to a SYMTAB_GLOBAL symbol');
+                        exit;
+                      end;
+                    if (RelocType=R_WASM_TAG_INDEX_LEB) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_EVENT) then
+                      begin
+                        InputError('Relocation must point to a SYMTAB_EVENT symbol');
+                        exit;
+                      end;
+                    if (RelocType in [
+                          R_WASM_FUNCTION_INDEX_LEB,
+                          R_WASM_TABLE_INDEX_SLEB,
+                          R_WASM_TABLE_INDEX_I32,
+                          R_WASM_FUNCTION_OFFSET_I32]) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_FUNCTION) then
+                      begin
+                        InputError('Relocation must point to a SYMTAB_FUNCTION symbol');
+                        exit;
+                      end;
+                    if (RelocType in [
+                          R_WASM_MEMORY_ADDR_LEB,
+                          R_WASM_MEMORY_ADDR_SLEB,
+                          R_WASM_MEMORY_ADDR_I32]) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_DATA) then
+                      begin
+                        InputError('Relocation must point to a SYMTAB_DATA symbol');
+                        exit;
+                      end;
+                  end;
+              if AReader.Pos<>(SectionStart+SectionSize) then
+                begin
+                  InputError('Unexpected relocation section size');
+                  exit;
+                end;
+              Result:=True;
+            end;
+
+          function ReadLinkingSection: Boolean;
+
+            function ReadSegmentInfo: Boolean;
+              var
+                SegmentCount: uint32;
+                i: Integer;
+              begin
+                Result:=False;
+                if SegmentInfoSectionRead then
+                  begin
+                    InputError('The WASM_SEGMENT_INFO subsection is duplicated');
+                    exit;
+                  end;
+                SegmentInfoSectionRead:=True;
+                if not ReadUleb32(SegmentCount) then
+                  begin
+                    InputError('Error reading the segment count from the WASM_SEGMENT_INFO subsection of the ''linking'' section');
+                    exit;
+                  end;
+                if SegmentCount<>Length(DataSegments) then
+                  begin
+                    InputError('Segment count in the WASM_SEGMENT_INFO subsection does not match the data count in the data section');
+                    exit;
+                  end;
+                for i:=0 to SegmentCount-1 do
+                  with DataSegments[i] do
+                    begin
+                      if not ReadName(SegName) then
+                        begin
+                          InputError('Error reading segment name from the WASM_SEGMENT_INFO subsection of the ''linking'' section');
+                          exit;
+                        end;
+                      if not ReadUleb32(SegAlignment) then
+                        begin
+                          InputError('Error reading segment alignment from the WASM_SEGMENT_INFO subsection of the ''linking'' section');
+                          exit;
+                        end;
+                      if not ReadUleb32(SegFlags) then
+                        begin
+                          InputError('Error reading segment flags from the WASM_SEGMENT_INFO subsection of the ''linking'' section');
+                          exit;
+                        end;
+                    end;
+                if AReader.Pos<>(SectionStart+SectionSize) then
+                  begin
+                    InputError('Unexpected WASM_SEGMENT_INFO section size');
+                    exit;
+                  end;
+                Result:=True;
+              end;
+
+            function ReadSymbolTable: Boolean;
+              var
+                SymCount: uint32;
+                i: Integer;
+                SymKindName: string;
+                SymKindB: Byte;
+              begin
+                Result:=False;
+                if SymbolTableSectionRead then
+                  begin
+                    InputError('The WASM_SYMBOL_TABLE subsection is duplicated');
+                    exit;
+                  end;
+                SymbolTableSectionRead:=True;
+                if not ReadUleb32(SymCount) then
+                  begin
+                    InputError('Error reading the symbol count from the WASM_SYMBOL_TABLE subsection of the ''linking'' section');
+                    exit;
+                  end;
+                SetLength(SymbolTable,SymCount);
+                for i:=0 to SymCount-1 do
+                  with SymbolTable[i] do
+                    begin
+                      if not Read(SymKindB,1) then
+                        begin
+                          InputError('Error reading symbol type from the WASM_SYMBOL_TABLE subsection of the ''linking'' section');
+                          exit;
+                        end;
+                      if SymKindB>Ord(High(TWasmSymbolType)) then
+                        begin
+                          InputError('Unsupported symbol type from the WASM_SYMBOL_TABLE subsection of the ''linking'' section');
+                          exit;
+                        end;
+                      SymKind:=TWasmSymbolType(SymKindB);
+                      if not ReadUleb32(SymFlags) then
+                        begin
+                          InputError('Error reading symbol flags from the WASM_SYMBOL_TABLE subsection of the ''linking'' section');
+                          exit;
+                        end;
+                      case SymKind of
+                        SYMTAB_FUNCTION,
+                        SYMTAB_GLOBAL,
+                        SYMTAB_EVENT,
+                        SYMTAB_TABLE:
+                          begin
+                            WriteStr(SymKindName, SymKind);
+                            if not ReadUleb32(SymIndex) then
+                              begin
+                                InputError('Error reading the index of a ' + SymKindName + ' symbol');
+                                exit;
+                              end;
+                            if ((SymKind=SYMTAB_FUNCTION) and (SymIndex>high(FuncTypes))) or
+                               ((SymKind=SYMTAB_EVENT) and (SymIndex>high(TagTypes))) then
+                              begin
+                                InputError('Symbol index too high');
+                                exit;
+                              end;
+                            if ((SymFlags and WASM_SYM_EXPLICIT_NAME)<>0) or
+                               ((SymFlags and WASM_SYM_UNDEFINED)=0) then
+                              begin
+                                if not ReadName(SymName) then
+                                  begin
+                                    InputError('Error reading symbol name of a ' + SymKindName + ' symbol');
+                                    exit;
+                                  end;
+                              end;
+                          end;
+                        SYMTAB_DATA:
+                          begin
+                            if not ReadName(SymName) then
+                              begin
+                                InputError('Error reading symbol name of a SYMTAB_DATA symbol');
+                                exit;
+                              end;
+                            if (SymFlags and WASM_SYM_UNDEFINED)=0 then
+                              begin
+                                if not ReadUleb32(SymIndex) then
+                                  begin
+                                    InputError('Error reading the data segment index of a SYMTAB_DATA symbol');
+                                    exit;
+                                  end;
+                                if SymIndex>high(DataSegments) then
+                                  begin
+                                    InputError('Data segment index of SYMTAB_DATA symbol out of bounds');
+                                    exit;
+                                  end;
+                                if not ReadUleb32(SymOffset) then
+                                  begin
+                                    InputError('Error reading the offset of a SYMTAB_DATA symbol');
+                                    exit;
+                                  end;
+                                if not ReadUleb32(SymSize) then
+                                  begin
+                                    InputError('Error reading the size of a SYMTAB_DATA symbol');
+                                    exit;
+                                  end;
+                              end;
+                          end;
+                        SYMTAB_SECTION:
+                          begin
+                            if not ReadUleb32(TargetSection) then
+                              begin
+                                InputError('Error reading the target section of a SYMTAB_SECTION symbol');
+                                exit;
+                              end;
+                          end;
+                      end;
+                    end;
+                if AReader.Pos<>(SectionStart+SectionSize) then
+                  begin
+                    InputError('Unexpected WASM_SYMBOL_TABLE section size');
+                    exit;
+                  end;
+                Result:=True;
+              end;
+
+            const
+              ExpectedVersion = 2;
+            var
+              Version, SubsectionSize, SaveSectionSize: uint32;
+              SubsectionType: Byte;
+              SaveSectionStart: LongInt;
+            begin
+              Result:=False;
+              if not ReadUleb32(Version) then
+                begin
+                  InputError('Error reading the version of the ''linking'' section');
+                  exit;
+                end;
+              if Version<>ExpectedVersion then
+                begin
+                  InputError('The ''linking'' section has an unsupported version (expected version ' + tostr(ExpectedVersion) + ', got version ' + tostr(Version) + ')');
+                  exit;
+                end;
+              while AReader.Pos<(SectionStart+SectionSize) do
+                begin
+                  if not read(SubsectionType, 1) then
+                    begin
+                      InputError('Error reading subsection type in the ''linking'' section');
+                      exit;
+                    end;
+                  if not ReadUleb32(SubsectionSize) then
+                    begin
+                      InputError('Error reading subsection size in the ''linking'' section');
+                      exit;
+                    end;
+                  if (AReader.Pos+SubsectionSize)>(SectionStart+SectionSize) then
+                    begin
+                      InputError('Subsection size exceeds bounds of its parent ''linking'' section');
+                      exit;
+                    end;
+                  SaveSectionStart:=SectionStart;
+                  SaveSectionSize:=SectionSize;
+                  SectionStart:=AReader.Pos;
+                  SectionSize:=SubsectionSize;
+                  case SubsectionType of
+                    Byte(WASM_SEGMENT_INFO):
+                      if not ReadSegmentInfo then
+                        begin
+                          InputError('Error reading the WASM_SEGMENT_INFO subsection of the ''linking'' section');
+                          exit;
+                        end;
+                    Byte(WASM_SYMBOL_TABLE):
+                      if not ReadSymbolTable then
+                        begin
+                          InputError('Error reading the WASM_SYMBOL_TABLE subsection of the ''linking'' section');
+                          exit;
+                        end;
+                    else
+                      begin
+                        InputError('Unsupported ''linking'' section subsection type ' + tostr(SubsectionType));
+                        exit;
+                      end;
+                  end;
+                  AReader.Seek(SectionStart+SectionSize);
+                  SectionStart:=SaveSectionStart;
+                  SectionSize:=SaveSectionSize;
+                end;
+              result:=True;
+            end;
+
+          function ReadProducersSection: Boolean;
+            begin
+              Result:=False;
+            end;
+
+          function ReadTargetFeaturesSection: Boolean;
+            begin
+              Result:=False;
+            end;
+
+          function ReadDebugSection(const SectionName: string; SectionType: TWasmCustomDebugSectionType): Boolean;
+            var
+              ObjSec: TObjSection;
+            begin
+              Result:=False;
+              if DebugSectionIndex[SectionType]<>-1 then
+                begin
+                  InputError('Duplicated debug section: ' + SectionName);
+                  exit;
+                end;
+              DebugSectionIndex[SectionType]:=SectionIndex;
+              ObjSec:=ObjData.createsection(SectionName,1,[oso_Data,oso_debug],false);
+              ObjSec.DataPos:=AReader.Pos;
+              ObjSec.Size:=SectionStart+SectionSize-AReader.Pos;
+              Result:=True;
+            end;
+
+          const
+            RelocationSectionPrefix = 'reloc.';
+          var
+            SectionName: ansistring;
+          begin
+            Result:=False;
+            ReadName(SectionName);
+            if Copy(SectionName,1,Length(RelocationSectionPrefix)) = RelocationSectionPrefix then
+              begin
+                if not ReadRelocationSection then
+                  begin
+                    InputError('Error reading the relocation section ''' + SectionName + '''');
+                    exit;
+                  end;
+              end
+            else
+              case SectionName of
+                'linking':
+                  if not ReadLinkingSection then
+                    begin
+                      InputError('Error reading the ''linking'' section');
+                      exit;
+                    end;
+                'producers':
+                  Result:=ReadProducersSection;
+                'target_features':
+                  Result:=ReadTargetFeaturesSection;
+                '.debug_frame':
+                  if not ReadDebugSection(SectionName, wcstDebugFrame) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                '.debug_info':
+                  if not ReadDebugSection(SectionName, wcstDebugInfo) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                '.debug_line':
+                  if not ReadDebugSection(SectionName, wcstDebugLine) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                '.debug_abbrev':
+                  if not ReadDebugSection(SectionName, wcstDebugAbbrev) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                '.debug_aranges':
+                  if not ReadDebugSection(SectionName, wcstDebugAranges) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                '.debug_ranges':
+                  if not ReadDebugSection(SectionName, wcstDebugRanges) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                '.debug_str':
+                  if not ReadDebugSection(SectionName, wcstDebugStr) then
+                    begin
+                      InputError('Error reading section ' + SectionName);
+                      exit;
+                    end;
+                else
+                  InputError('Unsupported custom section: ''' + SectionName + '''');
+              end;
+            Result:=True;
+          end;
+
+        function ReadTypeSection: Boolean;
+          var
+            FuncTypesCount, ParamsCount, ResultsCount: uint32;
+            FuncTypeId, WasmTypeId: Byte;
+            i, j: Integer;
+            wbt: TWasmBasicType;
+          begin
+            Result:=False;
+            if TypeSectionRead then
+              begin
+                InputError('Type section is duplicated');
+                exit;
+              end;
+            TypeSectionRead:=True;
+            if not ReadUleb32(FuncTypesCount) then
+              begin
+                InputError('Error reading the func types count');
+                exit;
+              end;
+            SetLength(FFuncTypes,FuncTypesCount);
+            for i:=0 to FuncTypesCount - 1 do
+              begin
+                FFuncTypes[i]:=TWasmFuncType.Create([],[]);
+                if not AReader.read(FuncTypeId,1) then
+                  begin
+                    InputError('Error reading the function type identifier');
+                    exit;
+                  end;
+                if FuncTypeId<>$60 then
+                  begin
+                    InputError('Incorrect function type identifier (expected $60, got $' + HexStr(FuncTypeId,2) + ')');
+                    exit;
+                  end;
+                if not ReadUleb32(ParamsCount) then
+                  begin
+                    InputError('Error reading the function parameters count');
+                    exit;
+                  end;
+                for j:=0 to ParamsCount-1 do
+                  begin
+                    if not AReader.read(WasmTypeId,1) then
+                      begin
+                        InputError('Error reading a function parameter basic type');
+                        exit;
+                      end;
+                    if not decode_wasm_basic_type(WasmTypeId,wbt) then
+                      begin
+                        InputError('Unknown function parameter basic type: $' + HexStr(WasmTypeId,2));
+                        exit;
+                      end;
+                    FFuncTypes[i].add_param(wbt);
+                  end;
+                if not ReadUleb32(ResultsCount) then
+                  begin
+                    InputError('Error reading the function results count');
+                    exit;
+                  end;
+                for j:=0 to ResultsCount-1 do
+                  begin
+                    if not AReader.read(WasmTypeId,1) then
+                      begin
+                        InputError('Error reading a function result basic type');
+                        exit;
+                      end;
+                    if not decode_wasm_basic_type(WasmTypeId,wbt) then
+                      begin
+                        InputError('Unknown function result basic type: $' + HexStr(WasmTypeId,2));
+                        exit;
+                      end;
+                    FFuncTypes[i].add_result(wbt);
+                  end;
+              end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected type section size');
+                exit;
+              end;
+            Result:=true;
+          end;
+
+        function ReadImportSection: Boolean;
+          var
+            ImportsCount: uint32;
+            i: Integer;
+            ModName, Name: ansistring;
+            ImportType, TableElemTyp, TableLimitsKind, MemoryLimitsKind,
+            GlobalType, GlobalMutabilityType: Byte;
+          begin
+            Result:=False;
+            if ImportSectionRead then
+              begin
+                InputError('Import section is duplicated');
+                exit;
+              end;
+            ImportSectionRead:=True;
+            if not ReadUleb32(ImportsCount) then
+              begin
+                InputError('Error reading the imports count');
+                exit;
+              end;
+            for i:=0 to ImportsCount-1 do
+              begin
+                if not ReadName(ModName) then
+                  begin
+                    InputError('Error reading import module name');
+                    exit;
+                  end;
+                if not ReadName(Name) then
+                  begin
+                    InputError('Error import name');
+                    exit;
+                  end;
+                if not AReader.Read(ImportType,1) then
+                  begin
+                    InputError('Error reading import type');
+                    exit;
+                  end;
+                case ImportType of
+                  $00:  { func }
+                    begin
+                      Inc(FuncTypeImportsCount);
+                      SetLength(FuncTypes,FuncTypeImportsCount);
+                      with FuncTypes[FuncTypeImportsCount-1] do
+                        begin
+                          IsImport:=True;
+                          ImportName:=Name;
+                          ImportModName:=ModName;
+                          if not ReadUleb32(typidx) then
+                            begin
+                              InputError('Error reading type index for func import');
+                              exit;
+                            end;
+                          if typidx>high(FFuncTypes) then
+                            begin
+                              InputError('Type index in func import exceeds bounds of the types table');
+                              exit;
+                            end;
+                        end;
+                    end;
+                  $01:  { table }
+                    begin
+                      Inc(TableTypeImportsCount);
+                      SetLength(TableTypes,TableTypeImportsCount);
+                      with TableTypes[TableTypeImportsCount-1] do
+                        begin
+                          IsImport:=True;
+                          ImportName:=Name;
+                          ImportModName:=ModName;
+                          if not AReader.read(TableElemTyp,1) then
+                            begin
+                              InputError('Error reading table element type for table import');
+                              exit;
+                            end;
+                          if not decode_wasm_basic_type(TableElemTyp,reftype) then
+                            begin
+                              InputError('Invalid table element type for table import: $' + HexStr(TableElemTyp,2));
+                              exit;
+                            end;
+                          if not (reftype in WasmReferenceTypes) then
+                            begin
+                              InputError('Table element type for table import must be a reference type');
+                              exit;
+                            end;
+                          if not AReader.read(TableLimitsKind,1) then
+                            begin
+                              InputError('Error reading table limits kind for table import');
+                              exit;
+                            end;
+                          case TableLimitsKind of
+                            $00:
+                              begin
+                                limits.HasMax:=False;
+                                limits.Max:=high(limits.Max);
+                                if not ReadUleb32(limits.min) then
+                                  begin
+                                    InputError('Error reading table limits min for table import');
+                                    exit;
+                                  end;
+                              end;
+                            $01:
+                              begin
+                                limits.HasMax:=True;
+                                if not ReadUleb32(limits.min) then
+                                  begin
+                                    InputError('Error reading table limits min for table import');
+                                    exit;
+                                  end;
+                                if not ReadUleb32(limits.max) then
+                                  begin
+                                    InputError('Error reading table limits max for table import');
+                                    exit;
+                                  end;
+                                if limits.min>limits.max then
+                                  begin
+                                    InputError('Table limits min exceed table limits max in table import');
+                                    exit;
+                                  end;
+                              end;
+                            else
+                              begin
+                                InputError('Unsupported table limits kind for table import: $' + HexStr(TableLimitsKind,2));
+                                exit;
+                              end;
+                          end;
+                        end;
+                    end;
+                  $02:  { mem }
+                    begin
+                      Inc(MemTypeImportsCount);
+                      SetLength(MemTypes,MemTypeImportsCount);
+                      with MemTypes[MemTypeImportsCount-1] do
+                        begin
+                          IsImport:=True;
+                          ImportName:=Name;
+                          ImportModName:=ModName;
+                          if not AReader.read(MemoryLimitsKind,1) then
+                            begin
+                              InputError('Error reading memory limits kind for memory import');
+                              exit;
+                            end;
+                          case MemoryLimitsKind of
+                            $00:
+                              begin
+                                limits.HasMax:=False;
+                                limits.Max:=high(limits.Max);
+                                if not ReadUleb32(limits.min) then
+                                  begin
+                                    InputError('Error reading memory limits min for memory import');
+                                    exit;
+                                  end;
+                              end;
+                            $01:
+                              begin
+                                limits.HasMax:=True;
+                                if not ReadUleb32(limits.min) then
+                                  begin
+                                    InputError('Error reading memory limits min for memory import');
+                                    exit;
+                                  end;
+                                if not ReadUleb32(limits.max) then
+                                  begin
+                                    InputError('Error reading memory limits max for memory import');
+                                    exit;
+                                  end;
+                                if limits.Min>limits.Max then
+                                  begin
+                                    InputError('Memory limits min exceed memory limits max in memory import');
+                                    exit;
+                                  end;
+                              end;
+                            else
+                              begin
+                                InputError('Unsupported memory limits kind for memory import: $' + HexStr(MemoryLimitsKind,2));
+                                exit;
+                              end;
+                          end;
+                        end;
+                    end;
+                  $03:  { global }
+                    begin
+                      Inc(GlobalTypeImportsCount);
+                      SetLength(GlobalTypes,GlobalTypeImportsCount);
+                      with GlobalTypes[GlobalTypeImportsCount-1] do
+                        begin
+                          IsImport:=True;
+                          ImportName:=Name;
+                          ImportModName:=ModName;
+                          if not AReader.read(GlobalType,1) then
+                            begin
+                              InputError('Error reading global type for global import');
+                              exit;
+                            end;
+                          if not decode_wasm_basic_type(GlobalType,valtype) then
+                            begin
+                              InputError('Unsupported global type for global import: ' + HexStr(GlobalType,2));
+                              exit;
+                            end;
+                          if not AReader.read(GlobalMutabilityType,1) then
+                            begin
+                              InputError('Error reading global mutability flag for global import');
+                              exit;
+                            end;
+                          case GlobalMutabilityType of
+                            $00:
+                              IsMutable:=False;
+                            $01:
+                              IsMutable:=True;
+                            else
+                              begin
+                                InputError('Unknown global mutability flag for global import: $' + HexStr(GlobalMutabilityType,2));
+                                exit;
+                              end;
+                          end;
+                        end;
+                    end;
+                  $04: { tag }
+                    begin
+                      Inc(TagTypeImportsCount);
+                      SetLength(TagTypes,TagTypeImportsCount);
+                      with TagTypes[TagTypeImportsCount-1] do
+                        begin
+                          IsImport:=True;
+                          ImportName:=Name;
+                          ImportModName:=ModName;
+                          if not Read(TagAttr,1) then
+                            begin
+                              InputError('Error reading import tag attribute');
+                              exit;
+                            end;
+                          if not ReadUleb32(TagTypeIdx) then
+                            begin
+                              InputError('Error reading import tag type index');
+                              exit;
+                            end;
+                          if TagTypeIdx>high(FFuncTypes) then
+                            begin
+                              InputError('Type index in tag import exceeds bounds of the types table');
+                              exit;
+                            end;
+                        end;
+                    end;
+                  else
+                    begin
+                      InputError('Unknown import type: $' + HexStr(ImportType,2));
+                      exit;
+                    end;
+                end;
+              end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected import section size');
+                exit;
+              end;
+            Result:=true;
+          end;
+
+        function ReadFunctionSection: Boolean;
+          var
+            FunctionsCount: uint32;
+            i: Integer;
+          begin
+            Result:=False;
+            if FunctionSectionRead then
+              begin
+                InputError('Function section is duplicated');
+                exit;
+              end;
+            FunctionSectionRead:=True;
+            if not ReadUleb32(FunctionsCount) then
+              begin
+                InputError('Error reading the functions count');
+                exit;
+              end;
+            SetLength(FuncTypes, FuncTypeImportsCount + FunctionsCount);
+            for i:=0 to FunctionsCount-1 do
+              with FuncTypes[i + FuncTypeImportsCount] do
+                begin
+                  IsImport:=False;
+                  if not ReadUleb32(typidx) then
+                    begin
+                      InputError('Error reading type index for function');
+                      exit;
+                    end;
+                  if typidx>high(FFuncTypes) then
+                    begin
+                      InputError('Type index in the function section exceeds bounds of the types table');
+                      exit;
+                    end;
+                end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected function section size');
+                exit;
+              end;
+            Result:=true;
+          end;
+
+        function ReadGlobalSection: Boolean;
+
+          function ParseExpr(out Init: TGlobalInitializer): Boolean;
+            var
+              B, B2: Byte;
+              tmpU32: UInt32;
+              tmpU64: UInt64;
+            begin
+              Result:=False;
+              repeat
+                if not Read(B, 1) then
+                  exit;
+                case B of
+                  $0B:  { end }
+                    ;
+                  $41:  { i32.const }
+                    begin
+                      Init.typ:=wbt_i32;
+                      if not ReadSleb32(Init.init_i32) then
+                        exit;
+                    end;
+                  $42:  { i64.const }
+                    begin
+                      Init.typ:=wbt_i64;
+                      if not ReadSleb(Init.init_i64) then
+                        exit;
+                    end;
+                  $43:  { f32.const }
+                    begin
+                      Init.typ:=wbt_f32;
+                      if not Read(tmpU32, 4) then
+                        exit;
+{$ifdef FPC_BIG_ENDIAN}
+                      tmpU32:=SwapEndian(tmpU32);
+{$endif FPC_BIG_ENDIAN}
+                      Move(tmpU32,Init.init_f32,4);
+                    end;
+                  $44:  { f64.const }
+                    begin
+                      Init.typ:=wbt_f64;
+                      if not Read(tmpU64, 8) then
+                        exit;
+{$ifdef FPC_BIG_ENDIAN}
+                      tmpU64:=SwapEndian(tmpU64);
+{$endif FPC_BIG_ENDIAN}
+                      Move(tmpU64,Init.init_f64,8);
+                    end;
+                  $D0:  { ref.null }
+                    begin
+                      if not Read(B2, 1) then
+                        exit;
+                      if not decode_wasm_basic_type(B2, Init.typ) then
+                        exit;
+                      if not (Init.typ in WasmReferenceTypes) then
+                        exit;
+                    end;
+                  else
+                    begin
+                      InputError('Unsupported opcode in global initializer');
+                      exit;
+                    end;
+                end;
+              until b = $0B;
+              Result:=True;
+            end;
+
+          var
+            GlobalsCount: uint32;
+            i: Integer;
+            vt: Byte;
+            mut: Byte;
+          begin
+            Result:=False;
+            if GlobalSectionRead then
+              begin
+                InputError('Global section is duplicated');
+                exit;
+              end;
+            GlobalSectionRead:=True;
+            if not ReadUleb32(GlobalsCount) then
+              begin
+                InputError('Error reading the globals count from the global section');
+                exit;
+              end;
+            SetLength(GlobalTypes,Length(GlobalTypes)+GlobalsCount);
+            for i:=0 to GlobalsCount-1 do
+              with GlobalTypes[i + GlobalTypeImportsCount] do
+                begin
+                  if not read(vt,1) then
+                    begin
+                      InputError('Error reading the type of a global from the global section');
+                      exit;
+                    end;
+                  if not decode_wasm_basic_type(vt,valtype) then
+                    begin
+                      InputError('Unsupported type of global in the global section');
+                      exit;
+                    end;
+                  if not read(mut,1) then
+                    begin
+                      InputError('Error reading the mutability flag of a global in the global section');
+                      exit;
+                    end;
+                  case mut of
+                    $00:
+                      IsMutable:=False;
+                    $01:
+                      IsMutable:=True;
+                    else
+                      begin
+                        InputError('Unsupported value (' + tostr(mut) + ') for the mutability flag of a global in the global section');
+                        exit;
+                      end;
+                  end;
+                  if not ParseExpr(GlobalInit) then
+                    begin
+                      InputError('Error parsing the global initializer expression in the global section');
+                      exit;
+                    end;
+                  if GlobalInit.typ<>valtype then
+                    begin
+                      InputError('Initializer expression for global produces a type, which does not match the type of the global');
+                      exit;
+                    end;
+                end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected global section size');
+                exit;
+              end;
+            Result:=True;
+          end;
+
+        function ReadExportSection: Boolean;
+          var
+            ExportsCount, FuncIdx, TableIdx, MemIdx, GlobalIdx, TagIdx: uint32;
+            i: Integer;
+            Name: ansistring;
+            ExportType: Byte;
+          begin
+            Result:=False;
+            if ExportSectionRead then
+              begin
+                InputError('Export section is duplicated');
+                exit;
+              end;
+            ExportSectionRead:=True;
+            if not ReadUleb32(ExportsCount) then
+              begin
+                InputError('Error reading the exports count from the export section');
+                exit;
+              end;
+            for i:=0 to ExportsCount-1 do
+              begin
+                if not ReadName(Name) then
+                  begin
+                    InputError('Error reading an export name from the export section');
+                    exit;
+                  end;
+                if not Read(ExportType,1) then
+                  begin
+                    InputError('Error reading an export type from the export section');
+                    exit;
+                  end;
+                case ExportType of
+                  $00:  { func }
+                    begin
+                      if not ReadUleb32(FuncIdx) then
+                        begin
+                          InputError('Error reading a func index from the export section');
+                          exit;
+                        end;
+                      if FuncIdx>high(FuncTypes) then
+                        begin
+                          InputError('Func index too high in the export section');
+                          exit;
+                        end;
+                      with FuncTypes[FuncIdx] do
+                        begin
+                          IsExported:=True;
+                          ExportName:=Name;
+                        end;
+                    end;
+                  $01:  { table }
+                    begin
+                      if not ReadUleb32(TableIdx) then
+                        begin
+                          InputError('Error reading a table index from the export section');
+                          exit;
+                        end;
+                      if TableIdx>high(TableTypes) then
+                        begin
+                          InputError('Table index too high in the export section');
+                          exit;
+                        end;
+                      with TableTypes[TableIdx] do
+                        begin
+                          IsExported:=True;
+                          ExportName:=Name;
+                        end;
+                    end;
+                  $02:  { mem }
+                    begin
+                      if not ReadUleb32(MemIdx) then
+                        begin
+                          InputError('Error reading a mem index from the export section');
+                          exit;
+                        end;
+                      if MemIdx>high(MemTypes) then
+                        begin
+                          InputError('Mem index too high in the export section');
+                          exit;
+                        end;
+                      with MemTypes[MemIdx] do
+                        begin
+                          IsExported:=True;
+                          ExportName:=Name;
+                        end;
+                    end;
+                  $03:  { global }
+                    begin
+                      if not ReadUleb32(GlobalIdx) then
+                        begin
+                          InputError('Error reading a global index from the export section');
+                          exit;
+                        end;
+                      if GlobalIdx>high(GlobalTypes) then
+                        begin
+                          InputError('Global index too high in the export section');
+                          exit;
+                        end;
+                      with GlobalTypes[GlobalIdx] do
+                        begin
+                          IsExported:=True;
+                          ExportName:=Name;
+                        end;
+                    end;
+                  $04:  { tag }
+                    begin
+                      if not ReadUleb32(TagIdx) then
+                        begin
+                          InputError('Error reading a tag index from the export section');
+                          exit;
+                        end;
+                      if TagIdx>high(TagTypes) then
+                        begin
+                          InputError('Tag index too high in the export section');
+                          exit;
+                        end;
+                      with TagTypes[TagIdx] do
+                        begin
+                          IsExported:=True;
+                          ExportName:=Name;
+                        end;
+                    end;
+                  else
+                    begin
+                      InputError('Unsupported export type in the export section: ' + tostr(ExportType));
+                      exit;
+                    end;
+                end;
+              end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected export section size');
+                exit;
+              end;
+            Result:=True;
+          end;
+
+        function ReadElementSection: Boolean;
+          begin
+            Result:=False;
+            if ElementSectionRead then
+              begin
+                InputError('Element section is duplicated');
+                exit;
+              end;
+            ElementSectionRead:=True;
+            { We skip the element section for now }
+            { TODO: implement reading it (and linking of tables) }
+            Result:=True;
+          end;
+
+        function ReadTagSection: Boolean;
+          var
+            TagCount: uint32;
+            i: Integer;
+          begin
+            Result:=False;
+            if TagSectionRead then
+              begin
+                InputError('Tag section is duplicated');
+                exit;
+              end;
+            TagSectionRead:=True;
+            if not ReadUleb32(TagCount) then
+              begin
+                InputError('Error reading the tag count from the tag section');
+                exit;
+              end;
+            SetLength(TagTypes,Length(TagTypes)+TagCount);
+            for i:=0 to TagCount-1 do
+              with TagTypes[i + TagTypeImportsCount] do
+                begin
+                  if not Read(TagAttr,1) then
+                    begin
+                      InputError('Error reading tag attribute');
+                      exit;
+                    end;
+                  if not ReadUleb32(TagTypeIdx) then
+                    begin
+                      InputError('Error reading tag type index');
+                      exit;
+                    end;
+                  if TagTypeIdx>high(FFuncTypes) then
+                    begin
+                      InputError('Type index in tag import exceeds bounds of the types table');
+                      exit;
+                    end;
+                end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected tag section size');
+                exit;
+              end;
+            Result:=True;
+          end;
+
+        function ReadCodeSection: Boolean;
+          var
+            CodeEntriesCount: uint32;
+            i: Integer;
+          begin
+            Result:=False;
+            if CodeSectionRead then
+              begin
+                InputError('Code section is duplicated');
+                exit;
+              end;
+            CodeSectionRead:=True;
+            CodeSectionIndex:=SectionIndex;
+            if not ReadUleb32(CodeEntriesCount) then
+              begin
+                InputError('Error reading the code entries cound from the code section');
+                exit;
+              end;
+            if CodeEntriesCount <> (Length(FuncTypes) - FuncTypeImportsCount) then
+              begin
+                InputError('Code segment count in the code section does not match the function definition count in the function section');
+                exit;
+              end;
+            SetLength(CodeSegments,CodeEntriesCount);
+            for i:=0 to CodeEntriesCount-1 do
+              with CodeSegments[i] do
+                begin
+                  if not ReadUleb32(CodeSize) then
+                    begin
+                      InputError('Error reading the code size of an entry in the code section');
+                      exit;
+                    end;
+                  if (AReader.Pos+CodeSize)>(SectionStart+SectionSize) then
+                    begin
+                      InputError('Code segment exceeds the bounds of the code section');
+                      exit;
+                    end;
+                  DataPos:=AReader.Pos;
+                  CodeSectionOffset:=AReader.Pos-SectionStart;
+                  AReader.Seek(AReader.Pos+CodeSize);
+                end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected code section size');
+                exit;
+              end;
+            Result:=true;
+          end;
+
+        function ReadDataSection: Boolean;
+
+          function ReadExpr(out ExprV: int32): Boolean;
+            var
+              b: Byte;
+            begin
+              Result:=False;
+              if not Read(b,1) then
+                exit;
+              if b<>$41 then
+                begin
+                  InputError('Only i32.const expressions supported');
+                  exit;
+                end;
+              if not ReadSleb32(ExprV) then
+                exit;
+              if not Read(b,1) then
+                exit;
+              if b<>$0B then
+                begin
+                  InputError('Only single const expressions supported');
+                  exit;
+                end;
+              Result:=True;
+            end;
+
+          var
+            DataCount: uint32;
+            DataType: Byte;
+            i: Integer;
+          begin
+            Result:=False;
+            if DataSectionRead then
+              begin
+                InputError('Data section is duplicated');
+                exit;
+              end;
+            DataSectionRead:=True;
+            DataSectionIndex:=SectionIndex;
+            if not ReadUleb32(DataCount) then
+              begin
+                InputError('Error reading the data entries count from the data section');
+                exit;
+              end;
+            if DataCountSectionRead then
+              begin
+                if Length(DataSegments)<>DataCount then
+                  begin
+                    InputError('Data entries count in the data section do not match the number, specified in the data count section');
+                    exit;
+                  end;
+              end
+            else
+              SetLength(DataSegments,DataCount);
+            for i:=0 to DataCount-1 do
+              with DataSegments[i] do
+                begin
+                  if not read(DataType, 1) then
+                    begin
+                      InputError('Error reading data type of segment from the data section');
+                      exit;
+                    end;
+                  case DataType of
+                    0:
+                      begin
+                        Active:=True;
+                        MemIdx:=0;
+                        if not ReadExpr(Offset) then
+                          begin
+                            InputError('Error reading memory offset of segment from the data section');
+                            exit;
+                          end;
+                      end;
+                    1:
+                      Active:=False;
+                    2:
+                      begin
+                        Active:=True;
+                        if not ReadUleb32(MemIdx) then
+                          begin
+                            InputError('Error reading MemIdx of segment from the data section');
+                            exit;
+                          end;
+                        if not ReadExpr(Offset) then
+                          begin
+                            InputError('Error reading memory offset of segment from the data section');
+                            exit;
+                          end;
+                      end;
+                    else
+                      begin
+                        InputError('Unsupported data type of segment in the data section: ' + tostr(DataType));
+                        exit;
+                      end;
+                  end;
+                  if MemIdx<>0 then
+                    begin
+                      InputError('Memory index other than 0 not supported (got ' + tostr(MemIdx) + ')');
+                      exit;
+                    end;
+                  if not Active then
+                    begin
+                      InputError('Passive memory segments not supported');
+                      exit;
+                    end;
+                  if not ReadUleb32(Len) then
+                    begin
+                      InputError('Error reading data segment length');
+                      exit;
+                    end;
+                  if (AReader.Pos+Len)>(SectionStart+SectionSize) then
+                    begin
+                      InputError('Data segment exceeds the bounds of the data section');
+                      exit;
+                    end;
+                  DataPos:=AReader.Pos;
+                  DataSectionOffset:=AReader.Pos-SectionStart;
+                  AReader.Seek(AReader.Pos+Len);
+                end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected data section size');
+                exit;
+              end;
+            Result:=true;
+          end;
+
+        function ReadDataCountSection: Boolean;
+          var
+            DataCount: uint32;
+          begin
+            Result:=False;
+            if DataCountSectionRead then
+              begin
+                InputError('Data count section is duplicated');
+                exit;
+              end;
+            DataCountSectionRead:=True;
+            if DataSectionRead then
+              begin
+                InputError('The data count section must occur before the data section');
+                exit;
+              end;
+            if not ReadUleb32(DataCount) then
+              begin
+                InputError('Error reading the data count from the data count section');
+                exit;
+              end;
+            if AReader.Pos<>(SectionStart+SectionSize) then
+              begin
+                InputError('Unexpected data count section size');
+                exit;
+              end;
+            SetLength(DataSegments, DataCount);
+            Result:=true;
+          end;
+
         begin
           Result:=False;
+          Inc(SectionIndex);
           if not AReader.read(SectionId,1) then
             begin
               InputError('Error reading section ID');
               exit;
             end;
-          if not ReadUleb(AReader,SectionSize) then
+          CheckSectionBounds:=false;
+          if not ReadUleb32(SectionSize) then
             begin
               InputError('Error reading section size');
-              exit;
-            end;
-          if SectionSize>high(uint32) then
-            begin
-              InputError('Invalid section size');
               exit;
             end;
           if (AReader.Pos+SectionSize)>AReader.size then
@@ -2177,19 +4001,161 @@ implementation
               InputError('Section exceeds beyond the end of file');
               exit;
             end;
-          { skip the section for now... TODO: parse the section }
+          SectionStart:=AReader.Pos;
+          CheckSectionBounds:=true;
+          case SectionId of
+            Byte(wsiCustom):
+              if not ReadCustomSection then
+                begin
+                  InputError('Error encountered, while reading a custom section');
+                  exit;
+                end;
+            Byte(wsiType):
+              if not ReadTypeSection then
+                begin
+                  InputError('Error reading the type section');
+                  exit;
+                end;
+            Byte(wsiImport):
+              if not ReadImportSection then
+                begin
+                  InputError('Error reading the import section');
+                  exit;
+                end;
+            Byte(wsiFunction):
+              if not ReadFunctionSection then
+                begin
+                  InputError('Error reading the function section');
+                  exit;
+                end;
+            Byte(wsiGlobal):
+              if not ReadGlobalSection then
+                begin
+                  InputError('Error reading the global section');
+                  exit;
+                end;
+            Byte(wsiExport):
+              if not ReadExportSection then
+                begin
+                  InputError('Error reading the export section');
+                  exit;
+                end;
+            Byte(wsiElement):
+              if not ReadElementSection then
+                begin
+                  InputError('Error reading the element section');
+                  exit;
+                end;
+            Byte(wsiTag):
+              if not ReadTagSection then
+                begin
+                  InputError('Error reading the tag section');
+                  exit;
+                end;
+            Byte(wsiCode):
+              if not ReadCodeSection then
+                begin
+                  InputError('Error reading the code section');
+                  exit;
+                end;
+            Byte(wsiData):
+              if not ReadDataSection then
+                begin
+                  InputError('Error reading the data section');
+                  exit;
+                end;
+            Byte(wsiDataCount):
+              begin
+                if not ReadDataCountSection then
+                  begin
+                    InputError('Error reading the data count section');
+                    exit;
+                  end;
+              end
+            else
+              begin
+                InputError('Unknown section: ' + ToStr(SectionId));
+                exit;
+              end;
+          end;
           if SectionSize>0 then
-            AReader.seek(AReader.Pos+SectionSize);
+            AReader.seek(SectionStart+SectionSize);
           Result:=True;
         end;
+
+        function FindCodeSegment(Ofs: uint32): Integer;
+          var
+            L, R, M: Integer;
+          begin
+            L:=Low(CodeSegments);
+            R:=High(CodeSegments);
+            while L<=R do
+              begin
+                M:=(L+R) div 2;
+                if (CodeSegments[M].CodeSectionOffset+CodeSegments[M].CodeSize-1) < Ofs then
+                  L:=M+1
+                else if CodeSegments[M].CodeSectionOffset > Ofs then
+                  R:=M-1
+                else
+                  begin
+                    Result:=M;
+                    exit;
+                  end;
+              end;
+            Result:=-1;
+          end;
+
+        function FindDataSegment(Ofs: uint32): Integer;
+          var
+            L, R, M: Integer;
+          begin
+            L:=Low(DataSegments);
+            R:=High(DataSegments);
+            while L<=R do
+              begin
+                M:=(L+R) div 2;
+                if (DataSegments[M].DataSectionOffset+DataSegments[M].Len-1) < Ofs then
+                  L:=M+1
+                else if DataSegments[M].DataSectionOffset > Ofs then
+                  R:=M-1
+                else
+                  begin
+                    Result:=M;
+                    exit;
+                  end;
+              end;
+            Result:=-1;
+          end;
 
       var
         ModuleMagic: array [0..3] of Byte;
         ModuleVersion: array [0..3] of Byte;
-        i: Integer;
+        i, j, FirstCodeSegmentIdx, FirstDataSegmentIdx, SegI: Integer;
+        CurrSec, ObjSec: TObjSection;
+        BaseSectionOffset: UInt32;
+        ObjReloc: TWasmObjRelocation;
+        ds: TWasmCustomDebugSectionType;
       begin
+        FReader:=AReader;
+        InputFileName:=AReader.FileName;
         objdata:=CObjData.Create(InputFileName);
         result:=false;
+        CodeSegments:=nil;
+        DataSegments:=nil;
+        SymbolTable:=nil;
+        RelocationTable:=nil;
+        SetLength(RelocationTable,2+(Ord(High(TWasmCustomDebugSectionType))-Ord(Low(TWasmCustomDebugSectionType))+1));
+        FuncTypes:=nil;
+        FuncTypeImportsCount:=0;
+        TableTypes:=nil;
+        TableTypeImportsCount:=0;
+        MemTypes:=nil;
+        MemTypeImportsCount:=0;
+        GlobalTypes:=nil;
+        GlobalTypeImportsCount:=0;
+        TagTypes:=nil;
+        TagTypeImportsCount:=0;
+
         if not AReader.read(ModuleMagic,4) then
           exit;
         for i:=0 to 3 do
@@ -2203,6 +4169,348 @@ implementation
         while AReader.Pos<AReader.size do
           if not ReadSection then
             exit;
+
+        { fill the code segment names }
+        for i:=low(SymbolTable) to high(SymbolTable) do
+          with SymbolTable[i] do
+            if (SymKind=SYMTAB_FUNCTION) and ((SymFlags and WASM_SYM_UNDEFINED)=0) then
+              begin
+                if FuncTypes[SymIndex].IsImport then
+                  begin
+                    InputError('WASM_SYM_UNDEFINED not set on a SYMTAB_FUNCTION symbol, that is an import');
+                    exit;
+                  end;
+                if (SymFlags and WASM_SYM_EXPLICIT_NAME)=0 then
+                  begin
+                    with CodeSegments[SymIndex-FuncTypeImportsCount] do
+                      begin
+                        SegName:='.text.n_'+SymName;
+                        SegIsExported:=FuncTypes[SymIndex].IsExported;
+                      end;
+                  end;
+              end;
+
+        { create segments }
+        FirstCodeSegmentIdx:=ObjData.ObjSectionList.Count;
+        for i:=low(CodeSegments) to high(CodeSegments) do
+          with CodeSegments[i] do
+            begin
+              if SegName='' then
+                begin
+                  InputError('Code section ' + tostr(i) + ' does not have a main symbol defined in the symbol table');
+                  exit;
+                end;
+              if SegIsExported then
+                CurrSec:=ObjData.createsection(SegName,1,[oso_executable,oso_Data,oso_load,oso_keep],false)
+              else
+                CurrSec:=ObjData.createsection(SegName,1,[oso_executable,oso_Data,oso_load],false);
+              CurrSec.DataPos:=DataPos;
+              CurrSec.Size:=CodeSize;
+            end;
+        FirstDataSegmentIdx:=ObjData.ObjSectionList.Count;
+        for i:=low(DataSegments) to high(DataSegments) do
+          with DataSegments[i] do
+            if Active then
+              begin
+                CurrSec:=ObjData.createsection(SegName,1 shl SegAlignment,[oso_Data,oso_load,oso_write],false);
+                CurrSec.DataPos:=DataPos;
+                CurrSec.MemPos:=Offset;
+                CurrSec.Size:=Len;
+              end;
+        ReadSectionContent(ObjData);
+
+        for i:=low(SymbolTable) to high(SymbolTable) do
+          with SymbolTable[i] do
+            case SymKind of
+              SYMTAB_DATA:
+                if (SymFlags and WASM_SYM_UNDEFINED)<>0 then
+                  begin
+                    objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                    objsym.bind:=AB_EXTERNAL;
+                    objsym.typ:=AT_DATA;
+                    objsym.objsection:=nil;
+                    objsym.offset:=0;
+                    objsym.size:=0;
+                  end
+                else
+                  begin
+                    objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                    if (SymFlags and WASM_SYM_BINDING_LOCAL)<> 0 then
+                      objsym.bind:=AB_LOCAL
+                    else
+                      objsym.bind:=AB_GLOBAL;
+                    objsym.typ:=AT_DATA;
+                    objsym.objsection:=TObjSection(ObjData.ObjSectionList[FirstDataSegmentIdx+SymIndex]);
+                    objsym.offset:=SymOffset;
+                    objsym.size:=SymSize;
+                  end;
+              SYMTAB_FUNCTION:
+                begin
+                  if (SymFlags and WASM_SYM_UNDEFINED)<>0 then
+                    begin
+                      if not FuncTypes[SymIndex].IsImport then
+                        begin
+                          InputError('WASM_SYM_UNDEFINED set on a SYMTAB_FUNCTION symbol, that is not an import');
+                          exit;
+                        end;
+                      if (SymFlags and WASM_SYM_EXPLICIT_NAME)<>0 then
+                        begin
+                          objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                          objsym.bind:=AB_EXTERNAL;
+                          objsym.typ:=AT_FUNCTION;
+                          objsym.objsection:=nil;
+                          objsym.offset:=0;
+                          objsym.size:=0;
+                          objsym.LinkingData.ImportModule:=FuncTypes[SymIndex].ImportModName;
+                          objsym.LinkingData.ImportName:=FuncTypes[SymIndex].ImportName;
+                        end
+                      else
+                        begin
+                          if FuncTypes[SymIndex].ImportModName = 'env' then
+                            objsym:=TWasmObjSymbol(ObjData.CreateSymbol(FuncTypes[SymIndex].ImportName))
+                          else
+                            objsym:=TWasmObjSymbol(ObjData.CreateSymbol(FuncTypes[SymIndex].ImportModName + '.' + FuncTypes[SymIndex].ImportName));
+                          objsym.bind:=AB_EXTERNAL;
+                          objsym.typ:=AT_FUNCTION;
+                          objsym.objsection:=nil;
+                          objsym.offset:=0;
+                          objsym.size:=0;
+                        end;
+                    end
+                  else
+                    begin
+                      objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                      objsym.bind:=AB_GLOBAL;
+                      objsym.typ:=AT_FUNCTION;
+                      objsym.objsection:=TObjSection(ObjData.ObjSectionList[FirstCodeSegmentIdx+SymIndex-FuncTypeImportsCount]);
+                      if (SymFlags and WASM_SYM_EXPLICIT_NAME)=0 then
+                        TWasmObjSection(ObjData.ObjSectionList[FirstCodeSegmentIdx+SymIndex-FuncTypeImportsCount]).MainFuncSymbol:=objsym;
+                      objsym.offset:=0;
+                      objsym.size:=objsym.objsection.Size;
+                    end;
+                  objsym.LinkingData.FuncType:=TWasmFuncType.Create(FFuncTypes[FuncTypes[SymIndex].typidx]);
+                  objsym.LinkingData.IsExported:=FuncTypes[SymIndex].IsExported;
+                  objsym.LinkingData.ExportName:=FuncTypes[SymIndex].ExportName;
+                end;
+              SYMTAB_GLOBAL:
+                begin
+                  if (SymFlags and WASM_SYM_UNDEFINED)<>0 then
+                    begin
+                      if not GlobalTypes[SymIndex].IsImport then
+                        begin
+                          InputError('WASM_SYM_UNDEFINED set on a SYMTAB_GLOBAL symbol, that is not an import');
+                          exit;
+                        end;
+                      if (SymFlags and WASM_SYM_EXPLICIT_NAME)<>0 then
+                        begin
+                          objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                          objsym.bind:=AB_EXTERNAL;
+                          objsym.typ:=AT_WASM_GLOBAL;
+                          objsym.objsection:=nil;
+                          objsym.offset:=0;
+                          objsym.size:=1;
+                          objsym.LinkingData.ImportModule:=GlobalTypes[SymIndex].ImportModName;
+                          objsym.LinkingData.ImportName:=GlobalTypes[SymIndex].ImportName;
+                        end
+                      else
+                        begin
+                          if GlobalTypes[SymIndex].ImportModName = 'env' then
+                            objsym:=TWasmObjSymbol(ObjData.CreateSymbol(GlobalTypes[SymIndex].ImportName))
+                          else
+                            objsym:=TWasmObjSymbol(ObjData.CreateSymbol(GlobalTypes[SymIndex].ImportModName + '.' + GlobalTypes[SymIndex].ImportName));
+                          objsym.bind:=AB_EXTERNAL;
+                          objsym.typ:=AT_WASM_GLOBAL;
+                          objsym.objsection:=nil;
+                          objsym.offset:=0;
+                          objsym.size:=1;
+                        end;
+                    end
+                  else
+                    begin
+                      if GlobalTypes[SymIndex].IsImport then
+                        begin
+                          InputError('WASM_SYM_UNDEFINED not set on a SYMTAB_GLOBAL symbol, that is an import');
+                          exit;
+                        end;
+                      objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                      objsym.bind:=AB_GLOBAL;
+                      objsym.typ:=AT_WASM_GLOBAL;
+                      objsym.objsection:=ObjData.createsection('.wasm_globals.n_'+SymName,1,[oso_Data,oso_load],true);
+                      if objsym.objsection.Size=0 then
+                        objsym.objsection.WriteZeros(1);
+                      if (SymFlags and WASM_SYM_EXPLICIT_NAME)=0 then
+                        TWasmObjSection(objsym.objsection).MainFuncSymbol:=objsym;
+                      objsym.offset:=0;
+                      objsym.size:=1;
+                      objsym.LinkingData.GlobalInitializer:=GlobalTypes[SymIndex].GlobalInit;
+                    end;
+                  objsym.LinkingData.GlobalType:=GlobalTypes[SymIndex].valtype;
+                  objsym.LinkingData.GlobalIsMutable:=GlobalTypes[SymIndex].IsMutable;
+                  objsym.LinkingData.IsExported:=GlobalTypes[SymIndex].IsExported;
+                  objsym.LinkingData.ExportName:=GlobalTypes[SymIndex].ExportName;
+                end;
+              SYMTAB_SECTION:
+                begin
+                  for ds:=Low(DebugSectionIndex) to High(DebugSectionIndex) do
+                    if DebugSectionIndex[ds]=TargetSection then
+                      begin
+                        ObjSec:=TWasmObjSection(ObjData.findsection(WasmCustomSectionName[ds]));
+                        break;
+                      end;
+                  if ObjSec=nil then
+                    begin
+                      InputError('SYMTAB_SECTION entry points to an unsupported section');
+                      exit;
+                    end;
+                end;
+              SYMTAB_EVENT:
+                begin
+                  if (SymFlags and WASM_SYM_UNDEFINED)<>0 then
+                    begin
+                      if not TagTypes[SymIndex].IsImport then
+                        begin
+                          InputError('WASM_SYM_UNDEFINED set on a SYMTAB_EVENT symbol, that is not an import');
+                          exit;
+                        end;
+                      if (SymFlags and WASM_SYM_EXPLICIT_NAME)<>0 then
+                        begin
+                          objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                          objsym.bind:=AB_EXTERNAL;
+                          objsym.typ:=AT_WASM_EXCEPTION_TAG;
+                          objsym.objsection:=nil;
+                          objsym.offset:=0;
+                          objsym.size:=1;
+                          objsym.LinkingData.ImportModule:=TagTypes[SymIndex].ImportModName;
+                          objsym.LinkingData.ImportName:=TagTypes[SymIndex].ImportName;
+                        end
+                      else
+                        begin
+                          if GlobalTypes[SymIndex].ImportModName = 'env' then
+                            objsym:=TWasmObjSymbol(ObjData.CreateSymbol(GlobalTypes[SymIndex].ImportName))
+                          else
+                            objsym:=TWasmObjSymbol(ObjData.CreateSymbol(GlobalTypes[SymIndex].ImportModName + '.' + GlobalTypes[SymIndex].ImportName));
+                          objsym.bind:=AB_EXTERNAL;
+                          objsym.typ:=AT_WASM_EXCEPTION_TAG;
+                          objsym.objsection:=nil;
+                          objsym.offset:=0;
+                          objsym.size:=1;
+                        end;
+                    end
+                  else
+                    begin
+                      if TagTypes[SymIndex].IsImport then
+                        begin
+                          InputError('WASM_SYM_UNDEFINED not set on a SYMTAB_EVENT symbol, that is an import');
+                          exit;
+                        end;
+                      objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                      if (symflags and WASM_SYM_BINDING_WEAK) <> 0 then
+                        objsym.bind:=AB_WEAK_EXTERNAL
+                      else if (symflags and WASM_SYM_BINDING_LOCAL) <> 0 then
+                        objsym.bind:=AB_LOCAL
+                      else
+                        objsym.bind:=AB_GLOBAL;
+                      objsym.typ:=AT_WASM_EXCEPTION_TAG;
+                      objsym.objsection:=ObjData.createsection('.wasm_tags.n_'+SymName,1,[oso_Data,oso_load],true);
+                      if objsym.objsection.Size=0 then
+                        objsym.objsection.WriteZeros(1);
+                      if (SymFlags and WASM_SYM_EXPLICIT_NAME)=0 then
+                        TWasmObjSection(objsym.objsection).MainFuncSymbol:=objsym;
+                      objsym.offset:=0;
+                      objsym.size:=1;
+                    end;
+                  objsym.LinkingData.FuncType:=TWasmFuncType.Create(FFuncTypes[TagTypes[SymIndex].TagTypeIdx]);
+                  objsym.LinkingData.IsExported:=TagTypes[SymIndex].IsExported;
+                  objsym.LinkingData.ExportName:=TagTypes[SymIndex].ExportName;
+                end;
+              SYMTAB_TABLE:
+                {TODO};
+            end;
+
+        for j:=0 to high(RelocationTable) do
+          for i:=0 to high(RelocationTable[j]) do
+            with RelocationTable[j,i] do
+              begin
+                case j of
+                  0:
+                    begin
+                      SegI:=FindCodeSegment(RelocOffset);
+                      if SegI=-1 then
+                        begin
+                          InputError('Relocation offset not found in code segment');
+                          Exit;
+                        end;
+                      BaseSectionOffset:=CodeSegments[SegI].CodeSectionOffset;
+                      ObjSec:=TObjSection(ObjData.ObjSectionList[FirstCodeSegmentIdx+SegI]);
+                    end;
+                  1:
+                    begin
+                      SegI:=FindDataSegment(RelocOffset);
+                      if SegI=-1 then
+                        begin
+                          InputError('Relocation offset not found in data segment');
+                          Exit;
+                        end;
+                      BaseSectionOffset:=DataSegments[SegI].DataSectionOffset;
+                      ObjSec:=TObjSection(ObjData.ObjSectionList[FirstDataSegmentIdx+SegI]);
+                    end;
+                  2..2+(Ord(High(TWasmCustomDebugSectionType))-Ord(Low(TWasmCustomDebugSectionType))):
+                    begin
+                      BaseSectionOffset:=0;
+                      ObjSec:=ObjData.findsection(WasmCustomSectionName[TWasmCustomSectionType((j-2)+Ord(Low(TWasmCustomDebugSectionType)))]);
+                    end;
+                  else
+                    internalerror(2023122801);
+                end;
+                case RelocType of
+                  R_WASM_FUNCTION_INDEX_LEB:
+                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_FUNCTION_INDEX_LEB));
+                  R_WASM_TABLE_INDEX_SLEB:
+                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_MEMORY_ADDR_OR_TABLE_INDEX_SLEB));
+                  R_WASM_TABLE_INDEX_I32:
+                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_ABSOLUTE));
+                  R_WASM_MEMORY_ADDR_LEB:
+                    begin
+                      ObjReloc:=TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_MEMORY_ADDR_LEB);
+                      ObjReloc.Addend:=RelocAddend;
+                      ObjSec.ObjRelocations.Add(ObjReloc);
+                    end;
+                  R_WASM_MEMORY_ADDR_SLEB:
+                    begin
+                      ObjReloc:=TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_MEMORY_ADDR_OR_TABLE_INDEX_SLEB);
+                      ObjReloc.Addend:=RelocAddend;
+                      ObjSec.ObjRelocations.Add(ObjReloc);
+                    end;
+                  R_WASM_MEMORY_ADDR_I32:
+                    begin
+                      ObjReloc:=TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_ABSOLUTE);
+                      ObjReloc.Addend:=RelocAddend;
+                      ObjSec.ObjRelocations.Add(ObjReloc);
+                    end;
+                  R_WASM_TYPE_INDEX_LEB:
+                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateFuncType(RelocOffset-BaseSectionOffset,FFuncTypes[RelocIndex]));
+                  R_WASM_FUNCTION_OFFSET_I32:
+                    begin
+                      ObjReloc:=TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_ABSOLUTE);
+                      ObjReloc.Addend:=RelocAddend;
+                      ObjReloc.IsFunctionOffsetI32:=True;
+                      ObjSec.ObjRelocations.Add(ObjReloc);
+                    end;
+                  R_WASM_SECTION_OFFSET_I32:
+                    begin
+                      ObjReloc:=TWasmObjRelocation.CreateSection(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSec,RELOC_ABSOLUTE);
+                      ObjReloc.Addend:=RelocAddend;
+                      ObjSec.ObjRelocations.Add(ObjReloc);
+                    end;
+                  R_WASM_GLOBAL_INDEX_LEB:
+                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_GLOBAL_INDEX_LEB));
+                  R_WASM_TAG_INDEX_LEB:
+                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_TAG_INDEX_LEB));
+                  else
+                    internalerror(2023122802);
+                end;
+              end;
+
         Result:=True;
       end;
 
@@ -2210,15 +4518,824 @@ implementation
                                TWasmExeOutput
 ****************************************************************************}
 
+    procedure TWasmExeOutput.WriteWasmSection(wsid: TWasmSectionID);
+      var
+        b: byte;
+      begin
+        b:=ord(wsid);
+        Writer.write(b,1);
+        WriteUleb(Writer,FWasmSections[wsid].size);
+        Writer.writearray(FWasmSections[wsid]);
+      end;
+
+    procedure TWasmExeOutput.WriteWasmSectionIfNotEmpty(wsid: TWasmSectionID);
+      begin
+        if FWasmSections[wsid].size>0 then
+          WriteWasmSection(wsid);
+      end;
+
+    procedure TWasmExeOutput.WriteWasmCustomSection(wcst: TWasmCustomSectionType);
+      var
+        b: byte;
+      begin
+        b:=0;
+        Writer.write(b,1);
+        WriteUleb(Writer,FWasmCustomSections[wcst].size);
+        Writer.writearray(FWasmCustomSections[wcst]);
+      end;
+
     function TWasmExeOutput.writeData: boolean;
+
+      procedure WriteImportSection;
+        var
+          imports_count: SizeInt;
+          i: Integer;
+        begin
+          imports_count:=Length(FFunctionImports);
+          WriteUleb(FWasmSections[wsiImport],imports_count);
+          for i:=0 to Length(FFunctionImports)-1 do
+            with FFunctionImports[i] do
+              begin
+                WriteName(FWasmSections[wsiImport],ModName);
+                WriteName(FWasmSections[wsiImport],Name);
+                WriteByte(FWasmSections[wsiImport],$00);
+                WriteUleb(FWasmSections[wsiImport],TypeIdx);
+              end;
+        end;
+
+      procedure WriteCodeSegments;
+        var
+          i: Integer;
+          exesec: TExeSection;
+          objsec: TWasmObjSection;
+        begin
+          exesec:=FindExeSection('.text');
+          if not assigned(exesec) then
+            internalerror(2023123102);
+          if not (oso_Data in exesec.SecOptions) then
+            internalerror(2023123103);
+          WriteUleb(FWasmSections[wsiFunction],exesec.ObjSectionList.Count);
+          WriteUleb(FWasmSections[wsiCode],exesec.ObjSectionList.Count);
+          for i:=0 to exesec.ObjSectionList.Count-1 do
+            begin
+              objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
+              if not (oso_data in objsec.secoptions) then
+                internalerror(2023123104);
+              if not assigned(objsec.data) then
+                internalerror(2023123105);
+              if objsec.MainFuncSymbol.LinkingData.ExeFunctionIndex<>(i+Length(FFunctionImports)) then
+                internalerror(2024010101);
+              WriteUleb(FWasmSections[wsiFunction],objsec.MainFuncSymbol.LinkingData.ExeTypeIndex);
+              WriteUleb(FWasmSections[wsiCode],objsec.Data.size);
+              objsec.Data.seek(0);
+              CopyDynamicArray(objsec.Data,FWasmSections[wsiCode],objsec.Data.size);
+            end;
+        end;
+
+      procedure WriteDataSegments;
+
+        procedure WriteExeSection(exesec: TExeSection);
+          var
+            i: Integer;
+            objsec: TObjSection;
+            exesecdatapos: LongWord;
+            dpos, pad: QWord;
+          begin
+            WriteByte(FWasmSections[wsiData],0);
+
+            WriteByte(FWasmSections[wsiData],$41);  { i32.const }
+            WriteSleb(FWasmSections[wsiData],longint(exesec.MemPos));
+            WriteByte(FWasmSections[wsiData],$0B);  { end }
+
+            WriteUleb(FWasmSections[wsiData],exesec.Size);
+            exesecdatapos:=FWasmSections[wsiData].size;
+            for i:=0 to exesec.ObjSectionList.Count-1 do
+              begin
+                objsec:=TObjSection(exesec.ObjSectionList[i]);
+                if not (oso_data in objsec.secoptions) then
+                  internalerror(2024010104);
+                if not assigned(objsec.data) then
+                  internalerror(2024010105);
+
+                dpos:=objsec.MemPos-exesec.MemPos+exesecdatapos;
+                pad:=dpos-FWasmSections[wsiData].size;
+                { objsection must be within SecAlign bytes from the previous one }
+                if (dpos<FWasmSections[wsiData].Size) or
+                  (pad>=max(objsec.SecAlign,1)) then
+                  internalerror(2024010106);
+                writeZeros(FWasmSections[wsiData],pad);
+
+                objsec.data.seek(0);
+                CopyDynamicArray(objsec.data,FWasmSections[wsiData],objsec.data.size);
+              end;
+            if (FWasmSections[wsiData].size-exesecdatapos)<>exesec.Size then
+              internalerror(2024010107);
+          end;
+
+        var
+          DataCount: Integer;
+        begin
+          DataCount:=2;
+          WriteUleb(FWasmSections[wsiDataCount],DataCount);
+          WriteUleb(FWasmSections[wsiData],DataCount);
+          WriteExeSection(FindExeSection('.rodata'));
+          WriteExeSection(FindExeSection('.data'));
+        end;
+
+      procedure WriteTableAndElemSections;
+        const
+          TableCount=1;
+        var
+          i: Integer;
+        begin
+          { Table section }
+
+          WriteUleb(FWasmSections[wsiTable],TableCount);
+          { table 0 }
+          {   table type }
+          WriteByte(FWasmSections[wsiTable],encode_wasm_basic_type(wbt_funcref));
+          {   table limits }
+          WriteByte(FWasmSections[wsiTable],$01);  { has min & max }
+          WriteUleb(FWasmSections[wsiTable],Length(FIndirectFunctionTable));  { min }
+          WriteUleb(FWasmSections[wsiTable],Length(FIndirectFunctionTable));  { max }
+
+          { Elem section }
+
+          WriteUleb(FWasmSections[wsiElement],1);  { 1 element segment }
+          { element segment 0 }
+          WriteByte(FWasmSections[wsiElement],0);  { type funcref, init((ref.func y) end)*, mode active <table 0, offset e> }
+          { e:expr }
+          WriteByte(FWasmSections[wsiElement],$41);  { i32.const }
+          WriteSleb(FWasmSections[wsiElement],1);    { starting from 1 (table entry 0 is ref.null) }
+          WriteByte(FWasmSections[wsiElement],$0B);  { end }
+          { y*:vec(funcidx) }
+          WriteUleb(FWasmSections[wsiElement],Length(FIndirectFunctionTable)-1);
+          for i:=1 to Length(FIndirectFunctionTable)-1 do
+            WriteUleb(FWasmSections[wsiElement],FIndirectFunctionTable[i].FuncIdx);
+        end;
+
+      procedure WriteGlobalSection;
+        var
+          exesec: TExeSection;
+          globals_count, i: Integer;
+          objsec: TWasmObjSection;
+        begin
+          exesec:=FindExeSection('.wasm_globals');
+          if not assigned(exesec) then
+            internalerror(2024010112);
+          globals_count:=exesec.ObjSectionList.Count;
+          if globals_count<>exesec.Size then
+            internalerror(2024010113);
+          WriteUleb(FWasmSections[wsiGlobal],globals_count);
+          for i:=0 to exesec.ObjSectionList.Count-1 do
+            begin
+              objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
+              WriteByte(FWasmSections[wsiGlobal],encode_wasm_basic_type(objsec.MainFuncSymbol.LinkingData.GlobalType));
+              if objsec.MainFuncSymbol.LinkingData.GlobalIsMutable then
+                WriteByte(FWasmSections[wsiGlobal],1)
+              else
+                WriteByte(FWasmSections[wsiGlobal],0);
+              { initializer expr }
+              with objsec.MainFuncSymbol.LinkingData.GlobalInitializer do
+                case typ of
+                  wbt_i32:
+                    begin
+                      WriteByte(FWasmSections[wsiGlobal],$41);  { i32.const }
+                      WriteSleb(FWasmSections[wsiGlobal],init_i32);
+                    end;
+                  wbt_i64:
+                    begin
+                      WriteByte(FWasmSections[wsiGlobal],$42);  { i64.const }
+                      WriteSleb(FWasmSections[wsiGlobal],init_i64);
+                    end;
+                  wbt_f32:
+                    begin
+                      WriteByte(FWasmSections[wsiGlobal],$43);  { f32.const }
+                      WriteF32LE(FWasmSections[wsiGlobal],init_f32);
+                    end;
+                  wbt_f64:
+                    begin
+                      WriteByte(FWasmSections[wsiGlobal],$44);  { f64.const }
+                      WriteF64LE(FWasmSections[wsiGlobal],init_f64);
+                    end;
+                  wbt_funcref,
+                  wbt_externref:
+                    begin
+                      WriteByte(FWasmSections[wsiGlobal],$D0);  { ref.null }
+                      WriteByte(FWasmSections[wsiGlobal],encode_wasm_basic_type(typ));
+                    end;
+                  else
+                    internalerror(2024010114);
+                end;
+              WriteByte(FWasmSections[wsiGlobal],$0B);  { end }
+            end;
+        end;
+
+      procedure WriteTagSection;
+        var
+          exesec: TExeSection;
+          tags_count, i: Integer;
+          objsec: TWasmObjSection;
+        begin
+          exesec:=FindExeSection('.wasm_tags');
+          if not assigned(exesec) then
+            exit;
+          tags_count:=exesec.ObjSectionList.Count;
+          if tags_count<>exesec.Size then
+            internalerror(2024010702);
+          if tags_count=0 then
+            exit;
+          WriteUleb(FWasmSections[wsiTag],tags_count);
+          for i:=0 to exesec.ObjSectionList.Count-1 do
+            begin
+              objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
+              WriteByte(FWasmSections[wsiTag],0);
+              WriteUleb(FWasmSections[wsiTag],objsec.MainFuncSymbol.LinkingData.ExeTypeIndex);
+            end;
+        end;
+
+      procedure WriteExportSection;
+        const
+          MemoryExportsCount=1;
+        var
+          FunctionExportsCount: Integer;
+          ExportsCount: Integer;
+          textsec: TExeSection;
+          i: Integer;
+          objsec: TWasmObjSection;
+        begin
+          FunctionExportsCount:=0;
+          textsec:=FindExeSection('.text');
+          if not assigned(textsec) then
+            internalerror(2024010115);
+          for i:=0 to textsec.ObjSectionList.Count-1 do
+            begin
+              objsec:=TWasmObjSection(textsec.ObjSectionList[i]);
+              if objsec.MainFuncSymbol.LinkingData.IsExported then
+                Inc(FunctionExportsCount)
+            end;
+
+          ExportsCount:=MemoryExportsCount+FunctionExportsCount;
+
+          WriteUleb(FWasmSections[wsiExport],ExportsCount);
+          { export 0 }
+          WriteName(FWasmSections[wsiExport],'memory');
+          WriteByte(FWasmSections[wsiExport],$02);  { mem }
+          WriteUleb(FWasmSections[wsiExport],0);    { memidx = 0 }
+
+          for i:=0 to textsec.ObjSectionList.Count-1 do
+            begin
+              objsec:=TWasmObjSection(textsec.ObjSectionList[i]);
+              if objsec.MainFuncSymbol.LinkingData.IsExported then
+                begin
+                  WriteName(FWasmSections[wsiExport],objsec.MainFuncSymbol.LinkingData.ExportName);
+                  WriteByte(FWasmSections[wsiExport],$00);  { func }
+                  WriteUleb(FWasmSections[wsiExport],objsec.MainFuncSymbol.LinkingData.ExeFunctionIndex);    { funcidx }
+                end;
+            end;
+        end;
+
+      procedure MaybeWriteDebugSection(st: TWasmCustomDebugSectionType);
+        var
+          exesec: TExeSection;
+        begin
+          exesec:=FindExeSection(WasmCustomSectionName[st]);
+          if assigned(exesec) then
+            begin
+              WriteExeSectionToDynArray(exesec,FWasmCustomSections[st]);
+              WriteWasmCustomSection(st);
+            end;
+        end;
+
+      var
+        cust_sec: TWasmCustomSectionType;
       begin
         result:=false;
-        {TODO: implement}
+
+        { each custom sections starts with its name }
+        for cust_sec in TWasmCustomSectionType do
+          WriteName(FWasmCustomSections[cust_sec],WasmCustomSectionName[cust_sec]);
+
+        SetStackPointer;
+
+        FFuncTypes.WriteTo(FWasmSections[wsiType]);
+        WriteImportSection;
+        WriteCodeSegments;
+        WriteDataSegments;
+        WriteTableAndElemSections;
+        WriteGlobalSection;
+        WriteTagSection;
+        WriteExportSection;
+
+        WriteUleb(FWasmSections[wsiMemory],1);
+        WriteByte(FWasmSections[wsiMemory],0);
+        WriteUleb(FWasmSections[wsiMemory],FMinMemoryPages);
+
+        {...}
+
+        Writer.write(WasmModuleMagic,SizeOf(WasmModuleMagic));
+        Writer.write(WasmVersion,SizeOf(WasmVersion));
+        WriteWasmSection(wsiType);
+        WriteWasmSection(wsiImport);
+        WriteWasmSection(wsiFunction);
+        WriteWasmSection(wsiTable);
+        WriteWasmSection(wsiMemory);
+        WriteWasmSectionIfNotEmpty(wsiTag);
+        WriteWasmSection(wsiGlobal);
+        WriteWasmSection(wsiExport);
+        WriteWasmSection(wsiElement);
+        WriteWasmSection(wsiDataCount);
+        WriteWasmSection(wsiCode);
+        WriteWasmSection(wsiData);
+
+        MaybeWriteDebugSection(wcstDebugAbbrev);
+        MaybeWriteDebugSection(wcstDebugInfo);
+        MaybeWriteDebugSection(wcstDebugStr);
+        MaybeWriteDebugSection(wcstDebugLine);
+        MaybeWriteDebugSection(wcstDebugFrame);
+        MaybeWriteDebugSection(wcstDebugAranges);
+        MaybeWriteDebugSection(wcstDebugRanges);
+
+        result := true;
       end;
 
     procedure TWasmExeOutput.DoRelocationFixup(objsec: TObjSection);
+
+      procedure writeUInt32LE(v: uint32);
+        begin
+{$ifdef FPC_BIG_ENDIAN}
+          v:=SwapEndian(v);
+{$endif FPC_BIG_ENDIAN}
+          objsec.data.write(v,4);
+        end;
+
+      var
+        i: Integer;
+        objreloc: TWasmObjRelocation;
+        objsym: TWasmObjSymbol;
       begin
-        {TODO: implement}
+        for i:=0 to objsec.ObjRelocations.Count-1 do
+          begin
+            objreloc:=TWasmObjRelocation(objsec.ObjRelocations[i]);
+            if assigned(objreloc.symbol) then
+              begin
+                objsym:=TWasmObjSymbol(objreloc.symbol);
+                case objreloc.typ of
+                  RELOC_FUNCTION_INDEX_LEB:
+                    begin
+                      if objsym.LinkingData.ExeFunctionIndex=-1 then
+                        internalerror(2024010103);
+                      objsec.Data.seek(objreloc.DataOffset);
+                      WriteUleb5(objsec.Data,objsym.LinkingData.ExeFunctionIndex);
+                    end;
+                  RELOC_ABSOLUTE:
+                    begin
+                      case objsym.typ of
+                        AT_FUNCTION:
+                          begin
+                            if objreloc.IsFunctionOffsetI32 then
+                              begin
+                                { R_WASM_FUNCTION_OFFSET_I32 }
+                                objsec.Data.seek(objreloc.DataOffset);
+                                writeUInt32LE(UInt32(objsym.objsection.MemPos+objreloc.Addend));
+                              end
+                            else
+                              begin
+                                { R_WASM_TABLE_INDEX_I32 }
+                                if objsym.LinkingData.ExeFunctionIndex=-1 then
+                                  internalerror(2024010103);
+                                if objsym.LinkingData.ExeIndirectFunctionTableIndex=-1 then
+                                  objsym.LinkingData.ExeIndirectFunctionTableIndex:=AddOrGetIndirectFunctionTableIndex(objsym.LinkingData.ExeFunctionIndex);
+                                objsec.Data.seek(objreloc.DataOffset);
+                                writeUInt32LE(UInt32(objsym.LinkingData.ExeIndirectFunctionTableIndex));
+                              end;
+                          end;
+                        AT_DATA:
+                          begin
+                            if objreloc.IsFunctionOffsetI32 then
+                              internalerror(2024010602);
+                            objsec.Data.seek(objreloc.DataOffset);
+                            writeUInt32LE(UInt32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                          end;
+                        else
+                          internalerror(2024010108);
+                      end;
+                    end;
+                  RELOC_MEMORY_ADDR_LEB:
+                    begin
+                      if objsym.typ<>AT_DATA then
+                        internalerror(2024010109);
+                      objsec.Data.seek(objreloc.DataOffset);
+                      WriteUleb5(objsec.Data,UInt32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                    end;
+                  RELOC_MEMORY_ADDR_OR_TABLE_INDEX_SLEB:
+                    begin
+                      case objsym.typ of
+                        AT_FUNCTION:
+                          begin
+                            if objsym.LinkingData.ExeFunctionIndex=-1 then
+                              internalerror(2024010103);
+                            if objsym.LinkingData.ExeIndirectFunctionTableIndex=-1 then
+                              objsym.LinkingData.ExeIndirectFunctionTableIndex:=AddOrGetIndirectFunctionTableIndex(objsym.LinkingData.ExeFunctionIndex);
+                            objsec.Data.seek(objreloc.DataOffset);
+                            WriteSleb5(objsec.Data,Int32(objsym.LinkingData.ExeIndirectFunctionTableIndex));
+                          end;
+                        AT_DATA:
+                          begin
+                            objsec.Data.seek(objreloc.DataOffset);
+                            WriteSleb5(objsec.Data,Int32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                          end;
+                        else
+                          internalerror(2024010110);
+                      end;
+                    end;
+                  RELOC_GLOBAL_INDEX_LEB:
+                    begin
+                      if objsym.typ<>AT_WASM_GLOBAL then
+                        internalerror(2024010111);
+                      objsec.Data.seek(objreloc.DataOffset);
+                      WriteUleb5(objsec.Data,UInt32(objsym.offset+objsym.objsection.MemPos));
+                    end;
+                  RELOC_TAG_INDEX_LEB:
+                    begin
+                      if objsym.typ<>AT_WASM_EXCEPTION_TAG then
+                        internalerror(2024010708);
+                      objsec.Data.seek(objreloc.DataOffset);
+                      WriteUleb5(objsec.Data,UInt32(objsym.offset+objsym.objsection.MemPos));
+                    end;
+                  else
+                    internalerror(2024010109);
+                end;
+              end
+            else if assigned(objreloc.objsection) then
+              begin
+                if objreloc.typ<>RELOC_ABSOLUTE then
+                  internalerror(2024010601);
+                objsec.Data.seek(objreloc.DataOffset);
+                writeUInt32LE(UInt32((objreloc.objsection.MemPos)+objreloc.Addend));
+              end
+            else if objreloc.typ=RELOC_TYPE_INDEX_LEB then
+              begin
+                objreloc.ExeTypeIndex:=FFuncTypes.AddOrGetFuncType(objreloc.FuncType);
+                objsec.Data.seek(objreloc.DataOffset);
+                WriteUleb5(objsec.Data,objreloc.ExeTypeIndex);
+              end
+            else
+              internalerror(2024010110);
+          end;
+      end;
+
+    constructor TWasmExeOutput.create;
+      var
+        i: TWasmSectionID;
+        j: TWasmCustomSectionType;
+      begin
+        inherited create;
+        CObjData:=TWasmObjData;
+        MaxMemPos:=$FFFFFFFF;
+        FFuncTypes:=TWasmFuncTypeTable.Create;
+        for i in TWasmSectionID do
+          FWasmSections[i] := tdynamicarray.create(SectionDataMaxGrow);
+        for j in TWasmCustomSectionType do
+          FWasmCustomSections[j] := tdynamicarray.create(SectionDataMaxGrow);
+        SetLength(FIndirectFunctionTable,1);
+        FIndirectFunctionTable[0].FuncIdx:=-1;
+      end;
+
+    destructor TWasmExeOutput.destroy;
+      var
+        i: TWasmSectionID;
+        j: TWasmCustomSectionType;
+      begin
+        for i in TWasmSectionID do
+          FWasmSections[i].Free;
+        for j in TWasmCustomSectionType do
+          FWasmCustomSections[j].Free;
+        FFuncTypes.Free;
+        inherited destroy;
+      end;
+
+    procedure TWasmExeOutput.GenerateLibraryImports(ImportLibraryList: TFPHashObjectList);
+      var
+        i, j: Integer;
+        ImportLibrary: TImportLibrary;
+        ImportSymbol: TImportSymbol;
+        exesym: TExeSymbol;
+      begin
+        { Here map import symbols to exe symbols and create necessary sections.
+          Actual import generation is done after unused sections (and symbols) are removed. }
+        FImports:=ImportLibraryList;
+        for i:=0 to ImportLibraryList.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(ImportLibraryList[i]);
+            for j:=0 to ImportLibrary.ImportSymbolList.Count-1 do
+              begin
+                ImportSymbol:=TImportSymbol(ImportLibrary.ImportSymbolList[j]);
+                exesym:=TExeSymbol(ExeSymbolList.Find(ImportSymbol.MangledName));
+                if assigned(exesym) and
+                   (exesym.State<>symstate_defined) then
+                  begin
+                    ImportSymbol.CachedExeSymbol:=exesym;
+                    exesym.State:=symstate_defined;
+                  end;
+              end;
+          end;
+        PackUnresolvedExeSymbols('after module imports');
+      end;
+
+    procedure TWasmExeOutput.AfterUnusedSectionRemoval;
+      begin
+        PrepareImports;
+        PrepareFunctions;
+        PrepareTags;
+      end;
+
+    procedure TWasmExeOutput.MemPos_ExeSection(const aname: string);
+      const
+        DebugPrefix = '.debug_';
+      var
+        ExeSec: TExeSection;
+        i: Integer;
+        objsec: TObjSection;
+      begin
+        { WebAssembly is a Harvard architecture.
+          Data lives in a separate address space, so start addressing back from 0
+          (the LLVM leaves the first 1024 bytes in the data segment empty, so we
+          start at 1024). }
+        if aname='.rodata' then
+          begin
+            CurrMemPos:=1024;
+            inherited;
+          end
+        else if aname='.text' then
+          begin
+            CurrMemPos:=0;
+            ExeSec:=FindExeSection(aname);
+            if not assigned(ExeSec) then
+              exit;
+            exesec.MemPos:=CurrMemPos;
+
+            CurrMemPos:=CurrMemPos+UlebEncodingSize(exesec.ObjSectionList.Count);
+
+            { set position of object ObjSections }
+            for i:=0 to exesec.ObjSectionList.Count-1 do
+              begin
+                objsec:=TObjSection(exesec.ObjSectionList[i]);
+                CurrMemPos:=CurrMemPos+UlebEncodingSize(objsec.Size);
+                CurrMemPos:=objsec.setmempos(CurrMemPos);
+              end;
+
+            { calculate size of the section }
+            exesec.Size:=CurrMemPos-exesec.MemPos;
+          end
+        else if (aname='.wasm_globals') or (aname='.wasm_tags') or
+                (Copy(aname,1,Length(DebugPrefix))=DebugPrefix) then
+          begin
+            CurrMemPos:=0;
+            inherited;
+          end
+        else
+          inherited;
+      end;
+
+    procedure TWasmExeOutput.Load_Symbol(const aname: string);
+      begin
+        if aname=StackPointerSymStr then
+          begin
+            internalObjData.createsection('*'+aname,1,[oso_Data,oso_load]);
+            FStackPointerSym:=TWasmObjSymbol(internalObjData.SymbolDefine(aname,AB_GLOBAL,AT_WASM_GLOBAL));
+            FStackPointerSym.size:=1;
+            FStackPointerSym.ObjSection.WriteZeros(1);
+            TWasmObjSection(FStackPointerSym.ObjSection).MainFuncSymbol:=FStackPointerSym;
+            FStackPointerSym.LinkingData.GlobalType:=wbt_i32;
+            FStackPointerSym.LinkingData.GlobalIsMutable:=True;
+            FStackPointerSym.LinkingData.GlobalInitializer.typ:=wbt_i32;
+            FStackPointerSym.LinkingData.GlobalInitializer.init_i32:=0;
+          end
+        else
+          inherited;
+      end;
+
+    procedure TWasmExeOutput.PrepareImports;
+
+      function AddFunctionImport(const libname,symname:TCmdStr; functype: TWasmFuncType): Integer;
+        begin
+          SetLength(FFunctionImports,Length(FFunctionImports)+1);
+          Result:=High(FFunctionImports);
+          if assigned(exemap) then
+            exemap.Add('  Importing Function[' + tostr(Result) + '] ' + symname + functype.ToString);
+          with FFunctionImports[Result] do
+            begin
+              ModName:=libname;
+              Name:=symname;
+              TypeIdx:=FFuncTypes.AddOrGetFuncType(functype);
+            end;
+        end;
+
+      var
+        i, j: Integer;
+        ImportLibrary: TImportLibrary;
+        ImportSymbol: TImportSymbol;
+        exesym: TExeSymbol;
+        newdll: Boolean;
+        fsym: TWasmObjSymbol;
+        objdata: TObjData;
+      begin
+        for i:=0 to FImports.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(FImports[i]);
+            newdll:=False;
+            for j:=0 to ImportLibrary.ImportSymbolList.Count-1 do
+              begin
+                ImportSymbol:=TImportSymbol(ImportLibrary.ImportSymbolList[j]);
+                exesym:=ImportSymbol.CachedExeSymbol;
+                if assigned(exesym) and
+                   exesym.Used then
+                  begin
+                    if (not newdll) and assigned(exemap) then
+                      begin
+                        exemap.Add('');
+                        exemap.Add('Importing from module '+ImportLibrary.Name);
+                      end;
+                    newdll:=True;
+                    TWasmObjSymbol(exesym.ObjSymbol).LinkingData.ExeFunctionIndex:=
+                      AddFunctionImport(ImportLibrary.Name,ImportSymbol.Name,TWasmObjSymbol(exesym.ObjSymbol).LinkingData.FuncType);
+                  end;
+              end;
+          end;
+
+        { set ExeFunctionIndex to the alias symbols as well }
+        for i:=0 to ObjDataList.Count-1 do
+          begin
+            objdata:=TObjData(ObjDataList[i]);
+            for j:=0 to objdata.ObjSymbolList.Count-1 do
+              begin
+                fsym:=TWasmObjSymbol(objdata.ObjSymbolList[j]);
+                if (fsym.LinkingData.ExeFunctionIndex=-1) and assigned(fsym.exesymbol) and (TWasmObjSymbol(fsym.exesymbol.ObjSymbol).LinkingData.ExeFunctionIndex<>-1) then
+                  fsym.LinkingData.ExeFunctionIndex:=TWasmObjSymbol(fsym.exesymbol.ObjSymbol).LinkingData.ExeFunctionIndex;
+              end;
+          end;
+      end;
+
+    procedure TWasmExeOutput.PrepareFunctions;
+      var
+        i, j: Integer;
+        exesec: TExeSection;
+        objsec: TWasmObjSection;
+        fsym: TWasmObjSymbol;
+        objdata: TObjData;
+      begin
+        if assigned(exemap) then
+          begin
+            exemap.Add('');
+            exemap.Add('Functions, defined in this module:');
+          end;
+        exesec:=FindExeSection('.text');
+        if not assigned(exesec) then
+          internalerror(2023123106);
+        for i:=0 to exesec.ObjSectionList.Count-1 do
+          begin
+            objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
+            fsym:=objsec.MainFuncSymbol;
+            if not assigned(fsym) then
+              internalerror(2023123107);
+            if not assigned(fsym.LinkingData.FuncType) then
+              internalerror(2023123108);
+            if fsym.LinkingData.ExeFunctionIndex<>-1 then
+              internalerror(2023123109);
+            if fsym.LinkingData.ExeTypeIndex<>-1 then
+              internalerror(2023123109);
+            fsym.LinkingData.ExeTypeIndex:=FFuncTypes.AddOrGetFuncType(fsym.LinkingData.FuncType);
+            fsym.LinkingData.ExeFunctionIndex:=i+Length(FFunctionImports);
+            if assigned(exemap) then
+              begin
+                exemap.Add('  Function[' + tostr(fsym.LinkingData.ExeFunctionIndex) + '] ' + fsym.Name + fsym.LinkingData.FuncType.ToString);
+              end;
+          end;
+        { set ExeFunctionIndex to the alias symbols as well }
+        for i:=0 to ObjDataList.Count-1 do
+          begin
+            objdata:=TObjData(ObjDataList[i]);
+            for j:=0 to objdata.ObjSymbolList.Count-1 do
+              begin
+                fsym:=TWasmObjSymbol(objdata.ObjSymbolList[j]);
+                if assigned(fsym.objsection) and fsym.objsection.USed and (fsym.typ=AT_FUNCTION) and (fsym.LinkingData.ExeFunctionIndex=-1) then
+                  begin
+                    fsym.LinkingData.ExeFunctionIndex:=TWasmObjSection(fsym.objsection).MainFuncSymbol.LinkingData.ExeFunctionIndex;
+                    if fsym.LinkingData.ExeFunctionIndex=-1 then
+                      internalerror(2024010102);
+                  end;
+              end;
+          end;
+      end;
+
+    procedure TWasmExeOutput.PrepareTags;
+      var
+        exesec: TExeSection;
+        i, j: Integer;
+        objsec: TWasmObjSection;
+        fsym: TWasmObjSymbol;
+        objdata: TObjData;
+      begin
+        exesec:=FindExeSection('.wasm_tags');
+        if not assigned(exesec) then
+          exit;
+        if assigned(exemap) then
+          begin
+            exemap.Add('');
+            exemap.Add('Tags, defined in this module:');
+          end;
+        for i:=0 to exesec.ObjSectionList.Count-1 do
+          begin
+            objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
+            fsym:=objsec.MainFuncSymbol;
+            if not assigned(fsym) then
+              internalerror(2024010703);
+            if not assigned(fsym.LinkingData.FuncType) then
+              internalerror(2024010704);
+            if fsym.LinkingData.ExeTagIndex<>-1 then
+              internalerror(2024010705);
+            if fsym.LinkingData.ExeTypeIndex<>-1 then
+              internalerror(2024010706);
+            fsym.LinkingData.ExeTypeIndex:=FFuncTypes.AddOrGetFuncType(fsym.LinkingData.FuncType);
+            fsym.LinkingData.ExeTagIndex:=i+Length(FTagImports);
+            if assigned(exemap) then
+              begin
+                exemap.Add('  Tag[' + tostr(fsym.LinkingData.ExeTagIndex) + '] ' + fsym.Name + fsym.LinkingData.FuncType.ToString);
+              end;
+          end;
+        { set ExeTagIndex to the alias symbols as well }
+        for i:=0 to ObjDataList.Count-1 do
+          begin
+            objdata:=TObjData(ObjDataList[i]);
+            for j:=0 to objdata.ObjSymbolList.Count-1 do
+              begin
+                fsym:=TWasmObjSymbol(objdata.ObjSymbolList[j]);
+                if assigned(fsym.objsection) and fsym.objsection.USed and (fsym.typ=AT_WASM_EXCEPTION_TAG) and (fsym.LinkingData.ExeTagIndex=-1) then
+                  begin
+                    fsym.LinkingData.ExeTagIndex:=TWasmObjSection(fsym.objsection).MainFuncSymbol.LinkingData.ExeTagIndex;
+                    if fsym.LinkingData.ExeTagIndex=-1 then
+                      internalerror(2024010707);
+                  end;
+              end;
+          end;
+      end;
+
+    function TWasmExeOutput.AddOrGetIndirectFunctionTableIndex(FuncIdx: Integer): integer;
+      var
+        i: Integer;
+      begin
+        for i:=1 to length(FIndirectFunctionTable)-1 do
+          if FIndirectFunctionTable[i].FuncIdx=FuncIdx then
+            begin
+              Result:=i;
+              exit;
+            end;
+        SetLength(FIndirectFunctionTable,Length(FIndirectFunctionTable)+1);
+        Result:=High(FIndirectFunctionTable);
+        FIndirectFunctionTable[Result].FuncIdx:=FuncIdx;
+      end;
+
+    procedure TWasmExeOutput.SetStackPointer;
+      var
+        BssSec: TExeSection;
+        StackStart, InitialStackPtrAddr: QWord;
+      begin
+        BssSec:=FindExeSection('.bss');
+        InitialStackPtrAddr := (BssSec.MemPos+BssSec.Size+stacksize+15) and (not 15);
+        FMinMemoryPages := (InitialStackPtrAddr+65535) shr 16;
+        FStackPointerSym.LinkingData.GlobalInitializer.init_i32:=Int32(InitialStackPtrAddr);
+      end;
+
+    procedure TWasmExeOutput.WriteExeSectionToDynArray(exesec: TExeSection; dynarr: tdynamicarray);
+      var
+        exesecdatapos: LongWord;
+        i: Integer;
+        objsec: TObjSection;
+        dpos, pad: QWord;
+      begin
+        exesecdatapos:=dynarr.size;
+        for i:=0 to exesec.ObjSectionList.Count-1 do
+          begin
+            objsec:=TObjSection(exesec.ObjSectionList[i]);
+            if not (oso_data in objsec.secoptions) then
+              internalerror(2024010104);
+            if not assigned(objsec.data) then
+              internalerror(2024010105);
+
+            dpos:=objsec.MemPos-exesec.MemPos+exesecdatapos;
+            pad:=dpos-dynarr.size;
+            { objsection must be within SecAlign bytes from the previous one }
+            if (dpos<dynarr.Size) or
+              (pad>=max(objsec.SecAlign,1)) then
+              internalerror(2024010106);
+            writeZeros(dynarr,pad);
+
+            objsec.data.seek(0);
+            CopyDynamicArray(objsec.data,dynarr,objsec.data.size);
+          end;
+        if (dynarr.size-exesecdatapos)<>exesec.Size then
+          internalerror(2024010107);
       end;
 
 

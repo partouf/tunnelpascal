@@ -28,6 +28,7 @@ interface
     uses
        cclasses,
        globtype,globals,constexp,version,tokens,
+       symtype,symdef,symsym,
        verbose,comphook,
        finput,
        widestr;
@@ -253,7 +254,11 @@ interface
           procedure readtoken(allowrecordtoken:boolean);
           function  readpreproc:ttoken;
           function  readpreprocint(var value:int64;const place:string):boolean;
+          function  readpreprocset(conform_to:tsetdef;var value:tnormalset;const place:string):boolean;
           function  asmgetchar:char;
+{$ifdef EXTDEBUG}
+          function DumpPointer : string;
+{$endif EXTDEBUG}
        end;
 
 {$ifdef PREPROCWRITE}
@@ -281,8 +286,6 @@ interface
         token,                        { current token being parsed }
         idtoken    : ttoken;          { holds the token if the pattern is a known word }
 
-        current_scanner : tscannerfile;  { current scanner in use }
-
         current_commentstyle : tcommentstyle; { needed to use read_comment from directives }
 {$ifdef PREPROCWRITE}
         preprocfile     : tpreprocfile;  { used with only preprocessing }
@@ -297,10 +300,16 @@ interface
     procedure InitScanner;
     procedure DoneScanner;
 
+    function current_scanner : tscannerfile;  { current scanner in use }
+    procedure set_current_scanner(avalue : tscannerfile);  { current scanner in use }
+
     { To be called when the language mode is finally determined }
     Function SetCompileMode(const s:string; changeInit: boolean):boolean;
     Function SetCompileModeSwitch(s:string; changeInit: boolean):boolean;
     procedure SetAppType(NewAppType:tapptype);
+
+    var
+      onfreescanner : procedure(s : tscannerfile) = nil;
 
 implementation
 
@@ -309,7 +318,7 @@ implementation
       cutils,cfileutl,
       systems,
       switches,
-      symbase,symtable,symtype,symsym,symconst,symdef,defutil,
+      symbase,symtable,symconst,defutil,defcmp,node,
       { This is needed for tcputype }
       cpuinfo,
       fmodule,fppu,
@@ -320,7 +329,24 @@ implementation
       { dictionaries with the supported directives }
       turbo_scannerdirectives : TFPHashObjectList;     { for other modes }
       mac_scannerdirectives   : TFPHashObjectList;     { for mode mac }
+      {
+        By default the current_scanner is current_module.scanner.
+        set_current_scanner sets the _temp_scanner variable.
+        If _temp_scanner is set, it is returned as the current scanner
+      }
+      _temp_scanner : tscannerfile;
 
+      function current_scanner : tscannerfile;  { current scanner in use }
+
+      begin
+        Result:=_temp_scanner;
+        if result<>nil then
+          exit;
+        if assigned(current_module) then
+          Result:=Tscannerfile(current_module.scanner)
+        else
+          Result:=Nil;
+      end;
 
 {*****************************************************************************
                               Helper routines
@@ -493,6 +519,10 @@ implementation
 {$endif i8086}
       end;
 
+    procedure set_current_scanner(avalue: tscannerfile);
+    begin
+      _temp_scanner:=avalue;
+    end;
 
     Function SetCompileMode(const s:string; changeInit: boolean):boolean;
       var
@@ -598,10 +628,17 @@ implementation
                current_settings.setalloc:=1;
              end
            else if (m_mac in current_settings.modeswitches) then
-             { compatible with Metrowerks Pascal }
-             current_settings.packenum:=2
+             begin
+               { compatible with Metrowerks Pascal }
+               current_settings.packenum:=2;
+               current_settings.setalloc:=default_settings.setalloc;
+             end
            else
-             current_settings.packenum:=4;
+             begin
+               current_settings.packenum:=default_settings.packenum;
+               current_settings.setalloc:=default_settings.setalloc;
+             end;
+
            if changeinit then
              begin
                init_settings.packenum:=current_settings.packenum;
@@ -715,10 +752,10 @@ implementation
         doinclude:=true;
         case s[length(s)] of
           '+':
-            s:=copy(s,1,length(s)-1);
+            setlength(s,length(s)-1);
           '-':
             begin
-              s:=copy(s,1,length(s)-1);
+              setlength(s,length(s)-1);
               doinclude:=false;
             end;
         end;
@@ -1022,6 +1059,7 @@ type
     function asInt: Integer;
     function asInt64: Int64;
     function asStr: String;
+    function asSet: tnormalset;
     destructor destroy; override;
   end;
 
@@ -1061,7 +1099,8 @@ type
             getmem(value.valueptr,value.len+1);
             move(c.value.valueptr^,value.valueptr^,value.len+1);
           end;
-        constwstring:
+        constwstring,
+        constwresourcestring:
           begin
             initwidestring(value.valueptr);
             copywidestring(c.value.valueptr,value.valueptr);
@@ -1478,6 +1517,11 @@ type
       result:=value.valueord.svalue;
     end;
 
+  function texprvalue.asSet: tnormalset;
+    begin
+      result:=pnormalset(value.valueptr)^;
+    end;
+
   function texprvalue.asStr: String;
     var
       b:byte;
@@ -1511,7 +1555,8 @@ type
         conststring,
         constresourcestring :
           freemem(value.valueptr,value.len+1);
-        constwstring :
+        constwstring,
+        constwresourcestring:
           donewidestring(pcompilerwidestring(value.valueptr));
         constreal :
           dispose(pbestreal(value.valueptr));
@@ -1566,7 +1611,7 @@ type
       end;
 
 
-    function preproc_comp_expr:texprvalue;
+    function preproc_comp_expr(conform_to:tdef):texprvalue;
 
         function preproc_sub_expr(pred_level:Toperator_precedence;eval:Boolean):texprvalue; forward;
 
@@ -1821,7 +1866,8 @@ type
            srsymtable : TSymtable;
            hdef : TDef;
            l : longint;
-           hasKlammer: Boolean;
+           hasKlammer,
+           read_next: Boolean;
            exprvalue:texprvalue;
            ns:tnormalset;
            fs,path,name: tpathstr;
@@ -2216,21 +2262,56 @@ type
                               case srsym.typ of
                                 constsym:
                                   begin
-                                    result.free;
-                                    result:=texprvalue.create_const(tconstsym(srsym));
-                                    tconstsym(srsym).IncRefCount;
+                                    { const def must conform to the set type }
+                                    if (conform_to<>nil) and
+                                      (conform_to.typ=setdef) and
+                                      (tconstsym(srsym).constdef.typ=setdef) and
+                                      (compare_defs(tsetdef(tconstsym(srsym).constdef).elementdef,tsetdef(conform_to).elementdef,nothingn)<>te_exact) then
+                                        begin
+                                          result.free;
+                                          result:=nil;
+                                          // TODO(ryan): better error?
+                                          Message(scan_e_error_in_preproc_expr);
+                                        end;
+                                    if result<>nil then
+                                      begin
+                                        result.free;
+                                        result:=texprvalue.create_const(tconstsym(srsym));
+                                        tconstsym(srsym).IncRefCount;
+                                      end;
                                   end;
                                 enumsym:
                                   begin
-                                    result.free;
-                                    result:=texprvalue.create_int(tenumsym(srsym).value);
-                                    tenumsym(srsym).IncRefCount;
+                                    { enum definition must conform to the set type }
+                                    if (conform_to<>nil) and
+                                      (conform_to.typ=setdef) and
+                                      (compare_defs(tenumsym(srsym).definition,tsetdef(conform_to).elementdef,nothingn)<>te_exact) then
+                                        begin
+                                          result.free;
+                                          result:=nil;
+                                          // TODO(ryan): better error?
+                                          Message(scan_e_error_in_preproc_expr);
+                                        end;
+                                    if result<>nil then
+                                      begin
+                                        result.free;
+                                        result:=texprvalue.create_int(tenumsym(srsym).value);
+                                        tenumsym(srsym).IncRefCount;
+                                      end;
                                   end;
                                 else
                                   ;
                               end;
                           end
-                        end
+                        { the id must be belong to the set type }
+                        else if (conform_to<>nil) and (conform_to.typ=setdef) then
+                          begin
+                            result.free;
+                            result:=nil;
+                            // TODO(ryan): better error?
+                            Message(scan_e_error_in_preproc_expr);
+                          end;
+                      end
                       { skip id(<expr>) if expression must not be evaluated }
                       else if not(eval) and (result.consttyp=conststring) then
                         begin
@@ -2258,16 +2339,36 @@ type
              begin
                preproc_consume(_LECKKLAMMER);
                ns:=[];
-               while current_scanner.preproc_token in [_ID,_INTCONST] do
+               read_next:=false;
+               while (current_scanner.preproc_token in [_ID,_INTCONST]) or read_next do
                begin
+                 read_next:=false;
                  exprvalue:=preproc_factor(eval);
+                 { the const set does not conform to the set def }
+                 if (conform_to<>nil) and
+                   (conform_to.typ=setdef) and
+                   (exprvalue.consttyp=constnone) then
+                   begin
+                     result:=texprvalue.create_error;
+                     break;
+                   end;
+                 { reject duplicate enums in the set }
+                 if exprvalue.asInt in ns then
+                   begin
+                     Message1(sym_e_duplicate_id,current_scanner.preproc_pattern);
+                     result:=texprvalue.create_error;
+                     break;
+                   end;
                  include(ns,exprvalue.asInt);
                  if current_scanner.preproc_token = _COMMA then
-                   preproc_consume(_COMMA);
+                   begin
+                     preproc_consume(_COMMA);
+                     read_next:=true;
+                   end
                end;
-               // TODO Add check of setElemType
                preproc_consume(_RECKKLAMMER);
-               result:=texprvalue.create_set(ns);
+               if result=nil then
+                 result:=texprvalue.create_set(ns);
              end
            else if current_scanner.preproc_token = _INTCONST then
              begin
@@ -2366,7 +2467,7 @@ type
       var
         hs: texprvalue;
       begin
-        hs:=preproc_comp_expr;
+        hs:=preproc_comp_expr(nil);
         if hs.isBoolean then
           result:=hs.asBool
         else
@@ -2545,7 +2646,7 @@ type
         if c='=' then
           begin
              current_scanner.readchar;
-             exprvalue:=preproc_comp_expr;
+             exprvalue:=preproc_comp_expr(nil);
              if not is_boolean(exprvalue.def) and
                 not is_integer(exprvalue.def) then
                exprvalue.error('Boolean, Integer', 'SETC');
@@ -2769,7 +2870,6 @@ type
          end;
       end;
 
-
 {*****************************************************************************
                             Preprocessor writing
 *****************************************************************************}
@@ -2888,7 +2988,7 @@ type
                                 TSCANNERFILE
  ****************************************************************************}
 
-    constructor tscannerfile.create(const fn:string; is_macro: boolean = false);
+    constructor tscannerfile.Create(const fn: string; is_macro: boolean);
       begin
         inputfile:=do_openinputfile(fn);
         if is_macro then
@@ -2931,10 +3031,12 @@ type
       end;
 
 
-    destructor tscannerfile.destroy;
+    destructor tscannerfile.Destroy;
       begin
+        if assigned(onfreescanner) then
+          onfreescanner(self);
         if assigned(current_module) and
-           (current_module.state=ms_compiled) and
+           (current_module.state in [ms_processed,ms_compiled]) and
            (status.errorcount=0) then
           checkpreprocstack
         else
@@ -5375,7 +5477,7 @@ type
              '+' :
                begin
                  readchar;
-                 if (c='=') and (cs_support_c_operators in current_settings.moduleswitches) then
+                 if c='=' then
                   begin
                     readchar;
                     token:=_PLUSASN;
@@ -5388,7 +5490,7 @@ type
              '-' :
                begin
                  readchar;
-                 if (c='=') and (cs_support_c_operators in current_settings.moduleswitches) then
+                 if c='=' then
                   begin
                     readchar;
                     token:=_MINUSASN;
@@ -5414,7 +5516,7 @@ type
              '*' :
                begin
                  readchar;
-                 if (c='=') and (cs_support_c_operators in current_settings.moduleswitches) then
+                 if c='=' then
                   begin
                     readchar;
                     token:=_STARASN;
@@ -5436,12 +5538,9 @@ type
                  case c of
                    '=' :
                      begin
-                       if (cs_support_c_operators in current_settings.moduleswitches) then
-                        begin
-                          readchar;
-                          token:=_SLASHASN;
-                          goto exit_label;
-                        end;
+                       readchar;
+                       token:=_SLASHASN;
+                       goto exit_label;
                      end;
                    '/' :
                      begin
@@ -6080,7 +6179,7 @@ exit_label:
       var
         hs : texprvalue;
       begin
-        hs:=preproc_comp_expr;
+        hs:=preproc_comp_expr(nil);
         if hs.isInt then
           begin
             value:=hs.asInt64;
@@ -6089,6 +6188,25 @@ exit_label:
         else
           begin
             hs.error('Integer',place);
+            result:=false;
+          end;
+        hs.free;
+      end;
+
+
+    function tscannerfile.readpreprocset(conform_to:tsetdef;var value:tnormalset;const place:string):boolean;
+      var
+        hs : texprvalue;
+      begin
+        hs:=preproc_comp_expr(conform_to);
+        if hs.def.typ=setdef then
+          begin
+            value:=hs.asSet;
+            result:=true;
+          end
+        else
+          begin
+            hs.error('Set',place);
             result:=false;
           end;
         hs.free;
@@ -6116,6 +6234,22 @@ exit_label:
          until false;
       end;
 
+{$ifdef EXTDEBUG}
+    function tscannerfile.DumpPointer: string;
+      var
+        i: Integer;
+
+      begin
+        Result:='';
+        if inputpointer=nil then exit;
+        i:=0;
+        While (inputpointer[I]<>#0) and (i<200) do
+          inc(i);
+        Setlength(result,I);
+        move(inputpointer^,Result[1],I);
+        result:='<'+inttostr(inputstart)+'>'+result;
+      end;
+{$endif EXTDEBUG}
 
 {*****************************************************************************
                                    Helpers

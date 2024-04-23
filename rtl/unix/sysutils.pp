@@ -69,8 +69,9 @@ uses
 {$ENDIF}
 
 {$IF defined(DARWIN)}
-{$DEFINE HAS_ISFILENAMECASEPRESERVING}
-{$DEFINE HAS_ISFILENAMECASESENSITIVE}
+  {$DEFINE HAS_ISFILENAMECASEPRESERVING}
+  {$DEFINE HAS_ISFILENAMECASESENSITIVE}
+  {$DEFINE USE_FUTIMES}
 {$ENDIF}
 
 {$if defined(LINUX)}
@@ -470,7 +471,8 @@ Function FileOpen (Const FileName : RawbyteString; Mode : Integer) : Longint;
 
 begin
   FileOpen:=FileOpenNoLocking(FileName, Mode);
-  FileOpen:=DoFileLocking(FileOpen, Mode);
+  if (Mode and fmShareNoLocking)=0 then
+    FileOpen:=DoFileLocking(FileOpen, Mode);
 end;
 
 function FileFlush(Handle: THandle): Boolean;
@@ -512,9 +514,12 @@ begin
     (which we can by definition) }
   fd:=FileOpenNoLocking(FileName,ShareMode);
   { the file exists, check whether our locking request is compatible }
-  if fd>=0 then
+  if (fd>=0) then
     begin
-      Result:=DoFileLocking(fd,ShareMode);
+      if ((ShareMode and fmShareNoLocking)=0) then
+        Result:=DoFileLocking(fd,ShareMode)
+      else
+        Result:=0;
       FileClose(fd);
      { Can't lock -> abort }
       if Result<0 then
@@ -522,7 +527,8 @@ begin
     end;
   { now create the file }
   Result:=FileCreate(FileName,Rights);
-  Result:=DoFileLocking(Result,ShareMode);
+  if ((ShareMode and fmShareNoLocking)=0) then
+    Result:=DoFileLocking(Result,ShareMode);
 end;
 
 
@@ -1178,7 +1184,7 @@ end;
 Function FileSetDate (Handle : Longint;Age : Int64) : Longint;
 {$ifdef USE_FUTIMES}
 var
-  times : tkernel_timespecs;
+  times : TTimespecArr;
 {$endif USE_FUTIMES}
 begin
   Result:=0;
@@ -1187,7 +1193,7 @@ begin
   times[0].tv_nsec:=0;
   times[1].tv_sec:=Age;
   times[1].tv_nsec:=0;
-  if futimens(Handle,times) = -1 then
+  if fpfutimens(Handle,times) = -1 then
     Result:=fpgeterrno;
 {$else USE_FUTIMES}
   FileSetDate:=-1;
@@ -1249,7 +1255,7 @@ Function FileSetDate (Const FileName : RawByteString; Age : Int64) : Longint;
 var
   SystemFileName: RawByteString;
 {$ifdef USE_UTIMENSAT}
-  times : tkernel_timespecs;
+  times : TTimespecArr;
 {$endif USE_UTIMENSAT}
   t: TUTimBuf;
 begin
@@ -1410,7 +1416,7 @@ end;
 ****************************************************************************}
 
 
-Function GetEpochTime: cint;
+Function GetEpochTime: time_t;
 {
   Get the number of seconds since 00:00, January 1 1970, GMT
   the time NOT corrected any way

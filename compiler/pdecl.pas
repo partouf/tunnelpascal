@@ -289,7 +289,7 @@ implementation
                      caret, to support const s : ^string = nil }
                    block_type:=bt_const_type;
                    consume(_COLON);
-                   read_anon_type(hdef,false);
+                   read_anon_type(hdef,false,nil);
                    block_type:=bt_const;
                    { create symbol }
                    storetokenpos:=current_tokenpos;
@@ -780,7 +780,6 @@ implementation
                gentypename:=typename;
                genorgtypename:=orgtypename;
              end;
-
 
            consume(_EQ);
 
@@ -1362,7 +1361,7 @@ implementation
                                  changestringtype(cunicodestringtype);
                                initwidestring(pw);
                                copywidestring(pcompilerwidestring(value_str),pw);
-                               sym:=cconstsym.create_wstring(orgname,constresourcestring,pw);
+                               sym:=cconstsym.create_wstring(orgname,constwresourcestring,pw);
                                end;
                           end;
                       else

@@ -83,6 +83,7 @@ interface
         { reusable deref node }
         fderefexpression  : tai_llvmspecialisedmetadatanode;
 
+        fllvm_dbg_declare_pd: tprocdef;
         fllvm_dbg_addr_pd: tprocdef;
 
         function absolute_llvm_path(const s:tcmdstr):tcmdstr;
@@ -490,6 +491,8 @@ implementation
 
     procedure TDebugInfoLLVM.ensuremetainit;
       begin
+        if not assigned(fllvm_dbg_declare_pd) then
+          fllvm_dbg_declare_pd:=search_system_proc('llvm_dbg_declare');
         if not assigned(fllvm_dbg_addr_pd) then
           fllvm_dbg_addr_pd:=search_system_proc('llvm_dbg_addr');
         if not assigned(fenums) then
@@ -574,7 +577,8 @@ implementation
         { not really clean since hardcoding the structure of the call
           instruction's procdef encoding, but quick }
         if (hp.oper[taillvm.callpdopernr]^.def.typ<>pointerdef) or
-           (tpointerdef(hp.oper[taillvm.callpdopernr]^.def).pointeddef<>fllvm_dbg_addr_pd) then
+           ((tpointerdef(hp.oper[taillvm.callpdopernr]^.def).pointeddef<>fllvm_dbg_declare_pd) and
+            (tpointerdef(hp.oper[taillvm.callpdopernr]^.def).pointeddef<>fllvm_dbg_addr_pd)) then
           exit;
         deref:=false;
 
@@ -754,7 +758,7 @@ implementation
       begin
         filemeta:=file_getmetanode(fileinfo.moduleindex,fileinfo.fileindex);
         if not assigned(filemeta) then
-          internalerror(2022041701);
+          internalerror(2022041730);
         result:=tai_llvmspecialisedmetadatanode.create(tspecialisedmetadatanodekind.DILocation);
         result.addqword('line',fileinfo.line);
         result.addqword('column',fileinfo.column);
@@ -2921,7 +2925,7 @@ implementation
 
             if (hp.typ=ait_llvmins) and
                ((nolineinfolevel=0) or
-                (taillvm(hp).llvmopcode=la_call)) then
+                (taillvm(hp).llvmopcode in [la_call,la_invoke])) then
               begin
                 positionmeta:=nil;
                 { valid file -> add info }
@@ -2933,18 +2937,23 @@ implementation
                         functionscope.addint64('scopeLine',tailineinfo(hp).fileinfo.line);
                         firstline:=false;
                       end;
+
                     positionmeta:=filepos_getmetanode(tailineinfo(hp).fileinfo,procdeffileinfo,functionscope,nolineinfolevel<>0);
-                  end
+                  end;
+
                 { LLVM requires line info for call instructions that may
                   potentially be inlined }
-                else if taillvm(hp).llvmopcode=la_call then
+                if (taillvm(hp).llvmopcode in [la_call,la_invoke]) and
+                   not assigned(positionmeta) then
                   begin
-                    positionmeta:=filepos_getmetanode(tailineinfo(hp).fileinfo,procdeffileinfo,functionscope,true);
+                    positionmeta:=filepos_getmetanode(procdeffileinfo,procdeffileinfo,functionscope,true);
                   end;
+
                 if assigned(positionmeta) then
                   taillvm(hp).addinsmetadata(tai_llvmmetadatareferenceoperand.createreferenceto('dbg',positionmeta));
+
                 if (cs_debuginfo in current_settings.moduleswitches) and
-                   (taillvm(hp).llvmopcode=la_call) then
+                   (taillvm(hp).llvmopcode = la_call) then
                   updatelocalvardbginfo(taillvm(hp),pd,functionscope);
               end;
             hp:=tai(hp.next);

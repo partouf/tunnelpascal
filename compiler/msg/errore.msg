@@ -150,7 +150,7 @@ general_i_reduced_filesearch=01028_I_Reduced file search: Not searching for uppe
 #
 # Scanner
 #
-# 02107 is the last used one
+# 02112 is the last used one
 #
 % \section{Scanner messages.}
 % This section lists the messages that the scanner emits. The scanner takes
@@ -445,6 +445,20 @@ scan_e_unexpected_endif=02108_E_$ENDIF directive found without a matching $IF(N)
 % When legacy ifend is turned on by the directive \var{\$LEGACYIFEND}, then the
 % \var{\$IF} directive must be closed by the \var{\$IFEND} directive and the
 % \var{\$IFDEF} directive must be closed by the \var{\$ENDIF} directive.
+scan_e_invalid_rtti_clause=02109_E_A Invalid RTTI clause (expected Explicit or Inherit)
+% The \var{\$RTTI} directive needs to be followed either by \var{EXPLICIT} or \var{INHERIT}
+% and entries for \var{FIELDS}, \var{PROPERTIES} or \var{METHODS}.
+scan_e_incomplete_rtti_clause=02110_E_A Explicit clause requires at least one option (Methods, Properties or Fields)
+% An \var{\$RTTI EXPLICIT} directive requires at least one of the \var{FIELDS}, \var{PROPERTIES}
+% or \var{METHODS} entries.
+scan_e_invalid_rtti_option=02111_E_A Invalid RTTI option "$1" (expected Methods, Properties or Fields)
+% The \var{\$RTTI EXPLICIT} can only contain \var{FIELDS}, \var{PROPERTIES} and \var{METHODS}
+% entries.
+scan_e_duplicate_rtti_option=02112_E_A Duplicate RTTI option "$1"
+% An option in a \var{\$RTTI EXPLICIT} directive can only appear once.
+scan_e_misplaced_rtti_directive=02113_E_A The RTTI directive cannot be used here
+% The \var{\$RTTI} directive can not be used in this location (e.g. before the \var{PROGRAM}
+% or \var{UNIT} headers).
 % \end{description}
 #
 # Parser
@@ -1657,9 +1671,12 @@ parser_e_suspending_externals_not_supported_on_current_platform=03368_E_Declarin
 parser_w_widechar_set_reduced=03369_W_Reducing Widechar set to single-byte AnsiChar set.
 % The base type of a set can only have 255 elements. Sets of wide characters
 % are reduced to sets of 1-byte characters.
-parser_e_nostringaliasinsystem=03370_e_Using 'string' alias is not allowed in the system unit. Use short-,ansi- or unicodestring.
+parser_e_nostringaliasinsystem=03370_E_Using 'string' alias is not allowed in the system unit. Use short-,ansi- or unicodestring.
 % As a safeguard, the system unit may only use basic string types, not the
 % string alias which is dependent on the mode in which a unit is compiled.
+parser_e_coperators_off=03371_E_C styled assignment operators are turned off
+% By default, c style assignment operators (+=, -=, *=, /=) are turn off. Either turn them on by the command line
+% parameter -Sc or in the source code by {\$COPERATORS ON}
 %
 % \end{description}
 %
@@ -3845,7 +3862,7 @@ package_u_ppl_filename=13029_U_PPL filename $1
 #
 option_logo=11023_[
 Free Pascal Compiler version $FPCFULLVERSION [$FPCDATE] for $FPCCPU
-Copyright (c) 1993-2023 by Florian Klaempfl and others
+Copyright (c) 1993-2024 by Florian Klaempfl and others
 ]
 
 #
@@ -4022,7 +4039,7 @@ Z*2Az80asm_Assemble using z80asm
 **2bl_Generate local symbol info
 **1B_Build all modules
 **1C<x>_Code generation options:
-**2C3_Turn on ieee error checking for constants
+**2C3_Turn on IEEE error checking for constants
 **2Ca<x>_Select ABI; see fpc -i or fpc -ia for possible values
 **2Cb_Generate code for a big-endian variant of the target architecture
 **2Cc<x>_Set default calling convention to <x>
@@ -4277,6 +4294,7 @@ F*2P<x>_Set target CPU (aarch64,arm,avr,i386,i8086,jvm,m68k,mips,mipsel,powerpc,
 6*2Tamiga_Commodore Amiga
 6*2Tatari_Atari ST/STe/TT
 6*2Tembedded_Embedded
+6*2Thuman68k_Human 68k
 6*2Tlinux_Linux
 6*2Tnetbsd_NetBSD
 6*2Tmacosclassic_Classic Mac OS

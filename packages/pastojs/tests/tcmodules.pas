@@ -534,6 +534,7 @@ type
     Procedure TestRecord_Const;
     Procedure TestRecord_TypecastFail;
     Procedure TestRecord_InFunction;
+    Procedure TestRecord_ArrayConstMultiline;
 
     // anonymous record
     Procedure TestRecordAnonym_Field;
@@ -3469,7 +3470,7 @@ begin
     LinesToStr([
     'this.i = 0;',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.b = false;',
     'this.d = 0.0;',
     'this.i2 = 3;',
@@ -3585,7 +3586,7 @@ begin
     'this.b = false;',
     'this.d = 0.0;',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     '']),
     LinesToStr([ // this.$main
     '$mod.i = $mod.i;',
@@ -3636,7 +3637,7 @@ begin
     'this.b = false;',
     'this.d = 0.0;',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     '']),
     LinesToStr([ // this.$main
     '$mod.i = $mod.i;',
@@ -5016,7 +5017,7 @@ begin
   CheckSource('TestProc_VarParamString',
     LinesToStr([ // statements
     'this.DoIt = function (vA,vB,vC) {',
-    '  var c = "";',
+    '  var c = "\x00";',
     '  vA = rtl.setCharAt(vA, 0, c);',
     '  vB.set(rtl.setCharAt(vB.get(), 1, c));',
     '  vC.set(rtl.setCharAt(vC.get(), 2, c));',
@@ -7417,7 +7418,7 @@ begin
     'this.LowChars = rtl.createSet(null, 97, 122);',
     'this.Chars = rtl.unionSet(this.LowChars, rtl.createSet(null, 65, 90));',
     'this.sc = rtl.createSet(1040, 1071);',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.s = "";',
     '']),
     LinesToStr([
@@ -7868,6 +7869,7 @@ begin
   '  d:=-004.00E-00;',
   '  d:=-005.00E-001;',
   '  d:=10**3;',
+  '  d:=100*9**0.5;',
   '  d:=10 mod 3;',
   '  d:=10 div 3;',
   '  d:=c;',
@@ -7942,7 +7944,8 @@ begin
     '$mod.d = 3.000E0;',
     '$mod.d = -4.00E-0;',
     '$mod.d = -5.00E-1;',
-    '$mod.d = Math.pow(10, 3);',
+    '$mod.d = 10 ** 3;',
+    '$mod.d = 100 * (9 ** 0.5);',
     '$mod.d = 10 % 3;',
     '$mod.d = rtl.trunc(10 / 3);',
     '$mod.d = 1;',
@@ -8671,7 +8674,7 @@ begin
   ConvertProgram;
   CheckSource('TestChar_Compare',
     LinesToStr([
-    'this.c="";',
+    'this.c = "\x00";',
     'this.b = false;'
     ]),
     LinesToStr([
@@ -8714,7 +8717,7 @@ begin
   ConvertProgram;
   CheckSource('TestChar_BuiltInProcs',
     LinesToStr([
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.i = 0;',
     'this.s = "";'
     ]),
@@ -9005,7 +9008,7 @@ begin
   CheckSource('TestString_CharAt',
     LinesToStr([ // statements
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.b = false;'
     ]),
     LinesToStr([ // this.$main
@@ -9160,7 +9163,7 @@ begin
   CheckSource('TestCharSet_Custom',
     LinesToStr([ // statements
     'this.crg = "b";',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.crg2 = "m";',
     'this.s = {};',
     '']),
@@ -9204,8 +9207,8 @@ begin
     '};',
     'this.Run = function (c) {',
     '};',
-    'this.c = "";',
-    'this.wc = "";',
+    'this.c = "\x00";',
+    'this.wc = "\x00";',
     'this.w = 0;',
     '']),
     LinesToStr([ // this.$main
@@ -9246,7 +9249,7 @@ begin
   ConvertProgram;
   CheckSource('TestForCharDo',
     LinesToStr([ // statements
-    'this.c = "";']),
+    'this.c = "\x00";']),
     LinesToStr([ // this.$main
     'for (var $l = 97; $l <= 99; $l++) $mod.c = String.fromCharCode($l);',
     'for (var $l1 = $mod.c.charCodeAt(); $l1 >= 97; $l1--) $mod.c = String.fromCharCode($l1);',
@@ -9291,11 +9294,11 @@ begin
   CheckSource('TestForCharInDo',
     LinesToStr([ // statements
     'this.Foo = "foo";',
-    'this.c = "";',
-    'this.c2 = "";',
+    'this.c = "\x00";',
+    'this.c2 = "\x00";',
     'this.s = "";',
     'this.a1 = [];',
-    'this.a2 = rtl.arraySetLength(null, "", 3);',
+    'this.a2 = rtl.arraySetLength(null, "\x00", 3);',
     'this.soc = {};',
     'this.socr = {};',
     'this.cr = "a";',
@@ -10049,8 +10052,8 @@ begin
   ConvertProgram;
   CheckSource('TestCaseOfString',
     LinesToStr([ // statements
-    'this.s = "";',
-    'this.h = "";',
+    'this.s = "\x00";',
+    'this.h = "\x00";',
     '']),
     LinesToStr([ // $mod.$main
     'var $tmp = $mod.s;',
@@ -10421,13 +10424,13 @@ begin
   ConvertProgram;
   CheckSource('TestArray_StaticChar',
     LinesToStr([ // statements
-    'this.Arr = rtl.arraySetLength(null, "", 65536);',
-    'this.Arr2 = rtl.arraySetLength(null, "", 26);',
+    'this.Arr = rtl.arraySetLength(null, "\x00", 65536);',
+    'this.Arr2 = rtl.arraySetLength(null, "\x00", 26);',
     'this.Arr3 = ["p", "a", "s"];',
     'this.Arr4 = ["p", "a", "s"];',
     'this.Arr5 = ["ä", "ö"];',
     'this.Arr6 = ["ä", "ö"];',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.b = false;',
     '']),
     LinesToStr([ // $mod.$main
@@ -11279,7 +11282,7 @@ begin
   ConvertProgram;
   CheckSource('TestArray_ArrayOfCharAssignString',
     LinesToStr([ // statements
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.s = "";',
     'this.a = [];',
     'this.Run = function (a) {',
@@ -13159,6 +13162,54 @@ begin
     '  var p = [];',
     '  p = rtl.arraySetLength(p, TPoint$1, 2);',
     '};',
+    '']),
+    LinesToStr([ // $mod.$main
+    '']));
+end;
+
+procedure TTestModule.TestRecord_ArrayConstMultiline;
+begin
+  StartProgram(false);
+  Add([
+  '{$mode delphi}',
+  'type',
+  '  TBird = record Wing: string; end;',
+  'const',
+  '  Birds: array[1..2] of TBird = (',
+  '    (Wing: ''''''',
+  '      First',
+  '      Second',
+  '      Third',
+  '    ''''''),',
+  '    (Wing: ''''''',
+  '      Value:=''Im in quotes''; ',
+  '    '''''')',
+  '  );',
+  'begin']);
+  ConvertProgram;
+  CheckSource('TestRecord_ArrayConstMultiline',
+    LinesToStr([ // statements
+    'rtl.recNewT(this, "TBird", function () {',
+    '  this.Wing = "";',
+    '  this.$eq = function (b) {',
+    '    return this.Wing === b.Wing;',
+    '  };',
+    '  this.$assign = function (s) {',
+    '    this.Wing = s.Wing;',
+    '    return this;',
+    '  };',
+    '});',
+    'this.Birds$a$clone = function (a) {',
+    '  var b = [];',
+    '  b.length = 2;',
+    '  for (var c = 0; c < 2; c++) b[c] = $mod.TBird.$clone(a[c]);',
+    '  return b;',
+    '};',
+    'this.Birds = [this.TBird.$clone({',
+    '  Wing: "  First\n  Second\n  Third"',
+    '}), this.TBird.$clone({',
+    '  Wing: "  Value:=''Im in quotes''; "',
+    '})];',
     '']),
     LinesToStr([ // $mod.$main
     '']));
@@ -29870,7 +29921,7 @@ begin
     'this.s = "";',
     'this.b = false;',
     'this.d = 0.0;',
-    'this.c = "";',
+    'this.c = "\x00";',
     '']),
     LinesToStr([ // $mod.$main
     '$mod.i = rtl.trunc($mod.v);',
@@ -29984,7 +30035,7 @@ begin
     'this.s = "";',
     'this.b = false;',
     'this.d = 0.0;',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.m = undefined;',
     '']),
     LinesToStr([ // $mod.$main
@@ -30369,7 +30420,7 @@ begin
     'this.b = false;',
     'this.d = 0.0;',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     '']),
     LinesToStr([ // $mod.$main
     '$mod.v = $mod.DoIt($mod.v, $mod.v, {',
@@ -30935,7 +30986,7 @@ begin
     'this.DoIt$1 = function (v) {',
     '};',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.u = "";',
     '']),
     LinesToStr([ // $mod.$main
@@ -30971,7 +31022,7 @@ begin
     'this.DoIt$1 = function (v) {',
     '};',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     'this.u = "";',
     '']),
     LinesToStr([ // $mod.$main
@@ -31599,7 +31650,7 @@ begin
     '  this.$init = function () {',
     '    this.FPropA = "";',
     '    this.VarLI = 0;',
-    '    this.VarC = "";',
+    '    this.VarC = "\x00";',
     '    this.VarS = "";',
     '    this.VarD = 0.0;',
     '    this.VarB = false;',
@@ -33631,7 +33682,7 @@ begin
     LinesToStr([ // statements
     'this.Bar = "bar";',
     'this.s = "";',
-    'this.c = "";',
+    'this.c = "\x00";',
     '$mod.$resourcestrings = {',
     '  Red: {',
     '      org: "red"',
@@ -34546,7 +34597,7 @@ begin
     '  var ArrChar = rtl.arraySetLength(null, 0, 10);',
     '  var ArrByteChar = rtl.arraySetLength(null, 0, 256, 10);',
     '  var i = 0;',
-    '  var c = "";',
+    '  var c = "\x00";',
     '  var o = null;',
     '  i = rtl.rc(Arr[1], 1, 10);',
     '  i = rtl.rc(ArrByteChar[1][2], 1, 10);',
@@ -34663,7 +34714,7 @@ begin
     'this.DoIt = function (h) {',
     '  var s = "";',
     '  var i = 0;',
-    '  var c = "";',
+    '  var c = "\x00";',
     '  var o = null;',
     '  c = rtl.rcc(rtl.rcCharAt(s, 0), 0, 65535);',
     '  s = rtl.rcSetCharAt(s, i - 1, rtl.rcCharAt(s, i - 1));',

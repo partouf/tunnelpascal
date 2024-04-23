@@ -5,7 +5,7 @@ default: all
 MAKEFILETARGETS=i386-netware
 BSDs = freebsd netbsd openbsd darwin dragonfly
 UNIXs = linux $(BSDs) solaris qnx haiku aix
-LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari
+LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari human68k
 OSNeedsComspecToRunBatch = go32v2 watcom
 FORCE:
 .PHONY: FORCE
@@ -549,6 +549,7 @@ PROFILEUNIT=DOSApi.Profile
 RASPI2UNIT=EmbeddedApi.raspi2
 RASPI3UNIT=EmbeddedApi.raspi3
 RASPIUARTUNIT=EmbeddedApi.raspiuart
+RP2040UNIT=EmbeddedApi.rp2040
 RTLCONSTSUNIT=System.RtlConsts
 SAM3X8EUNIT=EmbeddedApi.sam3x8e
 SAMD51P19AUNIT=EmbeddedApi.samd51p19a
@@ -796,6 +797,7 @@ PROFILEUNIT=profile
 RASPI2UNIT=raspi2
 RASPI3UNIT=raspi3
 RASPIUARTUNIT=raspiuart
+RP2040UNIT=rp2040
 RTLCONSTSUNIT=rtlconsts
 SAM3X8EUNIT=sam3x8e
 SAMD51P19AUNIT=samd51p19a
@@ -2281,7 +2283,7 @@ uachar$(PPUEXT): $(UACHAR_DEPS)
 	$(COMPILER) $(UACHAR_OPT) $<
 OBJPAS_DEPS= $(OBJPASDIR)/objpas.pp $(INC)/except.inc \
 	     $(SYSTEMUNIT)$(PPUEXT) \
-	     $(OBJPAS_DEPS_OS) $(OBJPAS_DEPS_SPU)
+	     $(OBJPAS_DEPS_OS) $(OBJPAS_DEPS_CPU)
 objpas$(PPUEXT): $(OBJPAS_DEPS)
 	$(COMPILER) $(OBJPAS_OPT) -Fi$(OBJPASDIR) $<
 MACPAS_DEPS=$(INC)/macpas.pp \
@@ -2388,6 +2390,10 @@ UnixApi.CP$(PPUEXT) : $(NSINC)/UnixApi.CP.pp $(UNIXCP_DEPS)
 	$(COMPILER) $(UNIXCP_OPT) $<
 ifeq ($(filter -dFPC_USE_LIBC,$(FPCOPT)),)
   LINUX_DEPS_OS+=$(SYSCALLUNIT)$(PPUEXT)
+else
+ifneq ($(filter $(CPU_TARGET),i386 x86_64),)
+  LINUX_DEPS_OS+=$(SYSCALLUNIT)$(PPUEXT)
+endif
 endif
 LINUX_DEPS=$(OSDIR)/linux.pp \
 	   $(BASEUNIXUNIT)$(PPUEXT) $(UNIXTYPEUNIT)$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \

@@ -133,6 +133,11 @@ const
   scan_e_emptymacroname=02106;
   scan_e_unexpected_ifend=02107;
   scan_e_unexpected_endif=02108;
+  scan_e_invalid_rtti_clause=02109;
+  scan_e_incomplete_rtti_clause=02110;
+  scan_e_invalid_rtti_option=02111;
+  scan_e_duplicate_rtti_option=02112;
+  scan_e_misplaced_rtti_directive=02113;
   parser_e_syntax_error=03000;
   parser_e_dont_nest_interrupt=03004;
   parser_w_proc_directive_ignored=03005;
@@ -485,6 +490,7 @@ const
   parser_e_suspending_externals_not_supported_on_current_platform=03368;
   parser_w_widechar_set_reduced=03369;
   parser_e_nostringaliasinsystem=03370;
+  parser_e_coperators_off=03371;
   type_e_mismatch=04000;
   type_e_incompatible_types=04001;
   type_e_not_equal_types=04002;
@@ -1172,9 +1178,9 @@ const
   option_info=11024;
   option_help_pages=11025;
 
-  MsgTxtSize = 92390;
+  MsgTxtSize = 92776;
 
   MsgIdxMax : array[1..20] of longint=(
-    29,109,371,134,102,63,148,38,224,71,
+    29,114,372,134,102,63,148,38,224,71,
     69,20,30,1,1,1,1,1,1,1
   );

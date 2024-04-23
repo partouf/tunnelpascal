@@ -52,7 +52,7 @@ uses
       procedure allocallcpuregisters(list: TAsmList); override;
       procedure deallocallcpuregisters(list: TAsmList); override;
 
-      procedure recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference); override;
+      procedure recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference; initial: boolean); override;
 
       class function def2regtyp(def: tdef): tregistertype; override;
      public
@@ -403,7 +403,7 @@ implementation
     end;
 
 
-  procedure thlcgllvm.recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference);
+  procedure thlcgllvm.recordnewsymloc(list: TAsmList; sym: tsym; def: tdef; const ref: treference; initial: boolean);
     var
       varmetapara,
       symmetadatapara,
@@ -414,7 +414,10 @@ implementation
          (sym.visibility<>vis_hidden) and
          (cs_debuginfo in current_settings.moduleswitches) then
         begin
-          pd:=search_system_proc('llvm_dbg_addr');
+          if initial then
+            pd:=search_system_proc('llvm_dbg_declare')
+          else
+            pd:=search_system_proc('llvm_dbg_addr');
           varmetapara.init;
           symmetadatapara.init;
           exprmetapara.init;
@@ -1268,7 +1271,6 @@ implementation
       pd: tprocdef;
       sourcepara, destpara, sizepara, alignpara, volatilepara: tcgpara;
       maxalign: longint;
-      indivalign: boolean;
     begin
       { perform small copies directly; not larger ones, because then llvm
         will try to load the entire large datastructure into registers and
@@ -1279,11 +1281,7 @@ implementation
           a_load_ref_ref(list,size,size,source,dest);
           exit;
         end;
-      indivalign:=llvmflag_memcpy_indiv_align in llvmversion_properties[current_settings.llvmversion];
-      if indivalign then
-        pd:=search_system_proc('llvm_memcpy64_indivalign')
-      else
-        pd:=search_system_proc('llvm_memcpy64');
+      pd:=search_system_proc('llvm_memcpy64_indivalign');
       sourcepara.init;
       destpara.init;
       sizepara.init;
@@ -1292,27 +1290,14 @@ implementation
       paramanager.getcgtempparaloc(list,pd,1,destpara);
       paramanager.getcgtempparaloc(list,pd,2,sourcepara);
       paramanager.getcgtempparaloc(list,pd,3,sizepara);
-      if indivalign then
-        begin
-          paramanager.getcgtempparaloc(list,pd,4,volatilepara);
-          destpara.Alignment:=-dest.alignment;
-          sourcepara.Alignment:=-source.alignment;
-        end
-      else
-        begin
-          paramanager.getcgtempparaloc(list,pd,4,alignpara);
-          paramanager.getcgtempparaloc(list,pd,5,volatilepara);
-          maxalign:=newalignment(max(source.alignment,dest.alignment),min(source.alignment,dest.alignment));
-          a_load_const_cgpara(list,u32inttype,maxalign,alignpara);
-        end;
+      paramanager.getcgtempparaloc(list,pd,4,volatilepara);
+      destpara.Alignment:=-dest.alignment;
+      sourcepara.Alignment:=-source.alignment;
       a_loadaddr_ref_cgpara(list,size,dest,destpara);
       a_loadaddr_ref_cgpara(list,size,source,sourcepara);
       a_load_const_cgpara(list,u64inttype,size.size,sizepara);
       a_load_const_cgpara(list,llvmbool1type,ord((vol_read in source.volatility) or (vol_write in dest.volatility)),volatilepara);
-      if indivalign then
-        g_call_system_proc(list,pd,[@destpara,@sourcepara,@sizepara,@volatilepara],nil).resetiftemp
-      else
-        g_call_system_proc(list,pd,[@destpara,@sourcepara,@sizepara,@alignpara,@volatilepara],nil).resetiftemp;
+      g_call_system_proc(list,pd,[@destpara,@sourcepara,@sizepara,@volatilepara],nil).resetiftemp;
       sourcepara.done;
       destpara.done;
       sizepara.done;
@@ -1386,7 +1371,10 @@ implementation
 
   procedure thlcgllvm.a_loadfpu_reg_ref(list: TAsmList; fromsize, tosize: tdef; reg: tregister; const ref: treference);
     var
+       pd: tprocdef;
+       roundpara, respara: tcgpara;
        tmpreg: tregister;
+       tmploc: tlocation;
        href: treference;
        fromcompcurr,
        tocompcurr: boolean;
@@ -1407,8 +1395,23 @@ implementation
          begin
            tmpreg:=getfpuregister(list,tosize);
            if tocompcurr then
-             { store back an int64 rather than an extended }
-             list.concat(taillvm.op_reg_size_reg_size(la_fptosi,tmpreg,fromsize,reg,tosize))
+             begin
+               { store back an int64 rather than an extended }
+               pd:=search_system_proc('fpc_round_real');
+               roundpara.init;
+               paramanager.getcgtempparaloc(list,pd,1,roundpara);
+               a_load_reg_cgpara(list,fromsize,reg,roundpara);
+               respara:=g_call_system_proc(list,pd,[@roundpara],nil);
+               if not assigned(respara.location) or
+                  (respara.location^.loc<>LOC_REGISTER) then
+                 internalerror(2023120510);
+               location_reset(tmploc,respara.location^.loc,def_cgsize(tosize));
+               tmploc.register:=tmpreg;
+               gen_load_cgpara_loc(list,respara.location^.def,respara,tmploc,false);
+               respara.resetiftemp;
+               respara.done;
+               roundpara.done;
+             end
            else
              a_loadfpu_reg_reg(list,fromsize,tosize,reg,tmpreg);
          end

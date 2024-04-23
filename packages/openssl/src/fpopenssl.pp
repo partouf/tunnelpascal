@@ -17,7 +17,7 @@ unit fpopenssl;
 {$ENDIF FPC_DOTTEDUNITS}
 
 {$mode objfpc}{$H+}
-{$DEFINE DUMPCERT}
+{.$DEFINE DUMPCERT}
 
 interface
 
@@ -244,9 +244,9 @@ var
 begin
   Utc:=Asn1UtctimeNew;
   try
-    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS',ValidFrom)));
+    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS"Z"',ValidFrom)));
     X509SetNotBefore(x, Utc);
-    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS',ValidTo)));
+    ASN1UtcTimeSetString(Utc,PAnsiChar(FormatDateTime('YYMMDDHHNNSS"Z"',ValidTo)));
     X509SetNotAfter(x,Utc);
   finally
     Asn1UtctimeFree(Utc);

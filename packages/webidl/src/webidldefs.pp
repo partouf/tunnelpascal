@@ -64,7 +64,9 @@ Type
     wibtError,
     wibtDOMException,
     // arrays
+    wibtVariantArray,
     wibtArrayBuffer,
+    wibtArrayBufferView,
     wibtDataView,
     wibtInt8Array,
     wibtInt16Array,
@@ -110,7 +112,9 @@ const
     'Function',
     'Error',
     'DOMException',
+    'VariantArray',
     'ArrayBuffer',
+    'ArrayBufferView',
     'DataView',
     'Int8Array',
     'Int16Array',
@@ -219,6 +223,8 @@ type
     Function Add(aClass : TIDLDefinitionClass; Const AName : UTF8String; const aFile: string; aLine, aCol: integer) : TIDLDefinition; override;
     Function Add(aItem : TIDLDefinition) : Integer;
     Function Delete(aItem : TIDLDefinition) : boolean; // true if found and deleted
+    Function IndexOfName(aName : UTF8String) : Integer;
+    Function HasName(aName : UTF8String) : Boolean;
     function GetEnumerator: TIDLDefinitionEnumerator;
     Property Parent : TIDLDefinition Read FParent;
     Property Definitions[aIndex : Integer] : TIDLDefinition Read GetD;default;
@@ -260,9 +266,19 @@ type
     Property Options : TAttributeOptions Read FOptions Write FOptions;
   end;
 
+
+  { TIDLTypeDefinition }
+  // Everything that defines a named type descends from this:
+  // function, typedef, enum, interface, dictionary, namespace, callback
+  TIDLTypeDefinition = class(TIDLDefinition)
+  Public
+    // Type name in Javascript
+    Function GetJSTypeName : String; virtual; abstract;
+  end;
+
   { TIDLStructuredDefinition }
 
-  TIDLStructuredDefinition = Class(TIDLDefinition)
+  TIDLStructuredDefinition = Class(TIDLTypeDefinition)
   Private
     FIsCallBack: Boolean;
     FPartials,
@@ -274,6 +290,7 @@ type
     function GetPartial(Aindex : Integer): TIDLStructuredDefinition;
     function GetPartials: TIDLDefinitionList;
   Public
+    Function GetJSTypeName : String; override;
     Destructor Destroy; override;
     Function IsExtension : Boolean; override;
     Function GetFullMemberList(aList : TIDLDefinitionList) : Integer;
@@ -312,6 +329,13 @@ type
     Property IsMixin : Boolean Read FIsMixin Write FIsMixin;
     Property IsInclude : Boolean Read FIsInclude Write FIsInclude;
     Property IsForward: Boolean read FIsForward write FIsForward;
+  end;
+
+  { TIDLNamespaceDefinition }
+
+  TIDLNamespaceDefinition = class(TIDLStructuredDefinition)
+  Public
+    Function AsString (aFull : Boolean) : UTF8String; override;
   end;
 
   { TIDLArgumentDefinition }
@@ -359,6 +383,18 @@ type
     // is this a callback function definition?
     Property Options : TFunctionOptions Read FOptions Write FOptions;
   end;
+
+  { TIDLCallBackDefinition }
+
+  TIDLCallBackDefinition = Class(TIDLTypeDefinition)
+  private
+    FFunctionDef: TIDLFunctionDefinition;
+  Public
+    Destructor Destroy; override;
+    Function GetJSTypeName: String; override;
+    Property FunctionDef : TIDLFunctionDefinition Read FFunctionDef Write FFunctionDef;
+  end;
+
 
   TSerializerKind = (skObject,skArray,skSingle,skFunction);
 
@@ -411,24 +447,26 @@ type
 
   { TIDLEnumDefinition }
 
-  TIDLEnumDefinition = Class(TIDLDefinition)
+  TIDLEnumDefinition = Class(TIDLTypeDefinition)
   private
     FValues: TStrings;
   Public
     Constructor Create(aParent : TIDLDefinition;Const aName : UTF8String; const aFile: string; aLine, aCol: integer); override;
     Destructor Destroy; override;
+    Function GetJSTypeName : String; override;
     Procedure AddValue(Const aValue : String);
     Property Values : TStrings Read FValues;
   end;
 
   { TIDLTypeDefDefinition }
 
-  TIDLTypeDefDefinition = Class(TIDLDefinition)
+  TIDLTypeDefDefinition = Class(TIDLTypeDefinition)
   private
     FNull: Boolean;
     FTypeName: String;
   Public
     Function Clone (aParent : TIDLDefinition) : TIDLTypeDefDefinition; virtual;
+    Function GetJSTypeName : String; override;
     Function AsString(Full: Boolean): UTF8String; override;
     Property TypeName : String Read FTypeName Write FTypeName;
     Property AllowNull : Boolean Read FNull Write FNull;
@@ -482,21 +520,23 @@ type
   end;
 
   { TIDLSequenceTypeDefDefinition }
-
+  TSequenceType = (stSequence,stFrozenArray,stObservableArray);
   TIDLSequenceTypeDefDefinition = Class(TIDLTypeDefDefinition)
   private
     FElementType: TIDLTypeDefDefinition;
+    FSequenceType: TSequenceType;
     procedure SetElementType(AValue: TIDLTypeDefDefinition);
   Public
     Function AsString(Full: Boolean): UTF8String; override;
     Function Clone (aParent : TIDLDefinition) : TIDLTypeDefDefinition; override;
     Destructor Destroy; override;
     property ElementType : TIDLTypeDefDefinition Read FElementType Write SetElementType;
+    Property SequenceType : TSequenceType Read FSequenceType Write FSequenceType;
   end;
 
   { TIDLSetlikeDefinition }
 
-  TIDLSetlikeDefinition = Class(TIDLDefinition)
+  TIDLSetlikeDefinition = Class(TIDLTypeDefinition)
   private
     FElementType: TIDLTypeDefDefinition;
     FIsReadonly: Boolean;
@@ -548,14 +588,20 @@ type
 
   TIDLIterableDefinition = Class(TIDLDefinition)
   private
+    FIsAsync: Boolean;
     FValueType: TIDLTypeDefDefinition;
     FKeyType: TIDLTypeDefDefinition;
+    FArguments: TIDLDefinitionList;
+    function GetArguments: TIDLDefinitionList;
     procedure SetKeyType(AValue: TIDLTypeDefDefinition);
     procedure SetValueType(AValue: TIDLTypeDefDefinition);
   Public
     Destructor Destroy; override;
+    Function HaveArguments : Boolean;
     property ValueType : TIDLTypeDefDefinition Read FValueType Write SetValueType;
     property KeyType : TIDLTypeDefDefinition Read FKeyType Write SetKeyType;
+    Property IsAsync : Boolean Read FIsAsync Write FIsAsync;
+    Property Arguments : TIDLDefinitionList Read GetArguments;
   end;
 
 function NameToWebIDLBaseType(const s: string): TWebIDLBaseType;
@@ -720,12 +766,33 @@ begin
     Result:=Attributes.AsString(true)+' '+Result;
 end;
 
+{ TIDLNamespaceDefinition }
+
+function TIDLNamespaceDefinition.AsString(aFull: Boolean): UTF8String;
+
+begin
+  Result:='namespace '+Name;
+  if IsPartial then
+    Result:='partial '+Result;
+  if Not HasMembers then
+    Result:=Result+' {'+sLineBreak+'}'
+  else
+    Result:=Result+' '+Members.AsString(true);
+  if aFull and HasAttributes then
+    Result:=Attributes.AsString(true)+' '+Result;
+end;
+
 { TIDLTypeDefDefinition }
 
 function TIDLTypeDefDefinition.Clone(aParent: TIDLDefinition): TIDLTypeDefDefinition;
 begin
   Result:=TIDLTypeDefDefinitionClass(Self.ClassType).Create(aParent,Name,aParent.SrcFile,aParent.Line,aParent.Column);
   Result.TypeName:=Self.TypeName;
+end;
+
+function TIDLTypeDefDefinition.GetJSTypeName: String;
+begin
+  Result:=FTypeName;
 end;
 
 function TIDLTypeDefDefinition.AsString(Full: Boolean): UTF8String;
@@ -817,6 +884,13 @@ begin
   FKeyType:=AValue;
 end;
 
+function TIDLIterableDefinition.GetArguments: TIDLDefinitionList;
+begin
+  if FArguments=nil then
+    FArguments:=TIDLDefinitionList.Create(Self,True);
+  Result:=FArguments;
+end;
+
 procedure TIDLIterableDefinition.SetValueType(AValue: TIDLTypeDefDefinition);
 begin
   if (AValue=FValueType) then exit;
@@ -828,7 +902,13 @@ destructor TIDLIterableDefinition.Destroy;
 begin
   ValueType:=Nil;
   KeyType:=Nil;
+  FreeAndNil(FArguments);
   inherited Destroy;
+end;
+
+function TIDLIterableDefinition.HaveArguments: Boolean;
+begin
+  Result:=Assigned(FArguments);
 end;
 
 { TIDLAttributeDefinition }
@@ -966,6 +1046,19 @@ begin
     Result:=Attributes.AsString(Full)+' '+Result;
 end;
 
+{ TIDLCallBackDefinition }
+
+destructor TIDLCallBackDefinition.Destroy;
+begin
+  FreeAndNil(FFunctionDef);
+  inherited Destroy;
+end;
+
+function TIDLCallBackDefinition.GetJSTypeName: String;
+begin
+  Result:=Name;
+end;
+
 { TIDLDictionaryDefinition }
 
 function TIDLDictionaryDefinition.GetDM(AIndex : Integer
@@ -1020,11 +1113,19 @@ begin
 end;
 
 function TIDLSequenceTypeDefDefinition.AsString(Full: Boolean): UTF8String;
+
+var
+  TT : String;
+
 begin
+  Case SequenceType of
+    stSequence : TT:='sequence';
+    stFrozenArray : TT:='FrozenArray';
+    stObservableArray : TT:='ObservableArray';
+  end;
+  Result:=TT+' <'+ElementType.TypeName+'>';
   if Full then
-    Result:='typedef sequence <'+ElementType.TypeName+'> '+Name
-  else
-    Result:='sequence <'+ElementType.TypeName+'>';
+    Result:='typedef '+Result+' '+Name;
   if full and HasAttributes then
     Result:=Attributes.AsString(True)+' '+Result;
 end;
@@ -1133,6 +1234,11 @@ begin
   inherited Destroy;
 end;
 
+function TIDLEnumDefinition.GetJSTypeName: String;
+begin
+  Result:=Name;
+end;
+
 procedure TIDLEnumDefinition.AddValue(const aValue: String);
 begin
   FValues.Add(aValue);
@@ -1163,6 +1269,11 @@ begin
   if Not Assigned(FPartials) then
     FPartials:=TIDLDefinitionList.Create(Self,False);
   Result:=FPartials;
+end;
+
+function TIDLStructuredDefinition.GetJSTypeName: String;
+begin
+  Result:=Name;
 end;
 
 destructor TIDLStructuredDefinition.Destroy;
@@ -1352,6 +1463,18 @@ begin
       exit(true);
       end;
   Result:=false;
+end;
+
+function TIDLDefinitionList.IndexOfName(aName: UTF8String): Integer;
+begin
+  Result:=Count-1;
+  While (Result>=0) and (Definitions[Result].Name<>aName) do
+    Dec(Result);
+end;
+
+function TIDLDefinitionList.HasName(aName: UTF8String): Boolean;
+begin
+  Result:=IndexOfName(aName)<>-1;
 end;
 
 function TIDLDefinitionList.GetEnumerator: TIDLDefinitionEnumerator;

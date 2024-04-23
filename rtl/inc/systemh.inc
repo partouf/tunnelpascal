@@ -570,7 +570,7 @@ Type
   UTF8Char = AnsiChar;
   PUTF8Char = PAnsiChar;
 
-  UCS4Char            = type 0..$10ffff;
+  UCS4Char            = 0..$10ffff;
   PUCS4Char           = ^UCS4Char;
 {$ifdef CPU16}
   TUCS4CharArray      = array[0..32767 div sizeof(UCS4Char)-1] of UCS4Char;
@@ -907,13 +907,13 @@ function StackTop: Pointer;
 {$endif}
 
 Procedure Move(const source;var dest;count:{$ifdef MOVE_HAS_SIZEUINT_COUNT}SizeUInt{$else}SizeInt{$endif});
-Procedure FillChar(var x;count:{$ifdef FILLCHAR_HAS_SIZEUINT_COUNT}SizeUInt{$else}SizeInt{$endif};Value:Byte);
+Procedure FillChar(var x;count:{$ifdef FILLCHAR_HAS_SIZEUINT_COUNT}SizeUInt{$else}SizeInt{$endif};Value:Byte); {$if defined(cpui386)}inline;{$endif}
 Procedure FillChar(var x;count:{$ifdef FILLCHAR_HAS_SIZEUINT_COUNT}SizeUInt{$else}SizeInt{$endif};Value:Boolean);
 Procedure FillChar(var x;count:{$ifdef FILLCHAR_HAS_SIZEUINT_COUNT}SizeUInt{$else}SizeInt{$endif};Value:AnsiChar);
 procedure FillByte(var x;count:{$ifdef FILLCHAR_HAS_SIZEUINT_COUNT}SizeUInt{$else}SizeInt{$endif};value:byte);
-Procedure FillWord(var x;count:SizeInt;Value:Word);
-procedure FillDWord(var x;count:SizeInt;value:DWord);
-procedure FillQWord(var x;count:SizeInt;value:QWord);
+Procedure FillWord(var x;count:SizeInt;Value:Word); {$if defined(cpui386)}inline;{$endif}
+procedure FillDWord(var x;count:SizeInt;value:DWord); {$if defined(cpui386)}inline;{$endif}
+procedure FillQWord(var x;count:SizeInt;value:QWord); {$if defined(cpui386)}inline;{$endif}
 function  IndexChar(const buf;len:SizeInt;b:ansichar):SizeInt;
 function  IndexChar(const buf;len:SizeInt;b:widechar):SizeInt;
 function  IndexByte(const buf;len:SizeInt;b:byte):SizeInt; {$if defined(cpui386)} inline; {$endif}

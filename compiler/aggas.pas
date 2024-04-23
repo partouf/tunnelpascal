@@ -239,7 +239,7 @@ implementation
           '.stabstr',
           '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
           '.eh_frame',
-          '.debug_frame','.debug_info','.debug_line','.debug_abbrev','.debug_aranges','.debug_ranges',
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev','.debug_aranges','.debug_ranges','.debug_loc','.debug_loclists',
           '.fpc',
           '.toc',
           '.init',
@@ -300,7 +300,7 @@ implementation
           '.stabstr',
           '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
           '.eh_frame',
-          '.debug_frame','.debug_info','.debug_line','.debug_abbrev','.debug_aranges','.debug_ranges',
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev','.debug_aranges','.debug_ranges','.debug_loc','.debug_loclists',
           '.fpc',
           '.toc',
           '.init',
@@ -512,7 +512,8 @@ implementation
          system_i386_EMX: ;
          system_m68k_atari, { atari tos/mint GNU AS also doesn't seem to like .section (KB) }
          system_m68k_amiga, { amiga has old GNU AS (2.14), which blews up from .section (KB) }
-         system_m68k_sinclairql: { same story, only ancient GNU tools available (KB) }
+         system_m68k_sinclairql, { same story, only ancient GNU tools available (KB) }
+         system_m68k_human68k: { see above... (KB) }
            begin
              { ... but vasm is GAS compatible on amiga/atari, and supports named sections }
              if create_smartlink_sections then
@@ -531,6 +532,7 @@ implementation
          system_i386_go32v2,
          system_i386_win32,
          system_x86_64_win64,
+         system_i386_nativent,
          system_i386_wince,
          system_arm_wince,
          system_aarch64_win64:
@@ -1786,7 +1788,7 @@ implementation
         { on Windows/(PE)COFF, global symbols are hidden by default: global
           symbols that are not explicitly exported from an executable/library,
           become hidden }
-        if (target_info.system in (systems_windows+systems_wince)) then
+        if (target_info.system in (systems_windows+systems_wince+systems_nativent)) then
           exit;
         if target_info.system in systems_darwin then
           writer.AsmWrite(#9'.private_extern ')
@@ -2180,6 +2182,8 @@ implementation
          sec_debug_abbrev,
          sec_debug_aranges,
          sec_debug_ranges,
+         sec_debug_loc,
+         sec_debug_loclists,
          { ELF resources (+ references to stabs debug information sections) }
          sec_code (* sec_fpc *),
          { Table of contents section }

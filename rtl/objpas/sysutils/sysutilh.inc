@@ -214,6 +214,7 @@ type
    EInvalidInsert = class(Exception);
 
    EPackageError = class(Exception);
+   ECFError = class(Exception);
 
    EOSError = class(Exception)
    public
@@ -226,6 +227,12 @@ type
    ENoDynLibsSupport = class(Exception);
 
    EProgrammerNotFound = class(Exception);
+   
+   EMonitor = class(Exception);
+   EMonitorLockException = class(EMonitor);
+   ENoMonitorSupportException = class(EMonitor);   
+
+   EObjectDisposed = class(Exception);
 
    ENotImplemented = class(Exception);
 
@@ -239,10 +246,20 @@ type
    EFileNotFoundException = class(Exception);
    EPathNotFoundException = class(Exception);
 
+   EInOutArgumentException = class(EArgumentException)
+   public
+     Path: string;
+     constructor Create(const aMsg, aPath: string); overload;
+     constructor CreateRes(ResStringRec: PResStringRec; const aPath: string); overload;
+     constructor CreateFmt(const fmt : string;  const args : array of const; const aPath : String); overload;
+   end;
+
    EInvalidOpException = class(Exception);
 
    ENoConstructException = class(Exception);
    EListError = Class(Exception);
+
+   EOperationCancelled = class(Exception);
 
    { Exception handling routines }
    function ExceptObject: TObject;
@@ -280,6 +297,7 @@ type
 
 {$IFNDEF VER3_0}
 generic function IfThen<T>(val:boolean;const iftrue:T; const iffalse:T) :T; inline; overload;
+generic function Exchange<T>(var target:T; const newvalue:T) :T; inline;
 {$ENDIF}
 
 Var
@@ -455,3 +473,8 @@ Type
 
   Function GetCompiledArchitecture : TOSVersion.TArchitecture;
   Function GetCompiledPlatform : TOSVersion.TPlatform;
+
+{$IFNDEF HAS_INVALIDHANDLE}
+const 
+  INVALID_HANDLE_VALUE = DWORD(-1);
+{$ENDIF}

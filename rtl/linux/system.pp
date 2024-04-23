@@ -25,6 +25,7 @@ Unit System;
                                     interface
 {*****************************************************************************}
 
+{$DEFINE SYSTEM_HAS_FEATURE_MONITOR}
 {$define FPC_IS_SYSTEM}
 {$define HAS_CMDLINE}
 {$define USE_NOTHREADMANAGER}
@@ -76,11 +77,6 @@ property cmdline:PAnsiChar read get_cmdline;
 {*****************************************************************************}
                                  implementation
 {*****************************************************************************}
-
-{$if defined(CPUI386) and not defined(FPC_USE_LIBC)}
-var
-  sysenter_supported: LongInt = 0;
-{$endif}
 
 const
   calculated_cmdline:PAnsiChar=nil;

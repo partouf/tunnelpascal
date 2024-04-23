@@ -280,6 +280,12 @@ begin
 {$include gtk2/fpmake.pp}
 end;
 
+procedure add_h68units(const ADirectory: string);
+begin
+  with Installer do
+{$include h68units/fpmake.pp}
+end;
+
 procedure add_hash(const ADirectory: string);
 begin
   with Installer do
@@ -869,6 +875,8 @@ begin
   with Installer do
 {$include gstreamer/fpmake.pp}
 end;
+
+{$include testinsight/fpmake.pp}
 
 {$include ide/fpmake.pp}
 {$include gitlab/fpmake.pp}

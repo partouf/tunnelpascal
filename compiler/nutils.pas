@@ -162,7 +162,7 @@ interface
     function get_open_const_array(p : tnode) : tnode;
 
     { excludes the flags passed in nf from the node tree passed }
-    procedure node_reset_flags(p : tnode;nf : tnodeflags);
+    procedure node_reset_flags(p : tnode;nf : TNodeFlags; tnf : TTransientNodeFlags);
 
     { include or exclude cs from p.localswitches }
     procedure node_change_local_switch(p : tnode;cs : tlocalswitch;enable : boolean);
@@ -173,6 +173,9 @@ interface
 
     { returns true if the node has the int value l }
     function is_constintvalue(p : tnode;l : Tconstexprint) : Boolean;
+
+    { if the node is a constant node which can be an int value, this value is returned }
+    function get_int_value(p : tnode): Tconstexprint;
 
     { returns true if the node is an inline node of type i }
     function is_inlinefunction(p : tnode;i : tinlinenumber) : Boolean;
@@ -1565,17 +1568,28 @@ implementation
           result:=get_open_const_array(taddrnode(tderefnode(result).left).left);
       end;
 
+    type
+      TFlagSet = record
+        nf : TNodeFlags;
+        tnf : TTransientNodeFlags;
+      end;
+
 
     function do_node_reset_flags(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         result:=fen_false;
-        n.flags:=n.flags-tnodeflags(arg^);
+        n.flags:=n.flags-TFlagSet(arg^).nf;
+        n.transientflags:=n.transientflags-TFlagSet(arg^).tnf;
       end;
 
 
-    procedure node_reset_flags(p : tnode; nf : tnodeflags);
+    procedure node_reset_flags(p : tnode; nf : TNodeFlags; tnf : TTransientNodeFlags);
+      var
+        FlagSet: TFlagSet;
       begin
-        foreachnodestatic(p,@do_node_reset_flags,@nf);
+        FlagSet.nf:=nf;
+        FlagSet.tnf:=tnf;
+        foreachnodestatic(p,@do_node_reset_flags,@FlagSet);
       end;
 
     type
@@ -1608,13 +1622,28 @@ implementation
 
     function doshortbooleval(p : tnode) : Boolean;
       begin
-        Result:=(p.nodetype in [orn,andn]) and ((nf_short_bool in taddnode(p).flags) or not(cs_full_boolean_eval in p.localswitches));
+        Result:=(p.nodetype in [orn,andn]) and ((anf_short_bool in taddnode(p).addnodeflags) or not(cs_full_boolean_eval in p.localswitches));
       end;
 
 
     function is_constintvalue(p: tnode; l: Tconstexprint): Boolean;
       begin
         Result:=is_constintnode(p) and (tordconstnode(p).value=l);
+      end;
+
+
+    function get_int_value(p: tnode): Tconstexprint;
+      begin
+        case p.nodetype of
+          ordconstn:
+            result:=tordconstnode(p).value;
+          pointerconstn:
+            result:=tpointerconstnode(p).value;
+          niln:
+            result:=0;
+          else
+            internalerror(2002080202);
+        end;
       end;
 
 
@@ -1709,7 +1738,8 @@ implementation
      function _node_reset_pass1_write(var n: tnode; arg: pointer): foreachnoderesult;
        begin
          Result := fen_false;
-         n.flags := n.flags - [nf_pass1_done,nf_write,nf_modify];
+         n.flags := n.flags - [nf_write,nf_modify];
+         n.transientflags := n.transientflags - [tnf_pass1_done];
          if n.nodetype = assignn then
            begin
              { Force re-evaluation of assignments so nf_modify and nf_write

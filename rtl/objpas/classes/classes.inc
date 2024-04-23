@@ -112,21 +112,38 @@ var
 type
   { this type is used if a thread is created using
     TThread.CreateAnonymousThread }
+
+  { TAnonymousThread }
+
   TAnonymousThread = class(TThread)
   private
     fProc: TProcedure;
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    fAnonProc : TThreadProcedure;
+    {$ENDIF}
+    FMethod : TThreadMethod;
   protected
     procedure Execute; override;
   public
-    { as in TThread aProc needs to be changed to TProc once closures are
-      supported }
     constructor Create(aProc: TProcedure);
+    {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+    constructor Create(aProc: TThreadProcedure);
+    {$ENDIF}
+    constructor Create(aProc: TThreadMethod);
   end;
 
 
 procedure TAnonymousThread.Execute;
 begin
-  fProc();
+  {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+  if assigned(fAnonProc) then
+    fAnonProc()
+  else
+  {$ENDIF}
+  if assigned(FMethod) then
+    FMethod()
+  else
+    fProc();
 end;
 
 
@@ -136,6 +153,22 @@ begin
   inherited Create(True);
   FreeOnTerminate := True;
   fProc := aProc;
+end;
+
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+constructor TAnonymousThread.Create(aProc: TThreadProcedure);
+begin
+  inherited Create(True);
+  FreeOnTerminate := True;
+  fAnonProc := aProc;
+end;
+{$ENDIF}
+
+constructor TAnonymousThread.Create(aProc: TThreadMethod);
+begin
+  inherited Create(True);
+  FreeOnTerminate := True;
+  FMethod := aProc;
 end;
 
 
@@ -232,6 +265,7 @@ begin
   inherited Create;
 {$ifdef FPC_HAS_FEATURE_THREADING}
     InterlockedIncrement(ThreadQueueLockCounter);
+    FThreadQueueLockCounted := true; { Guard against exception in descendant’s Create. }
 {$endif}
   if FExternalThread then
 {$ifdef FPC_HAS_FEATURE_THREADING}
@@ -256,7 +290,7 @@ begin
   RemoveQueuedEvents(Self);
   DoneSynchronizeEvent;
 {$ifdef FPC_HAS_FEATURE_THREADING}
-  if InterlockedDecrement(ThreadQueueLockCounter)=0 then
+  if FThreadQueueLockCounted and (InterlockedDecrement(ThreadQueueLockCounter)=0) then
     DoneCriticalSection(ThreadQueueLock);
 {$endif}
   { set CurrentThreadVar to Nil? }
@@ -284,7 +318,7 @@ begin
   TerminatedSet;
 end;
 
-Procedure TThread.TerminatedSet;
+procedure TThread.TerminatedSet;
 
 begin
   // Empty, must be overridden.
@@ -400,6 +434,13 @@ procedure TThread.DoneSynchronizeEvent;
     FSynchronizeEntry := Nil;
   end;
 
+
+
+class function TThread.CurrentIsMain : Boolean;
+
+begin
+  Result:=TThread.Current.ThreadID=MainThreadID;
+end;
 
 class procedure TThread.Synchronize(AThread: TThread; AMethod: TThreadMethod);
   var
@@ -634,7 +675,7 @@ begin
 end;
 
 {$ifdef FPC_HAS_REFERENCE_PROCEDURE}
-class procedure TThread.Queue(aThread: TThread; aProcedure: TThreadProcedure); static;
+class procedure TThread.Queue(aThread: TThread; AProcedure: TThreadProcedure);
 begin
   InternalQueue(aThread, aProcedure, False);
 end;
@@ -788,6 +829,23 @@ begin
   Result := TAnonymousThread.Create(aProc);
 end;
 
+{$ifdef FPC_HAS_REFERENCE_PROCEDURE}
+class function TThread.CreateAnonymousThread(aProc: TThreadProcedure): TThread;
+
+begin
+  if not Assigned(aProc) then
+    raise Exception.Create(SNoProcGiven);
+  Result := TAnonymousThread.Create(aProc);
+end;
+{$ENDIF}
+
+class function TThread.CreateAnonymousThread(aProc: TThreadMethod): TThread;
+begin
+  if not Assigned(aProc) then
+    raise Exception.Create(SNoProcGiven);
+  Result := TAnonymousThread.Create(aProc);
+end;
+
 
 class procedure TThread.NameThreadForDebugging(aThreadName: UnicodeString; aThreadID: TThreadID);
 begin
@@ -841,12 +899,33 @@ end;
 
 
 {$ifndef HAS_TTHREAD_GETSYSTEMTIMES}
-class procedure TThread.GetSystemTimes(out aSystemTimes: TSystemTimes);
+class function TThread.GetSystemTimes(out aSystemTimes: TSystemTimes) : Boolean;
 begin
   { by default we just return a zeroed out record }
   FillChar(aSystemTimes, SizeOf(aSystemTimes), 0);
+  Result:=False;
 end;
 {$endif}
+
+class function TThread.GetCPUUsage(var Previous: TSystemTimes): Integer;
+
+var
+  Act : TSystemTimes;
+  Load,Idle: QWord;
+  
+begin
+  Result:=0;
+  if not GetSystemTimes(Act) then 
+    exit;
+  Load:=(Act.UserTime-Previous.UserTime) +
+        (Act.KernelTime-Previous.KernelTime) +
+        (Act.NiceTime-Previous.NiceTime);
+  Idle:=Act.IdleTime-Previous.IdleTime;
+  Previous:=Act;
+  if (Load<>0) and (Load>Idle) then
+    Result:=100*Trunc(1-(Idle/Load));
+end;
+
 
 
 class function TThread.GetTickCount: LongWord;
@@ -1029,19 +1108,20 @@ begin
 end;
 
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteHandler; AOnTerminate : TNotifyEvent = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteHandler; AOnTerminate: TNotifyEvent): TThread;
 
 begin
   Result:=TSimpleThread.Create(AMethod,AOnTerminate);
 end;
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteCallback; AData : Pointer; AOnTerminate : TNotifyCallback = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteCallback; AData: Pointer; AOnTerminate: TNotifyCallBack): TThread;
 
 begin
   Result:=TSimpleProcThread.Create(AMethod,AData,AOnTerminate);
 end;
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteStatusHandler; AOnStatus : TThreadStatusNotifyEvent; AOnTerminate : TNotifyEvent = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteStatusHandler; AOnStatus: TThreadStatusNotifyEvent;
+  AOnTerminate: TNotifyEvent): TThread;
 
 begin
   If Not Assigned(AOnStatus) then
@@ -1049,7 +1129,8 @@ begin
   Result:=TSimpleStatusThread.Create(AMethod,AOnStatus,AOnTerminate);
 end;
 
-Class Function TThread.ExecuteInThread(AMethod : TThreadExecuteStatusCallback; AOnStatus : TThreadStatusNotifyCallback;AData : Pointer = Nil;  AOnTerminate : TNotifyCallBack = Nil) : TThread;
+class function TThread.ExecuteInThread(AMethod: TThreadExecuteStatusCallback; AOnStatus: TThreadStatusNotifyCallback;
+  AData: Pointer; AOnTerminate: TNotifyCallBack): TThread;
 
 begin
   If Not Assigned(AOnStatus) then
@@ -1382,6 +1463,14 @@ function FindGlobalComponent(const Name: string): TComponent;
       end;
   end;
 
+function IsUniqueGlobalComponentName(const aName: string): Boolean;
+
+begin
+  if Assigned(IsUniqueGlobalComponentNameProc) then
+    Result:=IsUniqueGlobalComponentNameProc(aName)
+  else 
+    Result:=Not Assigned(FindGlobalComponent(aName));
+end;
 
 procedure RegisterInitComponentHandler(ComponentClass: TComponentClass;   Handler: TInitComponentHandler);
 Var
@@ -2647,7 +2736,29 @@ begin
   Output.FixupResourceHeader(FixupInfo);      // Insert real resource data size
 end;
 
+function TestStreamFormat(const Stream: TStream): TStreamOriginalFormat;
 
+const
+  StartChars = [#9, #10, #13, #11, 'o', 'O','i','I',' '];
+
+var
+  aPos: Int64;
+  Sig: Packed Array[0..3] of byte;
+  IntSig : Longint absolute sig;
+  
+begin
+  Result:=sofUnknown;
+  aPos:=Stream.Position;
+  IntSig:=0;
+  Stream.Read(Sig,SizeOf(Sig));
+  Stream.Seek(aPos,soBeginning);
+  if (Sig[0]=$FF) or (IntSig=LongInt(FilerSignature)) or (IntSig=LongInt(FilerSignature1)) or (IntSig=0) then
+    Result:=sofBinary
+  else if (AnsiChar(Sig[0]) in StartChars) then
+    Result:=sofText
+  else if (Sig[0]=$EF) and (Sig[1]=$BB) and (Sig[2]=$BF) then
+    Result:=sofUTF8Text;
+end;
 
 { Utility routines }
 

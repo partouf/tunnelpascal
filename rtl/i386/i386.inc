@@ -25,6 +25,8 @@ var
   os_supports_sse : boolean;
   { this variable is set to true, if currently an sse check is executed and no sig ill should be generated }
   sse_check : boolean;
+  fast_large_repmovstosb : boolean; { Enhanced REP MOVSB and STOSB (ERMSB) feature @ CPUID(7).ebx[9]. }
+  fpc_cpucodeinit_performed : boolean; { Code before fpc_cpucodeinit can call certain dispatched functions, such as Move. }
 
 {$asmmode ATT}
 
@@ -47,15 +49,6 @@ function cpuid_support : boolean;assembler;nostackframe;
     setnz   %al
   end;
 
-{$ifndef FPC_PIC}
-{$ifndef FPC_SYSTEM_HAS_MOVE}
-{$ifndef OLD_ASSEMBLER}
-{$define USE_FASTMOVE}
-{$i fastmove.inc}
-{$endif not OLD_ASSEMBLER}
-{$endif FPC_SYSTEM_HAS_MOVE}
-{$endif FPC_PIC}
-
 {$define FPC_SYSTEM_HAS_FPC_CPUINIT}
 procedure fpc_cpuinit;
   begin
@@ -63,7 +56,6 @@ procedure fpc_cpuinit;
       must be implemented OS dependend (FK)
     has_sse_support:=sse_support;
     has_mmx_support:=mmx_support;
-    setup_fastmove;
     }
   end;
 
@@ -78,6 +70,12 @@ procedure fpc_geteipasecx; [public, alias: 'fpc_geteipasecx'];assembler; nostack
 asm
   movl    (%esp),%ecx
 end;
+{$endif}
+
+{$if not defined(FPC_SYSTEM_HAS_MOVE)
+ and not defined(OLD_ASSEMBLER)
+ and not defined(darwin)}
+{$i fastmove.inc}
 {$endif}
 
 {$ifndef FPC_SYSTEM_HAS_MOVE}
@@ -162,101 +160,519 @@ end;
 {$endif FPC_SYSTEM_HAS_MOVE}
 
 
-{$ifndef FPC_SYSTEM_HAS_FILLCHAR}
-{$define FPC_SYSTEM_HAS_FILLCHAR}
-Procedure FillChar(var x;count:SizeInt;value:byte);assembler; nostackframe;
+{$if not defined(FPC_SYSTEM_HAS_FILLCHAR)
+  or not defined(FPC_SYSTEM_HAS_FILLWORD)
+  or not defined(FPC_SYSTEM_HAS_FILLDWORD)
+  or not defined(FPC_SYSTEM_HAS_FILLQWORD)}
+
+{$if not defined(FPC_SYSTEM_HAS_FILLCHAR)
+  or not defined(FPC_SYSTEM_HAS_FILLWORD)
+  or not defined(FPC_SYSTEM_HAS_FILLDWORD)}
+const
+  FillXxxx_RepStosThreshold_ERMS = 1024;
+  FillXxxx_RepStosThreshold_NoERMS = 512 * 1024;
+
+procedure FillXxxx_U32Pattern_RepStos_8OrMore; assembler; nostackframe;
+{ eax — x, ecx — uint32 pattern, edx — byte count >= 8 (preferably >= FillXxxx_RepStosThreshold_(No)ERMS, depending on fast_large_repmovstosb). }
 asm
-        cmpl    $22,%edx          { empirically determined value on a Core 2 Duo Conroe }
-        jg      .LFillFull
-        orl     %edx,%edx
-        jle     .LFillZero
-
-.LFillLoop:
-        movb    %cl,(%eax)
-        incl    %eax
-        decl    %edx
-        jne     .LFillLoop
-.LFillZero:
-        ret
-
-.LFillFull:
 {$ifdef FPC_ENABLED_CLD}
         cld
 {$endif FPC_ENABLED_CLD}
-        push    %edi
-        movl    %eax,%edi
-        movzbl  %cl,%eax
-        movl    %edx,%ecx
-        imul    $0x01010101,%eax  { Expand al into a 4 subbytes of eax}
-        shrl    $2,%ecx
-        andl    $3,%edx
-        rep
-        stosl
-        movl    %edx,%ecx
-.LFill1:
-        rep
-        stosb
-.LFillEnd:
-        pop %edi
+        mov    %ecx, (%eax) { Write first 4 bytes unaligned. }
+        push   %ecx { pattern }
+        push   %edi
+        mov    %eax, %edi { Move x to edi, as expected by ‘rep stosl’. }
+        xchg   %eax, %ecx { now eax = pattern (as expected by ‘rep stosl’) and ecx = x (to rotate the pattern by its misalignment) }
+        shl    $3, %ecx { ecx = misalignment of x in bits. }
+        rol    %cl, %eax { misalign the pattern; no-op for FillChar, but handles misaligned cases of FillWord+. }
+        add    %edi, %edx { edx = x end }
+        lea    -1(%edx), %ecx { ecx = x end - 1. }
+        add    $4, %edi
+        and    $-4, %edi { edi = 4-byte aligned pointer strictly to the right of the start. }
+        and    $-4, %ecx { ecx = 4-byte aligned pointer strictly to the left of the end. }
+        sub    %edi, %ecx { ecx = byte count between them. }
+        shr    $2, %ecx { ecx = uint32 count, as expected by ‘rep stosl’. }
+        rep stosl
+        pop    %edi
+        pop    %ecx
+        mov    %ecx, -4(%edx) { Write last 4 bytes unaligned. }
+end;
+{$endif FillChar/Word/DWord required.}
+
+label
+  FillXxxx_MoreThanTwoXMMs;
+
+procedure FillXxxx_U32Pattern_SSE2_16OrMore; assembler; nostackframe;
+{ eax — x, ecx — uint32 pattern, edx — byte count >= 16 (preferably > 16). }
+const
+  NtThreshold = 4 * 1024 * 1024;
+asm
+        movd   %ecx, %xmm0
+        pshufd $0, %xmm0, %xmm0 { xmm0 = pattern for unaligned writes }
+        movdqu %xmm0, (%eax)
+        movdqu %xmm0, -16(%eax,%edx)
+        cmp    $32, %edx
+        ja     .LMoreThanTwoVectors
+        ret
+        .byte  144 { Turn .balign 16 before .L64x_Body into a no-op. }
+
+      { x can start and end misaligned on the vector boundary:
+        x = ~~][H1][H2][...][T2][T1]~
+            [UH]                 [UT]
+        UH/UT stands for “unaligned head/tail”, both have 1~16 bytes. }
+
+.LMoreThanTwoVectors:
+        push   %esi
+        mov    %ecx, %esi { esi = pattern }
+        mov    %eax, %ecx
+        shl    $3, %ecx { ecx = misalignment of x in bits }
+        rol    %cl, %esi { misalign the pattern }
+        movd   %esi, %xmm0
+        pshufd $0, %xmm0, %xmm0
+        pop    %esi
+
+{ FillChar (to skip the misaligning above) and FillQWord jump here.
+  eax — x, edx — byte count > 32, xmm0 = pattern for ALIGNED writes, first and last 16 bytes written. }
+FillXxxx_MoreThanTwoXMMs:
+        lea    -65(%eax,%edx), %ecx
+        and    $-16, %ecx { ecx = “T4” (possibly fictive) = loop bound. }
+        mov    %ecx, %edx { Remember T4 to edx. }
+        and    $-16, %eax { eax = H1 − 16. }
+        sub    %eax, %ecx { ecx = aligned byte count − 48. }
+        movdqa %xmm0, 16(%eax) { Write H1. }
+        cmp    $32-48, %ecx
+        jle    .LOneAlignedTailWrite
+        movdqa %xmm0, 32(%eax) { Write H2. }
+        cmp    $64-48, %ecx
+        jle    .LTwoAlignedTailWrites
+        sub    $48, %ecx { ecx = aligned byte count − 96 (32 bytes already written + 64 bytes written after loop). }
+        jle    .LFourAlignedTailWrites { ecx was ≤ 96−48 }
+
+        add    $48, %eax { eax = H3. }
+        cmp    $NtThreshold, %ecx
+        jae    .L64xNT_Body
+
+.balign 16 { no-op }
+.L64x_Body:
+        movdqa %xmm0, (%eax)
+        movdqa %xmm0, 16(%eax)
+        movdqa %xmm0, 32(%eax)
+        movdqa %xmm0, 48(%eax)
+        add    $64, %eax
+        sub    $64, %ecx
+        ja     .L64x_Body
+.LFourAlignedTailWrites:
+        movdqa %xmm0, (%edx) { T4 }
+        movdqa %xmm0, 16(%edx) { T3 }
+.LTwoAlignedTailWrites:
+        movdqa %xmm0, 32(%edx) { T2 }
+.LOneAlignedTailWrite:
+        movdqa %xmm0, 48(%edx) { T1 }
+        ret
+
+.balign 16
+.L64xNT_Body:
+        movntdq %xmm0, (%eax)
+        movntdq %xmm0, 16(%eax)
+        movntdq %xmm0, 32(%eax)
+        movntdq %xmm0, 48(%eax)
+        add    $64, %eax
+        sub    $64, %ecx
+        ja     .L64xNT_Body
+        sfence
+        jmp    .LFourAlignedTailWrites
+end;
+
+{$if not defined(FPC_SYSTEM_HAS_FILLCHAR)
+  or not defined(FPC_SYSTEM_HAS_FILLWORD)
+  or not defined(FPC_SYSTEM_HAS_FILLDWORD)}
+procedure FillXxxx_U32Pattern_Plain_16OrMore; assembler; nostackframe;
+{ eax — x, ecx — uint32 pattern, edx — byte count >= 12 (preferably >= 16). }
+asm
+        mov     %ecx, (%eax) { Write first 4 bytes. }
+        lea     -9(%eax,%edx), %edx
+        mov     %ecx, 5(%edx) { Write last 4 bytes. }
+        and     $-4, %edx { edx = loop bound. }
+        push    %esi
+        mov     %ecx, %esi { esi = pattern }
+        mov     %eax, %ecx
+        shl     $3, %ecx { ecx = misalignment of x in bits }
+        rol     %cl, %esi { misalign the pattern }
+        add     $4, %eax
+        and     $-4, %eax
+.balign 16
+.L8xLoop:
+        mov     %esi, (%eax)
+        mov     %esi, 4(%eax)
+        add     $8, %eax
+        cmp     %edx, %eax
+        jb      .L8xLoop
+        mov     %esi, (%edx)
+        mov     %esi, 4(%edx)
+        pop     %esi
+end;
+
+procedure FillXxxx_U32Pattern_Ladder_4to16; assembler; nostackframe;
+{ eax — x, ecx — uint32 pattern, edx — byte count, 4 <= edx <= 16. }
+asm
+        mov     %ecx, (%eax)
+        cmp     $8, %edx
+        jle     .LLast4
+        mov     %ecx, 4(%eax)
+        mov     %ecx, -8(%eax,%edx)
+.LLast4:
+        mov     %ecx, -4(%eax,%edx)
+end;
+{$endif FillChar/Word/DWord required.}
+{$endif FillChar/Word/DWord/QWord required.}
+
+
+{$ifndef FPC_SYSTEM_HAS_FILLCHAR}
+{$define FPC_SYSTEM_HAS_FILLCHAR}
+procedure FillChar_3OrLess; assembler; nostackframe;
+{ cl — x, edx — byte count, Low(int32) <= edx <= 3. }
+asm
+        test    %edx, %edx
+        jle     .LQuit
+        mov     %cl, (%eax)
+        mov     %cl, -1(%eax,%edx)
+        shr     $1, %edx
+        mov     %cl, (%eax,%edx)
+.LQuit:
+end;
+
+procedure FillChar_Plain(var x;count:SizeInt;value:byte);assembler;nostackframe;
+asm
+        cmp     $3, %edx
+        jle     FillChar_3OrLess
+
+        movzbl  %cl, %ecx
+        imul    $0x01010101, %ecx
+        cmp     $16, %edx
+        jbe     FillXxxx_U32Pattern_Ladder_4to16
+        jmp     FillXxxx_U32Pattern_Plain_16OrMore
+end;
+
+procedure FillChar_SSE2(var x;count:SizeInt;value:byte);assembler;nostackframe;
+asm
+        cmp     $3, %edx
+        jle     FillChar_3OrLess
+
+        movzbl  %cl, %ecx
+        imul    $0x01010101, %ecx
+        cmp     $16, %edx
+        jbe     FillXxxx_U32Pattern_Ladder_4to16
+        cmp     $FillXxxx_RepStosThreshold_NoERMS, %edx
+        jae     FillXxxx_U32Pattern_RepStos_8OrMore
+
+        movd   %ecx, %xmm0
+        pshufd $0, %xmm0, %xmm0 { xmm0 = pattern for unaligned writes }
+        movdqu %xmm0, (%eax)
+        movdqu %xmm0, -16(%eax,%edx)
+        cmp    $32, %edx
+        ja     FillXxxx_MoreThanTwoXMMs
+end;
+
+procedure FillChar_SSE2_ERMS(var x;count:SizeInt;value:byte);assembler;nostackframe;
+asm
+        cmp     $3, %edx
+        jle     FillChar_3OrLess
+
+        movzbl  %cl, %ecx
+        imul    $0x01010101, %ecx
+        cmp     $16, %edx
+        jbe     FillXxxx_U32Pattern_Ladder_4to16
+        cmp     $FillXxxx_RepStosThreshold_ERMS, %edx
+        jae     FillXxxx_U32Pattern_RepStos_8OrMore
+
+        movd   %ecx, %xmm0
+        pshufd $0, %xmm0, %xmm0 { xmm0 = pattern for unaligned writes }
+        movdqu %xmm0, (%eax)
+        movdqu %xmm0, -16(%eax,%edx)
+        cmp    $32, %edx
+        ja     FillXxxx_MoreThanTwoXMMs
+end;
+
+procedure FillChar_Dispatch(var x;count:SizeInt;value:byte); forward;
+
+var
+  FillChar_Impl: procedure(var x;count:SizeInt;value:byte) = @FillChar_Dispatch;
+
+procedure FillChar_Dispatch(var x;count:SizeInt;value:byte);
+begin
+  if not fpc_cpucodeinit_performed then
+    begin
+      FillChar_Plain(x, count, value);
+      exit;
+    end;
+  if fast_large_repmovstosb then
+    FillChar_Impl := @FillChar_SSE2_ERMS
+  else if has_sse2_support then
+    FillChar_Impl := @FillChar_SSE2
+  else
+    FillChar_Impl := @FillChar_Plain;
+  FillChar_Impl(x, count, value);
+end;
+
+procedure FillChar(var x;count:SizeInt;value:byte);
+begin
+  FillChar_Impl(x, count, value);
 end;
 {$endif FPC_SYSTEM_HAS_FILLCHAR}
 
 
 {$ifndef FPC_SYSTEM_HAS_FILLWORD}
 {$define FPC_SYSTEM_HAS_FILLWORD}
-procedure fillword(var x;count : SizeInt;value : word);assembler;
-var
-  saveedi : longint;
+procedure FillWord_3OrLess; assembler; nostackframe;
 asm
-        movl    %edi,saveedi
-        movl    %eax,%edi
-        movzwl  %cx,%eax
-        movl    %edx,%ecx
-{ check for zero or negative count }
-        cmpl    $0,%ecx
-        jle     .LFillWordEnd
-        movl    %eax,%edx
-        shll    $16,%eax
-        orl     %edx,%eax
-        movl    %ecx,%edx
-        shrl    $1,%ecx
-{$ifdef FPC_ENABLED_CLD}
-        cld
-{$endif FPC_ENABLED_CLD}
-        rep
-        stosl
-        movl    %edx,%ecx
-        andl    $1,%ecx
-        rep
-        stosw
-.LFillWordEnd:
-        movl    saveedi,%edi
+        test    %edx, %edx
+        jle     .LQuit
+        mov     %cx, (%eax)
+        mov     %cx, -2(%eax,%edx,2)
+        shr     $1, %edx
+        mov     %cx, (%eax,%edx,2)
+.LQuit:
+end;
+
+procedure FillWord_Plain(var x;count:SizeInt;value:word);assembler;nostackframe;
+asm
+        cmp     $3, %edx
+        jle     FillWord_3OrLess
+
+        shl     $1, %edx
+        movzwl  %cx, %ecx
+        imul    $0x00010001, %ecx
+        cmp     $16, %edx
+        jbe     FillXxxx_U32Pattern_Ladder_4to16
+        jmp     FillXxxx_U32Pattern_Plain_16OrMore
+end;
+
+procedure FillWord_SSE2(var x;count:SizeInt;value:word);assembler;nostackframe;
+asm
+        cmp     $3, %edx
+        jle     FillWord_3OrLess
+
+        shl     $1, %edx
+        movzwl  %cx, %ecx
+        imul    $0x00010001, %ecx
+        cmp     $16, %edx
+        jbe     FillXxxx_U32Pattern_Ladder_4to16
+        cmp     $FillXxxx_RepStosThreshold_NoERMS, %edx
+        jb      FillXxxx_U32Pattern_SSE2_16OrMore
+        jmp     FillXxxx_U32Pattern_RepStos_8OrMore
+end;
+
+procedure FillWord_SSE2_ERMS(var x;count:SizeInt;value:word);assembler;nostackframe;
+asm
+        cmp     $3, %edx
+        jle     FillWord_3OrLess
+
+        shl     $1, %edx
+        movzwl  %cx, %ecx
+        imul    $0x00010001, %ecx
+        cmp     $16, %edx
+        jbe     FillXxxx_U32Pattern_Ladder_4to16
+        cmp     $FillXxxx_RepStosThreshold_ERMS, %edx
+        jb      FillXxxx_U32Pattern_SSE2_16OrMore
+        jmp     FillXxxx_U32Pattern_RepStos_8OrMore
+end;
+
+procedure FillWord_Dispatch(var x;count:SizeInt;value:word); forward;
+
+var
+  FillWord_Impl: procedure(var x;count:SizeInt;value:word) = @FillWord_Dispatch;
+
+procedure FillWord_Dispatch(var x;count:SizeInt;value:word);
+begin
+  if not fpc_cpucodeinit_performed then
+    begin
+      FillWord_Plain(x, count, value);
+      exit;
+    end;
+  if fast_large_repmovstosb then
+    FillWord_Impl := @FillWord_SSE2_ERMS
+  else if has_sse2_support then
+    FillWord_Impl := @FillWord_SSE2
+  else
+    FillWord_Impl := @FillWord_Plain;
+  FillWord_Impl(x, count, value);
+end;
+
+procedure FillWord(var x;count:SizeInt;value:word);
+begin
+  FillWord_Impl(x, count, value);
 end;
 {$endif FPC_SYSTEM_HAS_FILLWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_FILLDWORD}
 {$define FPC_SYSTEM_HAS_FILLDWORD}
-procedure filldword(var x;count : SizeInt;value : dword);assembler;
-var
-  saveedi : longint;
+procedure FillDWord_4OrLess; assembler; nostackframe;
 asm
-        movl    %edi,saveedi
-        movl    %eax,%edi
-        movl    %ecx,%eax
-        movl    %edx,%ecx
-{ check for zero or negative count }
-        cmpl    $0,%ecx
-        jle     .LFillDWordEnd
-{$ifdef FPC_ENABLED_CLD}
-        cld
-{$endif FPC_ENABLED_CLD}
-        rep
-        stosl
-.LFillDWordEnd:
-        movl    saveedi,%edi
+        cmp     $1, %edx
+        jl      .LQuit
+        mov     %ecx, (%eax)
+        je      .LQuit
+        mov     %ecx, 4(%eax)
+        mov     %ecx, -8(%eax,%edx,4)
+        mov     %ecx, -4(%eax,%edx,4)
+.LQuit:
+end;
+
+procedure FillDWord_Plain(var x;count:SizeInt;value:dword);assembler;nostackframe;
+asm
+        cmp     $4, %edx
+        jle     FillDWord_4OrLess
+        shl     $2, %edx
+        jmp     FillXxxx_U32Pattern_Plain_16OrMore
+end;
+
+procedure FillDWord_SSE2(var x;count:SizeInt;value:dword);assembler;nostackframe;
+asm
+        cmp     $4, %edx
+        jle     FillDWord_4OrLess
+        shl     $2, %edx
+        cmp     $FillXxxx_RepStosThreshold_NoERMS, %edx
+        jb      FillXxxx_U32Pattern_SSE2_16OrMore
+        jmp     FillXxxx_U32Pattern_RepStos_8OrMore
+end;
+
+procedure FillDWord_SSE2_ERMS(var x;count:SizeInt;value:dword);assembler;nostackframe;
+asm
+        cmp     $4, %edx
+        jle     FillDWord_4OrLess
+        shl     $2, %edx
+        cmp     $FillXxxx_RepStosThreshold_ERMS, %edx
+        jb      FillXxxx_U32Pattern_SSE2_16OrMore
+        jmp     FillXxxx_U32Pattern_RepStos_8OrMore
+end;
+
+procedure FillDWord_Dispatch(var x;count:SizeInt;value:dword); forward;
+
+var
+  FillDWord_Impl: procedure(var x;count:SizeInt;value:dword) = @FillDWord_Dispatch;
+
+procedure FillDWord_Dispatch(var x;count:SizeInt;value:dword);
+begin
+  if not fpc_cpucodeinit_performed then
+    begin
+      FillDWord_Plain(x, count, value);
+      exit;
+    end;
+  if fast_large_repmovstosb then
+    FillDWord_Impl := @FillDWord_SSE2_ERMS
+  else if has_sse2_support then
+    FillDWord_Impl := @FillDWord_SSE2
+  else
+    FillDWord_Impl := @FillDWord_Plain;
+  FillDWord_Impl(x, count, value);
+end;
+
+procedure FillDWord(var x;count:SizeInt;value:dword);
+begin
+  FillDWord_Impl(x, count, value);
 end;
 {$endif FPC_SYSTEM_HAS_FILLDWORD}
+
+
+{$ifndef FPC_SYSTEM_HAS_FILLQWORD}
+{$define FPC_SYSTEM_HAS_FILLQWORD}
+procedure FillQWord_Plain(var x;count:SizeInt;value:QWord);assembler;nostackframe;
+{ eax = x, edx = count, [esp + 4] = value }
+asm
+        test    %edx, %edx { Don't care about clever things like separate small branches or aligning writes by misaligning the pattern, the function is dead. }
+        jle     .LQuit
+        push    %esi
+        mov     4+4(%esp), %esi { esi = value[0:31] }
+        mov     4+8(%esp), %ecx { ecx = value[32:63] }
+.balign 16
+.LLoop:
+        mov     %esi, (%eax)
+        mov     %ecx, 4(%eax)
+        add     $8, %eax
+        sub     $1, %edx
+        jnz     .LLoop
+        pop     %esi
+.LQuit:
+end;
+
+procedure FillQWord_SSE2(var x;count:SizeInt;value:QWord);assembler;nostackframe;
+{ eax = x, edx = count, [esp + 4] = value }
+asm
+        cmp     $4, %edx
+        jle     .L4OrLess
+        movq    4(%esp), %xmm0
+        punpcklqdq %xmm0, %xmm0
+        { Stack is 12 bytes:
+          [esp] = return address, [esp + 4] = value (not required anymore).
+          Convert to 4 bytes expected by FillXxxx_MoreThanTwoXMMs:
+          [esp] = return address. }
+        mov     (%esp), %ecx
+        add     $8, %esp
+        mov     %ecx, (%esp)
+        shl     $3, %edx
+        movdqu  %xmm0, (%eax)
+        movdqu  %xmm0, -16(%eax,%edx)
+        test    $7, %eax { Since misaligning the pattern is not very trivial, shortcut if x is aligned. }
+        jz      FillXxxx_MoreThanTwoXMMs
+        mov     %eax, %ecx { Misalign uint64s in xmm0 by the misalignment of x. }
+        shl     $3, %ecx
+        and     $63, %ecx
+        movd    %ecx, %xmm2
+        movdqa  %xmm0, %xmm1
+        psllq   %xmm2, %xmm1
+        neg     %ecx      { Can also do not ecx; and $63, %ecx; inc ecx to support ecx = 0, as SSE shifts correctly handle count >= bitsizeof.  }
+        and     $63, %ecx { But in the definitely unaligned case, ecx = 0 is impossible. }
+        movd    %ecx, %xmm2
+        psrlq   %xmm2, %xmm0
+        por     %xmm1, %xmm0
+        jmp     FillXxxx_MoreThanTwoXMMs
+
+.L4OrLess: { Doing this with 64-bit half-XMM MOVQs is a lot simpler but 2x slower (Coffee Lake). :\ }
+        cmp     $1, %edx
+        jl      .LQuit
+        mov     4(%esp), %ecx
+        mov     %ecx, (%eax)
+        je      .LSecondHalfOf1
+        mov     %ecx, 8(%eax)
+        mov     %ecx, -16(%eax,%edx,8)
+        mov     %ecx, -8(%eax,%edx,8)
+        mov     8(%esp), %ecx
+        mov     %ecx, 4(%eax)
+        mov     %ecx, 12(%eax)
+        mov     %ecx, -12(%eax,%edx,8)
+        mov     %ecx, -4(%eax,%edx,8)
+.LQuit:
+        ret     $8
+.LSecondHalfOf1:
+        mov     8(%esp), %ecx
+        mov     %ecx, 4(%eax)
+end;
+
+procedure FillQWord_Dispatch(var x;count:SizeInt;value:qword); forward;
+
+var
+  FillQWord_Impl: procedure(var x;count:SizeInt;value:qword) = @FillQWord_Dispatch;
+
+procedure FillQWord_Dispatch(var x;count:SizeInt;value:qword);
+begin
+  if not fpc_cpucodeinit_performed then
+    begin
+      FillQWord_Plain(x, count, value);
+      exit;
+    end;
+  if has_sse2_support then
+    FillQWord_Impl := @FillQWord_SSE2
+  else
+    FillQWord_Impl := @FillQWord_Plain;
+  FillQWord_Impl(x, count, value);
+end;
+
+procedure FillQWord(var x;count:SizeInt;value:qword);
+begin
+  FillQWord_Impl(x, count, value);
+end;
+{$endif FPC_SYSTEM_HAS_FILLQWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_INDEXBYTE}
@@ -393,57 +809,57 @@ end;
 function IndexByte_SSE2(const buf;len:SizeInt;b:byte):SizeInt; assembler; nostackframe;
 asm
         test      %edx, %edx
-        je        .LNothing
+        jz        .Lnotfound                 { exit if len=0 }
         push      %ebx
-        mov       %eax, %ebx
-        and       $-16, %eax
-        pxor      %xmm1, %xmm1
         movd      %ecx, %xmm1
+        lea       16(%eax), %ecx             { eax = original ptr, ecx = buf + 16 for aligning & shifts. }
         punpcklbw %xmm1, %xmm1
-        punpcklwd %xmm1, %xmm1
+        and       $-0x10, %ecx               { first aligned address after buf }
+        punpcklbw %xmm1, %xmm1
         pshufd    $0, %xmm1, %xmm1
-        lea       16(%eax), %ecx
-        movdqa    %xmm1, %xmm0
-        pcmpeqb   (%eax), %xmm0
-        sub       %ebx, %ecx
-        pmovmskb  %xmm0, %eax
-        sal       %cl, %eax
-        xor       %ax, %ax
-        shr       %cl, %eax
-        jz        .L16xAligned_Test
-        sub       $16, %ecx
-.LFound:
-        bsf       %eax, %eax
-        add       %ecx, %eax
+        movdqa    -16(%ecx), %xmm0           { Fetch first 16 bytes (up to 15 bytes before target) }
+        sub       %eax, %ecx                 { ecx=number of valid bytes, eax=original ptr }
+
+        pcmpeqb   %xmm1, %xmm0               { compare with pattern and get bitmask }
+        pmovmskb  %xmm0, %ebx
+
+        shl       %cl, %ebx                  { shift valid bits into high word }
+        and       $0xffff0000, %ebx          { clear low word containing invalid bits }
+        shr       %cl, %ebx                  { shift back }
+        jz        .Lcontinue
+.Lmatch:
+        bsf       %ebx, %ebx
+        lea       -16(%ecx,%ebx), %eax
         pop       %ebx
-        cmp       %edx, %eax
-        jnb       .LNothing
+        cmp       %eax, %edx                 { check against the buffer length }
+        jbe       .Lnotfound
         ret
 
-.balign 16
-.L16xAligned_Body:
-        movdqa    %xmm1, %xmm0
-        pcmpeqb   (%ebx,%ecx), %xmm0
-        pmovmskb   %xmm0, %eax
-        test      %eax, %eax
-        jne       .LFound
-        add       $16, %ecx
-.L16xAligned_Test:
-        cmp       %edx, %ecx
-        jb        .L16xAligned_Body
+    .balign 16
+.Lloop:
+        movdqa    (%eax,%ecx), %xmm0         { eax and ecx may have any values, }
+        add       $16, %ecx                  { but their sum is evenly divisible by 16. }
+        pcmpeqb   %xmm1, %xmm0
+        pmovmskb  %xmm0, %ebx
+        test      %ebx, %ebx
+        jnz       .Lmatch
+.Lcontinue:
+        cmp       %ecx, %edx
+        ja        .Lloop
         pop       %ebx
-.LNothing:
-        mov       $-1, %eax
+.Lnotfound:
+        or        $-1, %eax
 end;
 
 function IndexByte_Dispatch(const buf;len:SizeInt;b:byte):SizeInt; forward;
 
 var
   IndexByte_Impl: function(const buf;len:SizeInt;b:byte):SizeInt = @IndexByte_Dispatch;
-{$define has_i386_IndexByte_Impl} { used in assembler to manually inline IndexByte }
 
 function IndexByte_Dispatch(const buf;len:SizeInt;b:byte):SizeInt;
 begin
+  if not fpc_cpucodeinit_performed then
+    exit(IndexByte_Plain(buf,len,b));
   if has_sse2_support then
     IndexByte_Impl:=@IndexByte_SSE2
   else
@@ -462,145 +878,125 @@ end;
 {$define FPC_SYSTEM_HAS_INDEXWORD}
 function IndexWord_Plain(Const buf;len:SizeInt;b:word):SizeInt; assembler; nostackframe;
 asm
+        test    %edx, %edx
+        jz      .LNotFound
         push    %eax
-        cmp     $1073741823, %edx
-        ja      .LUnbounded
-        lea     (%eax,%edx,2), %edx
-        cmp     %edx, %eax
-        je      .LNotFound
-.LWordwise_Body:
+.LWordwise_Body: { Loop does not cross cache line if the function entry is aligned on 16 bytes. }
         cmp     %cx, (%eax)
         je      .LFound
         add     $2, %eax
-        cmp     %edx, %eax
-        jne     .LWordwise_Body
+        dec     %edx
+        jnz     .LWordwise_Body
+        pop     %edx
 .LNotFound:
-        pop     %eax
-        mov     $-1, %eax
+        or      $-1, %eax
         ret
 
 .LFound:
         pop     %edx
         sub     %edx, %eax
         shr     $1, %eax
-        ret
-
-.LUnbounded:
-        mov     %eax, %edx
-        jmp     .LWordwise_Body
 end;
 
 function IndexWord_SSE2(const buf;len:SizeInt;b:word):SizeInt; assembler; nostackframe;
 asm
-        test      %edx, %edx
-        je        .LInstantNothing
-        push      %edi
-        movd      %ecx, %xmm0
-        push      %esi
-        mov       %eax, %esi
+        test      %edx, %edx       { exit if len=0 }
+        je        .Lnotfound
         push      %ebx
-        and       $-0x10, %esi
-        punpcklwd %xmm0, %xmm0
-        movdqa    (%esi), %xmm2
-        sub       %eax, %esi
-        mov       %edx, %edi
-        pshufd    $0, %xmm0, %xmm0
-        lea       16(%esi), %edx
-        mov       %eax, %ebx
-        movdqa    %xmm0, %xmm1
-        mov       %edx, %ecx
+        movd      %ecx, %xmm1
+        punpcklwd %xmm1, %xmm1
+        pshufd    $0, %xmm1, %xmm1
+        lea       16(%eax), %ecx
+        and       $-16, %ecx
+        movdqa    -16(%ecx), %xmm0 { Fetch first 16 bytes (up to 14 bytes before target) }
+        sub       %eax, %ecx
 
-        test      $1, %al
-        jnz       .LUnaligned
+        test      $1, %eax         { if buffer isn't aligned to word boundary, }
+        jnz       .Lunaligned      { use a different algorithm }
 
-        pcmpeqw   %xmm0, %xmm2
-        pmovmskb  %xmm2, %eax
-
-        shl       %cl, %eax
-        xor       %ax, %ax
-        shr       $1, %edx
-        shr       %cl, %eax
-        jz        .LLoopTest
-        lea       -8(%edx), %ecx
-.LMatch:
-        bsf       %eax, %eax
-        shr       $1, %eax
-        add       %ecx, %eax
-        cmp       %edi, %eax
-        jnb       .LNothing
-        pop       %ebx
-        pop       %esi
-        pop       %edi
-        ret
-
-.balign 16
-.LLoop:
-        movdqa    (%ebx,%edx,2), %xmm0
-        mov       %edx, %ecx
-        add       $8, %edx
         pcmpeqw   %xmm1, %xmm0
-        pmovmskb  %xmm0, %eax
-        test      %eax, %eax
-        jne       .LMatch
-.LLoopTest:
-        cmp       %edi, %edx
-        jb        .LLoop
-.LNothing:
-        pop       %ebx
-        pop       %esi
-        pop       %edi
-.LInstantNothing:
-        mov       $-1, %eax
-        ret
+        pmovmskb  %xmm0, %ebx
 
-.LUnaligned:
-        psllw     $8, %xmm1
-        add       %edi, %edi
-        psrlw     $8, %xmm0
-        por       %xmm1, %xmm0
-        pcmpeqb   %xmm0, %xmm2
-        movdqa    %xmm0, %xmm1
-        pmovmskb  %xmm2, %eax
-        shl       %cl, %eax
-        xor       %ax, %ax
-        shr       %cl, %eax
-        lea       (%eax,%eax), %ecx
-        and       %ecx, %eax
-        and       $0x5555, %eax
-        je        .LUnalignedLoopTest
-.LUnalignedMatch:
-        bsf       %eax, %eax
-        add       %esi, %eax
-        cmp       %edi, %eax
-        jnb       .LNothing
+        shl       %cl, %ebx
+        and       $0xffff0000, %ebx
+        shr       %cl, %ebx
+        shr       $1, %ecx         { ecx=number of valid bytes }
+        test      %ebx, %ebx
+        jz        .Lcontinue
+.Lmatch:
+        bsf       %ebx, %ebx
+        shr       $1, %ebx         { in words }
+        lea       -8(%ecx,%ebx), %eax
         pop       %ebx
-        shr       $1, %eax
-        pop       %esi
-        pop       %edi
+        cmp       %eax, %edx
+        jbe       .Lnotfound       { if match is after the specified length, ignore it }
         ret
 
 .balign 16
-.LUnalignedLoop:
-        movdqa    (%ebx,%edx), %xmm0
-        shr       $16, %ecx
-        mov       %edx, %esi
-        add       $16, %edx
-        pcmpeqb   %xmm1, %xmm0
-        pmovmskb  %xmm0, %eax
-        add       %eax, %eax
-        or        %eax, %ecx
-        mov       %ecx, %eax
-        shr       $1, %eax
-        and       %ecx, %eax
-        and       $0x5555, %eax
-        jne       .LUnalignedMatch
-.LUnalignedLoopTest:
-        cmp       %edi, %edx
-        jb        .LUnalignedLoop
+.Lloop:
+        movdqa    (%eax,%ecx,2), %xmm0
+        add       $8, %ecx
+        pcmpeqw   %xmm1, %xmm0
+        pmovmskb  %xmm0, %ebx
+        test      %ebx, %ebx
+        jnz       .Lmatch
+.Lcontinue:
+        cmp       %ecx, %edx
+        ja        .Lloop
         pop       %ebx
+.Lnotfound:
+        or        $-1, %eax
+        ret
+
+.Lunaligned:
+        push      %esi
+        movdqa    %xmm1, %xmm2     { (mis)align the pattern (in this particular case: }
+        psllw     $8, %xmm1        {   swap bytes of each word of pattern) }
+        psrlw     $8, %xmm2
+        por       %xmm2, %xmm1
+
+        pcmpeqb   %xmm1, %xmm0
+        pmovmskb  %xmm0, %ebx
+
+        shl       %cl, %ebx
+        and       $0xffff0000, %ebx
+        shr       %cl, %ebx
+
+        xor       %esi, %esi       { nothing to merge yet }
+        add       %edx, %edx       { length words -> bytes }
+        jmp       .Lcontinue_u
+
+.balign 16
+.Lloop_u:
+        movdqa    (%eax,%ecx), %xmm0
+        add       $16, %ecx
+        pcmpeqb   %xmm1, %xmm0     { compare by bytes }
+        shr       $16, %esi        { bit 16 shifts into 0 }
+        pmovmskb  %xmm0, %ebx
+.Lcontinue_u:
+        shl       $1, %ebx         { 15:0 -> 16:1 }
+        or        %esi, %ebx       { merge bit 0 from previous round }
+        mov       %ebx, %esi
+        shr       $1, %ebx         { now AND together adjacent pairs of bits }
+        and       %esi, %ebx
+        and       $0x5555, %ebx    { also reset odd bits }
+        jnz       .Lmatch_u
+        cmp       %ecx, %edx
+        ja        .Lloop_u
+.Lnotfound_u:
         pop       %esi
-        pop       %edi
-        mov       $-1, %eax
+        pop       %ebx
+        or        $-1, %eax
+        ret
+
+.Lmatch_u:
+        bsf       %ebx, %ebx
+        lea       -16(%ecx,%ebx), %eax
+        cmp       %eax, %edx
+        jbe       .Lnotfound_u     { if match is after the specified length, ignore it }
+        sar       $1, %eax         { in words }
+        pop       %esi
+        pop       %ebx
 end;
 
 function IndexWord_Dispatch(const buf;len:SizeInt;b:word):SizeInt; forward;
@@ -610,6 +1006,8 @@ var
 
 function IndexWord_Dispatch(const buf;len:SizeInt;b:word):SizeInt;
 begin
+  if not fpc_cpucodeinit_performed then
+    exit(IndexWord_Plain(buf,len,b));
   if has_sse2_support then
     IndexWord_Impl:=@IndexWord_SSE2
   else
@@ -629,105 +1027,71 @@ end;
 function IndexDWord_Plain(Const buf;len:SizeInt;b:DWord):SizeInt; assembler; nostackframe;
 asm
         push    %eax
-        cmp     $536870911, %edx
-        ja      .LUnbounded
-        lea     (%eax,%edx,4), %edx
-        cmp     %edx, %eax
-        je      .LNotFound
-.LDWordwise_Body:
-        cmp     %ecx, (%eax)
-        je      .LFound
+        sub     $4, %eax
+.LDWordwise_Next: { Loop does not cross cache line if the function entry is aligned on 16 bytes. }
         add     $4, %eax
-        cmp     %edx, %eax
-        jne     .LDWordwise_Body
-.LNotFound:
-        pop     %eax
-        mov     $-1, %eax
-        ret
-
-.LFound:
+        sub     $1, %edx
+        jb      .LNotFound
+        cmp     %ecx, (%eax)
+        jne     .LDWordwise_Next
         pop     %edx
         sub     %edx, %eax
         shr     $2, %eax
         ret
 
-.LUnbounded:
-        mov     %eax, %edx
-        jmp     .LDWordwise_Body
+.LNotFound:
+        pop     %edx
+        mov     $-1, %eax
 end;
 
 function IndexDWord_SSE2(const buf;len:SizeInt;b:DWord):SizeInt; assembler; nostackframe;
 asm
-        push     %esi
-        lea      (%eax,%edx,4), %esi
-        push     %ebx
-        mov      %eax, %ebx
-        cmp      $536870911, %edx
-        ja       .LUnbounded
-        and      $-4, %edx
-        jz       .LDWordwise_Test
-        push     %edi
-        shl      $2, %edx
-        movd     %ecx, %xmm2
-        add      %eax, %edx
-        pshufd   $0, %xmm2, %xmm1
-
-.balign 16
+        push     %eax
+        sub      $4, %edx
+        jle      .LDwordwise_Prepare
+        movd     %ecx, %xmm1
+        pshufd   $0, %xmm1, %xmm1
+.balign 16 { 1-byte NOP. }
 .L4x_Body:
         movdqu   (%eax), %xmm0
         pcmpeqd  %xmm1, %xmm0
-        pmovmskb %xmm0, %edi
-        test     %edi, %edi
-        jnz      .L4x_Found
-.L4x_Next:
+        pmovmskb %xmm0, %ecx
+        test     %ecx, %ecx
+        jnz      .LFoundAtMask
         add      $16, %eax
-        cmp      %eax, %edx
-        jne      .L4x_Body
+        sub      $4, %edx
+        jg       .L4x_Body
 
-        cmp      %esi, %eax
-        je       .LNothing
-
-        lea      -16(%esi), %eax
+        lea      (%eax,%edx,4), %eax
         movdqu   (%eax), %xmm0
         pcmpeqd  %xmm1, %xmm0
-        pmovmskb %xmm0, %edi
-        test     %edi, %edi
-        jnz      .L4x_Found
-.LNothing:
-        pop      %edi
-        pop      %ebx
-        pop      %esi
-        mov      $-1, %eax
-        ret
-
-.balign 16
-.L4x_Found:
-        bsf      %edi, %edi
-        add      %edi, %eax
-        pop      %edi
-.LDWordwise_Found:
-        sub      %ebx, %eax
+        pmovmskb %xmm0, %ecx
+        test     %ecx, %ecx
+        jz       .LNothing
+.LFoundAtMask:
+        bsf      %ecx, %ecx
+        add      %ecx, %eax
+.LFoundAtEax:
+        pop      %edx
+        sub      %edx, %eax
         shr      $2, %eax
-        pop      %ebx
-        pop      %esi
         ret
+        nop { Turns .balign 16 before .LDwordwise_Body into a no-op. }
 
-.balign 16
-.LDWordwise_Body:
-        cmp      %ecx, (%eax)
-        je       .LDWordwise_Found
+.LDwordwise_Prepare:
+        add      $3, %edx
+        cmp      $-1, %edx
+        je       .LNothing
+.balign 16 { no-op }
+.LDwordwise_Body:
+        cmp      (%eax), %ecx
+        je       .LFoundAtEax
         add      $4, %eax
-.LDWordwise_Test:
-        cmp      %esi, %eax
-        jne      .LDWordwise_Body
-        mov      $-1, %eax
-        pop      %ebx
-        pop      %esi
-        ret
-
-.LUnbounded:
-        mov      %eax, %esi
-        jmp      .LDWordwise_Body
+        sub      $1, %edx
+        jae      .LDwordwise_Body
+.LNothing:
+        pop      %edx
+        or       $-1, %eax
 end;
 
 function IndexDWord_Dispatch(const buf;len:SizeInt;b:DWord):SizeInt; forward;
@@ -737,6 +1101,8 @@ var
 
 function IndexDWord_Dispatch(const buf;len:SizeInt;b:DWord):SizeInt;
 begin
+  if not fpc_cpucodeinit_performed then
+    exit(IndexDWord_Plain(buf,len,b));
   if has_sse2_support then
     IndexDWord_Impl:=@IndexDWord_SSE2
   else
@@ -787,86 +1153,71 @@ end;
 {$define FPC_SYSTEM_HAS_COMPAREBYTE}
 function CompareByte_Plain(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
-        sub     %eax, %edx
-        cmp     $6, %ecx
-        push    %esi
-        lea     (%eax,%ecx), %esi
-        jle     .LBytewiseTail_Prepare
+        { eax = buf1, edx = buf2, ecx = len }
         push    %ebx
-        lea     3(%eax), %ebx
-        and     $-4, %ebx
-        cmp     %ebx, %eax
-        jne     .LBytewiseHead_Body
-.L4x_Prepare:
-        mov     %esi, %eax
+        sub     %eax, %edx { edx = buf2 - buf1 }
+        cmp     $3, %ecx
+        jle     .LBytewise_Prepare
+
+        { Align buf1 on 4 bytes. }
+        mov     (%edx,%eax), %ebx
+        cmp     (%eax), %ebx
+        jne     .L4xDiffer
+        lea     -4(%eax,%ecx), %ecx { ecx = buf1 end - (4 + buf1 and -4) = count remaining }
         and     $-4, %eax
-        jmp     .L4x_Body
+        sub     %eax, %ecx
 
 .balign 16
 .L4x_Next:
-        add     $4, %ebx
-        cmp     %ebx, %eax
-        je      .LBytewiseTail_PrepareFromHeadAnd4x
-.L4x_Body:
-        mov     (%ebx,%edx), %ecx
-        cmp     %ecx, (%ebx)
+        add     $4, %eax
+        sub     $4, %ecx { at .LLast4, ecx is 4 less than remaining bytes }
+        jle     .LLast4
+        mov     (%edx,%eax), %ebx
+        cmp     (%eax), %ebx
         je      .L4x_Next
-        mov     (%ebx), %eax
+.L4xDiffer:
+        mov     (%eax), %edx
 {$ifdef CPUX86_HAS_BSWAP}
-        bswap   %ecx
+        bswap   %ebx
+        bswap   %edx
 {$else}
-        rol     $8, %cx
-        rol     $16, %ecx
-        rol     $8, %cx
+        rol     $8, %bx
+        rol     $16, %ebx
+        rol     $8, %bx
+        rol     $8, %dx
+        rol     $16, %edx
+        rol     $8, %dx
 {$endif}
-        pop     %ebx
-        pop     %esi
-{$ifdef CPUX86_HAS_BSWAP}
-        bswap   %eax
-{$else}
-        rol     $8, %ax
-        rol     $16, %eax
-        rol     $8, %ax
-{$endif}
-        cmp     %eax, %ecx
+        cmp     %ebx, %edx
+.LDoSbb:
         sbb     %eax, %eax
-        and     $2, %eax
-        sub     $1, %eax
+        or      $1, %eax
+        pop     %ebx
         ret
 
-.LBytewiseHead_Next:
-        add     $1, %eax
-        cmp     %eax, %ebx
-        je      .L4x_Prepare
-.LBytewiseHead_Body:
-        movzbl  (%eax,%edx), %ecx
-        cmp     (%eax), %cl
-        je      .LBytewiseHead_Next
-        pop     %ebx
-        jmp     .LBytesDiffer
-
-.LBytewiseTail_PrepareFromHeadAnd4x:
-        pop     %ebx
-.LBytewiseTail_Prepare:
-        cmp     %esi, %eax
-        jne     .LBytewiseTail_Body
-.LNothingFound:
+.LLast4:
+        add     %ecx, %eax
+        mov     (%edx,%eax), %ebx
+        cmp     (%eax), %ebx
+        jne     .L4xDiffer
         xor     %eax, %eax
-        pop     %esi
+        pop     %ebx
         ret
 
-.LBytewiseTail_Next:
+.LBytewise_Prepare:
+        sub     $1, %ecx
+        jb      .LNothing
+.balign 16 { no-op }
+.LBytewise_Body:
+        movzbl  (%edx,%eax), %ebx
+        cmp     %bl, (%eax)
+        jne     .LDoSbb
         add     $1, %eax
-        cmp     %eax, %esi
-        je      .LNothingFound
-.LBytewiseTail_Body:
-        movzbl  (%eax,%edx), %ecx
-        cmp     (%eax), %cl
-        je      .LBytewiseTail_Next
-.LBytesDiffer:
-        movzbl  (%eax), %eax
-        pop     %esi
-        sub     %ecx, %eax
+        sub     $1, %ecx
+        jae     .LBytewise_Body
+.LNothing:
+        xor     %eax, %eax
+        pop     %ebx
 end;
 
 function CompareByte_SSE2(const buf1, buf2; len: SizeInt): SizeInt; assembler; nostackframe;
@@ -1104,6 +1455,8 @@ var
 
 function CompareByte_Dispatch(const buf1, buf2; len: SizeInt): SizeInt;
 begin
+  if not fpc_cpucodeinit_performed then
+    exit(CompareByte_Plain(buf1, buf2, len));
   if has_sse2_support then
     CompareByte_Impl:=@CompareByte_SSE2
   else
@@ -1122,166 +1475,170 @@ end;
 {$define FPC_SYSTEM_HAS_COMPAREWORD}
 function CompareWord_Plain(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
-        sub     %eax, %edx
-        push    %esi
-        cmp     $1073741823, %ecx
-        ja      .LUnbounded
-        cmp     $3, %ecx
-        lea     (%eax,%ecx,2), %esi
-        jle     .LWordwise_Test
         push    %ebx
-        test    $3, %al
-        je      .LPtrUintWise_Prepare
+        sub     %eax, %edx { edx = buf2 - buf1 }
+        lea     -4(%ecx), %ebx { Go wordwise if ecx <= 3 or ecx > 1073741823 (High(int32) div 2) ==> uint32(ecx - 4) > 1073741819. }
+        cmp     $1073741819, %ebx
+        ja      .LWordwise_Prepare
+        test    $2, %al
+        je      .LAlignedToPtrUintOrNaturallyMisaligned
         movzwl  (%edx,%eax), %ebx
-        cmp     (%eax), %bx
-        jne     .LPopEbxAndDoSbb
+        cmp     %bx, (%eax)
+        jne     .LDoSbb
         add     $2, %eax
         sub     $1, %ecx
-.LPtrUintWise_Prepare:
-        and     $-2, %ecx
-        lea     (%eax,%ecx,2), %ecx
+.LAlignedToPtrUintOrNaturallyMisaligned:
+        sub     $2, %ecx
 .balign 16
 .LPtrUintWise_Next:
         mov     (%edx,%eax), %ebx
-        cmp     (%eax), %ebx
+        cmp     %ebx, (%eax)
         jne     .LPtrUintsDiffer
         add     $4, %eax
-        cmp     %eax, %ecx
-        jne     .LPtrUintWise_Next
+        sub     $2, %ecx
+        jg      .LPtrUintWise_Next
+        lea     (%eax,%ecx,2), %eax
+        mov     (%edx,%eax), %ebx
+        cmp     %ebx, (%eax)
+        jne     .LPtrUintsDiffer
         pop     %ebx
-.LWordwise_Test:
-        cmp     %esi, %eax
-        je      .LNothingFound
-.LWordwise_Body:
-        movzwl  (%edx,%eax), %ecx
-        cmp     (%eax), %cx
-        jne     .LDoSbb
-        add     $2, %eax
-        cmp     %esi, %eax
-        jne     .LWordwise_Body
-.LNothingFound:
         xor     %eax, %eax
-        pop     %esi
         ret
 
 .LPtrUintsDiffer:
-        cmp     (%eax), %bx
-        jne     .LPopEbxAndDoSbb
+        cmp     %bx, (%eax)
+        jne     .LDoSbb
         shr     $16, %ebx
-        cmp     2(%eax), %bx
-.LPopEbxAndDoSbb:
-        pop     %ebx
+        cmp     %bx, 2(%eax)
 .LDoSbb:
         sbb     %eax, %eax
-        and     $2, %eax
-        sub     $1, %eax
-        pop     %esi
+        or      $1, %eax
+        pop     %ebx
         ret
 
-.LUnbounded:
-        mov     %eax, %esi
-        jmp     .LWordwise_Body
+.balign 16
+.LWordwise_Body:
+        movzwl  (%edx,%eax), %ebx
+        cmp     %bx, (%eax)
+        jne     .LDoSbb
+        add     $2, %eax
+.LWordwise_Prepare:
+        sub     $1, %ecx
+        jnb     .LWordwise_Body
+        pop     %ebx
+        xor     %eax, %eax
 end;
 
 function CompareWord_SSE2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
         push     %ebx
-        cmp      $1073741823, %ecx
-        ja       .LUnbounded
-        lea      (%eax,%ecx,2), %ebx { ebx = buf1 end }
-        cmp      $3, %ecx
-        jle      .LWordwise_Test
-        push     %esi
-        and      $-8, %ecx
-        lea      (%eax,%ecx,2), %esi { esi = end of full XMMs in buf1 }
-        cmp      %esi, %eax
-        jne      .L8x_Body
-        lea      15(%esi), %eax
-        lea      15(%edx), %ecx
-        xor      %esi, %eax
-        xor      %edx, %ecx
-        or       %ecx, %eax
-        cmp      $4095, %eax
-        ja       .LCantOverReadBoth
-        movdqu   (%esi), %xmm0
-        movdqu   (%edx), %xmm2
-        pcmpeqw  %xmm2, %xmm0
-        pmovmskb %xmm0, %eax
-        xor      $65535, %eax
-        jz       .LReturnEAX
-        bsf      %eax, %eax
-        lea      (%esi,%eax), %ecx
-        cmp      %ebx, %ecx
-        jnb      .LNothing
-        movzwl   (%esi,%eax), %ebx
-        cmp      %bx, (%edx,%eax)
-.L8x_DoSbb:
-        pop      %esi
-.LWordwise_DoSbb:
+        sub      %eax, %edx { edx = buf2 - buf1 }
+        lea      -2(%ecx), %ebx { Go wordwise if ecx <= 1 or uint32(ecx) > 1073741823 (High(int32) div 2) ==> uint32(ecx - 2) > 1073741821. }
+        cmp      $1073741821, %ebx
+        ja       .LWordwise_Prepare
+        cmp      $8, %ecx
+        jge      .LVecOrMore
+
+        lea      (%edx,%eax), %ebx
+        or       %eax, %ebx
+        and      $4095, %ebx
+        cmp      $4080, %ebx
+        ja       .LWordwise_Prepare
+        movdqu   (%edx,%eax), %xmm0
+        movdqu   (%eax), %xmm1
+        pcmpeqw  %xmm1, %xmm0
+        pmovmskb %xmm0, %ebx
+        inc      %bx
+        jz       .LNothing
+        shl      $1, %ecx { convert to bytes }
+        bsf      %ebx, %ebx
+        cmp      %ecx, %ebx
+        jb       .LSubtractWords
+.LNothing:
         pop      %ebx
-        sbb      %eax, %eax
-        and      $2, %eax
-        sub      $1, %eax
+        xor      %eax, %eax
         ret
 
 .balign 16
-.L8x_Body:
-        movdqu   (%edx), %xmm0
-        movdqu   (%eax), %xmm1
-        pcmpeqw  %xmm1, %xmm0
-        pmovmskb %xmm0, %ecx
-        xor      $65535, %ecx
-        jnz      .L8x_Found
-        add      $16, %eax
-        add      $16, %edx
-        cmp      %eax, %esi
-        jne      .L8x_Body
-
-        cmp      %esi, %ebx
-        je       .LNothing
-
-        sub      %eax, %edx
-        lea      -16(%ebx), %eax
-        add      %eax, %edx
-        movdqu   (%edx), %xmm0
-        movdqu   (%eax), %xmm1
-        pcmpeqw  %xmm1, %xmm0
-        pmovmskb %xmm0, %ecx
-        xor      $65535, %ecx
-        jnz      .L8x_Found
-.LNothing:
-        xor      %eax, %eax
-.LReturnEAX:
-        pop      %esi
-        pop      %ebx
-        ret
-
-.L8x_Found:
-        bsf      %ecx, %ecx
-        movzwl   (%eax,%ecx), %eax
-        cmp      %ax, (%edx,%ecx)
-        jmp      .L8x_DoSbb
-
-.LCantOverReadBoth:
-        mov      %esi, %eax
-        pop      %esi
 .LWordwise_Body:
-        movzwl   (%eax), %ecx
-        cmp      %cx, (%edx)
-        jne      .LWordwise_DoSbb
-.LWordwise_Next:
-        add      $2, %eax
-        add      $2, %edx
-.LWordwise_Test:
-        cmp      %ebx, %eax
-        jne      .LWordwise_Body
+        movzwl  (%edx,%eax), %ebx
+        cmp     %bx, (%eax)
+        jne     .LDoSbb
+        add     $2, %eax
+.LWordwise_Prepare:
+        sub     $1, %ecx
+        jae     .LWordwise_Body
+        xor     %eax, %eax
+        pop     %ebx
+        ret
+
+.LDoSbb:
+        sbb     %eax, %eax
+        or      $1, %eax
+        pop     %ebx
+        ret
+
+.LVecOrMore:
+        movdqu   (%edx,%eax), %xmm0 { Compare first vectors. }
+        movdqu   (%eax), %xmm1
+        pcmpeqw  %xmm1, %xmm0
+        pmovmskb %xmm0, %ebx
+        inc      %bx
+        jnz      .LVec0Differs
+
+        shl      $1, %ecx { convert to bytes }
+        sub      $32, %ecx { first 16 bytes already analyzed + last 16 bytes analyzed separately }
+        jle      .LLastVec
+
+        push     %eax { save original buf1 to recover word position if byte mismatch found (aligned loop works in bytes to support misaligned buf1). }
+        add      %eax, %ecx
+        and      $-16, %eax { align buf1; +16 is performed by the loop. }
+        sub      %eax, %ecx
+
+.balign 16
+.LAligned8xLoop_Body:
+        add      $16, %eax
+        movdqu   (%edx,%eax), %xmm0
+        pcmpeqb  (%eax), %xmm0
+        pmovmskb %xmm0, %ebx
+        inc      %bx
+        jnz      .LAligned8xLoop_VecDiffers
+        sub      $16, %ecx
+        ja       .LAligned8xLoop_Body
+        pop      %ebx { drop original buf1 }
+.LLastVec:
+        lea      16(%eax,%ecx), %eax { point to the last 16 bytes }
+        movdqu   (%edx,%eax), %xmm0
+        movdqu   (%eax), %xmm1
+        pcmpeqw  %xmm1, %xmm0
+        pmovmskb %xmm0, %ebx
+        inc      %bx
+        jnz      .LVec0Differs
+        pop      %ebx
         xor      %eax, %eax
+        ret
+
+.LVec0Differs:
+        bsf      %ebx, %ebx
+.LSubtractWords:
+        add      %eax, %edx
+        movzwl   (%eax,%ebx), %eax
+        movzwl   (%edx,%ebx), %edx
+        sub      %edx, %eax
         pop      %ebx
         ret
 
-.LUnbounded:
-        mov      %eax, %ebx
-        jmp      .LWordwise_Body
+.LAligned8xLoop_VecDiffers:
+        bsf      %ebx, %ebx
+        add      %ebx, %eax
+        pop      %ecx
+        sub      %ecx, %eax
+        and      $-2, %eax
+        add      %ecx, %eax
+        movzwl   (%edx,%eax), %edx
+        movzwl   (%eax), %eax
+        sub      %edx, %eax
+        pop      %ebx
 end;
 
 function CompareWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt; forward;
@@ -1291,6 +1648,8 @@ var
 
 function CompareWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt;
 begin
+  if not fpc_cpucodeinit_performed then
+    exit(CompareWord_Plain(buf1, buf2, len));
   if has_sse2_support then
     CompareWord_Impl:=@CompareWord_SSE2
   else
@@ -1309,110 +1668,112 @@ end;
 {$define FPC_SYSTEM_HAS_COMPAREDWORD}
 function CompareDWord_Plain(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
-        cmp     $536870912, %ecx
+        sub     $1, %ecx
+        jb      .LNothing
         push    %ebx
-        jnb     .LUnbounded
-        lea     (%eax,%ecx,4), %ebx
-        cmp     %ebx, %eax
-        je      .LNothing
-
+        sub     %eax, %edx
 .balign 16
 .LDwordwise_Body:
-        mov     (%edx), %ecx
-        cmp     (%eax), %ecx
+        mov     (%edx,%eax), %ebx
+        cmp     %ebx, (%eax)
         jne     .LDoSbb
         add     $4, %eax
-        add     $4, %edx
-        cmp     %eax, %ebx
-        jne     .LDwordwise_Body
-.LNothing:
-        xor     %eax, %eax
+        sub     $1, %ecx
+        jnb     .LDwordwise_Body
         pop     %ebx
+.LNothing:
+        xor %eax, %eax
         ret
 
 .LDoSbb:
         pop     %ebx
         sbb     %eax, %eax
-        and     $2, %eax
-        sub     $1, %eax
-        ret
-
-.LUnbounded:
-        mov     %eax, %ebx
-        jmp     .LDwordwise_Body
+        or      $1, %eax
 end;
 
 function CompareDWord_SSE2(Const buf1,buf2;len:SizeInt):SizeInt; assembler; nostackframe;
 asm
-        push     %esi
-        cmp      $536870912, %ecx
-        jnb      .LUnbounded
-        lea      (%eax,%ecx,4), %esi { esi = buf1 end }
-        cmp      $3, %ecx
-        jle      .LDWordwise_Test
         push     %ebx
-        and      $-4, %ecx
-        lea      (%eax,%ecx,4), %ecx { ecx = end of full XMMs in buf1 }
-.balign 16
-.L4x_Body:
-        movdqu   (%edx), %xmm0
-        movdqu   (%eax), %xmm1
+        sub      %eax, %edx { edx = buf2 - buf1 }
+        lea      -5(%ecx), %ebx { Go dwordwise if ecx <= 4 or ecx > 536870911 (High(int32) div 4) ==> uint32(ecx - 5) > 536870906. }
+        cmp      $536870906, %ebx
+        ja       .LDwordwise_Prepare
+        shl      $2, %ecx { convert to bytes }
+
+        movdqu   (%edx,%eax), %xmm1 { Compare first vectors. }
+        movdqu   (%eax), %xmm0
         pcmpeqd  %xmm1, %xmm0
         pmovmskb %xmm0, %ebx
-        xor      $65535, %ebx
-        jnz      .L4x_Found
+        inc      %bx
+        jnz      .LVec0Differs
+
+        sub      $32, %ecx { first 16 bytes already analyzed + last 16 bytes analyzed separately }
+        jle      .LLastVec
+
+        push     %eax { save original buf1 to recover uint32 position if byte mismatch found (aligned loop works in bytes to support misaligned buf1). }
+        add      %eax, %ecx
+        and      $-16, %eax { align buf1; +16 is performed by the loop. }
+        sub      %eax, %ecx
+
+.balign 16
+.LAligned4xLoop_Body:
         add      $16, %eax
-        add      $16, %edx
-        cmp      %eax, %ecx
-        jne      .L4x_Body
-
-        cmp      %esi, %ecx
-        je       .LNothing
-
-        sub      %eax, %edx
-        lea      -16(%esi), %eax
-        add      %eax, %edx
-        movdqu   (%edx), %xmm0
-        movdqu   (%eax), %xmm1
+        movdqu   (%eax,%edx), %xmm0
+        pcmpeqb  (%eax), %xmm0
+        pmovmskb %xmm0, %ebx
+        inc      %bx
+        jnz      .LAligned4xLoop_VecDiffers
+        sub      $16, %ecx
+        ja       .LAligned4xLoop_Body
+        pop      %ebx { drop original buf1 }
+.LLastVec:
+        lea      16(%eax,%ecx), %eax { point to the last 16 bytes }
+        movdqu   (%edx,%eax), %xmm1
+        movdqu   (%eax), %xmm0
         pcmpeqd  %xmm1, %xmm0
         pmovmskb %xmm0, %ebx
-        xor      $65535, %ebx
-        jnz      .L4x_Found
-.LNothing:
+        inc      %bx
+        jnz      .LVec0Differs
         pop      %ebx
-        pop      %esi
         xor      %eax, %eax
+        ret
+
+.LVec0Differs:
+        bsf      %ebx, %ebx
+        add      %eax, %edx { recover edx = buf2 }
+        mov      (%edx,%ebx), %edx
+        cmp      %edx, (%eax,%ebx)
+        sbb      %eax, %eax
+        or       $1, %eax
+        pop      %ebx
+        ret
+
+.LAligned4xLoop_VecDiffers:
+        bsf      %ebx, %ebx
+        add      %ebx, %eax
+        pop      %ecx
+        sub      %ecx, %eax
+        and      $-4, %eax
+        add      %ecx, %eax
+        mov      (%edx,%eax), %edx
+        cmp      %edx, (%eax)
+.LDoSbb:
+        sbb      %eax, %eax
+        or       $1, %eax
+        pop      %ebx
         ret
 
 .balign 16
-.LDWordwise_Body:
-        mov      (%eax), %ecx
-        cmp      %ecx, (%edx)
-        jne      .LDoSbb
-        add      $4, %eax
-        add      $4, %edx
-.LDWordwise_Test:
-        cmp      %esi, %eax
-        jne      .LDWordwise_Body
-        xor      %eax, %eax
-        pop      %esi
-        ret
-
-.L4x_Found:
-        bsf      %ebx, %ebx
-        mov      (%eax,%ebx), %eax
-        cmp      %eax, (%edx,%ebx)
-        pop      %ebx
-.LDoSbb:
-        pop      %esi
-        sbb      %eax, %eax
-        and      $2, %eax
-        sub      $1, %eax
-        ret
-
-.LUnbounded:
-        mov      %eax, %esi
-        jmp      .LDWordwise_Body
+.LDwordwise_Body:
+        mov     (%edx,%eax), %ebx
+        cmp     %ebx, (%eax)
+        jne     .LDoSbb
+        add     $4, %eax
+.LDwordwise_Prepare:
+        sub     $1, %ecx
+        jnb     .LDwordwise_Body
+        pop     %ebx
+        xor     %eax, %eax
 end;
 
 function CompareDWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt; forward;
@@ -1422,6 +1783,8 @@ var
 
 function CompareDWord_Dispatch(const buf1, buf2; len: SizeInt): SizeInt;
 begin
+  if not fpc_cpucodeinit_performed then
+    exit(CompareDWord_Plain(buf1, buf2, len));
   if has_sse2_support then
     CompareDWord_Impl:=@CompareDWord_SSE2
   else
@@ -1481,8 +1844,10 @@ end;
 {$define FPC_SYSTEM_HAS_FPC_SHORTSTR_ASSIGN}
 
 procedure fpc_shortstr_to_shortstr(out res:shortstring; const sstr: shortstring);assembler;[public,alias:'FPC_SHORTSTR_TO_SHORTSTR']; compilerproc;
-  var
-   saveesi,saveedi : longint;
+{$ifndef FPC_PROFILE}
+  nostackframe;
+{$endif}
+  { eax = res, edx = high(res), ecx = sstr }
   asm
   {$ifdef FPC_PROFILE}
         push  %eax
@@ -1493,40 +1858,26 @@ procedure fpc_shortstr_to_shortstr(out res:shortstring; const sstr: shortstring)
         pop   %edx
         pop   %eax
   {$endif FPC_PROFILE}
-        movl    %edi,saveedi
-        movl    %esi,saveesi
-{$ifdef FPC_ENABLED_CLD}
-        cld
-{$endif FPC_ENABLED_CLD}
-        movl    res,%edi
-        movl    sstr,%esi
-        movl    %edx,%ecx
-        xorl    %eax,%eax
-        lodsb
-        cmpl    %ecx,%eax
-        jbe     .LStrCopy1
-        movl    %ecx,%eax
-.LStrCopy1:
-        stosb
-        cmpl    $7,%eax
-        jl      .LStrCopy2
-        movl    %edi,%ecx       { Align on 32bits }
-        negl    %ecx
-        andl    $3,%ecx
-        subl    %ecx,%eax
-        rep
-        movsb
-        movl    %eax,%ecx
-        andl    $3,%eax
-        shrl    $2,%ecx
-        rep
-        movsl
-.LStrCopy2:
-        movl    %eax,%ecx
-        rep
-        movsb
-        movl    saveedi,%edi
-        movl    saveesi,%esi
+        cmp     (%ecx), %dl { length(sstr) fits into res? }
+        jbe     .LEdxIsLen { use high(res) if length(sstr) does not fit }
+        movzbl  (%ecx), %edx { use length(sstr) }
+.LEdxIsLen:
+        mov     %dl, (%eax) { store length to res[0] }
+        xchg    %ecx, %edx { ecx = length = Move count, edx = sstr }
+        xchg    %eax, %edx { eax = sstr = Move src, edx = res = Move dest }
+        inc     %eax
+        inc     %edx
+{$ifdef FPC_PROFILE}
+{$ifdef FPC_SYSTEM_STACKALIGNMENT16}
+        lea     -8(%esp), %esp
+{$endif FPC_SYSTEM_STACKALIGNMENT16}
+        call    Move
+{$ifdef FPC_SYSTEM_STACKALIGNMENT16}
+        lea     8(%esp), %esp
+{$endif FPC_SYSTEM_STACKALIGNMENT16}
+{$else FPC_PROFILE}
+        jmp     Move
+{$endif FPC_PROFILE}
   end;
 
 
@@ -1586,8 +1937,7 @@ end;
 {$define FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE}
 
 function fpc_shortstr_compare(const left,right:shortstring): longint;assembler; [public,alias:'FPC_SHORTSTR_COMPARE']; compilerproc;
-var
-  saveesi,saveedi,saveebx : longint;
+{ eax = left, edx = right }
 asm
 {$ifdef FPC_PROFILE}
         push  %eax
@@ -1598,61 +1948,56 @@ asm
         pop   %edx
         pop   %eax
 {$endif FPC_PROFILE}
-        movl    %edi,saveedi
-        movl    %esi,saveesi
-        movl    %ebx,saveebx
-{$ifdef FPC_ENABLED_CLD}
-        cld
-{$endif FPC_ENABLED_CLD}
-        movl    right,%esi
-        movl    left,%edi
-        movzbl  (%esi),%eax
-        movzbl  (%edi),%ebx
-        movl    %eax,%edx
-        incl    %esi
-        incl    %edi
-        cmpl    %ebx,%eax
-        jbe     .LStrCmp1
-        movl    %ebx,%eax
-.LStrCmp1:
-        cmpl    $7,%eax
-        jl      .LStrCmp2
-        movl    %edi,%ecx       { Align on 32bits }
-        negl    %ecx
-        andl    $3,%ecx
-        subl    %ecx,%eax
-        orl     %ecx,%ecx
-        repe
-        cmpsb
-        jne     .LStrCmp3
-        movl    %eax,%ecx
-        andl    $3,%eax
-        shrl    $2,%ecx
-        orl     %ecx,%ecx
-        repe
-        cmpsl
-        je      .LStrCmp2
-        movl    $4,%eax
-        subl    %eax,%esi
-        subl    %eax,%edi
-.LStrCmp2:
-        movl    %eax,%ecx
-        orl     %eax,%eax
-        repe
-        cmpsb
-        je      .LStrCmp4
-.LStrCmp3:
-        movzbl  -1(%esi),%edx      // Compare failing (or equal) position
-        movzbl  -1(%edi),%ebx
-.LStrCmp4:
-        movl    %ebx,%eax          // Compare length or position
-        subl    %edx,%eax
-        movl    saveedi,%edi
-        movl    saveesi,%esi
-        movl    saveebx,%ebx
+        push    %ebx
+        movzbl  (%eax), %ecx { ecx = len(left) }
+        movzbl  (%edx), %ebx { ebx = len(right) }
+        cmp     %ebx, %ecx
+{$ifdef CPUX86_HAS_CMOV}
+        cmovg   %ebx, %ecx
+{$else}
+        jle     .LEcxIsLen
+        mov     %ebx, %ecx
+.LEcxIsLen:
+{$endif}
+        push    %eax { save left }
+        inc     %eax
+        inc     %edx
+        { stack is already aligned to 16 bytes if required: return address + push ebp + push ebx + push eax. }
+{$if defined(FPC_PIC) or not declared(CompareByte_Impl)}
+        call    CompareByte
+{$else}
+        call    CompareByte_Impl { manually inline CompareByte }
+{$endif}
+        pop     %edx { restore left }
+        test    %eax, %eax
+        jnz     .LReturn
+        movzbl  (%edx), %eax
+        sub     %ebx, %eax
+.LReturn:
+        pop     %ebx
 end;
 {$endif FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE}
 
+
+{$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE_EQUAL}
+{$define FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE_EQUAL}
+function fpc_shortstr_compare_equal(const left,right:shortstring) : longint;assembler;nostackframe; [public,alias:'FPC_SHORTSTR_COMPARE_EQUAL']; compilerproc; nostackframe;
+{ eax = left, edx = right }
+asm
+        movzbl  (%eax), %ecx
+        cmp     (%edx), %cl
+        jne     .LNotEqual
+        inc     %eax
+        inc     %edx
+{$if defined(FPC_PIC) or not declared(CompareByte_Impl)}
+        jmp     CompareByte
+{$else}
+        jmp     CompareByte_Impl { manually inline CompareByte }
+{$endif}
+.LNotEqual:
+        or      $-1, %eax
+end;
+{$endif FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE_EQUAL}
 
 {$ifndef FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
 {$define FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
@@ -1687,7 +2032,7 @@ asm
 {$if defined(FPC_SYSTEM_STACKALIGNMENT16) and defined(FPC_PROFILE)}
         leal    -12(%esp), %esp
 {$endif defined(FPC_SYSTEM_STACKALIGNMENT16) and defined(FPC_PROFILE)}
-{$if defined(FPC_PIC) or not defined(has_i386_IndexByte_Impl)}
+{$if defined(FPC_PIC) or not declared(IndexByte_Impl)}
         call    IndexByte
 {$else}
         call    IndexByte_Impl { manually inline IndexByte }
@@ -1728,8 +2073,6 @@ asm
 {$endif}
 end;
 {$endif FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
-
-{$undef has_i386_IndexByte_Impl} { no longer required }
 
 {$IFNDEF INTERNAL_BACKTRACE}
 {$define FPC_SYSTEM_HAS_GET_FRAME}
@@ -1958,42 +2301,40 @@ end;
 
 
 
-function InterLockedDecrement (var Target: longint) : longint; assembler;
+function InterLockedDecrement (var Target: longint) : longint; assembler; nostackframe;
 asm
         movl    $-1,%edx
-        xchgl   %edx,%eax
         lock
-        xaddl   %eax, (%edx)
-        decl    %eax
+        xaddl   %edx, (%eax)
+        lea     -1(%edx),%eax
 end;
 
 
-function InterLockedIncrement (var Target: longint) : longint; assembler;
+function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
 asm
         movl    $1,%edx
-        xchgl   %edx,%eax
         lock
-        xaddl   %eax, (%edx)
-        incl    %eax
+        xaddl   %edx, (%eax)
+        lea     1(%edx),%eax
 end;
 
 
-function InterLockedExchange (var Target: longint;Source : longint) : longint; assembler;
+function InterLockedExchange (var Target: longint;Source : longint) : longint; assembler; nostackframe;
 asm
         xchgl   (%eax),%edx
         movl    %edx,%eax
 end;
 
 
-function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint; assembler;
+function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint; assembler; nostackframe;
 asm
-        xchgl   %eax,%edx
         lock
-        xaddl   %eax, (%edx)
+        xaddl   %edx, (%eax)
+        movl    %edx,%eax
 end;
 
 
-function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; assembler;
+function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; assembler; nostackframe;
 asm
         xchgl   %eax,%ecx
         lock
@@ -2091,18 +2432,19 @@ Procedure SysResetFPU;
 { because of the brain dead sse detection on x86, this test is post poned }
 procedure fpc_cpucodeinit;
   var
-    _ecx,_edx : longint;
+    _eax,_ecx_cpuid1,_edx_cpuid1,_ebx_cpuid7 : longint;
   begin
     if cpuid_support then
       begin
         asm
             movl $1,%eax
+            xorl %ecx,%ecx
             cpuid
-            movl %edx,_edx
-            movl %ecx,_ecx
+            movl %edx,_edx_cpuid1
+            movl %ecx,_ecx_cpuid1
         end ['ebx'];
-        has_mmx_support:=(_edx and $800000)<>0;
-        if ((_edx and $2000000)<>0) then
+        has_mmx_support:=(_edx_cpuid1 and $800000)<>0;
+        if ((_edx_cpuid1 and $2000000)<>0) then
           begin
             os_supports_sse:=true;
             sse_check:=true;
@@ -2121,8 +2463,38 @@ procedure fpc_cpucodeinit;
           end;
         if has_sse_support then
           begin
-            has_sse2_support:=((_edx and $4000000)<>0);
-            has_sse3_support:=((_ecx and $200)<>0);
+            has_sse2_support:=((_edx_cpuid1 and $4000000)<>0);
+            has_sse3_support:=((_ecx_cpuid1 and $200)<>0);
+
+            { now avx }
+            asm
+              xorl %eax,%eax
+              cpuid
+              movl %eax,_eax
+            end;
+            if _eax>=7 then
+              begin
+                asm
+                  movl $7,%eax
+                  xorl %ecx,%ecx
+                  cpuid
+                  movl %ebx,_ebx_cpuid7
+                end;
+                fast_large_repmovstosb:=_ebx_cpuid7 and (1 shl 9)<>0;
+                if (_ecx_cpuid1 and $08000000<>0 {XGETBV support?}) then
+                  begin
+                    asm
+                      xorl %ecx,%ecx
+                      .byte   0x0f,0x01,0xd0 { xgetbv }
+                      movl %eax,_eax
+                    end;
+                    if (_eax and 6)=6 then
+                      begin
+                        has_avx_support:=(_ecx_cpuid1 and $10000000)<>0;
+                        has_avx2_support:=(_ebx_cpuid7 and $20)<>0;
+                      end;
+                  end;
+              end;
           end;
       end;
 
@@ -2135,9 +2507,7 @@ procedure fpc_cpucodeinit;
       end;
 
     SysResetFPU;
-{$ifdef USE_FASTMOVE}
-    setup_fastmove;
-{$endif}
+    fpc_cpucodeinit_performed:=true;
   end;
 
 
@@ -2188,31 +2558,13 @@ function fpc_truely_ansistr_unique(Var S : Pointer): Pointer; forward;
 {$define FPC_SYSTEM_HAS_ANSISTR_UNIQUE}
 Function fpc_ansistr_Unique(Var S : Pointer): Pointer; [Public,Alias : 'FPC_ANSISTR_UNIQUE']; compilerproc; nostackframe;assembler;
 asm
-// Var S located in register
-// Var $result located in register
-        movl    %eax,%edx
-// [437] pointer(result) := pointer(s);
-        movl    (%eax),%eax
-// [438] If Pointer(S)=Nil then
-        testl   %eax,%eax
-        je      .Lj4031
-.Lj4036:
-// [440] if PAnsiRec(Pointer(S)-Firstoff)^.Ref<>1 then
-        movl    -8(%eax),%ecx
-        cmpl    $1,%ecx
-        je      .Lj4038
-// [441] result:=fpc_truely_ansistr_unique(s);
+        movl    (%eax),%edx
+        testl   %edx,%edx
+        jz      .Lunchanged
+        cmpl    $1,-8(%edx)
+        jne     fpc_truely_ansistr_unique
+.Lunchanged:
         movl    %edx,%eax
-{$ifdef FPC_SYSTEM_STACKALIGNMENT16}
-        leal    -12(%esp),%esp
-{$endif FPC_SYSTEM_STACKALIGNMENT16}
-        call    fpc_truely_ansistr_unique
-{$ifdef FPC_SYSTEM_STACKALIGNMENT16}
-        leal    12(%esp),%esp
-{$endif FPC_SYSTEM_STACKALIGNMENT16}
-.Lj4038:
-.Lj4031:
-// [442] end;
 end;
 
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
@@ -2262,14 +2614,15 @@ end;
 function BsfQWord(Const AValue : QWord): cardinal; assembler; nostackframe;
 asm
      bsfl    4(%esp),%eax
-     jnz     .L2
+     jz     .L1
+     ret     $8
 .L1:
      bsfl    8(%esp),%eax
-     jnz     .L3
-     movl    $223,%eax
-.L3:
-     addl    $32,%eax
+     jz      .L2
+     add     $32,%eax
+     ret     $8
 .L2:
+     movl    $255,%eax
 end;
 {$endif FPC_SYSTEM_HAS_BSF_QWORD}
 
@@ -2281,12 +2634,13 @@ asm
      bsrl    8(%esp),%eax
      jz     .L1
      add     $32,%eax
-     jmp     .L2
+     ret     $8
 .L1:
      bsrl    4(%esp),%eax
-     jnz     .L2
-     movl    $255,%eax
+     jz      .L2
+     ret     $8
 .L2:
+     movl    $255,%eax
 end;
 {$endif FPC_SYSTEM_HAS_BSR_QWORD}
 
@@ -2294,20 +2648,17 @@ end;
 {$define FPC_SYSTEM_HAS_SAR_QWORD}
 function fpc_SarInt64(Const AValue : Int64;const Shift : Byte): Int64; [Public,Alias:'FPC_SARINT64']; compilerproc; assembler; nostackframe;
 asm
-        movb   %al,%cl
         movl   8(%esp),%edx
-        movl   4(%esp),%eax
-        andb   $63,%cl
-        cmpb   $32,%cl
+        movzbl %al,%ecx
+        cmpb   $32,%al
         jnb    .L1
+        movl   4(%esp),%eax
         shrdl  %cl,%edx,%eax
         sarl   %cl,%edx
-        jmp    .Lexit
+        ret    $8
 .L1:
         movl   %edx,%eax
         sarl   $31,%edx
-        andb   $31,%cl
-        sarl   %cl,%eax
-.Lexit:
+        sarl   %cl,%eax // uses 5 lower bits of cl.
 end;
 {$endif FPC_SYSTEM_HAS_SAR_QWORD}

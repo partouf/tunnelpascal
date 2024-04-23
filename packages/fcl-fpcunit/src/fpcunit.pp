@@ -18,6 +18,7 @@ unit fpcunit;
 
 {$mode objfpc}
 {$h+}
+{$modeswitch functionreferences}
 
 interface
 
@@ -58,6 +59,7 @@ type
 
 
   TRunMethod = procedure of object;
+  TRunLocalMethod = reference to procedure;
 
   TTestResult = class;
   TTestSuite = class;
@@ -98,6 +100,14 @@ type
   protected
     Class var AssertCount : Integer;
   public
+    type
+      TStatusHook = Procedure(const msg : string);
+      TStatusEvent = Procedure(const msg : string) of object;
+    class var StatusHook : TStatusHook;
+    class var StatusEvent : TStatusEvent;
+  public
+    class procedure Status(const aMsg: String); inline;
+    class procedure Status(const aMsg: String; const aArgs: array of const); inline;
     class procedure Fail(const AMessage: string; AErrorAddrs: Pointer = nil);
     class procedure Fail(const AFmt: string; Args : Array of const;  AErrorAddrs: Pointer = nil);
     class procedure FailEquals(const expected, actual: string; const ErrorMsg: string = ''; AErrorAddrs: Pointer = nil);
@@ -153,6 +163,12 @@ type
     class procedure AssertNotNull(const AString: string); overload;
     class procedure AssertException(const AMessage: string; AExceptionClass: ExceptClass; AMethod: TRunMethod; const AExceptionMessage : String = ''; AExceptionContext : Integer = 0; AErrorAddr : Pointer = Nil); overload;
     class procedure AssertException(AExceptionClass: ExceptClass; AMethod: TRunMethod;const AExceptionMessage : String = ''; AExceptionContext : Integer = 0); overload;
+    class procedure AssertNoException(const AMessage : string; AMethod: TRunMethod); overload;
+    class procedure AssertNoException(AMethod: TRunMethod); overload;
+    class procedure AssertException(const AMessage: string; AExceptionClass: ExceptClass; AMethod: TRunLocalMethod; const AExceptionMessage : String = ''; AExceptionContext : Integer = 0; AErrorAddr : Pointer = Nil); overload;
+    class procedure AssertException(AExceptionClass: ExceptClass; AMethod: TRunLocalMethod;const AExceptionMessage : String = ''; AExceptionContext : Integer = 0); overload;
+    class procedure AssertNoException(const AMessage : string; AMethod: TRunLocalMethod); overload;
+    class procedure AssertNoException(AMethod: TRunLocalMethod); overload;
 
     {$IFDEF DUnit}
       {$I DUnitCompatibleInterface.inc}
@@ -359,6 +375,7 @@ Resourcestring
   SExceptionCompare = 'Exception %s expected but %s was raised';
   SExceptionMessageCompare = 'Exception raised but exception property Message differs: ';
   SExceptionHelpContextCompare = 'Exception raised but exception property HelpContext differs: ';
+  SErrUnexpectedException = 'No exception expected but exception %s was raised with message: %s';
   SMethodNotFound = 'Method <%s> not found';
   SNoValidInheritance = ' does not inherit from TTestCase';
   SNoValidTests = 'No valid tests found in ';
@@ -637,6 +654,19 @@ begin
 end;
 
 { TAssert }
+
+class procedure TAssert.Status(const aMsg: String);
+begin
+  If Assigned(StatusHook) then
+    StatusHook(aMsg);
+  if Assigned(StatusEvent) then
+    StatusEvent(aMsg);
+end;
+
+class procedure TAssert.Status(const aMsg: String; const aArgs: array of const);
+begin
+  Status(SafeFormat(aMsg,aArgs));
+end;
 
 class procedure TAssert.Fail(const AMessage: string; AErrorAddrs: Pointer);
 begin
@@ -977,7 +1007,7 @@ class procedure TAssert.AssertException(const AMessage: string; AExceptionClass:
   end;
 
 var
-  FailMsg : string;
+  Msg,FailMsg : string;
 begin
   If AErrorAddr=Nil then
     AErrorAddr:=CallerAddr;
@@ -998,14 +1028,119 @@ begin
         FailMsg:=ComparisonMsg(SExceptionHelpContextCompare,IntToStr(AExceptionContext),IntToStr(E.HelpContext))
       end;
   end;
-  AssertTrue(AMessage + ': '+FailMsg, FailMsg='', AErrorAddr);
+  Msg:=FailMsg;
+  if aMessage<>'' then
+    Msg:=AMessage + ': '+Msg;
+  AssertTrue(Msg, FailMsg='', AErrorAddr);
 end;
 
 
 class procedure TAssert.AssertException(AExceptionClass: ExceptClass;
   AMethod: TRunMethod;const AExceptionMessage : String = ''; AExceptionContext : Integer = 0);
+
 begin
   AssertException('', AExceptionClass, AMethod, AExceptionMessage, AExceptionContext, CallerAddr);
+end;
+
+
+class procedure TAssert.AssertNoException(const AMessage: string; AMethod: TRunMethod);
+
+var
+  Msg,aClass,aExceptionMessage : String;
+
+begin
+  aClass:='';
+  aExceptionMessage:='';
+  Try
+    aMethod;
+  Except
+    On E : Exception do
+      begin
+      aClass:=E.ClassName;
+      aExceptionMessage:=E.Message;
+      end;
+  end;
+  Msg:=Format(SErrUnexpectedException,[aClass,aExceptionMessage]);
+  if aMessage<>'' then
+    Msg:=aMessage+': '+Msg;
+  AssertTrue(Msg,aClass='');
+end;
+
+class procedure TAssert.AssertNoException(AMethod: TRunMethod);
+begin
+  AssertNoException('',aMethod);
+end;
+
+class procedure TAssert.AssertException(const AMessage: string; AExceptionClass: ExceptClass; AMethod: TRunLocalMethod;
+  const AExceptionMessage: String; AExceptionContext: Integer; AErrorAddr: Pointer);
+
+  Function MisMatch (const AClassName : String) : String;
+
+  begin
+    Result:=Format(SExceptionCompare,[AExceptionClass.ClassName, AClassName])
+  end;
+
+var
+  Msg,FailMsg : string;
+
+begin
+  If AErrorAddr=Nil then
+    AErrorAddr:=CallerAddr;
+  FailMsg:='';
+  try
+    AMethod;
+    FailMsg:=MisMatch(SNoException);
+  except
+    on E: Exception do
+      begin
+      if Not E.ClassType.InheritsFrom(AExceptionClass) then
+        FailMsg:=MisMatch(E.ClassName)
+      else if not (AExceptionClass.ClassName = E.ClassName) then
+        FailMsg:=MisMatch(E.ClassName)
+      else if (AExceptionMessage<>'') and (AExceptionMessage<>E.Message) then
+        FailMsg:=ComparisonMsg(SExceptionMessageCompare,AExceptionMessage,E.Message)
+      else if (AExceptionContext<>0) and (AExceptionContext<>E.HelpContext) then
+        FailMsg:=ComparisonMsg(SExceptionHelpContextCompare,IntToStr(AExceptionContext),IntToStr(E.HelpContext))
+      end;
+  end;
+  Msg:=FailMsg;
+  if aMessage<>'' then
+    Msg:=AMessage + ': '+Msg;
+  AssertTrue(Msg, FailMsg='', AErrorAddr);
+end;
+
+class procedure TAssert.AssertException(AExceptionClass: ExceptClass; AMethod: TRunLocalMethod; const AExceptionMessage: String;
+  AExceptionContext: Integer);
+begin
+  AssertException('', AExceptionClass, AMethod, AExceptionMessage, AExceptionContext, CallerAddr);
+end;
+
+class procedure TAssert.AssertNoException(const AMessage: string; AMethod: TRunLocalMethod);
+
+var
+  Msg,aClass,aExceptionMessage : String;
+
+begin
+  aClass:='';
+  aExceptionMessage:='';
+  Try
+    aMethod;
+  Except
+    On E : Exception do
+      begin
+      aClass:=E.ClassName;
+      aExceptionMessage:=E.Message;
+      end;
+  end;
+  Msg:=Format(SErrUnexpectedException,[aClass,aExceptionMessage]);
+  if aMessage<>'' then
+    Msg:=aMessage+': '+Msg;
+  AssertTrue(Msg,aClass='');
+end;
+
+class procedure TAssert.AssertNoException(AMethod: TRunLocalMethod);
+begin
+  AssertNoException('',aMethod);
 end;
 
 

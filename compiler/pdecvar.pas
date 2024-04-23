@@ -38,7 +38,7 @@ interface
 
     procedure read_var_decls(options:Tvar_dec_options;out had_generic:boolean);
 
-    procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc: ppvariantrecdesc;out had_generic:boolean);
+    procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc: ppvariantrecdesc;out had_generic:boolean; out attr_element_count : integer);
 
     procedure read_public_and_external(vs: tabstractvarsym);
 
@@ -1454,7 +1454,7 @@ implementation
                read_gpc_name(sc);
 {$endif}
 
-             read_anon_type(hdef,false);
+             read_anon_type(hdef,false,nil);
              maybe_guarantee_record_typesym(hdef,symtablestack.top);
              for i:=0 to sc.count-1 do
                begin
@@ -1679,12 +1679,12 @@ implementation
       end;
 
 
-    procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc : ppvariantrecdesc;out had_generic:boolean);
+    procedure read_record_fields(options:Tvar_dec_options; reorderlist: TFPObjectList; variantdesc : ppvariantrecdesc;out had_generic:boolean; out attr_element_count : integer);
       var
          sc : TFPObjectList;
          i  : longint;
          hs,sorg : string;
-         hdef,casetype : tdef;
+         gendef,hdef,casetype : tdef;
          { maxsize contains the max. size of a variant }
          { startvarrec contains the start of the variant part of a record }
          maxsize, startvarrecsize : asizeint;
@@ -1707,6 +1707,7 @@ implementation
          hadgendummy,
          semicoloneaten,
          removeclassoption: boolean;
+         dummyattrelementcount : integer;
 {$if defined(powerpc) or defined(powerpc64)}
          tempdef: tdef;
          is_first_type: boolean;
@@ -1727,6 +1728,7 @@ implementation
          sc:=TFPObjectList.create(false);
          removeclassoption:=false;
          had_generic:=false;
+         attr_element_count:=0;
          while (token=_ID) and
             not(((vd_object in options) or
                  ((vd_record in options) and (m_advanced_records in current_settings.modeswitches))) and
@@ -1775,9 +1777,28 @@ implementation
              if had_generic and (sc.count=0) then
                break;
              consume(_COLON);
+             if attr_element_count=0 then
+               attr_element_count:=sc.Count;
+
              typepos:=current_filepos;
 
-             read_anon_type(hdef,false);
+             { make sure that the correct genericdef is set up, especially if
+               we're dealing with anonymous type declarations }
+             gendef:=nil;
+             if df_specialization in current_structdef.defoptions then
+               begin
+                 srsymtable:=current_structdef.genericdef.getsymtable(gs_record);
+                 if not assigned(srsymtable) then
+                   internalerror(2024041204);
+                 srsym:=tsym(srsymtable.find(tabstractvarsym(sc[0]).name));
+                 if not assigned(srsym) then
+                   internalerror(2024041205);
+                 if srsym.typ<>fieldvarsym then
+                   internalerror(2024041206);
+                 gendef:=tfieldvarsym(srsym).vardef;
+               end;
+
+             read_anon_type(hdef,false,tstoreddef(gendef));
              maybe_guarantee_record_typesym(hdef,symtablestack.top);
 {$ifdef wasm}
              if is_wasm_reference_type(hdef) then
@@ -1996,7 +2017,7 @@ implementation
                       symtablestack.top.insertsym(fieldvs);
                     end;
                 end;
-              read_anon_type(casetype,true);
+              read_anon_type(casetype,true,nil);
               block_type:=bt_var;
               if assigned(fieldvs) then
                 begin
@@ -2056,7 +2077,7 @@ implementation
                 consume(_LKLAMMER);
                 inc(variantrecordlevel);
                 if token<>_RKLAMMER then
-                  read_record_fields([vd_record],nil,@variantdesc^^.branches[high(variantdesc^^.branches)].nestedvariant,hadgendummy);
+                  read_record_fields([vd_record],nil,@variantdesc^^.branches[high(variantdesc^^.branches)].nestedvariant,hadgendummy,dummyattrelementcount);
                 dec(variantrecordlevel);
                 consume(_RKLAMMER);
 
