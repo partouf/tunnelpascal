@@ -1644,6 +1644,9 @@ implementation
       end;
 
     function make_mangledname(const typeprefix:TSymStr;st:TSymtable;const suffix:TSymStr):TSymStr;
+      const
+        with_nr:integer=0;  // use for prevent of double ID-error of assembler
+                            // when bilding name for anonymous mthods within a with-statement
       var
         s,
         prefix : TSymStr;
@@ -1696,8 +1699,8 @@ implementation
             break;
           prefix:='$'+prefix;
         until false;
-        { symtable must now be static or global }
-        if not(st.symtabletype in [staticsymtable,globalsymtable]) then
+        { symtable must now be static, global or from an with-object-statement }
+        if not(st.symtabletype in [staticsymtable,globalsymtable,withsymtable]) then
           internalerror(200204175);
 
         { The mangled name is made out of at most 4 parts:
@@ -1718,6 +1721,12 @@ implementation
         if (TSymtable(main_module.localsymtable)=st) and
            (not main_module.is_unit) then
           result:=result+'P$'+st.name^
+        else if Assigned(st.defowner) and (st.defowner.typ=objectdef) then
+          begin
+            result:=result+tnode(twithsymtable(st).withrefnode).resultdef.typesym.Name+
+                    '_'+with_nr.ToString;   // see below
+            with_nr:=succ(with_nr);
+          end         
         else
           result:=result+st.name^;
         if prefix<>'' then
