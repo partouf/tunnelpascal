@@ -1,8 +1,11 @@
+{ %FAIL }
 { %OPT=-Sew -OoNOPEEPHOLE }
 
-{ This test evaluates the power of "pure" for a hash function }
+{ In this instance, compilation fails because during pure function analysis,
+  an overflow error will occur and get caught because the pure function was
+  implemented under the $Q+ option }
 
-program tpurefnv1a;
+program tpurefnv1ab;
 
 {$MODE OBJFPC}
 
@@ -10,7 +13,7 @@ const
   FNV64_offset_basis = QWord($CBF29CE484222325);
   FNV64_prime        = QWord($00000100000001B3);
 
-{$PUSH}{$Q-}
+{$PUSH}{$Q+}
 function FNV1a64Digest(const Input: ansistring): QWord; pure;
 var
   I: Integer;
@@ -24,7 +27,8 @@ const
   StringConst = 'The quick brown fox jumps over the lazy dog';
   ForceNonConst: ansistring = 'The quick brown fox jumps over the lazy dog';
   ExpectedHash = QWord($F3F9B7F5E7E47110);
-  
+
+{$Q-}
 var
   HashRes, ControlRes: QWord;
 begin
