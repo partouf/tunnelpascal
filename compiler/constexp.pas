@@ -1,5 +1,5 @@
 {
-    Copyright (c) 2007 by Daniel Mantione
+    Copyright (c) 2007-2024 by Daniel Mantione
 
     This unit implements a Tconstexprint type. This type simulates an integer
     type that can handle numbers from low(int64) to high(qword) calculations.
@@ -149,6 +149,7 @@ begin
     result:=c.uvalue;
 end;
 
+{$push}{$Q-}
 function add_to(const a:Tconstexprint;b:qword):Tconstexprint;
 
 var sspace,uspace:qword;
@@ -156,13 +157,11 @@ var sspace,uspace:qword;
 label try_qword;
 
 begin
-  result.overflow:=false;
+  result.overflow:=a.overflow; { Preserve overflow flag }
 
   {Try if the result fits in an int64.}
   if (a.signed) and (a.svalue<0) then
-    {$push}{$Q-}
     sspace:=qword(high(int64))+qword(-a.svalue)
-    {$pop}
   else if not a.signed and (a.uvalue>qword(high(int64))) then
     goto try_qword
   else
@@ -171,9 +170,7 @@ begin
   if sspace>=b then
     begin
       result.signed:=true;
-      {$push} {$Q-}
       result.svalue:=a.svalue+int64(b);
-      {$pop}
       exit;
     end;
 
@@ -185,15 +182,11 @@ try_qword:
     uspace:=high(qword)-a.uvalue}
   else
     uspace:=high(qword)-a.uvalue;
-  if uspace>=b then
-    begin
-      result.signed:=false;
-      {$push} {$Q-}
-      result.uvalue:=a.uvalue+b;
-      {$pop}
-      exit;
-    end;
-  result.overflow:=true;
+  if uspace<b then
+    result.overflow:=true;
+  result.signed:=false;
+  result.uvalue:=a.uvalue+b;
+  exit;
 end;
 
 function sub_from(const a:Tconstexprint;b:qword):Tconstexprint;
@@ -202,89 +195,72 @@ const abs_low_int64=qword(9223372036854775808);   {abs(low(int64)) -> overflow e
 
 var sspace:qword;
 
-label try_qword,ov;
+label try_qword;
 
 begin
-  result.overflow:=false;
+  result.overflow:=a.overflow; { Preserve overflow flag }
 
   {Try if the result fits in an int64.}
   if (a.signed) and (a.svalue<0) then
-    {$push} {$Q-}
     sspace:=qword(a.svalue)+abs_low_int64
-    {$pop}
   else if not a.signed and (a.uvalue>qword(high(int64))) then
     goto try_qword
   else
-    {$push} {$Q-}
     sspace:=a.uvalue+abs_low_int64;
-    {$pop}
   if sspace>=b then
     begin
       result.signed:=true;
-      {$push} {$Q-}
       result.svalue:=a.svalue-int64(b);
-      {$pop}
       exit;
     end;
 
   {Try if the result fits in a qword.}
 try_qword:
-  if not(a.signed and (a.svalue<0)) and (a.uvalue>=b) then
-    begin
-      result.signed:=false;
-      {$push} {$Q-}
-      result.uvalue:=a.uvalue-b;
-      {$pop}
-      exit;
-    end;
-ov:
-  result.overflow:=true;
+  if (a.signed and (a.svalue<0)) or (a.uvalue<b) then
+    result.overflow:=true;
+  result.signed:=false;
+  result.uvalue:=a.uvalue-b;
+  exit;
 end;
 
 operator + (const a,b:Tconstexprint):Tconstexprint;
 
 begin
-  if a.overflow or b.overflow then
-    begin
-      result.overflow:=true;
-      exit;
-    end;
   if b.signed and (b.svalue<0) then
-    {$push} {$Q-}
     result:=sub_from(a,qword(-b.svalue))
-    {$pop}
   else
     result:=add_to(a,b.uvalue);
+
+  if b.overflow then
+    result.overflow:=True; { Preserve overflow flag }
 end;
 
 operator - (const a,b:Tconstexprint):Tconstexprint;
 
 begin
-  if a.overflow or b.overflow then
-    begin
-      result.overflow:=true;
-      exit;
-    end;
   if b.signed and (b.svalue<0) then
-    {$push} {$Q-}
     result:=add_to(a,qword(-b.svalue))
-    {$pop}
   else
     result:=sub_from(a,b.uvalue);
+
+  if b.overflow then
+    result.overflow:=True; { Preserve overflow flag }
 end;
 
 operator - (const a:Tconstexprint):Tconstexprint;
 
 begin
   if not a.signed and (a.uvalue>qword(high(int64))) then
-    result.overflow:=true
+    begin
+      result.signed:=true;
+      result.svalue:=a.svalue;
+      result.overflow:=true
+    end
   else
     begin
       result.overflow:=false;
       result.signed:=true;
-      {$push} {$Q-}
       result.svalue:=-a.svalue;
-      {$pop}
     end;
 end;
 
@@ -313,7 +289,12 @@ begin
     bb:=b.uvalue;
 
   if (bb<>0) and (high(qword) div bb<aa) then
-    result.overflow:=true
+    begin
+      { Calculate result nonetheless}
+      result.signed:=sa xor sb;
+      result.uvalue:=aa*bb;
+      result.overflow:=true;
+    end
   else
     begin
       r:=aa*bb;
@@ -321,9 +302,8 @@ begin
         begin
           result.signed:=true;
           if r>qword(high(int64)) then
-            result.overflow:=true
-          else
-            result.svalue:=-int64(r);
+            result.overflow:=true;
+          result.svalue:=-int64(r);
         end
       else
         begin
@@ -333,35 +313,32 @@ begin
     end;
 end;
 
+
 operator div (const a,b:Tconstexprint):Tconstexprint;
 
 var aa,bb,r:qword;
     sa,sb:boolean;
 
 begin
-  if a.overflow or b.overflow then
-    begin
-      result.overflow:=true;
-      exit;
-    end;
-  result.overflow:=false;
+  result.overflow:=a.overflow or b.overflow; { Preserve overflow flag }
   sa:=a.signed and (a.svalue<0);
   if sa then
-    {$push} {$Q-}
     aa:=qword(-a.svalue)
-    {$pop}
   else
     aa:=a.uvalue;
   sb:=b.signed and (b.svalue<0);
   if sb then
-    {$push} {$Q-}
     bb:=qword(-b.svalue)
-    {$pop}
   else
     bb:=b.uvalue;
 
   if bb=0 then
-    result.overflow:=true
+    begin
+      { Division by zero }
+      result.signed:=a.signed;
+      result.svalue:=a.svalue;
+      result.overflow:=true;
+    end
   else
     begin
       r:=aa div bb;
@@ -369,9 +346,8 @@ begin
         begin
           result.signed:=true;
           if r>qword(high(int64)) then
-            result.overflow:=true
-          else
-            result.svalue:=-int64(r);
+            result.overflow:=true;
+          result.svalue:=-int64(r);
         end
       else
         begin
@@ -387,28 +363,24 @@ var aa,bb,r:qword;
     sa,sb:boolean;
 
 begin
-  if a.overflow or b.overflow then
-    begin
-      result.overflow:=true;
-      exit;
-    end;
-  result.overflow:=false;
+  result.overflow:=a.overflow or b.overflow; { Preserve overflow flag }
   sa:=a.signed and (a.svalue<0);
   if sa then
-    {$push} {$Q-}
     aa:=qword(-a.svalue)
-    {$pop}
   else
     aa:=a.uvalue;
   sb:=b.signed and (b.svalue<0);
   if sb then
-    {$push} {$Q-}
     bb:=qword(-b.svalue)
-    {$pop}
   else
     bb:=b.uvalue;
   if bb=0 then
-    result.overflow:=true
+    begin
+      { Division by zero }
+      result.signed:=a.signed;
+      result.svalue:=0;
+      result.overflow:=true;
+    end
   else
     begin
       { the sign of a modulo operation only depends on the sign of the
@@ -421,14 +393,13 @@ begin
         result.svalue:=-int64(r);
     end;
 end;
+{$pop}
 
 operator / (const a,b:Tconstexprint):bestreal;
 
 var aa,bb:bestreal;
 
 begin
-  if a.overflow or b.overflow then
-    internalerror(200706096);
   if a.signed then
     aa:=a.svalue
   else
