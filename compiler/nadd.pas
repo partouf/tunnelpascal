@@ -56,6 +56,7 @@ interface
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
           function simplify(forinline: boolean) : tnode;override;
+          function pure_simplify : tnode;override;
           function dogetcopy : tnode;override;
           function docompare(p: tnode): boolean; override;
     {$ifdef state_tracking}
@@ -1949,6 +1950,77 @@ implementation
                   end;
               end;
           end;
+      end;
+
+
+    function taddnode.pure_simplify : tnode;
+      var
+        v, lv, rv: Tconstexprint;
+        lt, rt: TNodeType;
+      begin
+        lt := left.nodetype;
+        rt := right.nodetype;
+
+        { Allow overflows to happen with int constants }
+        if (nodetype in [addn, subn, muln]) and
+          { Check to see if the node types are integral constants to save time }
+          (lt in [ordconstn, pointerconstn, niln]) and
+          (rt in [ordconstn, pointerconstn, niln]) and
+          not (cs_check_overflow in current_settings.localswitches) and
+          (
+            (
+              is_constintnode(left) and
+              is_constintnode(right)
+            ) or
+            (
+              is_constenumnode(left) and
+              is_constenumnode(right) and
+              (allowenumop(nodetype) or (nf_internal in flags))
+            ) or
+            (
+              (lt in [pointerconstn,niln]) and
+              is_constintnode(right) and
+              (nodetype <> muln)
+            ) or
+            (
+              (rt in [pointerconstn,niln]) and
+              is_constintnode(left) and
+              (nodetype = addn)
+            ) or
+            (
+              (lt in [pointerconstn,niln]) and
+              (rt in [pointerconstn,niln]) and
+              (nodetype = subn)
+            ) or
+            (
+              (left.resultdef.typ = orddef) and is_currency(left.resultdef) and
+              (right.resultdef.typ = orddef) and is_currency(right.resultdef)
+            )
+          ) then
+          begin
+            { load values }
+            lv:=get_int_value(left);
+            rv:=get_int_value(right);
+
+            case nodetype of
+              addn:
+                v := lv + rv;
+              subn:
+                v := lv - rv;
+              muln:
+                v := lv * rv;
+              else
+                InternalError(2024042501);
+            end;
+
+            v.overflow := False;
+            if is_constpointernode(left) or is_constpointernode(right) then
+              Result := cpointerconstnode.create(qword(v),resultdef)
+            else
+              Result := cordconstnode.create(v,resultdef,False);
+          end
+        else
+          Result := simplify(True);
       end;
 
 
