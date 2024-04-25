@@ -98,6 +98,9 @@ interface
     { tries to simplify the given node after inlining }
     procedure doinlinesimplify(var n : tnode);
 
+    { tries to simplify the given node for purity analysis }
+    function dopuresimplify(var n : tnode): Boolean;
+
     { creates an ordinal constant, optionally based on the result from a
       simplify operation: normally the type is the smallest integer type
       that can hold the value, but when inlining the "def" will be used instead,
@@ -1176,6 +1179,44 @@ implementation
       end;
 
 
+    function callpuresimplify(var n: tnode; arg: pointer): foreachnoderesult;
+      var
+        hn : tnode;
+        treechanged : ^boolean;
+      begin
+        result:=fen_false;
+        if n.inheritsfrom(tloopnode) and
+           not (lnf_simplify_processing in tloopnode(n).loopflags) then
+          begin
+            // Try to simplify condition
+            dopuresimplify(tloopnode(n).left);
+            // call directly second part below,
+            // which might change the loopnode into
+            // something else if the conditino is a constant node
+            include(tloopnode(n).loopflags,lnf_simplify_processing);
+            callpuresimplify(n,arg);
+            // Be careful, n might have change node type
+            if n.inheritsfrom(tloopnode) then
+              exclude(tloopnode(n).loopflags,lnf_simplify_processing);
+          end
+        else
+          begin
+            hn:=n.pure_simplify;
+            if assigned(hn) then
+              begin
+                treechanged := arg;
+                if assigned(treechanged) then
+                  treechanged^:=true
+                else
+                  internalerror (201008182);
+                n.free;
+                n:=hn;
+                typecheckpass(n);
+              end;
+          end;
+      end;
+
+
     { tries to simplify the given node calling the simplify method recursively }
     procedure doinlinesimplify(var n : tnode);
       var
@@ -1184,6 +1225,21 @@ implementation
         repeat
           treechanged:=false;
           foreachnodestatic(pm_postandagain,n,@callsimplify,@treechanged);
+        until not(treechanged);
+      end;
+
+
+    { tries to simplify the given node for purity analysis }
+    function dopuresimplify(var n : tnode): Boolean;
+      var
+        treechanged : boolean;
+      begin
+        Result := False;
+
+        repeat
+          treechanged:=false;
+          foreachnodestatic(pm_postandagain,n,@callpuresimplify,@treechanged);
+          Result := Result or treechanged;
         until not(treechanged);
       end;
 
