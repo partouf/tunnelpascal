@@ -8011,8 +8011,6 @@ implementation
 
 
     destructor tobjectdef.destroy;
-      var
-        i: longint;
       begin
          if assigned(symtable) then
            begin
@@ -8031,13 +8029,7 @@ implementation
              dispose(iidguid);
              iidguid:=nil;
            end;
-         if assigned(vmtentries) then
-           begin
-             for i:=0 to vmtentries.count-1 do
-               dispose(pvmtentry(vmtentries[i]));
-             vmtentries.free;
-             vmtentries:=nil;
-           end;
+         TFPList.FreeAndNilDisposing(vmtentries,TypeInfo(tvmtentry));
          if assigned(vmcallstaticinfo) then
            begin
              freemem(vmcallstaticinfo);

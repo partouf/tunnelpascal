@@ -3883,6 +3883,7 @@ implementation
 
       var
         candidates : tcallcandidates;
+        ccflags : tcallcandidatesflags;
         oldcallnode : tcallnode;
         hpt,tmp : tnode;
         pt : tcallparanode;
@@ -3891,7 +3892,6 @@ implementation
         cand_cnt : integer;
         i : longint;
         ignoregenericparacall,
-        ignorevisibility,
         is_const : boolean;
         statements : tstatementnode;
         converted_result_data : ttempcreatenode;
@@ -3899,7 +3899,6 @@ implementation
         invokesym : tsym;
       begin
          result:=nil;
-         candidates:=nil;
 
          oldcallnode:=aktcallnode;
          aktcallnode:=self;
@@ -4015,13 +4014,32 @@ implementation
                            exit;
                          end;
                      end;
+
+                   ccflags:=[];
+
                    { ignore possible private for properties or in delphi mode for anon. inherited (FK) }
-                   ignorevisibility:=(nf_isproperty in flags) or
-                                     ((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
-                                     (cnf_ignore_visibility in callnodeflags);
-                   candidates:=tcallcandidates.create(symtableprocentry,symtableproc,left,ignorevisibility,
-                     not(nf_isproperty in flags),cnf_objc_id_call in callnodeflags,cnf_unit_specified in callnodeflags,
-                     callnodeflags*[cnf_anon_inherited,cnf_inherited]=[],cnf_anon_inherited in callnodeflags,spezcontext);
+                   if (nf_isproperty in flags) or
+                     ((m_delphi in current_settings.modeswitches) and (cnf_anon_inherited in callnodeflags)) or
+                     (cnf_ignore_visibility in callnodeflags)
+                   then
+                     ccflags:=ccflags+[cc_ignorevisibility];
+
+                   if not(nf_isproperty in flags) then
+                     ccflags:=ccflags+[cc_allowdefaultparas];
+
+                   if cnf_objc_id_call in callnodeflags then
+                     ccflags:=ccflags+[cc_objcidcall];
+
+                   if cnf_unit_specified in callnodeflags then
+                     ccflags:=ccflags+[cc_explicitunit];
+
+                   if callnodeflags*[cnf_anon_inherited,cnf_inherited]=[] then
+                     ccflags:=ccflags+[cc_searchhelpers];
+
+                   if cnf_anon_inherited in callnodeflags then
+                     ccflags:=ccflags+[cc_anoninherited];
+
+                   candidates.init(symtableprocentry,symtableproc,left,ccflags,spezcontext);
 
                    { no procedures found? then there is something wrong
                      with the parameter size or the procedures are
@@ -4064,7 +4082,7 @@ implementation
                               symtableprocentry.write_parameter_lists(nil);
                             end;
                         end;
-                      candidates.free;
+                      candidates.done;
                       exit;
                     end;
 
@@ -4139,7 +4157,7 @@ implementation
 {$endif EXTDEBUG}
 
                       { We can not proceed, release all procs and exit }
-                      candidates.free;
+                      candidates.done;
                       exit;
                     end;
 
@@ -4149,7 +4167,7 @@ implementation
                    if procdefinition.is_specialization and (procdefinition.typ=procdef) then
                      maybe_add_pending_specialization(procdefinition,candidates.para_anon_syms);
 
-                   candidates.free;
+                   candidates.done;
                  end; { end of procedure to call determination }
              end;
 
