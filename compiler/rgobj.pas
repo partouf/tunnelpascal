@@ -75,11 +75,13 @@ unit rgobj;
 
       Tmoveset=(ms_coalesced_moves,ms_constrained_moves,ms_frozen_moves,
                 ms_worklist_moves,ms_active_moves);
-      Tmoveins=class(Tlinkedlistitem)
+      Tmoveins=record
         moveset:Tmoveset;
         x,y:Tsuperregister;
         id:longint;
+        node:TIntrusiveDequeNode;
       end;
+      Pmoveins=^Tmoveins;
 
       Tmovelistheader=record
         count,
@@ -89,7 +91,7 @@ unit rgobj;
 
       Tmovelist=record
         header : Tmovelistheader;
-        data : array[tsuperregister] of Tmoveins;
+        data : array[tsuperregister] of Pmoveins;
       end;
       Pmovelist=^Tmovelist;
 
@@ -251,7 +253,7 @@ unit rgobj;
         { in this list we collect all moveins which should be disposed after register allocation finishes,
           we still need the moves for spill coalesce for the whole register allocation process, so they cannot be
           released as soon as they are frozen or whatever }
-        move_garbage : Tlinkedlist;
+        move_garbage : TIntrusiveDeque;
         extended_backwards,
         backwards_was_first : tbitset;
         has_usedmarks: boolean;
@@ -276,7 +278,7 @@ unit rgobj;
         function  spill_registers(list:TAsmList;headertai:tai):boolean;virtual;
         function  getnewreg(subreg:tsubregister):tsuperregister;
         procedure add_edges_used(u:Tsuperregister);
-        procedure add_to_movelist(u:Tsuperregister;ins:Tmoveins);
+        procedure add_to_movelist(u:Tsuperregister;ins:Pmoveins);
         function move_related(n:Tsuperregister):boolean;
         procedure make_work_list;
         procedure sort_simplify_worklist;
@@ -332,7 +334,7 @@ unit rgobj;
     procedure sort_movelist(ml:Pmovelist);
 
     var h,i,p:longword;
-        t:Tmoveins;
+        t:Pmoveins;
 
     begin
       with ml^ do
@@ -346,7 +348,7 @@ unit rgobj;
                 i:=h;
                 t:=data[i];
                 repeat
-                  if data[i-p].id<=t.id then
+                  if data[i-p]^.id<=t^.id then
                     break;
                   data[i]:=data[i-p];
                   dec(i,p);
@@ -452,8 +454,8 @@ unit rgobj;
          maxreginfo:=first_imaginary;
          maxreginfoinc:=16;
          moveins_id_counter:=0;
-         worklist_moves:=Tlinkedlist.create;
-         move_garbage:=TLinkedList.Create;
+         worklist_moves.Init;
+         move_garbage.Init;
          reginfo:=allocmem(first_imaginary*sizeof(treginfo));
          for i:=0 to first_imaginary-1 do
            begin
@@ -479,6 +481,12 @@ unit rgobj;
       end;
 
 
+    procedure DisposeOfMoveins(node: PIntrusiveDequeNode; param: pointer);
+      begin
+        dispose(Pmoveins(pointer(node)-PtrUint(@Pmoveins(nil)^.node)));
+      end;
+
+
     destructor trgobj.destroy;
       begin
         spillednodes.done;
@@ -489,8 +497,10 @@ unit rgobj;
         selectstack.done;
         live_registers.done;
 
-        move_garbage.free;
-        worklist_moves.free;
+        move_garbage.Clear(@DisposeOfMoveins,nil);
+        move_garbage.Done;
+        worklist_moves.Clear(@DisposeOfMoveins,nil);
+        worklist_moves.Done;
 
         dispose_reginfo;
         extended_backwards.free;
@@ -791,7 +801,7 @@ unit rgobj;
     end;
 {$endif EXTDEBUG}
 
-    procedure trgobj.add_to_movelist(u:Tsuperregister;ins:Tmoveins);
+    procedure trgobj.add_to_movelist(u:Tsuperregister;ins:Pmoveins);
     begin
 {$ifdef EXTDEBUG}
         if (u>=maxreginfo) then
@@ -934,7 +944,7 @@ unit rgobj;
     {This procedure notifies a certain as a move instruction so the
      register allocator can try to eliminate it.}
 
-    var i:Tmoveins;
+    var i:Pmoveins;
         sreg, dreg : Tregister;
         ssupreg,dsupreg:Tsuperregister;
 
@@ -952,10 +962,10 @@ unit rgobj;
       if moveins_id_counter=high(moveins_id_counter) then
         internalerror(2021112701);
       inc(moveins_id_counter);
-      i:=Tmoveins.create;
-      i.id:=moveins_id_counter;
-      i.moveset:=ms_worklist_moves;
-      worklist_moves.insert(i);
+      new(i);
+      i^.id:=moveins_id_counter;
+      i^.moveset:=ms_worklist_moves;
+      worklist_moves.PushFront(@i^.node);
       ssupreg:=getsupreg(sreg);
       add_to_movelist(ssupreg,i);
       dsupreg:=getsupreg(dreg);
@@ -964,8 +974,8 @@ unit rgobj;
       if (ssupreg<>dsupreg) {and (getregtype(sreg)=getregtype(dreg))} then
         {Avoid adding the same move instruction twice to a single register.}
         add_to_movelist(dsupreg,i);
-      i.x:=ssupreg;
-      i.y:=dsupreg;
+      i^.x:=ssupreg;
+      i^.y:=dsupreg;
     end;
 
     function trgobj.move_related(n:Tsuperregister):boolean;
@@ -978,7 +988,7 @@ unit rgobj;
         if movelist<>nil then
           with movelist^ do
             for i:=0 to header.count-1 do
-              if Tmoveins(data[i]).moveset in [ms_worklist_moves,ms_active_moves] then
+              if data[i]^.moveset in [ms_worklist_moves,ms_active_moves] then
                 begin
                   move_related:=true;
                   break;
@@ -1105,16 +1115,16 @@ unit rgobj;
     procedure trgobj.prepare_colouring;
     begin
       make_work_list;
-      active_moves:=Tlinkedlist.create;
-      frozen_moves:=Tlinkedlist.create;
-      coalesced_moves:=Tlinkedlist.create;
-      constrained_moves:=Tlinkedlist.create;
+      active_moves.Init;
+      frozen_moves.Init;
+      coalesced_moves.Init;
+      constrained_moves.Init;
       selectstack.clear;
     end;
 
     procedure trgobj.enable_moves(n:Tsuperregister);
 
-    var m:Tlinkedlistitem;
+    var m:Pmoveins;
         i:cardinal;
 
     begin
@@ -1123,12 +1133,12 @@ unit rgobj;
           for i:=0 to movelist^.header.count-1 do
             begin
               m:=movelist^.data[i];
-              if Tmoveins(m).moveset=ms_active_moves then
+              if m^.moveset=ms_active_moves then
                 begin
                   {Move m from the set active_moves to the set worklist_moves.}
-                  active_moves.remove(m);
-                  Tmoveins(m).moveset:=ms_worklist_moves;
-                  worklist_moves.concat(m);
+                  active_moves.remove(@m^.node);
+                  m^.moveset:=ms_worklist_moves;
+                  worklist_moves.PushBack(@m^.node);
                 end;
           end;
     end;
@@ -1329,7 +1339,7 @@ unit rgobj;
     var adj : Psuperregisterworklist;
         original_u_count, i,n,p,q:cardinal;
         t : tsuperregister;
-        searched:Tmoveins;
+        searched:Pmoveins;
         found : boolean;
 
     begin
@@ -1376,7 +1386,7 @@ unit rgobj;
                   if q<>0 then
                     repeat
                       i:=(p+q) shr 1;
-                      if searched.id>reginfo[u].movelist^.data[i].id then
+                      if searched^.id>reginfo[u].movelist^.data[i]^.id then
                         p:=i+1
                       else
                         q:=i;
@@ -1389,7 +1399,7 @@ unit rgobj;
                         { no need to search the instructions we've already added
                           from v, we know we won't find a match there }
                         for i:=header.sorted_until+1 to original_u_count-1 do
-                          if searched.id=data[i].id then
+                          if searched^.id=data[i]^.id then
                             begin
                               found:=true;
                               break;
@@ -1445,13 +1455,13 @@ unit rgobj;
 
     procedure trgobj.coalesce;
 
-    var m:Tmoveins;
+    var m:Pmoveins;
         x,y,u,v:cardinal;
 
     begin
-      m:=Tmoveins(worklist_moves.getfirst);
-      x:=get_alias(m.x);
-      y:=get_alias(m.y);
+      m:=pointer(worklist_moves.PopFront)-PtrUint(@Pmoveins(nil)^.node);
+      x:=get_alias(m^.x);
+      y:=get_alias(m^.y);
       if (y<first_imaginary) then
         begin
           u:=y;
@@ -1464,8 +1474,8 @@ unit rgobj;
         end;
       if (u=v) then
         begin
-          m.moveset:=ms_coalesced_moves;  {Already coalesced.}
-          coalesced_moves.insert(m);
+          m^.moveset:=ms_coalesced_moves;  {Already coalesced.}
+          coalesced_moves.PushFront(@m^.node);
           add_worklist(u);
         end
       {Do u and v interfere? In that case the move is constrained. Two
@@ -1473,8 +1483,8 @@ unit rgobj;
        code u is precoloured, thus interference...}
       else if (v<first_imaginary) or ibitmap[u,v] then
         begin
-          m.moveset:=ms_constrained_moves;  {Cannot coalesce yet...}
-          constrained_moves.insert(m);
+          m^.moveset:=ms_constrained_moves;  {Cannot coalesce yet...}
+          constrained_moves.PushFront(@m^.node);
           add_worklist(u);
           add_worklist(v);
         end
@@ -1488,22 +1498,22 @@ unit rgobj;
               ((v>=first_imaginary) or
                (v in usable_register_set)) then
         begin
-          m.moveset:=ms_coalesced_moves;  {Move coalesced!}
-          coalesced_moves.insert(m);
+          m^.moveset:=ms_coalesced_moves;  {Move coalesced!}
+          coalesced_moves.PushFront(@m^.node);
           combine(u,v);
           add_worklist(u);
         end
       else
         begin
-          m.moveset:=ms_active_moves;
-          active_moves.insert(m);
+          m^.moveset:=ms_active_moves;
+          active_moves.PushFront(@m^.node);
         end;
     end;
 
     procedure trgobj.freeze_moves(u:Tsuperregister);
 
     var i:cardinal;
-        m:Tlinkedlistitem;
+        m:Pmoveins;
         v,x,y:Tsuperregister;
 
     begin
@@ -1511,21 +1521,21 @@ unit rgobj;
         for i:=0 to reginfo[u].movelist^.header.count-1 do
           begin
             m:=reginfo[u].movelist^.data[i];
-            if Tmoveins(m).moveset in [ms_worklist_moves,ms_active_moves] then
+            if m^.moveset in [ms_worklist_moves,ms_active_moves] then
               begin
-                x:=Tmoveins(m).x;
-                y:=Tmoveins(m).y;
+                x:=m^.x;
+                y:=m^.y;
                 if get_alias(y)=get_alias(u) then
                   v:=get_alias(x)
                 else
                   v:=get_alias(y);
                 {Move m from active_moves/worklist_moves to frozen_moves.}
-                if Tmoveins(m).moveset=ms_active_moves then
-                  active_moves.remove(m)
+                if m^.moveset=ms_active_moves then
+                  active_moves.remove(@m^.node)
                 else
-                  worklist_moves.remove(m);
-                Tmoveins(m).moveset:=ms_frozen_moves;
-                frozen_moves.insert(m);
+                  worklist_moves.remove(@m^.node);
+                m^.moveset:=ms_frozen_moves;
+                frozen_moves.PushFront(@m^.node);
 
                 if (v>=first_imaginary) and not(move_related(v)) and
                    (reginfo[v].degree<usable_registers_cnt) then
@@ -1834,23 +1844,19 @@ unit rgobj;
     begin
       { remove all items from the worklists, but do not free them, they are still needed for spill coalesce }
 
-      move_garbage.concatList(worklist_moves);
+      move_garbage.PushDequeBack(worklist_moves);
 
-      move_garbage.concatList(active_moves);
-      active_moves.Free;
-      active_moves:=nil;
+      move_garbage.PushDequeBack(active_moves);
+      active_moves.Done;
 
-      move_garbage.concatList(frozen_moves);
-      frozen_moves.Free;
-      frozen_moves:=nil;
+      move_garbage.PushDequeBack(frozen_moves);
+      frozen_moves.Done;
 
-      move_garbage.concatList(coalesced_moves);
-      coalesced_moves.Free;
-      coalesced_moves:=nil;
+      move_garbage.PushDequeBack(coalesced_moves);
+      coalesced_moves.Done;
 
-      move_garbage.concatList(constrained_moves);
-      constrained_moves.Free;
-      constrained_moves:=nil;
+      move_garbage.PushDequeBack(constrained_moves);
+      constrained_moves.Done;
     end;
 
 
@@ -2474,8 +2480,8 @@ unit rgobj;
                  assigned(reginfo[t].movelist) then
                 for j:=0 to reginfo[t].movelist^.header.count-1 do
                   begin
-                    x:=Tmoveins(reginfo[t].movelist^.data[j]).x;
-                    y:=Tmoveins(reginfo[t].movelist^.data[j]).y;
+                    x:=reginfo[t].movelist^.data[j]^.x;
+                    y:=reginfo[t].movelist^.data[j]^.y;
                     if (x=t) and
                       (spillinfo[get_alias(y)].spilled) and
                       not(spillinfo[get_alias(y)].interferences[0,t]) then
