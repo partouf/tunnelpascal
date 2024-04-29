@@ -1349,6 +1349,7 @@ interface
     function is_dispinterface(def: tdef): boolean;
     function is_object(def: tdef): boolean;
     function is_class(def: tdef): boolean;
+    function is_classref(def: tdef): boolean;
     function is_cppclass(def: tdef): boolean;
     function is_objectpascal_helper(def: tdef): boolean;
     function is_objcclass(def: tdef): boolean;
@@ -9294,6 +9295,13 @@ implementation
           (tobjectdef(def).objecttype=odt_class);
       end;
 
+    function is_classref(def: tdef): boolean;
+      begin
+        is_classref:=
+          assigned(def) and
+          (def.typ=classrefdef) and
+          is_class(tclassrefdef(def).pointeddef);
+      end;
 
     function is_object(def: tdef): boolean;
       begin
