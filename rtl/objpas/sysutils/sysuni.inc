@@ -133,7 +133,6 @@ function UnicodeSameText(const s1, s2 : UnicodeString) : Boolean;{$ifdef SYSUTIL
 
 { we've no templates, but with includes we can simulate this :) }
 {$macro on}
-{$define INWIDEFORMAT}
 {$define TFormatString:=unicodestring}
 {$define TFormatChar:=unicodechar}
 
@@ -143,7 +142,6 @@ Function UnicodeFormat (Const Fmt : UnicodeString; const Args : Array of const; 
 
 {$undef TFormatString}
 {$undef TFormatChar}
-{$undef INWIDEFORMAT}
 {$macro off}
 
 Function UnicodeFormat (Const Fmt : UnicodeString; const Args : Array of const) : UnicodeString;
