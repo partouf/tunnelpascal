@@ -2107,6 +2107,15 @@ implementation
                 current_asmdata.asmlists[al_dwarf_aranges].concat(tai_const.Create_16bit_unaligned(0));
 {$endif i8086}
               end;
+          end
+        else
+        if (ds_dwarf_fpdebug in current_settings.debugswitches) then
+          begin
+            if use_dotted_functions then
+              procentry := '.' + def.mangledname
+            else
+              procentry := def.mangledname;
+            append_labelentry(DW_AT_entry_pc,current_asmdata.RefAsmSymbol(procentry,AT_FUNCTION));
           end;
 
         { Don't write the funcretsym explicitly, it's also in the
