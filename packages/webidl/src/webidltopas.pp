@@ -103,7 +103,7 @@ const
     'Byte',
     'SmallInt',
     'Word',
-    'Longint',
+    'LongInt',
     'Cardinal',
     'Int64',
     'QWord',
@@ -132,6 +132,7 @@ type
     FContext: TWebIDLContext;
     FDictionaryClassParent: String;
     FFieldPrefix: String;
+    FGeneratingImplementation: Boolean;
     FGlobalVars: TStrings;
     FInputStream: TStream;
     FOutputStream: TStream;
@@ -148,6 +149,8 @@ type
     FTypeAliases: TStrings; // user defined type maping name to name
     FVerbose: Boolean;
     FWebIDLVersion: TWebIDLVersion;
+    function CreateCallBackFromInterface(aDef: TIDLInterfaceDefinition): TIDLCallBackDefinition;
+    procedure ResolveCallbackInterfaces;
     procedure SetGlobalVars(const AValue: TStrings);
     procedure SetIncludeImplementationCode(AValue: TStrings);
     procedure SetIncludeInterfaceCode(AValue: TStrings);
@@ -175,6 +178,7 @@ type
     procedure AddGlobalJSIdentifier(D: TIDLDefinition); virtual;
     procedure ResolveParentInterfaces(aList: TIDLDefinitionList); virtual;
     procedure ResolveParentInterface(Intf: TIDLInterfaceDefinition); virtual;
+    procedure ResolveParentInterface(Intf: TIDLDictionaryDefinition); virtual;
     procedure ResolveTypeDefs(aList: TIDLDefinitionList); virtual;
     procedure ResolveTypeDef(D: TIDLDefinition); virtual;
     procedure RemoveInterfaceForwards(aList: TIDLDefinitionList); virtual;
@@ -290,6 +294,7 @@ type
     procedure Execute; virtual;
     procedure WriteOptions; virtual;
     function IsKeyWord(const S: String): Boolean; override;
+    Property GeneratingImplementation : Boolean Read FGeneratingImplementation;
   Public
     Property InputFileName: String Read FInputFileName Write FInputFileName;
     Property InputStream: TStream Read FInputStream Write FInputStream;
@@ -454,7 +459,8 @@ begin
   Result:=False;
   For D in aList do
     if D is TIDLConstDefinition then
-      Exit(True);
+      if ConvertDef(D) then
+        Exit(True);
 end;
 
 function TBaseWebIDLToPas.WriteFunctionImplicitTypes(aList: TIDLDefinitionList): Integer;
@@ -531,14 +537,14 @@ end;
 function TBaseWebIDLToPas.WriteDictionaryImplicitTypes(aList: TIDLDefinitionList): Integer;
 Var
   D: TIDLDefinition;
-  FA: TIDLAttributeDefinition absolute D;
+  MD : TIDLDictionaryMemberDefinition absolute D;
 
 begin
   Result:=0;
   for D in aList do
     if D is TIDLDictionaryDefinition then
       if ConvertDef(D) then
-        Result:=Result+WriteImplicitAutoType(FA.AttributeType);
+        Result:=Result+WriteImplicitAutoType(MD.MemberType);
 end;
 
 function TBaseWebIDLToPas.WriteOtherImplicitTypes(
@@ -608,6 +614,7 @@ end;
 
 function TBaseWebIDLToPas.WriteMapLikePrivateReadOnlyFields(aParent: TIDLDefinition; aMap: TIDLMapLikeDefinition): Integer;
 begin
+  if (aParent=Nil) and (aMap=Nil) then ; // Silence compiler warning
   Result:=1;
   AddLn('fsize : NativeInt; external name ''size'';');
 end;
@@ -632,6 +639,7 @@ end;
 function TBaseWebIDLToPas.WriteMapLikeProperties(aParent: TIDLDefinition; aMap: TIDLMapLikeDefinition): Integer;
 
 begin
+  if (aParent=Nil) and (aMap=nil) then ; // Silence compiler warning
   AddLn('property size : NativeInt read fsize;');
   Result:=1;
 end;
@@ -974,6 +982,7 @@ Var
 var
   D: TIDLDefinition;
 begin
+  if (aParent=Nil) and (aParentname='') then ; // Silence compiler warning
   L:=TFPObjectHashTable.Create(False);
   try
     For D in ML Do
@@ -1216,6 +1225,7 @@ Var
   Msg : String;
 
 begin
+  FGeneratingImplementation:=True;
   Msg:='';
   DoLog('Writing implementation section');
   Addln('');
@@ -1239,6 +1249,7 @@ begin
       Msg:=SErrBeforeException;
     DoLog('Wrote %d of %d definitions%s',[Cnt,Context.Definitions.Count,Msg]);
   end;
+  FGeneratingImplementation:=False;
 end;
 
 procedure TBaseWebIDLToPas.WriteDefinitionImplementation(D: TIDLDefinition);
@@ -1318,8 +1329,7 @@ begin
   if Intf=nil then ;
 end;
 
-function TBaseWebIDLToPas.GetDictionaryDefHead(const CurClassName: string;
-  Dict: TIDLDictionaryDefinition): String;
+function TBaseWebIDLToPas.GetDictionaryDefHead(const CurClassName: string; Dict: TIDLDictionaryDefinition): String;
 var
   CurParent: String;
 begin
@@ -1462,6 +1472,7 @@ end;
 function TBaseWebIDLToPas.GetPascalTypeName(const aTypeName: String; ForTypeDef: Boolean): String;
 
 begin
+  if ForTypeDef then; // Silence compiler warning
   GetPascalTypeAndName(aTypeName,Result);
 end;
 
@@ -1703,8 +1714,7 @@ begin
           Inc(Result);
 end;
 
-function TBaseWebIDLToPas.GetArguments(aList: TIDLDefinitionList;
-  ForceBrackets: Boolean): String;
+function TBaseWebIDLToPas.GetArguments(aList: TIDLDefinitionList; ForceBrackets: Boolean): String;
 
 Var
   I, ArgType: TIDLDefinition;
@@ -2167,6 +2177,8 @@ procedure TBaseWebIDLToPas.WritePascal;
 var
   i: Integer;
   Line: String;
+  aList : TIDLDefinitionList;
+
 begin
   CreateUnitClause;
   CreateHeader;
@@ -2185,9 +2197,19 @@ begin
   DoLog('Generating typedefs and callback definitions');
   WriteTypeDefsAndCallbacks(Context.Definitions);
   DoLog('Generating dictionary definitions');
-  WriteDictionaryDefs(Context.Definitions);
+  aList:=Context.GetDictionariesTopologically;
+  try
+    WriteDictionaryDefs(aList);
+  finally
+    aList.Free;
+  end;
   DoLog('Generating interface definitions');
-  WriteInterfaceDefs(Context.GetInterfacesTopologically);
+  aList:=Context.GetInterfacesTopologically;
+  try
+    WriteInterfaceDefs(aList);
+  finally
+    aList.Free;
+  end;
   DoLog('Generating namespace definitions');
   WriteNamespaceDefs(Context.Definitions);
   Undent;
@@ -2235,6 +2257,7 @@ var
   CN : String;
 
 begin
+  if (ParentName='') then ; // Silence compiler warning
   CN:=D.Name;
   if CN='' then
     raise EConvertError.Create('[20220725184324] at '+GetDefPos(D));
@@ -2252,6 +2275,7 @@ var
   CN : String;
 
 begin
+  if (ParentName='') then ; // Silence compiler warning
   CN:=D.Name;
   if CN='' then
     raise EConvertError.Create('[20220725184324] at '+GetDefPos(D));
@@ -2269,6 +2293,7 @@ var
   CN : String;
 
 begin
+  if (ParentName='') then ; // Silence compiler warning
   CN:=D.Name;
   if CN='' then
     raise EConvertError.Create('[20220725184410] at '+GetDefPos(D));
@@ -2301,10 +2326,11 @@ begin
   if Recurse then
     begin
     // Should be passed in first
-
     AllocatePasName(D.ElementType,ConcatNames(ParentName,CN),True);
     if CN='' then
-      CN:=ConstructSequenceTypeName(TIDLSequenceTypeDefDefinition(D),False);
+      CN:=ConstructSequenceTypeName(TIDLSequenceTypeDefDefinition(D),False)
+    else
+      CN:=ArrayPrefix+CN+ArraySuffix;
     if D.Data=Nil then
       begin
       sDef:=FindGlobalDef(CN);
@@ -2397,6 +2423,7 @@ var
   CN : String;
 
 begin
+  if (ParentName='') and Recurse then ; // Silence compiler warning
   CN:=D.Name;
   Result:=TPasData(D.Data);
   if Result=Nil then
@@ -2431,6 +2458,7 @@ Var
   CN: String;
 
 begin
+  if (aParent=Nil) then ; // Silence compiler warning
   CN:=D.Name;
   if CN='' then
     CN:=ParentName+'Type';
@@ -2519,6 +2547,7 @@ var
   aNativeType : TPascalNativeType;
 
 begin
+  if (ParentName='') and Recurse then ; // Silence compiler warning
   CN:=D.Name;
   TN:=D.TypeName;
   aNativeType:=GetPascalTypeAndName(TN,PN);
@@ -2539,6 +2568,7 @@ var
   gDef : TIDLDefinition;
 
 begin
+  if (ParentName='') and Recurse then ; // Silence compiler warning
   {
     We are actually doing 2 things. We allocate a pascal name for an identifier,
     and we determine the native pascal type of the identifier, if possible.
@@ -2676,7 +2706,9 @@ var
 begin
   For D in aList do
     if D is TIDLInterfaceDefinition then
-      ResolveParentInterface(TIDLInterfaceDefinition(D));
+      ResolveParentInterface(TIDLInterfaceDefinition(D))
+    else if D is TIDLDictionaryDefinition then
+      ResolveParentInterface(TIDLDictionaryDefinition(D));
 end;
 
 procedure TBaseWebIDLToPas.ResolveParentInterface(Intf: TIDLInterfaceDefinition
@@ -2689,6 +2721,18 @@ begin
   aDef:=FindGlobalDef(Intf.ParentName);
   if aDef is TIDLInterfaceDefinition then
     Intf.ParentInterface:=TIDLInterfaceDefinition(aDef);
+end;
+
+procedure TBaseWebIDLToPas.ResolveParentInterface(Intf: TIDLDictionaryDefinition
+  );
+var
+  aDef: TIDLDefinition;
+begin
+  if Intf.ParentDictionary<>nil then exit;
+  if Intf.ParentName='' then exit;
+  aDef:=FindGlobalDef(Intf.ParentName);
+  if aDef is TIDLDictionaryDefinition then
+    Intf.ParentDictionary:=TIDLDictionaryDefinition(aDef);
 end;
 
 procedure TBaseWebIDLToPas.ResolveTypeDefs(aList: TIDLDefinitionList);
@@ -3026,21 +3070,71 @@ begin
     AllocatePasName(D,ParentName,True);
 end;
 
+
+function TBaseWebIDLToPas.CreateCallBackFromInterface(aDef: TIDLInterfaceDefinition): TIDLCallBackDefinition;
+
+var
+  I,Idx,Count : Integer;
+
+begin
+  DoLog('Converting callback interface %s to callback',[aDef.Name]);
+  Count:=0;
+  For I:=0 to aDef.Members.Count-1 do
+    if (aDef.Member[I] is TIDLFunctionDefinition) then
+      begin
+      Idx:=I;
+      Inc(Count);
+      end;
+  if (Count<>1)  then
+    Raise EWebIDLParser.CreateFmt('Callback Interface %s has wrong function member count',[aDef.Name]);
+  if not (aDef.Member[Idx] is TIDLFunctionDefinition) then
+    Raise EWebIDLParser.CreateFmt('Callback Interface %s member %s is not a function',[aDef.Name,aDef.Members[Idx].Name]);
+  Result:=TIDLCallBackDefinition(FContext.Add(TIDLCallBackDefinition,aDef.Name,aDef.SrcFile,aDef.Line,aDef.Column));
+  Result.FunctionDef:=TIDLFunctionDefinition(aDef.Members.Extract(aDef.Member[Idx]));
+  Result.FunctionDef.Name:=Result.Name;
+end;
+
+procedure TBaseWebIDLToPas.ResolveCallbackInterfaces;
+
+var
+  D : TIDLDefinition;
+  DI : TIDLInterfaceDefinition absolute D;
+
+begin
+  For D In FContext.Definitions do
+    if (D is TIDLInterfaceDefinition) and DI.IsCallBack then
+      begin
+      CreateCallBackFromInterface(DI);
+      FContext.Definitions.Delete(D);
+      end;
+
+end;
+
 procedure TBaseWebIDLToPas.ProcessDefinitions;
 
 var
   D : TIDLDefinition;
 
 begin
+  DoLog('Resolving callback interfaces.');
+  ResolveCallbackInterfaces;
+  DoLog('Removing interface forwards.');
   RemoveInterfaceForwards(FContext.Definitions);
+  DoLog('Appending partials to interfaces.');
   FContext.AppendPartials;
+  DoLog('Appending includes to interfaces.');
   FContext.AppendIncludes;
+  DoLog('Adding global identifiers.');
   For D in FContext.Definitions do
     if D.Name<>'' then
-      AddGlobalJSIdentifier(D);
+    AddGlobalJSIdentifier(D);
+  DoLog('Allocating pascal names.');
   AllocatePasNames(FContext.Definitions);
+  DoLog('Resolving parent interfaces.');
   ResolveParentInterfaces(FContext.Definitions);
+  DoLog('Resolving type definitions.');
   ResolveTypeDefs(FContext.Definitions);
+  DoLog('Done processing definitions.');
 end;
 
 procedure TBaseWebIDLToPas.Execute;
