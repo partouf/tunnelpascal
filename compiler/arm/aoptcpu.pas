@@ -76,6 +76,7 @@ Type
     { Individual optimisation routines }
     function OptPass1DataCheckMov(var p: tai): Boolean;
     function OptPass1ADDSUB(var p: tai): Boolean;
+    function OptPass1Bcc(var p: tai): Boolean;
     function OptPass1CMP(var p: tai): Boolean;
     function OptPass1STM(var p: tai): Boolean;
     function OptPass1MOV(var p: tai): Boolean;
@@ -808,6 +809,60 @@ Implementation
       Result := (taicpu(p).ops >= 3) and
         GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) and
         RemoveSuperfluousMove(p, hp1, 'DataMov2Data');
+    end;
+
+
+  function TCpuAsmOptimizer.OptPass1Bcc(var p: tai): Boolean;
+    var
+      hp1, hp2, hp_last: tai;
+    begin
+      Result := False;
+
+      { Change:
+          b(c) @Lbl
+          cmp     ## (also cmn, tst and teq)
+          b(c) @Lbl (same label)
+
+        To:
+          cmp(~c) ##
+          b(c) @Lbl
+      }
+      if (taicpu(p).condition <> C_None) and
+        IsJumpToLabel(taicpu(p)) and
+        GetNextInstruction(p, hp1) and
+        (hp1.typ = ait_instruction) then
+        begin
+          if (
+              (cs_opt_size in current_settings.optimizerswitches) or
+              { Too many chained conditional CMPs will cause slowdown }
+              (
+                GetLastInstruction(p, hp_last) and
+                (
+                  { Permit if previous entry is either not an instruction or is
+                    unconditional (e.g. a regular CMP) }
+                  (hp_last.typ <> ait_instruction) or
+                  (taicpu(hp_last).condition = C_None)
+                )
+              )
+            ) and
+            MatchInstruction(hp1, [A_CMP, A_CMN, A_TST, A_TEQ], [C_None], [PF_None]) and
+            GetNextInstruction(hp1, hp2) and
+            { Conditions must match }
+            MatchInstruction(hp2, [A_B], [taicpu(p).condition], [PF_None]) and
+            { Make sure jumps go to the same destination }
+            references_equal(JumpTargetOp(taicpu(p))^.ref^, JumpTargetOp(taicpu(hp2))^.ref^) then
+            begin
+              DebugMsg(SPeepholeOptimization + 'Bcc; CMP; Bcc -> CMP(~c); Bcc', p);
+              { Apply inverted condition to the comparison, thus preserving the
+                flags if the inverted condition is not fulfilled }
+              taicpu(hp1).condition := inverse_cond(taicpu(p).condition);
+              JumpTargetOp(taicpu(p))^.ref^.symbol.decrefs;
+              AllocRegBetween(NR_DEFAULTFLAGS, p, hp1, UsedRegs);
+              RemoveCurrentP(p, hp1);
+              Result := True;
+              Exit;
+            end;
+        end;
     end;
 
 
@@ -2343,6 +2398,8 @@ Implementation
       if p.typ = ait_instruction then
         begin
           case taicpu(p).opcode of
+            A_B:
+              Result := OptPass1Bcc(p);
             A_CMP:
               Result := OptPass1CMP(p);
             A_STR:
