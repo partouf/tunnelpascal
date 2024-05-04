@@ -130,7 +130,7 @@ implementation
            if we just parsed the a token that has m_class }
          if not(m_class in current_settings.modeswitches) and
             (Upper(s)=pattern) and
-            (m_class in tokeninfo^[idtoken].keyword) then
+            (m_class in tokeninfo[idtoken].keyword) then
            Message(parser_f_need_objfpc_or_delphi_mode);
        end;
 
@@ -142,7 +142,7 @@ implementation
            if we just parsed the a token that has m_class }
          if not(m_class in current_settings.modeswitches) and
             (Upper(s)=pattern) and
-            (m_class in tokeninfo^[idtoken].keyword) then
+            (m_class in tokeninfo[idtoken].keyword) then
            MessagePos(filepos,parser_f_need_objfpc_or_delphi_mode);
        end;
 
@@ -154,9 +154,9 @@ implementation
     begin
         if (token<>i) and (idtoken<>i) then
           if token=_id then
-            Message2(scan_f_syn_expected,tokeninfo^[i].str,'identifier '+pattern)
+            Message2(scan_f_syn_expected,tokeninfo[i].str,'identifier '+pattern)
           else
-            Message2(scan_f_syn_expected,tokeninfo^[i].str,tokeninfo^[token].str)
+            Message2(scan_f_syn_expected,tokeninfo[i].str,tokeninfo[token].str)
         else
           begin
             if token=_END then
@@ -470,7 +470,7 @@ implementation
             _LIBRARY:
               begin
                 if sp_hint_library in symopt then
-                  Message1(parser_e_dir_not_allowed,arraytokeninfo[idtoken].str)
+                  Message1(parser_e_dir_not_allowed,tokeninfo[idtoken].str)
                 else
                   include(symopt,sp_hint_library);
                 try_consume_hintdirective:=true;
@@ -478,7 +478,7 @@ implementation
             _DEPRECATED:
               begin
                 if sp_hint_deprecated in symopt then
-                  Message1(parser_e_dir_not_allowed,arraytokeninfo[idtoken].str)
+                  Message1(parser_e_dir_not_allowed,tokeninfo[idtoken].str)
                 else
                   include(symopt,sp_hint_deprecated);
                 try_consume_hintdirective:=true;
@@ -487,7 +487,7 @@ implementation
             _EXPERIMENTAL:
               begin
                 if sp_hint_experimental in symopt then
-                  Message1(parser_e_dir_not_allowed,arraytokeninfo[idtoken].str)
+                  Message1(parser_e_dir_not_allowed,tokeninfo[idtoken].str)
                 else
                   include(symopt,sp_hint_experimental);
                 try_consume_hintdirective:=true;
@@ -495,7 +495,7 @@ implementation
             _PLATFORM:
               begin
                 if sp_hint_platform in symopt then
-                  Message1(parser_e_dir_not_allowed,arraytokeninfo[idtoken].str)
+                  Message1(parser_e_dir_not_allowed,tokeninfo[idtoken].str)
                 else
                   include(symopt,sp_hint_platform);
                 try_consume_hintdirective:=true;
@@ -503,7 +503,7 @@ implementation
             _UNIMPLEMENTED:
               begin
                 if sp_hint_unimplemented in symopt then
-                  Message1(parser_e_dir_not_allowed,arraytokeninfo[idtoken].str)
+                  Message1(parser_e_dir_not_allowed,tokeninfo[idtoken].str)
                 else
                   include(symopt,sp_hint_unimplemented);
                 try_consume_hintdirective:=true;

@@ -106,7 +106,7 @@ var
 begin
   result:=nil;
   for i:=low(syscall_conventions) to high(syscall_conventions) do
-    if arraytokeninfo[syscall_conventions[i].token].str = name then
+    if tokeninfo[syscall_conventions[i].token].str = name then
       begin
         result:=@syscall_conventions[i];
         break;

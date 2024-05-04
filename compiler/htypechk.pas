@@ -248,7 +248,7 @@ implementation
         for i:=1 to tok2nodes do
           if tok2node[i].nod=nt then
             begin
-              result:=tokeninfo^[tok2node[i].tok].str;
+              result:=tokeninfo[tok2node[i].tok].str;
               break;
             end;
        end;
@@ -813,7 +813,7 @@ implementation
             ppn.free;
             if not (ocf_check_only in ocf) then
               begin
-                CGMessage2(parser_e_operator_not_overloaded_2,ld.typename,arraytokeninfo[optoken].str);
+                CGMessage2(parser_e_operator_not_overloaded_2,ld.typename,tokeninfo[optoken].str);
                 t:=cnothingnode.create;
               end;
             exit;
@@ -834,7 +834,7 @@ implementation
             ppn.free;
             if not (ocf_check_only in ocf) then
               begin
-                CGMessage2(parser_e_operator_not_overloaded_2,ld.typename,arraytokeninfo[optoken].str);
+                CGMessage2(parser_e_operator_not_overloaded_2,ld.typename,tokeninfo[optoken].str);
                 t:=cnothingnode.create;
               end;
             exit;
@@ -938,7 +938,7 @@ implementation
             { exit when no overloads are found }
             if (result=0) and generror then
               begin
-                CGMessage3(parser_e_operator_not_overloaded_3,ld.GetTypeName,arraytokeninfo[optoken].str,rd.GetTypeName);
+                CGMessage3(parser_e_operator_not_overloaded_3,ld.GetTypeName,tokeninfo[optoken].str,rd.GetTypeName);
                 candidates.free;
                 ppn.free;
                 ppn:=nil;

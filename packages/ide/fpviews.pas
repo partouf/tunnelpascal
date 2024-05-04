@@ -931,7 +931,7 @@ var
 begin
   Count:=0;
   for I:=ord(Low(tToken)) to ord(High(tToken)) do
-  with TokenInfo^[TToken(I)] do
+  with TokenInfo[TToken(I)] do
      if (str<>'') and (str[1] in['A'..'Z']) and (length(str)>1) then
        Inc(Count);
   GetReservedWordCount:=Count;
@@ -946,7 +946,7 @@ begin
   Count:=-1;
   I:=ord(Low(tToken));
   while (I<=ord(High(tToken))) and (Idx=-1) do
-   with TokenInfo^[TToken(I)] do
+   with TokenInfo[TToken(I)] do
     begin
       if (str<>'') and (str[1] in['A'..'Z']) and (length(str)>1) then
         begin
@@ -959,7 +959,7 @@ begin
   if Idx=-1 then
     S:=''
   else
-    S:=TokenInfo^[TToken(Idx)].str;
+    S:=TokenInfo[TToken(Idx)].str;
   GetReservedWord:=S;
 end;
 

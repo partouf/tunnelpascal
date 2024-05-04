@@ -2651,10 +2651,10 @@ begin
         begin
           if token <= high(ttoken) then
             begin
-              write(arraytokeninfo[token].str);
+              write(tokeninfo[token].str);
               if not (token in [_CWCHAR, _CWSTRING, _CSTRING, _CCHAR,
                                 _INTCONST,_REALNUMBER, _ID]) then
-                StrAppend(linestr,lowercase(arraytokeninfo[token].str));
+                StrAppend(linestr,lowercase(tokeninfo[token].str));
             end
           else
             begin
