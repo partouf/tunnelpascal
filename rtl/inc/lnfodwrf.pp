@@ -1424,7 +1424,7 @@ function DwarfBackTraceStr(addr: CodePointer): shortstring;
 var
   func,
   source : string;
-  hs     : string;
+  hs     : shortstring;
   line   : longint;
   Store  : TBackTraceStrFunc;
   Success : boolean;
