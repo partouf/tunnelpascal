@@ -497,18 +497,24 @@ Var
   cp : TSystemCodePage;
 {$endif FPC_HAS_CPSTRING}
 begin
+  Size:=Length(S2);
+  if Size=0 then
+    exit('');
+{$ifndef jvm}
+  { Maybe, by chance, result already has the desired contents? :) >10% in Lazarus at the time of writing this.
+    Also, judging from SetCodePage.Convert = false below, cp does not matter. }
+  if (Size<=32) { Bounds the worst case... 255 is too much. }
+    and (Size=Length(Result)) and (CompareByte(S2[1],Pointer(Result)^,Size)=0) then
+    exit;
+{$endif}
 {$ifdef FPC_HAS_CPSTRING}
   cp:=TranslatePlaceholderCP(cp);
 {$else FPC_HAS_CPSTRING}
   cp:=DefaultSystemCodePage;
 {$endif FPC_HAS_CPSTRING}
-  Size:=Length(S2);
   Setlength(fpc_ShortStr_To_AnsiStr,Size);
-  if Size>0 then
-    begin
-      fpc_shortstr_ansistr_intern_charmove(S2,1,fpc_ShortStr_To_AnsiStr,0,Size);
-      SetCodePage(fpc_ShortStr_To_AnsiStr,cp,False);
-    end
+  fpc_shortstr_ansistr_intern_charmove(S2,1,fpc_ShortStr_To_AnsiStr,0,Size);
+  SetCodePage(fpc_ShortStr_To_AnsiStr,cp,False);
 end;
 {$endif FPC_HAS_SHORTSTR_TO_ANSISTR}
 
@@ -524,6 +530,12 @@ var
   cp : TSystemCodePage;
 {$endif FPC_HAS_CPSTRING}
 begin
+{$ifndef jvm}
+  { Maybe, by chance, result already has the desired contents? :) 85% (!) calls in Lazarus at the time of writing this.
+    Judging from SetCodePage.Convert = false below, cp does not matter. }
+  if (Length(Result)=1) and (c=Result[1]) then
+    exit;
+{$endif}
 {$ifdef FPC_HAS_CPSTRING}
   cp:=TranslatePlaceholderCP(cp);
 {$else FPC_HAS_CPSTRING}
