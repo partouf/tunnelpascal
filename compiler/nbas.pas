@@ -598,6 +598,8 @@ implementation
 
 
     function tstatementnode.simplify(forinline: boolean) : tnode;
+      var
+        n: TNode;
       begin
         result:=nil;
         { these "optimizations" are only to make it more easy to recognise    }
@@ -606,6 +608,14 @@ implementation
         { because if the main blocknode which makes up a procedure/function   }
         { body were replaced with a statementn/nothingn, this could cause     }
         { problems elsewhere in the compiler which expects a blocknode        }
+
+        { Statement within a statement; probably a result of pure analysis }
+        if (left.nodetype = statementn) then
+          begin
+            n := left;
+            left := tstatementnode(n).PruneKeepLeft();
+            n.Free;
+          end;
 
         { remove next statement if it's a nothing-statement (since if it's }
         { the last, it won't remove itself -- see next simplification)     }
