@@ -1,6 +1,6 @@
 var
   l: longint;
-{$ifdef cpu64}
+{$if declared(interlockedcompareexchange64)}
   i: int64;
 {$endif}
 
@@ -15,7 +15,7 @@ begin
   if l<>-1 then
     halt(4);
 
-{$ifdef cpu64}
+{$if declared(interlockedcompareexchange64)}
   i:=-123;
   if interlockedcompareexchange64(i,-1,124)<>-123 then
     halt(5);

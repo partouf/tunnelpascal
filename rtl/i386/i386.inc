@@ -2297,15 +2297,54 @@ asm
 end;
 
 
-function InterlockedCompareExchange64(var Target: int64; NewValue: int64; Comperand: int64): int64; assembler;
+function InterlockedIncrement64 (var Target: int64) : int64;
+var
+  Fetch: int64;
+begin
+  repeat
+    Fetch := Target;
+    Result := Fetch + 1;
+  until InterlockedCompareExchange64(Target, Result, Fetch) = Fetch;
+end;
+
+
+function InterlockedDecrement64 (var Target: int64) : int64;
+var
+  Fetch: int64;
+begin
+  repeat
+    Fetch := Target;
+    Result := Fetch - 1;
+  until InterlockedCompareExchange64(Target, Result, Fetch) = Fetch;
+end;
+
+
+function InterlockedExchange64 (var Target: int64;Source : int64) : int64;
+begin
+  repeat
+    Result := Target;
+  until InterlockedCompareExchange64(Target, Source, Result) = Result;
+end;
+
+
+function InterlockedExchangeAdd64 (var Target: int64;Source : int64) : int64;
+begin
+  repeat
+    Result := Target;
+  until InterlockedCompareExchange64(Target, Result + Source, Result) = Result;
+end;
+
+
+function InterlockedCompareExchange64(var Target: int64; NewValue: int64; Comperand: int64): int64; assembler; nostackframe;
+// eax = Target, [esp + 12] = NewValue, [esp + 4] = Comperand
 asm
         pushl       %ebx
         pushl       %edi
         movl        %eax,%edi
-        movl        Comperand+4,%edx
-        movl        Comperand+0,%eax
-        movl        NewValue+4,%ecx
-        movl        NewValue+0,%ebx
+        movl        12(%esp),%eax
+        movl        16(%esp),%edx
+        movl        20(%esp),%ebx
+        movl        24(%esp),%ecx
         lock cmpxchg8b (%edi)
         pop         %edi
         pop         %ebx
