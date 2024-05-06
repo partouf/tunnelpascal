@@ -389,7 +389,6 @@ function ReadNext() : Longint; inline;
 var
   bytesread : SizeInt;
 begin
-  ReadNext := -1;
   if EBufPos >= EBufCnt then begin
     EBufPos := 0;
     EBufCnt := EBUF_SIZE;
@@ -397,14 +396,16 @@ begin
       EBufCnt := limit - index;
     blockread(e.f, EBuf, EBufCnt, bytesread);
     EBufCnt := bytesread;
+    if bytesread<=0 then
+    begin
+      ReadNext := -1;
+      Exit;
+    end;
   end;
-  if EBufPos < EBufCnt then begin
-    ReadNext := EBuf[EBufPos];
-    inc(EBufPos);
-    inc(index);
-  end
-  else
-    ReadNext := -1;
+
+  ReadNext := EBuf[EBufPos];
+  inc(EBufPos);
+  inc(index);
 end;
 
 { Reads the next size bytes into dest. Returns true if successful,
@@ -428,16 +429,18 @@ begin
       blockread(e.f, EBuf, EBufCnt, bytesread);
       EBufCnt := bytesread;
       if bytesread <= 0 then
-        r := False;
+      begin
+        ReadNext:=r;
+        Exit;
+      end;
     end;
-    if EBufPos < EBufCnt then begin
-      bytesread := EBufCnt - EBufPos;
-      if bytesread > size - totalread then bytesread := size - totalread;
-      System.Move(EBuf[EBufPos], d[totalread], bytesread);
-      inc(EBufPos, bytesread);
-      inc(index, bytesread);
-      inc(totalread, bytesread);
-    end;
+
+    bytesread := EBufCnt - EBufPos;
+    if bytesread > size - totalread then bytesread := size - totalread;
+    System.Move(EBuf[EBufPos], d[totalread], bytesread);
+    inc(EBufPos, bytesread);
+    inc(index, bytesread);
+    inc(totalread, bytesread);
   end;
   ReadNext := r;
 end;
