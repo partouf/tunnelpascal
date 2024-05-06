@@ -80,7 +80,7 @@ type
   TSegment = Word;
 
 const
-  EBUF_SIZE = 100;
+  EBUF_SIZE = 1000;
 
 {$WARNING This code is not thread-safe, and needs improvement}
 var
