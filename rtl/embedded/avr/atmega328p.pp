@@ -338,6 +338,8 @@ const
   EEPE = 1; // EEPROM Write Enable
   EERE = 0; // EEPROM Read Enable
 
+  {$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -449,5 +451,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set TWI_ISR, Default_IRQ_handler
    .set SPM_Ready_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

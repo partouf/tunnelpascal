@@ -1,7 +1,7 @@
 { %opt=-O2 -Os -B }
 { %cpu=avr }
 
-program tshift_size;
+program tshiftsize;
 
 { Test correctness of code generated for shifts with compile time constant shift distance.
   This test is compiled to test the size optimized code generator. }

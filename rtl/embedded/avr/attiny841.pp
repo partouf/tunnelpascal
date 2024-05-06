@@ -529,6 +529,7 @@ const
   COM2A0 = $06;  // Compare Output Mode 2A, bits
   COM2A1 = $07;  // Compare Output Mode 2A, bits
 
+{$include sectionhelpersh.inc}
 
 implementation
 {$define RELBRANCHES}
@@ -657,5 +658,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set USART1_TX_ISR, Default_IRQ_handler
   .set TWI_SLAVE_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

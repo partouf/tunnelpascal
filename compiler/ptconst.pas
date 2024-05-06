@@ -38,8 +38,7 @@ implementation
        fmodule,
        scanner,pbase,pdecvar,
        node,ngtcon,
-       symconst,symbase,symdef
-       ;
+       symconst,symbase,symdef;
 
     procedure read_typed_const(list:tasmlist;sym:tstaticvarsym;in_structure:boolean);
       var
@@ -120,6 +119,17 @@ implementation
                   Message(parser_e_section_no_locals);
                 tstaticvarsym(sym).section:=section;
                 include(sym.varoptions, vo_has_section);
+{$ifdef avr}
+                sym.symsection:=sectionNameToSymSection(section);
+                if (sym.symsection=ss_progmem) and not(vo_is_const in sym.varoptions) and
+                   ((vo_is_typed_const in sym.varoptions) and
+                    (cs_typed_const_writable in current_settings.localswitches)) then
+                  Comment(V_Error, 'Section PROGMEM is read-only and only supported for const values');
+                if sym.vardef.symsection=ss_none then
+                  maybeRegisterNewTypeWithSection(tabstractvarsym(sym))
+                else if sym.vardef.symsection<>sym.symsection then
+                  Comment(V_Error, 'Cannot override section value of type');
+{$endif avr}
               end;
           end;
 

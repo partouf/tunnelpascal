@@ -150,6 +150,8 @@ const
   INTF0 = 6; // External Interrupt Flag 0
   PCIF = 5; // Pin Change Interrupt Flag
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -207,5 +209,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set ANA_COMP_ISR, Default_IRQ_handler
    .set ADC_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

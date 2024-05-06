@@ -442,7 +442,6 @@ unit scandir;
         do_localswitch(cs_check_fpu_exceptions);
       end;
 
-
     procedure dir_objectchecks;
       begin
         do_localswitch(cs_check_object);
@@ -782,6 +781,13 @@ unit scandir;
         else
          current_module.linkOtherSharedLibs.add(libname,link_always);
       end;
+
+{$ifdef avr}
+    procedure dir_literalstringsinprogmem;
+      begin
+        do_localswitch(cs_literal_strings_in_progmem);
+      end;
+{$endif avr}
 
     procedure dir_localsymbols;
       begin
@@ -2028,6 +2034,13 @@ unit scandir;
           end;
       end;
 
+{$ifdef avr}
+    procedure dir_convertsectionedstringstotemps;
+      begin
+        do_localswitch(cs_convert_sectioned_strings_to_temps);
+      end;
+{$endif avr}
+
     procedure dir_coperators;
       begin
         do_moduleswitch(cs_support_c_operators);
@@ -2083,6 +2096,9 @@ unit scandir;
         AddDirective('CHECKPOINTER',directive_all, @dir_checkpointer);
         AddDirective('CODEALIGN',directive_all, @dir_codealign);
         AddDirective('CODEPAGE',directive_all, @dir_codepage);
+{$ifdef avr}
+        AddDirective('CONVERTSECTIONEDSTRINGSTOTEMP', directive_all, @dir_convertsectionedstringstotemps);
+{$endif avr}
         AddDirective('COPERATORS',directive_all, @dir_coperators);
         AddDirective('COPYRIGHT',directive_all, @dir_copyright);
         AddDirective('D',directive_all, @dir_description);
@@ -2125,6 +2141,9 @@ unit scandir;
         AddDirective('LINK',directive_all, @dir_link);
         AddDirective('LINKFRAMEWORK',directive_all, @dir_linkframework);
         AddDirective('LINKLIB',directive_all, @dir_linklib);
+{$ifdef avr}
+        AddDirective('LITERALSTRINGSINPROGMEM', directive_all, @dir_literalstringsinprogmem);
+{$endif avr}
         AddDirective('LOCALSYMBOLS',directive_all, @dir_localsymbols);
         AddDirective('LONGSTRINGS',directive_all, @dir_longstrings);
         AddDirective('M',directive_all, @dir_memory);

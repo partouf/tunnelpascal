@@ -277,6 +277,8 @@ const
   WDE = 3; // Watch Dog Enable
   WDP = 0; // Watch Dog Timer Prescaler bits
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -368,5 +370,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set TIMER0_COMP_ISR, Default_IRQ_handler
    .set SPM_RDY_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

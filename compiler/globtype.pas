@@ -173,7 +173,10 @@ interface
          cs_force_far_calls,
          cs_hugeptr_arithmetic_normalization,
          cs_hugeptr_comparison_normalization,
-         cs_legacyifend
+         cs_legacyifend,
+         { avr specific }
+         cs_literal_strings_in_progmem,
+         cs_convert_sectioned_strings_to_temps
        );
        tlocalswitches = set of tlocalswitch;
 

@@ -216,6 +216,8 @@ const
   WCOL = 6; // Write Collision Flag
   SPI2X = 0; // Double SPI Speed Bit
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -293,5 +295,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set SPI_ISR, Default_IRQ_handler
    .set QTRIP_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

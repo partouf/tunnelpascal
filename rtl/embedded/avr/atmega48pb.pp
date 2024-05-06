@@ -444,6 +444,7 @@ const
   RXS = $06;  
   RXSIE = $07;  
 
+{$include sectionhelpersh.inc}
 
 implementation
 {$define RELBRANCHES}
@@ -560,5 +561,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
   .set SPM_Ready_ISR, Default_IRQ_handler
   .set USART_START_ISR, Default_IRQ_handler
 end;
+
+{$include sectionhelpers.inc}
 
 end.

@@ -196,6 +196,10 @@ interface
           {could also be part of tabstractnormalvarsym, but there's
            one byte left here till the next 4 byte alignment        }
           varsymaccess  : tvarsymaccessflags;
+{$ifdef avr}
+          { Unlike the section string this only store supported sections }
+          symsection : tsymsection;
+{$endif avr}
           constructor create(st:tsymtyp;const n : TSymStr;vsp:tvarspez;def:tdef;vopts:tvaroptions);
           constructor ppuload(st:tsymtyp;ppufile:tcompilerppufile);
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -419,6 +423,9 @@ interface
           constdefderef : tderef;
           consttyp    : tconsttyp;
           value       : tconstvalue;
+{$ifdef avr}
+          symsection : tsymsection;
+{$endif avr}
           constructor create_ord(const n : TSymStr;t : tconsttyp;v : tconstexprint;def:tdef);virtual;
           constructor create_ordptr(const n : TSymStr;t : tconsttyp;v : tconstptruint;def:tdef);virtual;
           constructor create_ptr(const n : TSymStr;t : tconsttyp;v : pointer;def:tdef);virtual;
@@ -521,6 +528,15 @@ interface
 
     function same_constvalue(consttyp:tconsttyp;const value1,value2:tconstvalue):boolean;
 
+{$ifdef avr}
+    function sectionNameToSymSection(sectionname:ansistring):tsymsection;
+    function symSectionToSectionName(ss:tsymsection):ansistring;
+    function symSectionToSectionPostfixName(ss:tsymsection):ansistring;
+    procedure maybeRegisterNewTypeWithSection(var sym:tabstractvarsym); overload;
+    procedure maybeRegisterNewTypeWithSection(var def:tdef; const symsection: tsymsection); overload;
+    function needSectionSpecificHelperCode(ss:tsymsection; isRead: boolean): boolean;
+{$endif avr}
+
 implementation
 
     uses
@@ -620,6 +636,148 @@ implementation
         if sp_hint_unimplemented in symoptions then
           MessagePos1(filepos,sym_w_non_implemented_symbol,name);
       end;
+
+{$ifdef avr}
+    function sectionNameToSymSection(sectionname:ansistring):tsymsection;
+      begin
+        if CompareText('.PROGMEM',sectionname)=0 then
+          result:=ss_progmem
+        else if CompareText('.EEPROM',sectionname)=0 then
+          result:=ss_eeprom
+        else
+          begin
+            result:=ss_none;
+            if (CompareText('PROGMEM',sectionname)=0) or
+               (CompareText('EEPROM',sectionname)=0) then
+              Comment(V_Hint,sectionname+' is not recognized as a special section, but seems similar to .'+upper(sectionname)+' which is supported by the compiler');
+          end;
+      end;
+
+    function symSectionToSectionName(ss:tsymsection):ansistring;
+      begin
+        case ss of
+          ss_progmem:result:='.progmem';
+          ss_eeprom:result:='.eeprom';
+        else
+          result:='';
+        end;
+      end;
+
+    function symSectionToSectionPostfixName(ss: tsymsection): ansistring;
+      begin
+        case ss of
+          ss_progmem:result:='progmem';
+          ss_eeprom:result:='eeprom';
+        else
+          result:='';
+        end;
+      end;
+
+    procedure maybeRegisterNewTypeWithSection(var sym:tabstractvarsym);
+      var
+        s:TIDString;
+        hash:THashedIDString;
+        newtype:ttypesym;
+        hdef:tdef;
+        symEntry:TSymEntry;
+      begin
+        { Symbols of pointer type should not transfer the section property to the type
+          as the pointer can be located in one section and the pointed to data in another }
+        if (sym.vardef.typ<>pointerdef) and (sym.vardef.typ<>objectdef) then
+          begin
+            if (sym.vardef.symsection<>ss_none) then
+              begin
+                if (sym.vardef.symsection<>sym.symsection) then
+                  Comment(V_Error,'Incompatible sections specified for type and symbol');
+              end
+            else
+              begin
+                if sym.symsection<>ss_none then
+                  begin
+                    { Check if type for this section is already registered }
+                    s:=sym.vardef.typename+symSectionToSectionName(sym.symsection);
+                    hash.Id:=upper(s);
+                    symEntry:=symtablestack.top.FindWithHash(hash);
+                    if symEntry=nil then
+                      begin
+                        { register new type symbol }
+                        hdef:=tstoreddef(sym.vardef).getcopy;
+                        hdef.symsection:=sym.symsection;
+                        include(hdef.defoptions,df_unique);
+
+                        newtype:=ctypesym.create(s,hdef);
+                        newtype.visibility:=symtablestack.top.currentvisibility;
+                        include(newtype.symoptions,sp_explicitrename);
+                        symtablestack.top.insertsym(newtype);
+                        hdef.typesym:=newtype;
+                        hdef.register_def;
+                        sym.vardef:=hdef;
+                        { Add reference since this is called when amending a type's section info in a declaration }
+                        newtype.IncRefCount;
+                      end
+                    else
+                      sym.vardef:=ttypesym(symEntry).typedef;
+                  end;
+              end;
+          end
+        else if (sym.vardef.typ=objectdef) then
+          Comment(V_Error,'Placing an object in a section is not supported');
+      end;
+
+    procedure maybeRegisterNewTypeWithSection(var def: tdef;
+      const symsection: tsymsection);
+      var
+        s:TIDString;
+        newtype:ttypesym;
+        hash:THashedIDString;
+        symEntry:TSymEntry;
+      begin
+        if (def.symsection<>symsection) then
+          begin
+            if Assigned(def.typesym) then
+              begin
+                newtype:=ttypesym(def.typesym);
+                s:=def.typesym.RealName+symSectionToSectionName(symsection);
+                hash.Id:=upper(s);
+                symEntry:=symtablestack.top.FindWithHash(hash);
+                if symEntry=nil then
+                  begin
+                    { register new type symbol }
+                    def:=tstoreddef(def).getcopy;
+                    def.symsection:=symsection;
+                    include(def.defoptions,df_unique);
+                    if not Assigned(newtype) then
+                      begin
+                        newtype:=ctypesym.create(s,def);
+                        newtype.visibility:=symtablestack.top.currentvisibility;
+                        include(newtype.symoptions,sp_explicitrename);
+                        symtablestack.top.insertsym(newtype);
+                      end;
+                    def.typesym:=newtype;
+                    def.register_def;
+                  end
+                else
+                  def:=ttypesym(symEntry).typedef;
+              end
+            else  { Anonymous type definition }
+              begin
+                def:=tstoreddef(def).getcopy;
+                def.symsection:=symsection;
+                include(def.defoptions,df_unique);
+                def.register_def;
+              end;
+          end;
+      end;
+
+    function needSectionSpecificHelperCode(ss: tsymsection; isRead: boolean): boolean;
+      begin
+        result:=(ss in [ss_progmem,ss_eeprom]) and
+           (not(CPUAVR_HAS_NVM_DATASPACE in cpu_capabilities[current_settings.cputype]) or
+            not(CPUAVR_HAS_LPMX in cpu_capabilities[current_settings.cputype]) or
+            not isRead);
+      end;
+
+{$endif avr}
 
 {****************************************************************************
                           TSYM (base for all symtypes)
@@ -2204,6 +2362,9 @@ implementation
 {$else symansistr}
          _mangledname:=nil;
 {$endif symansistr}
+{$ifdef avr}
+        symsection:=ss_none;
+{$endif avr}
       end;
 
 

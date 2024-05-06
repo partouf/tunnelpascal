@@ -916,6 +916,13 @@ implementation
         { check if local proc/func is assigned to procvar }
         if right.resultdef.typ=procvardef then
           test_local_to_procvar(tprocvardef(right.resultdef),left.resultdef);
+
+{$ifdef avr}
+        { Pointers across memory sections not allowed }
+        if (right.resultdef.typ=pointerdef) and (left.resultdef.typ=pointerdef) then
+          if right.resultdef.symsection<>left.resultdef.symsection then
+            Comment(V_Error,'Pointers in different sections are not allowed');
+{$endif avr}
       end;
 
 
@@ -926,6 +933,7 @@ implementation
         hdef: tdef;
         hs: string;
         needrtti: boolean;
+        procname: string;
       begin
          result:=nil;
          expectloc:=LOC_VOID;
@@ -970,7 +978,18 @@ implementation
                  hp:=ccallparanode.create
                        (right,
                   ccallparanode.create(left,nil));
-                 result:=ccallnode.createintern('fpc_'+tstringdef(right.resultdef).stringtypname+'_to_shortstr',hp);
+                 procname:='fpc_'+tstringdef(right.resultdef).stringtypname+'_to_shortstr';
+{$ifdef avr}
+                 if ((right.resultdef.symsection=ss_eeprom) or
+                    (right.location.reference.symsection=ss_eeprom)) and
+                    needSectionSpecificHelperCode(ss_eeprom, true) then
+                   procname:=procname+'_eeprom'
+                 else if ((right.resultdef.symsection=ss_progmem) or
+                         (right.location.reference.symsection=ss_progmem)) and
+                         needSectionSpecificHelperCode(ss_progmem, true)  then
+                   procname:=procname+'_progmem';
+{$endif avr}
+                 result:=ccallnode.createintern(procname,hp);
                  firstpass(result);
                  left:=nil;
                  right:=nil;

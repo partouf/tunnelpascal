@@ -26,7 +26,7 @@ unit symcpu;
 interface
 
 uses
-  symtype,symdef,symsym;
+  symtype,symdef,symsym,symconst;
 
 type
   { defs }
@@ -55,10 +55,24 @@ type
   tcpuerrordefclass = class of tcpuerrordef;
 
   tcpupointerdef = class(tpointerdef)
+  protected
+    procedure ppuload_platform(ppufile:tcompilerppufile); override;
+    procedure ppuwrite_platform(ppufile:tcompilerppufile); override;
+  public
+    constructor create(def:tdef); override;
+    function compatible_with_pointerdef_size(ptr:tpointerdef): boolean; override;
+    function getcopy:tstoreddef; override;
+    function GetTypeName:string; override;
   end;
   tcpupointerdefclass = class of tcpupointerdef;
 
   tcpurecorddef = class(trecorddef)
+  protected
+    procedure ppuload_platform(ppufile:tcompilerppufile); override;
+    procedure ppuwrite_platform(ppufile:tcompilerppufile); override;
+  public
+    function getcopy:tstoreddef; override;
+    function GetTypeName:string; override;
   end;
   tcpurecorddefclass = class of tcpurecorddef;
 
@@ -75,14 +89,32 @@ type
   tcpuclassrefdefclass = class of tcpuclassrefdef;
 
   tcpuarraydef = class(tarraydef)
+  protected
+    procedure ppuload_platform(ppufile:tcompilerppufile); override;
+    procedure ppuwrite_platform(ppufile:tcompilerppufile); override;
+  public
+    function getcopy:tstoreddef; override;
+    function GetTypeName:string; override;
   end;
   tcpuarraydefclass = class of tcpuarraydef;
 
   tcpuorddef = class(torddef)
+  protected
+    procedure ppuload_platform(ppufile:tcompilerppufile); override;
+    procedure ppuwrite_platform(ppufile:tcompilerppufile); override;
+  public
+    function getcopy:tstoreddef; override;
+    function GetTypeName:string; override;
   end;
   tcpuorddefclass = class of tcpuorddef;
 
   tcpufloatdef = class(tfloatdef)
+  protected
+    procedure ppuload_platform(ppufile:tcompilerppufile); override;
+    procedure ppuwrite_platform(ppufile:tcompilerppufile); override;
+  public
+    function getcopy:tstoreddef; override;
+    function GetTypeName:string; override;
   end;
   tcpufloatdefclass = class of tcpufloatdef;
 
@@ -95,6 +127,12 @@ type
   tcpuprocdefclass = class of tcpuprocdef;
 
   tcpustringdef = class(tstringdef)
+  protected
+    procedure ppuload_platform(ppufile:tcompilerppufile); override;
+    procedure ppuwrite_platform(ppufile:tcompilerppufile); override;
+  public
+    function getcopy:tstoreddef; override;
+    function GetTypeName:string; override;
   end;
   tcpustringdefclass = class of tcpustringdef;
 
@@ -173,6 +211,193 @@ const
 
 
 implementation
+
+procedure tcpustringdef.ppuload_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuload_platform(ppufile);
+  symsection:=tsymsection(ppufile.getbyte);
+end;
+
+procedure tcpustringdef.ppuwrite_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuwrite_platform(ppufile);
+  ppufile.putbyte(byte(symsection));
+end;
+
+function tcpustringdef.getcopy: tstoreddef;
+begin
+  Result:=inherited getcopy;
+  Result.symsection:=symsection;
+end;
+
+function tcpustringdef.GetTypeName: string;
+begin
+  result:=inherited GetTypeName;
+  case symsection of
+    ss_eeprom: result:=result+'.EEPROM';
+    ss_progmem: result:=result+'.PROGMEM';
+  else
+    ;
+  end;
+end;
+
+procedure tcpuorddef.ppuload_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuload_platform(ppufile);
+  symsection:=tsymsection(ppufile.getbyte);
+end;
+
+procedure tcpuorddef.ppuwrite_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuwrite_platform(ppufile);
+  ppufile.putbyte(byte(symsection));
+end;
+
+function tcpuorddef.getcopy: tstoreddef;
+begin
+  Result:=inherited getcopy;
+  Result.symsection:=symsection;
+end;
+
+function tcpuorddef.GetTypeName: string;
+begin
+  result:=inherited GetTypeName;
+  case symsection of
+    ss_eeprom: result:=result+'.EEPROM';
+    ss_progmem: result:=result+'.PROGMEM';
+  else
+    ;
+  end;
+end;
+
+procedure tcpuarraydef.ppuload_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuload_platform(ppufile);
+  symsection:=tsymsection(ppufile.getbyte);
+end;
+
+procedure tcpuarraydef.ppuwrite_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuwrite_platform(ppufile);
+  ppufile.putbyte(byte(symsection));
+end;
+
+function tcpuarraydef.getcopy: tstoreddef;
+begin
+  Result:=inherited getcopy;
+  Result.symsection:=symsection;
+end;
+
+function tcpuarraydef.GetTypeName: string;
+begin
+  result:=inherited GetTypeName;
+  case symsection of
+    ss_eeprom: result:=result+'.EEPROM';
+    ss_progmem: result:=result+'.PROGMEM';
+  else
+    ;
+  end;
+end;
+
+procedure tcpufloatdef.ppuload_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuload_platform(ppufile);
+  symsection:=tsymsection(ppufile.getbyte);
+end;
+
+procedure tcpufloatdef.ppuwrite_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuwrite_platform(ppufile);
+  ppufile.putbyte(byte(symsection));
+end;
+
+function tcpufloatdef.getcopy: tstoreddef;
+begin
+  Result:=inherited getcopy;
+  Result.symsection:=symsection;
+end;
+
+function tcpufloatdef.GetTypeName: string;
+begin
+  result:=inherited GetTypeName;
+  case symsection of
+    ss_eeprom: result:=result+'.EEPROM';
+    ss_progmem: result:=result+'.PROGMEM';
+  else
+    ;
+  end;
+end;
+
+procedure tcpurecorddef.ppuload_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuload_platform(ppufile);
+  symsection:=tsymsection(ppufile.getbyte);
+end;
+
+procedure tcpurecorddef.ppuwrite_platform(ppufile: tcompilerppufile);
+begin
+  inherited ppuwrite_platform(ppufile);
+  ppufile.putbyte(byte(symsection));
+end;
+
+function tcpurecorddef.getcopy: tstoreddef;
+begin
+  Result:=inherited getcopy;
+  tcpurecorddef(result).symsection:=symsection;
+end;
+
+function tcpurecorddef.GetTypeName: string;
+begin
+  result:=inherited GetTypeName;
+  case symsection of
+    ss_eeprom: result:=result+'.EEPROM';
+    ss_progmem: result:=result+'.PROGMEM';
+  else
+    ;
+  end;
+end;
+
+procedure tcpupointerdef.ppuload_platform(ppufile:tcompilerppufile);
+begin
+  inherited ppuload_platform(ppufile);
+  symsection:=tsymsection(ppufile.getbyte);
+end;
+
+procedure tcpupointerdef.ppuwrite_platform(ppufile:tcompilerppufile);
+begin
+  inherited ppuwrite_platform(ppufile);
+  ppufile.putbyte(byte(symsection));
+end;
+
+constructor tcpupointerdef.create(def:tdef);
+begin
+  inherited create(def);
+  symsection:=def.symsection;
+end;
+
+function tcpupointerdef.compatible_with_pointerdef_size(ptr:tpointerdef
+  ): boolean;
+begin
+  result:=inherited and
+    (tcpupointerdef(ptr).symsection=symsection);
+end;
+
+function tcpupointerdef.getcopy:tstoreddef;
+begin
+  result:=inherited getcopy;
+  tcpupointerdef(result).symsection:=symsection;
+end;
+
+function tcpupointerdef.GetTypeName:string;
+begin
+  result:=inherited GetTypeName;
+  case symsection of
+    ss_eeprom: result:=result+'.EEPROM';
+    ss_progmem: result:=result+'.PROGMEM';
+  else
+    ;
+  end;
+end;
 
 begin
   { used tdef classes }

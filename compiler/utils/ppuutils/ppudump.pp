@@ -2426,7 +2426,9 @@ const
         'i8086 force FAR calls', {cs_force_far_calls}
         'i8086 huge pointer arithmetic', {cs_hugeptr_arithmetic_normalization}
         'i8086 huge pointer comparison', {cs_hugeptr_comparison_normalization}
-        'enforce legacy ifend behaviour' {cs_legacyifend}
+        'enforce legacy ifend behaviour', {cs_legacyifend}
+        'AVR place string literals in progmem section', {cs_literal_strings_in_progmem}
+        'AVR copy sectioned strings to temporary strings' { cs_convert_sectioned_strings_to_temps}
        );
        { Switches which can be changed by a mode (fpc,tp7,delphi) }
        modeswitchname : array[tmodeswitch] of string[50] =
@@ -4175,6 +4177,20 @@ begin
              write  ([space,'     Pointed Type : ']);
              readderef('',TPpuPointerDef(def).Ptr);
              writeln([space,' Has Pointer Math : ',(getbyte<>0)]);
+             if tsystemcpu(ppufile.header.common.cpu) in [cpu_avr] then
+               begin
+                 b:=getbyte;
+                 if b>0 then
+                   begin
+                     write([space,' Section : ']);
+                     case tsymsection(b) of
+                       ss_eeprom: writeln('.eeprom');
+                       ss_progmem: writeln('.progmem');
+                     else
+                       WriteWarning('Invalid AVR section type: '+IntToStr(b));
+                     end;
+                   end;
+               end;
              if tsystemcpu(ppufile.header.common.cpu) in [cpu_i8086,cpu_i386,cpu_x86_64] then
                begin
                  write([space,' X86 Pointer Type : ']);

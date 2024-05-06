@@ -79,6 +79,8 @@ const
   ONTIM = 3; // Modulation On-time Bits
   MCONF = 0; // Modulation Configuration Bits
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$define RELBRANCHES}
@@ -112,5 +114,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set TIMER0_OVF_ISR, Default_IRQ_handler
    .set ANA_COMP_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

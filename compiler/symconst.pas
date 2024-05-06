@@ -1136,6 +1136,9 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       '"SUSPENDING"' {po_wasm_suspending}
     );
 
+type
+  tsymsection = (ss_none,ss_progmem,ss_eeprom);
+
 implementation
 
 end.

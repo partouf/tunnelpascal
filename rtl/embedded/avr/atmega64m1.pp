@@ -597,6 +597,8 @@ const
   PSYNC1 = 2; // Selection of Synchronization Out for ADC
   PSYNC0 = 0; // Selection of Synchronization Out for ADC
 
+{$include sectionhelpersh.inc}
+
 implementation
 
 {$i avrcommon.inc}
@@ -728,5 +730,7 @@ procedure _FPC_start; assembler; nostackframe; noreturn; public name '_START'; s
    .set EE_READY_ISR, Default_IRQ_handler
    .set SPM_READY_ISR, Default_IRQ_handler
  end;
+
+{$include sectionhelpers.inc}
 
 end.

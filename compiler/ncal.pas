@@ -1258,10 +1258,29 @@ implementation
                        begin
                          check_ranges(left.fileinfo,left,parasym.vardef);
                          inserttypeconv(left,parasym.vardef);
+{$ifdef avr}             { Check section compatibility when passing by reference }
+                         if (parasym.varspez in [vs_var,vs_out,vs_constref]) and
+                            (left.resultdef.symsection<>parasym.vardef.symsection) then
+                           Comment(V_Error,'Cannot pass a reference if sections do not match');
+{$endif avr}
                        end;
                       if codegenerror then
                         exit;
                    end;
+
+{$ifdef avr}
+                 if is_shortstring(left.resultdef) and
+                    is_shortstring(parasym.vardef) and
+                    (needSectionSpecificHelperCode(left.resultdef.symsection,true) and
+                     (left.resultdef.symsection<>parasym.vardef.symsection)) and
+                    (parasym.vardef.typ<>formaldef) and
+                    not(parasym.univpara) then
+                   begin
+                     inserttypeconv(left,parasym.vardef);
+                     if codegenerror then
+                       exit;
+                   end;
+{$endif avr}
 
                 { truncate shortstring value parameters at the caller side if }
                 { they are passed by value (if passed by reference, then the  }
@@ -1582,6 +1601,10 @@ implementation
      constructor tcallnode.createintern(const name: string; params: tnode);
        var
          srsym: tsym;
+{$ifdef avr}
+         symtab: TSymtable;
+         controllername: string;
+{$endif avr}
        begin
          srsym := tsym(systemunit.Find(name));
          { in case we are looking for a non-external compilerproc of which we
@@ -1591,6 +1614,18 @@ implementation
          if not assigned(srsym) and
             (cs_compilesystem in current_settings.moduleswitches) then
            srsym := tsym(systemunit.Find(upper(name)));
+{$ifdef avr}
+         if not Assigned(srsym) then
+           if current_settings.controllertype=ct_none then
+             { Possibly compiling RTL controller unit, search for proc in current module }
+             searchsym_in_module(current_module,name,srsym,symtab)
+           else
+             begin
+               { Look in currently defined controller unit for matching proc }
+               controllername:=embedded_controllers[current_settings.controllertype].controllerunitstr;
+               searchsym_in_named_module(controllername,name,srsym,symtab);
+             end;
+{$endif avr}
          if not assigned(srsym) or
             (srsym.typ<>procsym) then
            Message1(cg_f_unknown_compilerproc,name);
