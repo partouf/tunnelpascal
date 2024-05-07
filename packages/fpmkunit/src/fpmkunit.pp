@@ -8490,8 +8490,8 @@ begin
                    Result:=(P.State=tsCompiled);
                    if Result then
                      begin
-                     break;
                      CompileReason:=Format(SDbgPackageDepRecompiled,[P.Name]);
+                     break;
                      end;
                  end;
              end;
@@ -8508,8 +8508,8 @@ begin
             Result:=NeedsCompile(APackage,APackage.Targets.TargetItems[i]);
             if Result then
               begin
-              break;
               CompileReason:=Format(SDbgTargetHasToBeCompiled,[APackage.Targets.TargetItems[i].Name]);
+              break;
               end;
           end;
       Finally
