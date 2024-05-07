@@ -745,54 +745,70 @@ end;
 {$define FPC_SYSTEM_HAS_INDEXDWORD}
 function IndexDWord(Const buf;len:SizeInt;b:dword):SizeInt; assembler; nostackframe;
 asm
-{$ifdef win64}
-    mov      %rcx, %rax
-{$else}
-    mov      %rdx, %r8
-    mov      %rsi, %rdx
-    mov      %rdi, %rax
-{$endif}
-    cmp      $4, %rdx
+    mov      buf, %rax
+    cmp      $3, len
     jle      .LDwordwise_Prepare
-    sub      $4, %rdx
-    movd     %r8d, %xmm1
-    pshufd   $0, %xmm1, %xmm1
+    movd     b, %xmm2
+    pshufd   $0, %xmm2, %xmm2
+    sub      $8, len
+    jle      .LTwoVectors
 .balign 16
-.L4x_Body:
+.L8x_Body:
     movdqu   (%rax), %xmm0
-    pcmpeqd  %xmm1, %xmm0
-    pmovmskb %xmm0, %r8d
+    pcmpeqd  %xmm2, %xmm0
+    movdqu   16(%rax), %xmm1
+    pcmpeqd  %xmm2, %xmm1
+    por      %xmm0, %xmm1
+    pmovmskb %xmm1, %r8d
     test     %r8d, %r8d
-    jnz      .LFoundAtMask
-    add      $16, %rax
-    sub      $4, %rdx
-    jg       .L4x_Body
-
-    lea      (%rax,%rdx,4), %rax
-    movdqu   (%rax), %xmm0
-    pcmpeqd  %xmm1, %xmm0
-    pmovmskb %xmm0, %r8d
-    test     %r8d, %r8d
-    jnz      .LFoundAtMask
+    jnz      .L8x_Found
+    add      $32, %rax
+    sub      $8, len
+    jg       .L8x_Body
+    lea      (%rax,{$ifdef win64}%rdx{$else}%rsi{$endif},4), %rax { Point to last 2 vectors. }
+    cmp      $-7, len
+    jge      .L8x_Body { Reuse .L8x_Body to compare last 2 vectors, if not compared already. }
     or       $-1, %rax
     ret
 
-.balign 16 { no-op }
+.balign 16
 .LDwordwise_Body:
-    cmp      (%rax), %r8d
+    cmpl     (%rax), b
     je       .LFoundAtRax
     add      $4, %rax
 .LDwordwise_Prepare:
-    sub      $1, %rdx
+    sub      $1, len
     jae      .LDwordwise_Body
     or       $-1, %rax
     ret
 
-.LFoundAtMask:
-    bsf      %r8d, %r8d
-    add      %r8, %rax
+.LTwoVectors:
+    movdqu   (%rax), %xmm0
+    pcmpeqd  %xmm2, %xmm0
+    pmovmskb %xmm0, %r8d
+    test     %r8d, %r8d
+    jnz      .LFoundAtR8
+    lea      16(%rax,{$ifdef win64}%rdx{$else}%rsi{$endif},4), %rax
+    movdqu   (%rax), %xmm0
+    pcmpeqd  %xmm2, %xmm0
+    pmovmskb %xmm0, %edx
+    test     %edx, %edx
+    jnz      .LFoundAtEdx
+    or       $-1, %rax
+    ret
+
+.L8x_Found:
+    pmovmskb %xmm0, %edx
+    test     %edx, %edx
+    jnz      .LFoundAtEdx
+    add      $16, %rax
+.LFoundAtR8:
+    mov      %r8d, %edx
+.LFoundAtEdx:
+    bsf      %edx, %edx
+    add      %rdx, %rax
 .LFoundAtRax:
-    sub      {$ifdef win64} %rcx {$else} %rdi {$endif}, %rax
+    sub      buf, %rax
     shr      $2, %rax
 end;
 {$endif FPC_SYSTEM_HAS_INDEXDWORD}

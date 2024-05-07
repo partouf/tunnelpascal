@@ -1001,52 +1001,62 @@ end;
 
 function IndexDWord_SSE2(const buf;len:SizeInt;b:DWord):SizeInt; assembler; nostackframe;
 asm
+        cmp      $3, %edx
+        jle      IndexDWord_Plain
         push     %eax
-        sub      $4, %edx
-        jle      .LDwordwise_Prepare
-        movd     %ecx, %xmm1
-        pshufd   $0, %xmm1, %xmm1
-.balign 16 { 1-byte NOP. }
-.L4x_Body:
+        movd     %ecx, %xmm2
+        pshufd   $0, %xmm2, %xmm2
+        sub      $8, %edx
+        jle      .LTwoVectors
+.balign 16
+.L8x_Body:
         movdqu   (%eax), %xmm0
-        pcmpeqd  %xmm1, %xmm0
-        pmovmskb %xmm0, %ecx
+        pcmpeqd  %xmm2, %xmm0
+        movdqu   16(%eax), %xmm1
+        pcmpeqd  %xmm2, %xmm1
+        por      %xmm0, %xmm1
+        pmovmskb %xmm1, %ecx
         test     %ecx, %ecx
-        jnz      .LFoundAtMask
-        add      $16, %eax
-        sub      $4, %edx
-        jg       .L4x_Body
+        jnz      .L8x_Found
+        add      $32, %eax
+        sub      $8, %edx
+        jg       .L8x_Body
+        lea      (%eax,%edx,4), %eax { Point to last 2 vectors. }
+        cmp      $-7, %edx
+        jge      .L8x_Body { Reuse .L8x_Body to compare last 2 vectors, if not compared already. }
+        pop      %edx
+        or       $-1, %eax
+        ret
 
-        lea      (%eax,%edx,4), %eax
+.LTwoVectors:
         movdqu   (%eax), %xmm0
-        pcmpeqd  %xmm1, %xmm0
+        pcmpeqd  %xmm2, %xmm0
         pmovmskb %xmm0, %ecx
         test     %ecx, %ecx
-        jz       .LNothing
-.LFoundAtMask:
-        bsf      %ecx, %ecx
-        add      %ecx, %eax
-.LFoundAtEax:
+        jnz      .LFoundAtEcx
+        lea      16(%eax,%edx,4), %eax
+        movdqu   (%eax), %xmm0
+        pcmpeqd  %xmm2, %xmm0
+        pmovmskb %xmm0, %edx
+        test     %edx, %edx
+        jnz      .LFoundAtEdx
+        pop      %edx
+        or       $-1, %eax
+        ret
+
+.L8x_Found:
+        pmovmskb %xmm0, %edx
+        test     %edx, %edx
+        jnz      .LFoundAtEdx
+        add      $16, %eax
+.LFoundAtEcx:
+        mov      %ecx, %edx
+.LFoundAtEdx:
+        bsf      %edx, %edx
+        add      %edx, %eax
         pop      %edx
         sub      %edx, %eax
         shr      $2, %eax
-        ret
-        nop { Turns .balign 16 before .LDwordwise_Body into a no-op. }
-
-.LDwordwise_Prepare:
-        add      $3, %edx
-        cmp      $-1, %edx
-        je       .LNothing
-.balign 16 { no-op }
-.LDwordwise_Body:
-        cmp      (%eax), %ecx
-        je       .LFoundAtEax
-        add      $4, %eax
-        sub      $1, %edx
-        jae      .LDwordwise_Body
-.LNothing:
-        pop      %edx
-        or       $-1, %eax
 end;
 
 function IndexDWord_Dispatch(const buf;len:SizeInt;b:DWord):SizeInt; forward;
