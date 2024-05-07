@@ -15950,6 +15950,14 @@ var
       end;
   end;
 
+  function GetFullClassPath(const ClassType: TPasClassType): String;
+  begin
+    Result := ClassType.ExternalName;
+
+    if ClassType.Parent is TPasClassType then
+      Result := GetFullClassPath(TPasClassType(ClassType.Parent)) + '.' + Result;
+  end;
+
 var
   aResolver: TPas2JSResolver;
   DelaySrc: TJSSourceElements;
@@ -16063,7 +16071,7 @@ begin
     if Ancestor=nil then
       AncestorPath:='null'
     else if AncestorIsExternal then
-      AncestorPath:=TPasClassType(Ancestor).ExternalName
+      AncestorPath:=GetFullClassPath(TPasClassType(Ancestor))
     else
       AncestorPath:=CreateReferencePath(Ancestor,AContext,rpkPathAndName);
     Call.AddArg(CreatePrimitiveDotExpr(AncestorPath,El));
