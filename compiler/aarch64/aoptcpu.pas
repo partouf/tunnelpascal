@@ -52,6 +52,8 @@ Interface
         function OptPass1LDR(var p: tai): Boolean; override;
         function OptPass1STR(var p: tai): Boolean; override;
       private
+        function DoMOVConstOps(var p: tai): Boolean;
+
         function RemoveSuperfluousFMov(const p: tai; movp: tai; const optimizer: string): boolean;
         function OptPass1Shift(var p: tai): boolean;
         function OptPass1Data(var p: tai): boolean;
@@ -61,6 +63,7 @@ Interface
         function OptPass1MOVZ(var p: tai): boolean;
         function OptPass1FMov(var p: tai): Boolean;
         function OptPass1B(var p: tai): boolean;
+        function OptPass1CMP(var p: tai): boolean;
         function OptPass1SXTW(var p: tai): Boolean;
 
         function OptPass2CSEL(var p: tai): Boolean;
@@ -506,6 +509,30 @@ Implementation
     var
       hp1: tai;
     begin
+      Result := False;
+      if taicpu(p).opcode in [A_ADD, A_SUB] then
+        begin
+          {
+            Remove: add/sub reg,reg,wzr/#0
+          }
+          if (taicpu(p).ops = 3) and
+            (taicpu(p).oppostfix = PF_None) and
+            (taicpu(p).oper[1]^.reg = taicpu(p).oper[0]^.reg) and
+            (
+              MatchOperand(taicpu(p).oper[2]^, 0) or
+              (
+                (taicpu(p).oper[2]^.typ = top_reg) and
+                (getsupreg(taicpu(p).oper[2]^.reg) = RS_XZR)
+              )
+            ) then
+            begin
+              DebugMsg(SPeepholeOptimization + 'Arithmetic identity operation removed', p);
+              RemoveCurrentP(p);
+              Result := True;
+              Exit;
+            end;
+        end;
+
       Result := GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) and
         RemoveSuperfluousMove(p, hp1, 'DataMov2Data');
     end;
@@ -589,6 +616,109 @@ Implementation
     end;
 
 
+  function TCpuAsmOptimizer.DoMOVConstOps(var p: tai): Boolean;
+    var
+      hp1, hp1_last: tai;
+      CGSize: TCGSize;
+      MessageStr: string;
+      X: Integer;
+    begin
+      Result := False;
+
+      TransferUsedRegs(TmpUsedRegs);
+
+      if getsubreg(taicpu(p).oper[0]^.reg) = R_SUBD then
+        CGSize := OS_S32
+      else
+        CGSize := OS_S64;
+
+{$ifdef DEBUG_AOPTCPU}
+      MessageStr := std_regname(taicpu(p).oper[0]^.reg) + ' = ';
+      if taicpu(p).oper[1]^.typ = top_reg then
+        MessageStr := MessageStr + std_regname(taicpu(p).oper[1]^.reg)
+      else
+        MessageStr := MessageStr + '#' + tostr(taicpu(p).oper[1]^.val);
+
+      MessageStr := MessageStr + '; replaced register to minimise pipeline stall';
+{$else DEBUG_AOPTCPU}
+      MessageStr := '';
+{$endif DEBUG_AOPTCPU}
+
+      hp1_last := p;
+      while GetNextInstructionUsingReg(hp1_last, hp1, taicpu(p).oper[0]^.reg) and
+        (hp1.typ = ait_instruction) and
+        (taicpu(hp1).condition = C_None) do
+        begin
+          case taicpu(hp1).ops of
+            2:
+              if MatchOperand(taicpu(hp1).oper[1]^, taicpu(p).oper[0]^.reg) then
+                case taicpu(hp1).opcode of
+                  A_CMP, A_CMN:
+                    begin
+                      if (taicpu(p).oper[1]^.typ = top_reg) or { Will be the zero register }
+                        is_arith_const(aword(taicpu(p).oper[1]^.val)) then
+                        begin
+                          DebugMsg(SPeepholeOptimization + 'MovCmp2MovCmp; ' + MessageStr, hp1);
+                          taicpu(hp1).loadoper(1, taicpu(p).oper[1]^);
+                          Result := True;
+                        end;
+                    end;
+
+                  A_MOV:
+                    begin
+                      DebugMsg(SPeepholeOptimization + 'MovMov2MovMov; ' + MessageStr, hp1);
+
+                      { Make opcode the came as p so the constant is guaranteed to fit }
+                      taicpu(hp1).opcode := taicpu(p).opcode;
+                      taicpu(hp1).loadoper(1, taicpu(p).oper[1]^);
+                      Result := True;
+                    end;
+                  else
+                    ;
+                end;
+            3:
+              case taicpu(hp1).opcode of
+                A_ADD, A_SUB:
+                  if (
+                      (taicpu(p).oper[1]^.typ = top_reg) or { Will be the zero register }
+                      is_arith_const(aword(taicpu(p).oper[1]^.val))
+                    )and
+                    MatchOperand(taicpu(hp1).oper[2]^, taicpu(p).oper[0]^.reg) then
+                    begin
+                      DebugMsg(SPeepholeOptimization + 'MovAdd/Sub2MovAdd/Sub; ' + MessageStr, hp1);
+                      taicpu(hp1).loadoper(2, taicpu(p).oper[1]^);
+                      Result := True;
+                    end;
+                else
+                  ;
+              end;
+            else
+              ;
+          end;
+
+          { See if the replaced register is still in use }
+          if not RegInInstruction(taicpu(p).oper[0]^.reg, hp1) then
+            begin
+              UpdateUsedRegsBetween(TmpUsedRegs, hp1_last, hp1);
+
+              if not RegUsedAfterInstruction(taicpu(p).oper[0]^.reg, hp1, TmpUsedRegs) then
+                begin
+                  DebugMsg(SPeepholeOptimization + 'Mov2None 2 done', p);
+                  TryRemoveRegAlloc(taicpu(p).oper[0]^.reg, p, hp1);
+                  RemoveCurrentP(p);
+                  Exit;
+                end;
+
+              { See if any more instructions can be replaced }
+              hp1_last := hp1;
+              Continue;
+            end;
+
+          Break;
+        end;
+    end;
+
+
   function TCpuAsmOptimizer.OptPass1Mov(var p : tai): boolean;
     var
       hp1: tai;
@@ -601,10 +731,24 @@ Implementation
          RemoveCurrentP(p);
          DebugMsg(SPeepholeOptimization + 'Mov2None done', p);
          Result:=true;
-       end
+         Exit;
+       end;
+
+     if (taicpu(p).ops=2) and
+       (
+         (taicpu(p).oper[1]^.typ = top_const) or
+         (getsupreg(taicpu(p).oper[1]^.reg) = RS_XZR)
+       ) then
+       begin
+         { The constant will be a valid shifter const and doesn't have to be
+           checked }
+         Result := DoMovConstOps(p);
+         if Result then
+           Exit;
+       end;
 
 
-     else if (taicpu(p).ops=2) and
+     if (taicpu(p).ops=2) and
        (getsubreg(taicpu(p).oper[0]^.reg)=R_SUBD) and
        GetNextInstruction(p, hp1) and
        { Faster to get it out of the way than go through MatchInstruction }
@@ -624,13 +768,13 @@ Implementation
          RemoveCurrentP(p);
          Result:=true;
          exit;
-       end
+       end;
      {
        optimize
        mov rX, yyyy
        ....
      }
-     else if GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) then
+     if GetNextInstructionUsingReg(p, hp1, taicpu(p).oper[0]^.reg) then
        begin
          if RemoveSuperfluousMove(p, hp1, 'MovMov2Mov') then
            Result:=true
@@ -646,6 +790,7 @@ Implementation
     var
       hp1: tai;
       ZeroReg: TRegister;
+      CGSIze: TCGSize;
     begin
       Result := False;
       hp1 := nil;
@@ -660,6 +805,10 @@ Implementation
             not MatchInstruction(hp1, [A_MOVK, A_MOVN], [C_None], [PF_None]) or
             (taicpu(hp1).oper[0]^.reg <> taicpu(p).oper[0]^.reg) then
             begin
+              Result := DoMovConstOps(p);
+              if Result then
+                Exit;
+
               if (taicpu(p).oper[1]^.val = 0) then
                 begin
                   { Change;
@@ -683,7 +832,7 @@ Implementation
                 end;
             end;
           {
-             remove the second Movz from
+             remove the first Movz from
 
              movz reg,...
              movz reg,...
@@ -987,6 +1136,19 @@ Implementation
 
           Result:=true;
           exit;
+        end;
+    end;
+
+
+  function TCpuAsmOptimizer.OptPass1CMP(var p: tai): boolean;
+    begin
+      Result := False;
+      if (taicpu(p).oper[1]^.typ = top_reg) and
+        (getsupreg(taicpu(p).oper[1]^.reg) = RS_XZR) then
+        begin
+          { Favour "cmp reg,#0" over "cmp reg,xzr" }
+          taicpu(p).loadconst(1, 0);
+          Result := True;
         end;
     end;
 
@@ -1441,6 +1603,8 @@ Implementation
           case taicpu(p).opcode of
             A_B:
               Result:=OptPass1B(p);
+            A_CMP:
+              Result:=OptPass1CMP(p);
             A_LDR:
               Result:=OptPass1LDR(p);
             A_STR:

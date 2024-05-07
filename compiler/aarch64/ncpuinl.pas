@@ -398,6 +398,8 @@ implementation
       var
         paraarray : array[1..2] of tnode;
         i: Integer;
+        constval: Boolean;
+        compval: Int64;
         ai: taicpu;
         op: TAsmOp;
         cond: TAsmCond;
@@ -441,6 +443,15 @@ implementation
            end
          else if is_32bitint(resultdef) or is_64bitint(resultdef) then
            begin
+             { See if we can use a constant on the CMP Instruction }
+             constval := False;
+             compval := 0;
+             if (paraarray[2].location.loc = LOC_CONSTANT) and (is_arith_const(aword(paraarray[2].location.value))) then
+               begin
+                 constval := True;
+                 compval := paraarray[2].location.value;
+               end;
+
              { no memory operand is allowed }
              for i:=low(paraarray) to high(paraarray) do
                begin
@@ -452,8 +463,12 @@ implementation
              location_reset(location,LOC_REGISTER,paraarray[1].location.size);
              location.register:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
 
-             current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,
-               paraarray[1].location.register,paraarray[2].location.register));
+             if constval then
+               current_asmdata.CurrAsmList.concat(taicpu.op_reg_const(A_CMP,
+                 paraarray[1].location.register,compval))
+             else
+               current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,
+                 paraarray[1].location.register,paraarray[2].location.register));
 
              case inlinenumber of
                in_min_longint,
