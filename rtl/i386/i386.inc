@@ -1255,21 +1255,22 @@ asm
         xor      %eax, %eax
         ret
 
-.LVecEm2Differs:
-        sub      $16, %ecx
 .LVecEm1Differs:
+        add      $16, %ecx
+.LVecEm2Differs:
         bsf      %ebx, %ebx
         add      %ecx, %ebx
-        movzbl   16(%eax,%ebx), %eax
-        movzbl   16(%edx,%ebx), %edx
+        movzbl   (%eax,%ebx), %eax
+        movzbl   (%edx,%ebx), %edx
         sub      %edx, %eax
         pop      %ebx
         ret
         nop      { Turn .balign 16 before .LAligned32xLoop_Body into a no-op. }
 
 .LAligned32xLoop_Prepare:
-        lea      -32(%eax,%ecx), %ecx { buffer end - last two vectors handled separately - first two vectors already analyzed (by the fact ecx was still len - 32) }
         sub      %eax, %edx { edx = buf2 - buf1 }
+        jz       .LNothing2 { Exit if buf1 = buf2. }
+        lea      -32(%eax,%ecx), %ecx { buffer end - last two vectors handled separately - first two vectors already analyzed (by the fact ecx was still len - 32) }
         and      $-16, %eax { Align buf1. First two vectors already analyzed are skipped by +32 on the first loop iteration. }
         sub      %eax, %ecx { ecx = count to be handled with loop }
 .balign 16 { No-op. }
@@ -1299,6 +1300,7 @@ asm
         pmovmskb %xmm1, %ebx
         inc      %bx
         jnz      .LAligned32xLoop_TwoVectorsDiffer
+.LNothing2:
         pop      %ebx
         xor      %eax, %eax
         ret
@@ -1533,6 +1535,7 @@ asm
         pop     %ebx
         ret
 
+        .byte    102,102,102,102,102,102,102,102,102,102,102,144 { Turn .balign 16 before .LAligned8xLoop_Body into a no-op. }
 .LVecOrMore:
         movdqu   (%edx,%eax), %xmm0 { Compare first vectors. }
         movdqu   (%eax), %xmm1
@@ -1545,6 +1548,8 @@ asm
         sub      $32, %ecx { first 16 bytes already analyzed + last 16 bytes analyzed separately }
         jle      .LLastVec
 
+        test     %edx, %edx
+        jz       .LNothing { Exit if buf1 = buf2. }
         push     %eax { save original buf1 to recover word position if byte mismatch found (aligned loop works in bytes to support misaligned buf1). }
         add      %eax, %ecx
         and      $-16, %eax { align buf1; +16 is performed by the loop. }
@@ -1665,6 +1670,8 @@ asm
         sub      $32, %ecx { first 16 bytes already analyzed + last 16 bytes analyzed separately }
         jle      .LLastVec
 
+        test     %edx, %edx
+        jz       .LNothing { Exit if buf1 = buf2. }
         push     %eax { save original buf1 to recover uint32 position if byte mismatch found (aligned loop works in bytes to support misaligned buf1). }
         add      %eax, %ecx
         and      $-16, %eax { align buf1; +16 is performed by the loop. }
@@ -1689,6 +1696,7 @@ asm
         pmovmskb %xmm0, %ebx
         inc      %bx
         jnz      .LVec0Differs
+.LNothing:
         pop      %ebx
         xor      %eax, %eax
         ret
