@@ -75,7 +75,7 @@ interface
     { checks if the given node tree contains only nodes of the given type,
       if this isn't the case, an ie is thrown
     }
-    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset);
+    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     procedure load_procvar_from_calln(var p1:tnode);
     function get_local_or_para_sym(const aname: string): tabstractvarsym;
@@ -93,7 +93,7 @@ interface
 
     function node_complexity(p: tnode): cardinal;
     function node_resources_fpu(p: tnode): cardinal;
-    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo);
+    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     { tries to simplify the given node after inlining }
     procedure doinlinesimplify(var n : tnode);
@@ -135,9 +135,9 @@ interface
 
     { count the number of nodes in the node tree,
       rough estimation how large the tree "node" is }
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     { returns true, if the value described by node is constant/immutable, this approximation is safe
       if no dirty tricks like buffer overflows or pointer magic are used }
@@ -162,7 +162,7 @@ interface
     function get_open_const_array(p : tnode) : tnode;
 
     { excludes the flags passed in nf from the node tree passed }
-    procedure node_reset_flags(p : tnode;nf : TNodeFlags; tnf : TTransientNodeFlags);
+    procedure node_reset_flags(p : tnode;nf : TNodeFlags; tnf : TTransientNodeFlags); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
     { include or exclude cs from p.localswitches }
     procedure node_change_local_switch(p : tnode;cs : tlocalswitch;enable : boolean);
@@ -208,7 +208,7 @@ interface
     {
       resets all flags so that nf_write/nf_modify information is regenerated
     }
-    procedure node_reset_pass1_write(n: tnode);
+    procedure node_reset_pass1_write(n: tnode); {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
 implementation
 
@@ -444,7 +444,7 @@ implementation
       end;
 
 
-    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset);
+    procedure checktreenodetypes(n : tnode;typeset : tnodetypeset); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         foreachnodestatic(n,@do_check,@typeset);
       end;
@@ -1132,7 +1132,7 @@ implementation
       end;
 
 
-    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo);
+    procedure node_tree_set_filepos(var n:tnode;const filepos:tfileposinfo); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         foreachnodestatic(n,@setnodefilepos,@filepos);
       end;
@@ -1409,32 +1409,29 @@ implementation
 
     function has_no_code(n : tnode) : boolean;
       begin
-        if n=nil then
-          begin
-            result:=true;
-            exit;
-          end;
-        case n.nodetype of
-          nothingn:
-            begin
-               result:=true;
-               exit;
-            end;
-          blockn:
-            begin
-              result:=has_no_code(tblocknode(n).left);
-              exit;
-            end;
-          statementn:
-            begin
-              repeat
-                result:=has_no_code(tstatementnode(n).left);
-                n:=tstatementnode(n).right;
-              until not(result) or not assigned(n);
-              exit;
-            end;
-          else
-            result:=false;
+        result:=true;
+        while Assigned(n) do
+          case n.nodetype of
+            nothingn:
+              Exit;
+            blockn:
+              begin
+                n:=tblocknode(n).left;
+                Continue;
+              end;
+            statementn:
+              begin
+                repeat
+                  result:=has_no_code(tstatementnode(n).left);
+                  n:=tstatementnode(n).right; { Will be another statement }
+                until not(result) or not assigned(n);
+                Exit;
+              end;
+            else
+              begin
+                result:=false;
+                Exit;
+              end;
         end;
       end;
 
@@ -1493,37 +1490,33 @@ implementation
         result:=foreachnodestatic(n,@check_for_conditional_nodes,nil);
       end;
 
-    var
-      nodecount : dword;
 
     function donodecount(var n: tnode; arg: pointer): foreachnoderesult;
       begin
-        inc(nodecount);
+        Inc(PDWord(arg)^);
         result:=fen_false;
       end;
 
 
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount,nil);
-        result:=nodecount;
+        result:=0;
+        foreachnodestatic(node,@donodecount,@result);
       end;
 
 
     function donodecount_weighted(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         if not(n.nodetype in [blockn,statementn,callparan,nothingn]) then
-          inc(nodecount);
+          Inc(PDWord(arg)^);
         result:=fen_false;
       end;
 
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount_weighted,nil);
-        result:=nodecount;
+        result:=0;
+        foreachnodestatic(node,@donodecount_weighted,@result);
       end;
 
 
@@ -1538,13 +1531,11 @@ implementation
     function actualtargetnode(n : pnode) : pnode;
       begin
         result:=n;
-        case n^.nodetype of
-          typeconvn:
-            if ttypeconvnode(n^).retains_value_location then
-              result:=actualtargetnode(@ttypeconvnode(n^).left);
+        while result^.nodetype = typeconvn do
+          if ttypeconvnode(result^).retains_value_location then
+            result:=@(ttypeconvnode(result^).left)
           else
-            ;
-        end;
+            Break;
       end;
 
 
@@ -1564,8 +1555,8 @@ implementation
     function get_open_const_array(p : tnode) : tnode;
       begin
         result:=p;
-        if (p.nodetype=derefn) and (tderefnode(p).left.nodetype=addrn) then
-          result:=get_open_const_array(taddrnode(tderefnode(result).left).left);
+        while (result.nodetype=derefn) and (tderefnode(result).left.nodetype=addrn) do
+          result:=taddrnode(tderefnode(result).left).left;
       end;
 
     type
@@ -1583,7 +1574,7 @@ implementation
       end;
 
 
-    procedure node_reset_flags(p : tnode; nf : TNodeFlags; tnf : TTransientNodeFlags);
+    procedure node_reset_flags(p : tnode; nf : TNodeFlags; tnf : TTransientNodeFlags); {$ifdef USEINLINE}inline;{$endif USEINLINE}
       var
         FlagSet: TFlagSet;
       begin
@@ -1674,25 +1665,31 @@ implementation
     function IsSingleStatement(p: tnode; var s: tnode): Boolean;
       begin
         Result:=false;
-        if assigned(p) then
-          case p.nodetype of
-            blockn:
-              Result:=IsSingleStatement(tblocknode(p).statements,s);
-            statementn:
-              if not(assigned(tstatementnode(p).next)) then
+        while assigned(p) do
+          begin
+            case p.nodetype of
+              blockn:
                 begin
-                  Result:=true;
-                  s:=tstatementnode(p).statement;
+                  p:=tblocknode(p).statements;
+                  Continue;
                 end;
-            inlinen,
-            assignn,
-            calln:
-              begin
-                s:=p;
-                Result:=true;
-              end
-            else
-              ;
+              statementn:
+                if not(assigned(tstatementnode(p).next)) then
+                  begin
+                    s:=tstatementnode(p).statement;
+                    Result:=true;
+                  end;
+              inlinen,
+              assignn,
+              calln:
+                begin
+                  s:=p;
+                  Result:=true;
+                end
+              else
+                ;
+            end;
+            Break;
           end;
       end;
 
@@ -1750,7 +1747,7 @@ implementation
        end;
 
 
-     procedure node_reset_pass1_write(n: tnode);
+     procedure node_reset_pass1_write(n: tnode); {$ifdef USEINLINE}inline;{$endif USEINLINE}
        begin
          foreachnodestatic(n,@_node_reset_pass1_write,nil);
        end;
