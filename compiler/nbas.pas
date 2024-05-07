@@ -366,7 +366,7 @@ implementation
       ppu,
       symconst,symdef,defutil,defcmp,
       pass_1,
-      nutils,nld,ncnv,
+      nutils,nld,ncnv,nflw,
       procinfo
 {$ifdef DEBUG_NODE_XML}
 {$ifndef jvm}
@@ -873,6 +873,19 @@ implementation
                                 n.right := MergeNestedBlock(p);
                                 Continue;
                               end;
+                          goton:
+                            begin
+                              last := TStatementNode(p.Next);
+                              if Assigned(last) and
+                                Assigned(last.statement) and
+                                (TGotoNode(p.statement).labelnode = last.statement) then
+                                begin
+                                  { Goto jumps to a label that immediately follows it }
+                                  n.right := p.PruneKeepRight();
+                                  p.Free;
+                                  Continue;
+                                end;
+                            end;
                           else
                             ;
                         end;
