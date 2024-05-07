@@ -273,6 +273,7 @@ Unit AoptObj;
         Procedure ClearUsedRegs;
         Procedure UpdateUsedRegs(p : Tai); {$ifdef USEINLINE}inline;{$endif USEINLINE}
         class procedure UpdateUsedRegs(var Regs: TAllUsedRegs; p: Tai); static;
+        class procedure UpdateUsedRegsIgnoreNew(var Regs: TAllUsedRegs; p: Tai); static;
 
         { UpdateUsedRegsBetween updates the given TUsedRegs from p1 to p2 exclusive, calling GetNextInstruction
           to move between instructions and sending p1.Next to UpdateUsedRegs }
@@ -284,8 +285,14 @@ Unit AoptObj;
         function UpdateUsedRegsAndOptimize(p : Tai): Tai;
 
         Function CopyUsedRegs(var dest : TAllUsedRegs) : boolean;
+        class function CopyUsedRegs(var source: TAllUsedRegs; var dest : TAllUsedRegs) : boolean; static;
+
+        { Merges the registers marked as used into UsedRegs }
+        procedure MergeUsedRegs(const Regs : TAllUsedRegs);
+
         procedure RestoreUsedRegs(const Regs : TAllUsedRegs);
         procedure TransferUsedRegs(var dest: TAllUsedRegs);
+        class procedure TransferUsedRegs(var source: TAllUsedRegs; var dest: TAllUsedRegs); static;
         class procedure ReleaseUsedRegs(const regs : TAllUsedRegs); static;
         class function RegInUsedRegs(reg : TRegister;var regs : TAllUsedRegs) : boolean; static;
         class procedure IncludeRegInUsedRegs(reg : TRegister;var regs : TAllUsedRegs); static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
@@ -441,6 +448,14 @@ Unit AoptObj;
 
         { Actually updates a used register }
         class procedure UpdateReg(var Regs : TAllUsedRegs; p: tai_regalloc); static; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+
+        { Called whenever a new iteration of pass 1 starts.  Override for
+          platform-specific behaviour }
+        procedure Pass1Initialize; virtual;
+
+        { Called whenever a new iteration of pass 2 starts.  Override for
+          platform-specific behaviour }
+        procedure Pass2Initialize; virtual;
       private
         procedure DebugMsg(const s: string; p: tai);
 
@@ -1151,6 +1166,37 @@ Unit AoptObj;
         end;
 
 
+      class procedure TAOptObj.UpdateUsedRegsIgnoreNew(var Regs: TAllUsedRegs; p: Tai);
+        begin
+          { this code is based on TUsedRegs.Update to avoid multiple passes through the asmlist,
+            the code is duplicated here }
+          repeat
+            while assigned(p) and
+                  ((p.typ in (SkipInstr - [ait_RegAlloc])) or
+                   ((p.typ = ait_label) and
+                    labelCanBeSkipped(tai_label(p))) or
+                   ((p.typ = ait_marker) and
+                    (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd]))) do
+                 p := tai(p.next);
+            while assigned(p) and
+                  (p.typ=ait_RegAlloc) Do
+              begin
+                prefetch(pointer(p.Next)^);
+                case tai_regalloc(p).ratype of
+                  ra_dealloc :
+                    Exclude(Regs[getregtype(tai_regalloc(p).reg)].UsedRegs, getsupreg(tai_regalloc(p).reg));
+                  else
+                    ;
+                end;
+                p := tai(p.next);
+              end;
+          until not(assigned(p)) or
+                (not(p.typ in SkipInstr) and
+                 not((p.typ = ait_label) and
+                     labelCanBeSkipped(tai_label(p))));
+        end;
+
+
       class procedure TAOptObj.UpdateUsedRegsBetween(var Regs: TAllUsedRegs; p1, p2: Tai);
         begin
           { this code is based on TUsedRegs.Update to avoid multiple passes through the asmlist,
@@ -1192,6 +1238,26 @@ Unit AoptObj;
       end;
 
 
+      class function TAOptObj.CopyUsedRegs(var source: TAllUsedRegs; var dest: TAllUsedRegs): boolean;
+      var
+        i : TRegisterType;
+      begin
+        Result:=true;
+        for i:=low(TRegisterType) to high(TRegisterType) do
+          dest[i]:=TUsedRegs.Create_Regset(i,source[i].GetUsedRegs);
+      end;
+
+
+      { Merges the registers marked as used into UsedRegs }
+      procedure TAOptObj.MergeUsedRegs(const Regs : TAllUsedRegs);
+      var
+        i : TRegisterType;
+      begin
+        for i:=low(TRegisterType) to high(TRegisterType) do
+          UsedRegs[i].UsedRegs := UsedRegs[i].UsedRegs + Regs[i].UsedRegs;
+      end;
+
+
       procedure TAOptObj.RestoreUsedRegs(const Regs: TAllUsedRegs);
       var
         i : TRegisterType;
@@ -1213,6 +1279,18 @@ Unit AoptObj;
           the only published means to modify the internal state en-masse. [Kit] }
         for i:=low(TRegisterType) to high(TRegisterType) do
           dest[i].Create_Regset(i, UsedRegs[i].GetUsedRegs);
+      end;
+
+
+      class procedure TAOptObj.TransferUsedRegs(var source: TAllUsedRegs; var dest: TAllUsedRegs); static;
+      var
+        i : TRegisterType;
+      begin
+        { Note that the constructor Create_Regset is being called as a regular
+          method - it is not instantiating a new object.  This is because it is
+          the only published means to modify the internal state en-masse. [Kit] }
+        for i:=low(TRegisterType) to high(TRegisterType) do
+          dest[i].Create_Regset(i, source[i].GetUsedRegs);
       end;
 
 
@@ -2695,6 +2773,7 @@ Unit AoptObj;
           p := StartPoint;
           FirstInstruction := True;
           ClearUsedRegs;
+          Pass1Initialize;
 
           while Assigned(p) and (p <> BlockEnd) Do
             begin
@@ -2768,6 +2847,7 @@ Unit AoptObj;
           stoploop := True;
           p := BlockStart;
           ClearUsedRegs;
+          Pass2Initialize;
           while (p <> BlockEnd) Do
             begin
               prefetch(pointer(p.Next)^);
@@ -2827,6 +2907,18 @@ Unit AoptObj;
     function TAOptObj.PostPeepHoleOptsCpu(var p: tai): boolean;
       begin
         result := false;
+      end;
+
+
+    procedure TAOptObj.Pass1Initialize;
+      begin
+        { Do nothing by default }
+      end;
+
+
+    procedure TAOptObj.Pass2Initialize;
+      begin
+        { Do nothing by default }
       end;
 
 

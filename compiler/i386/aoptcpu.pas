@@ -26,6 +26,7 @@ unit aoptcpu;
 
 {$ifdef EXTDEBUG}
 {$define DEBUG_AOPTCPU}
+{$define DEBUG_AOPTCSE}
 {$endif EXTDEBUG}
 
   Interface
@@ -37,6 +38,7 @@ unit aoptcpu;
 
     Type
       TCpuAsmOptimizer = class(TX86AsmOptimizer)
+        procedure DebugSWMsg(const s : string; p : tai);inline;
         function PrePeepHoleOptsCpu(var p: tai): boolean; override;
         function PeepHoleOptPass1Cpu(var p: tai): boolean; override;
         function PeepHoleOptPass2Cpu(var p: tai): boolean; override;
@@ -49,15 +51,35 @@ unit aoptcpu;
   Implementation
 
     uses
-      verbose,globtype,globals,
+      verbose,globtype,globals,cutils,
       cpuinfo,
       aasmcpu,
-      aoptutils,
+      aoptbase,aoptutils,
       aasmcfi,
       procinfo,
       cgutils,
       { units we should get rid off: }
       symsym,symconst;
+
+
+{$ifdef DEBUG_AOPTCSE}
+    const
+      SSlidingWindow: shortstring = 'Assembly CSE: ';
+
+    procedure TCpuAsmOptimizer.DebugSWMsg(const s: string;p : tai);
+      begin
+        asml.insertbefore(tai_comment.Create(strpnew(s)), p);
+      end;
+{$else DEBUG_AOPTCSE}
+    { Empty strings help the optimizer to remove string concatenations that won't
+      ever appear to the user on release builds. [Kit] }
+    const
+      SSlidingWindow = '';
+
+    procedure TCpuAsmOptimizer.DebugSWMsg(const s: string;p : tai);inline;
+      begin
+      end;
+{$endif DEBUG_AOPTCSE}
 
 
     { Checks if the register is a 32 bit general purpose register }
@@ -260,10 +282,34 @@ unit aoptcpu;
                 A_CLC,
                 A_STC:
                   Result:=OptPass1STCCLC(p);
+                A_CALL:
+                  if (cs_opt_asmcse in current_settings.optimizerswitches) then
+                    begin
+                      DebugSWMsg(SSlidingWindow + 'Reset sliding window upon CALL', p);
+                      ResetSW;
+                    end;
                 else
                   ;
               end;
+
+              { If an unsafe reference is found, clear the sliding window }
+              if not Result and
+                (cs_opt_asmcse in current_settings.optimizerswitches) and
+                { Saves doing it twice }
+                (taicpu(p).opcode <> A_CALL) and
+                IsWriteToMemory(taicpu(p)) then
+                begin
+                  DebugSWMsg(SSlidingWindow + 'Reset sliding window upon memory write', p);
+                  ResetSW;
+                end;
             end;
+          ait_label:
+            if (cs_opt_asmcse in current_settings.optimizerswitches) and
+              not labelCanBeSkipped(tai_label(p)) then
+              begin
+                DebugSWMsg(SSlidingWindow + 'Reset sliding window upon finding label', p);
+                ResetSW;
+              end;
           else
             ;
         end;

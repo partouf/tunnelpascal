@@ -41,6 +41,7 @@ implementation
 
 uses
   globals,
+  aoptbase,cutils,
   globtype,
   aasmcpu;
 
@@ -183,10 +184,34 @@ uses
                 A_CLC,
                 A_STC:
                   Result:=OptPass1STCCLC(p);
+                A_CALL:
+                  if (cs_opt_asmcse in current_settings.optimizerswitches) then
+                    begin
+                      DebugSWMsg(SSlidingWindow + 'Reset sliding window upon CALL', p);
+                      ResetSW;
+                    end;
                 else
                   ;
               end;
+
+              { If an unsafe reference is found, clear the sliding window }
+              if not Result and
+                (cs_opt_asmcse in current_settings.optimizerswitches) and
+                { Saves doing it twice }
+                (taicpu(p).opcode <> A_CALL) and
+                IsWriteToMemory(taicpu(p)) then
+                begin
+                  DebugSWMsg(SSlidingWindow + 'Reset sliding window upon memory write', p);
+                  ResetSW;
+                end;
             end;
+          ait_label:
+            if (cs_opt_asmcse in current_settings.optimizerswitches) and
+              not labelCanBeSkipped(tai_label(p)) then
+              begin
+                DebugSWMsg(SSlidingWindow + 'Reset sliding window upon finding label', p);
+                ResetSW;
+              end;
           else
             ;
         end;

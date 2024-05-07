@@ -24,9 +24,11 @@ unit aoptx86;
 {$i fpcdefs.inc}
 
 { $define DEBUG_AOPTCPU}
+{ $define DEBUG_AOPTCSE}
 
 {$ifdef EXTDEBUG}
 {$define DEBUG_AOPTCPU}
+{$define DEBUG_AOPTCSE}
 {$endif EXTDEBUG}
 
   interface
@@ -34,9 +36,12 @@ unit aoptx86;
     uses
       globtype,cclasses,
       cpubase,
-      aasmtai,aasmcpu,
+      aasmtai,aasmcpu,aasmdata,
       cgbase,cgutils,
       aopt,aoptobj;
+
+    const
+      SLIDING_WINDOW_SIZE = 32;
 
     type
       TOptsToCheck = (
@@ -45,11 +50,18 @@ unit aoptx86;
         aoc_DoPass2JccOpts
       );
 
+      TSlidingWindowEntry = record
+        ai: tai;
+        RegState: TAllUsedRegs;
+      end;
+
       TX86AsmOptimizer = class(TAsmOptimizer)
         { some optimizations are very expensive to check, so the
           pre opt pass can be used to set some flags, depending on the found
           instructions if it is worth to check a certain optimization }
         OptsToCheck : set of TOptsToCheck;
+        constructor create(_AsmL: TAsmList); override;
+        destructor Destroy; override;
         function RegLoadedWithNewValue(reg : tregister; hp : tai) : boolean; override;
         function InstructionLoadsFromReg(const reg : TRegister; const hp : tai) : boolean; override;
         class function RegReadByInstruction(reg : TRegister; hp : tai) : boolean; static;
@@ -92,9 +104,15 @@ unit aoptx86;
         function GetNextInstructionUsingRegTrackingUse(Current: tai; out Next: tai; reg: TRegister): Boolean;
         function RegModifiedByInstruction(Reg: TRegister; p1: tai): boolean; override;
       private
+        SlidingWindow: array[0..SLIDING_WINDOW_SIZE-1] of TSlidingWindowEntry;
+        WindowTop: Cardinal;
+
         function SkipSimpleInstructions(var hp1: tai): Boolean;
 
       protected
+        DisableSW: Boolean;
+
+        { Returns true if the target compiler and its settings favour MOVZX over other instruction combinations }
         class function IsMOVZXAcceptable: Boolean; static; inline;
 
         function CheckMovMov2MovMov2(const p, hp1: tai): Boolean;
@@ -130,6 +148,8 @@ unit aoptx86;
           or writes to a global symbol }
         class function IsRefSafe(const ref: PReference): Boolean; static;
 
+        { Returns true if the instruction writes to memory }
+        class function IsWriteToMemory(const p: taicpu): Boolean; static;
 
         { Returns true if the given MOV instruction can be safely converted to CMOV }
         class function CanBeCMOV(p, cond_p: tai; var RefModified: Boolean) : boolean; static;
@@ -150,6 +170,7 @@ unit aoptx86;
         function FuncMov2Func(var p: tai; const hp1: tai): Boolean;
 
         procedure DebugMsg(const s : string; p : tai);inline;
+        procedure DebugSWMsg(const s : string; p : tai);inline;
 
         class function IsExitCode(p : tai) : boolean; static;
         class function isFoldableArithOp(hp1 : taicpu; reg : tregister) : boolean; static;
@@ -230,6 +251,37 @@ unit aoptx86;
 
         { Processor-dependent reference optimisation }
         class procedure OptimizeRefs(var p: taicpu); static;
+
+        { Sliding window routines }
+        function HandleSimple2OpSWInstruction(var p: tai): Boolean;
+        procedure ResetSW;
+        procedure AddToSW(var p: tai);
+        function FindSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
+
+        { Locates a match where all but the last operand are equal (although it
+          must be a register }
+        function FindPartialSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
+
+        { Allocate all registers marked as used in TrackedRegs between p1 and p2
+          (uses TmpUsedRegs as the initialusedregs in calls to AllocRegBetween }
+        procedure AllocAllUsedRegsBetween(p1, p2: tai; var TrackedRegs: TAllUsedRegs; var InitialUsedRegs: TAllUsedRegs);
+
+        { Checks all instructions between sequence_start and sequence_end inclusive
+          to see if any registers in use, according to ForwardTrackedRegs, are
+          not modified in between.  False if all registers are static, True otherwise. }
+        function CheckSWRegisters(p1, p2: tai; var ForwardTrackedRegs: TAllUsedRegs): Boolean;
+
+        { Step thorugh a sliding-window match with the current instruction and
+          see how much of a chain can be removed }
+        function TraceSWSequence(var p: tai; sw_pointer: tai; var SWRegState: TAllUsedRegs): Boolean;
+
+        { Called whenever a new iteration of pass 1 starts.  Override for
+          platform-specific behaviour }
+        procedure Pass1Initialize; override;
+
+        { Called whenever a new iteration of pass 1 starts.  Override for
+          platform-specific behaviour }
+        procedure Pass2Initialize; override;
       end;
 
     function MatchInstruction(const instr: tai; const op: TAsmOp; const opsize: topsizes): boolean;
@@ -256,6 +308,17 @@ unit aoptx86;
     { returns true, if ref is a reference using only the registers passed as base and index
       and having an offset }
     function MatchReferenceWithOffset(const ref : treference;base,index : TRegister) : Boolean;
+
+
+{$ifdef DEBUG_AOPTCSE}
+    const
+      SSlidingWindow: shortstring = 'Assembly CSE: ';
+{$else DEBUG_AOPTCSE}
+    { Empty strings help the optimizer to remove string concatenations that won't
+      ever appear to the user on release builds. [Kit] }
+    const
+      SSlidingWindow = '';
+{$endif DEBUG_AOPTCSE}
 
   implementation
 
@@ -549,6 +612,29 @@ unit aoptx86;
       end;
 
 
+  constructor TX86AsmOptimizer.create(_AsmL: TAsmList);
+    var
+      X: Integer;
+    begin
+      inherited create(_AsmL);
+      for X := 0 to SLIDING_WINDOW_SIZE - 1 do
+        begin
+          SlidingWindow[X].ai := nil;
+          CreateUsedRegs(SlidingWindow[X].RegState);
+        end;
+
+      WindowTop := SLIDING_WINDOW_SIZE - 1;
+    end;
+
+
+  destructor TX86AsmOptimizer.Destroy;
+    begin
+      { Release any copied register states in the sliding window }
+      ResetSW;
+      inherited Destroy;
+    end;
+
+
   function TX86AsmOptimizer.GetNextInstructionUsingReg(Current: tai; out Next: tai; reg: TRegister): Boolean;
     begin
       Next:=Current;
@@ -826,9 +912,12 @@ unit aoptx86;
                   ((getregtype(reg)=R_INTREGISTER) and (getsupreg(reg)=RS_EAX)) and
                   ((getsubreg(reg)<>R_SUBH) or (p.opsize<>S_B))
                  );
-            2,3:
+            2:
               regReadByInstruction :=
                 reginop(reg,p.oper[0]^) or
+                reginop(reg,p.oper[1]^);
+            3:
+              regReadByInstruction :=
                 reginop(reg,p.oper[1]^);
             else
               InternalError(2019112801);
@@ -1429,6 +1518,17 @@ unit aoptx86;
         Result := '';
       end;
 {$endif DEBUG_AOPTCPU}
+
+{$ifdef DEBUG_AOPTCSE}
+    procedure TX86AsmOptimizer.DebugSWMsg(const s: string;p : tai);
+      begin
+        asml.insertbefore(tai_comment.Create(strpnew(s)), p);
+      end;
+{$else DEBUG_AOPTCSE}
+    procedure TX86AsmOptimizer.DebugSWMsg(const s: string;p : tai);inline;
+      begin
+      end;
+{$endif DEBUG_AOPTCSE}
 
     class function TX86AsmOptimizer.IsMOVZXAcceptable: Boolean; inline;
       begin
@@ -2770,6 +2870,32 @@ unit aoptx86;
       end;
 
 
+    class function TX86AsmOptimizer.IsWriteToMemory(const p: taicpu): Boolean;
+      var
+        X: Integer;
+      begin
+        Result := True;
+        if ([
+            Ch_WMemEDI, Ch_All
+          ] * InsProp[p.opcode].Ch) <> [] then
+          { Implicit memory writes or modifications to the stack pointer are unsafe }
+          Exit;
+
+        for X := 0 to p.ops - 1 do
+          if (p.oper[X]^.typ = top_ref) and
+            (
+              ((X = 0) and (([Ch_WOp1, Ch_RWOp1, Ch_MOp1] * InsProp[p.opcode].Ch) <> [])) or
+              ((X = 1) and (([Ch_WOp2, Ch_RWOp2, Ch_MOp2] * InsProp[p.opcode].Ch) <> [])) or
+              ((X = 2) and (([Ch_WOp3, Ch_RWOp3, Ch_MOp3] * InsProp[p.opcode].Ch) <> [])) or
+              ((X = 3) and (([Ch_WOp4, Ch_RWOp4, Ch_MOp4] * InsProp[p.opcode].Ch) <> []))
+            ) then
+            { Unsafe write }
+            Exit;
+
+        Result := False;
+      end;
+
+
     function TX86AsmOptimizer.ConvertLEA(const p: taicpu): Boolean;
       var
         l: asizeint;
@@ -3034,7 +3160,7 @@ unit aoptx86;
 
     function TX86AsmOptimizer.OptPass1MOV(var p : tai) : boolean;
     var
-      hp1, hp2, hp3, hp4: tai;
+      hp1, hp2, hp3, hp4, sw_start, sw_last: tai;
       DoOptimisation, TempBool: Boolean;
 {$ifdef x86_64}
       NewConst: TCGInt;
@@ -3383,9 +3509,9 @@ unit aoptx86;
                             end;
                         end;
                       else
-                        if (taicpu(hp1).opcode <> A_MOV) and (taicpu(hp1).opcode <> A_LEA) then
+(*                        if (taicpu(hp1).opcode <> A_MOV) and (taicpu(hp1).opcode <> A_LEA) then
                           { Just to make a saving, since there are no more optimisations with MOVZX and MOVSX/D }
-                          Exit;
+                          Exit *);
                     end;
                 end
              { The RegInOp check makes sure that movl r/m,%reg1l; movzbl (%reg1l),%reg1l"
@@ -4901,8 +5027,9 @@ unit aoptx86;
             { If the LEA instruction can be converted into an arithmetic instruction,
               it may be possible to then fold it in the next optimisation, otherwise
               there's nothing more that can be optimised here. }
-            if not ConvertLEA(taicpu(hp1)) then
-              Exit;
+            ConvertLEA(taicpu(hp1));
+//            if not ConvertLEA(taicpu(hp1)) then
+//              Exit;
 
           end;
 
@@ -5309,6 +5436,10 @@ unit aoptx86;
             Result := True;
             Exit;
           end;
+
+        { Don't call if Result is already True }
+        if not Result then
+          Result := HandleSimple2OpSWInstruction(p);
       end;
 
 
@@ -5368,6 +5499,10 @@ unit aoptx86;
               end;
             end;
           end;
+
+        { Don't call if Result is already True }
+        if not Result then
+          Result := HandleSimple2OpSWInstruction(p);
       end;
 
 
@@ -6520,6 +6655,9 @@ unit aoptx86;
                   end;
               end;
           end;
+        { Don't call if Result is already True }
+        if not Result then
+          Result := HandleSimple2OpSWInstruction(p);
       end;
 
 
@@ -8616,6 +8754,7 @@ unit aoptx86;
    function TX86AsmOptimizer.OptPass1Imul(var p: tai): boolean;
      var
        hp1 : tai;
+       SWRegState: TAllUsedRegs;
      begin
        result:=false;
        { replace
@@ -8641,6 +8780,38 @@ unit aoptx86;
                RemoveInstruction(hp1);
                result:=true;
              end;
+         end;
+
+       if not Result and
+         (cs_opt_asmcse in current_settings.optimizerswitches) and
+         { Only the 3-instruction version is a true write; don't store the 1-
+           and 2-operand versions in the sliding window }
+         (taicpu(p).ops = 3) and
+         { If IMUL reads and writes to the same register, it's impossible for it
+           to be a valid starting point for a repeating sequence since the input
+           won't be the same }
+         not MatchOperand(taicpu(p).oper[1]^, taicpu(p).oper[2]^.reg) then
+         begin
+           hp1 := FindSWMatch(taicpu(p), SWRegState);
+           if Assigned(hp1) and
+             not (
+               (taicpu(hp1).oper[1]^.typ = top_reg) and
+               { Call SuperRegistersEqual to save calling RegModifiedBetween unnecessarily }
+               RegModifiedBetween(taicpu(hp1).oper[1]^.reg, hp1, p)
+             ) and
+             not (
+               (taicpu(hp1).oper[1]^.typ = top_ref) and
+               { Make sure the registers that make up the reference haven't changed }
+               (taicpu(hp1).oper[1]^.ref^.refaddr = addr_no) and
+               RegPairModifiedBetween(taicpu(hp1).oper[1]^.ref^.base, taicpu(hp1).oper[1]^.ref^.index, hp1, p)
+             ) and
+             TraceSWSequence(p, hp1, SWRegState) then
+             begin
+               Result := True;
+               Exit;
+             end;
+
+           AddToSW(p);
          end;
      end;
 
@@ -14905,6 +15076,10 @@ unit aoptx86;
                   end;
               end;
           end;
+
+        { Don't call if Result is already True }
+        if not Result then
+          Result := HandleSimple2OpSWInstruction(p);
       end;
 
 
@@ -17365,6 +17540,861 @@ unit aoptx86;
         for OperIdx := 0 to p.ops - 1 do
           if p.oper[OperIdx]^.typ = top_ref then
             optimize_ref(p.oper[OperIdx]^.ref^, False);
+      end;
+
+
+    function TX86AsmOptimizer.HandleSimple2OpSWInstruction(var p: tai): Boolean;
+      var
+        SWRegState: TAllUsedRegs;
+        hp1, hp2: tai;
+      begin
+        Result := False;
+        if (cs_opt_asmcse in current_settings.optimizerswitches) and
+          (taicpu(p).oper[1]^.typ = top_reg) then
+          begin
+            { Instruction must explicitly write to the last operand (not modify or read-write) }
+            if not (Ch_WOp2 in InsProp[taicpu(p).opcode].Ch) and
+              { The only exceptional case }
+              not (
+                (taicpu(p).opcode = A_MOVSD) and
+                (taicpu(p).ops = 2)
+              ) then
+              InternalError(2022022501);
+
+            GetLastInstruction(p, hp2);
+
+            hp1 := FindSWMatch(taicpu(p), SWRegState);
+            if Assigned(hp1) and
+              { Can't be adjacent }
+              (hp1 <> hp2) and
+              not (
+                (taicpu(hp1).oper[0]^.typ = top_reg) and
+                { Call SuperRegistersEqual to save calling RegModifiedBetween unnecessarily }
+                RegModifiedBetween(taicpu(hp1).oper[0]^.reg, hp1, p)
+              ) and
+              not (
+                (taicpu(hp1).oper[0]^.typ = top_ref) and
+                { Make sure the registers that make up the reference haven't changed }
+                (taicpu(hp1).oper[0]^.ref^.refaddr = addr_no) and
+                RegPairModifiedBetween(taicpu(hp1).oper[0]^.ref^.base, taicpu(hp1).oper[0]^.ref^.index, hp1, p)
+              ) and
+              TraceSWSequence(p, hp1, SWRegState) then
+              begin
+                Result := True;
+                Exit;
+              end
+            else if (getregtype(taicpu(p).oper[1]^.reg) = R_INTREGISTER) and
+              { Don't do partial matches for register-to-register moves, as these
+                are already as efficient as they can be (and will cause an infinite
+                loop in the peephole optimizer in some cases). }
+              not (
+                (taicpu(p).opcode = A_MOV) and
+                (taicpu(p).oper[0]^.typ = top_reg)
+              ) then
+              begin
+                { If not an exact match, maybe a partial match? }
+                hp1 := FindPartialSWMatch(taicpu(p), SWRegState);
+                { oper[1] of hp1 will be a register, otherwise FindPartialSWMatch would have returned nil }
+                if Assigned(hp1) and
+                  { Can't be adjacent }
+                  (hp1 <> hp2) and
+                  not RegModifiedBetween(taicpu(hp1).oper[1]^.reg, hp1, p) and
+                  not (
+                    (taicpu(hp1).oper[0]^.typ = top_reg) and
+                    { Call SuperRegistersEqual to save calling RegModifiedBetween unnecessarily }
+                    not SuperRegistersEqual(taicpu(hp1).oper[0]^.reg, taicpu(hp1).oper[1]^.reg) and
+                    RegModifiedBetween(taicpu(hp1).oper[0]^.reg, hp1, p)
+                  ) and
+                  not (
+                    (taicpu(hp1).oper[0]^.typ = top_ref) and
+                    (
+                      { If True, this means the register changes value, but is
+                        missed by RegPairModifiedBetween }
+                      RegInRef(taicpu(hp1).oper[1]^.reg, taicpu(hp1).oper[0]^.ref^) or
+                      (
+                        { Make sure the registers that make up the reference haven't changed }
+                        (taicpu(hp1).oper[0]^.ref^.refaddr = addr_no) and
+                        RegPairModifiedBetween(taicpu(hp1).oper[0]^.ref^.base, taicpu(hp1).oper[0]^.ref^.index, hp1, p)
+                      )
+                    )
+                  ) and
+                  not (
+                    { Don't convert "mov const,%reg1; ...; mov const,%reg2" into "mov const,%reg1; ...; mov %reg1,%reg2" }
+                    (taicpu(p).opcode = A_MOV) and
+                    (taicpu(p).oper[0]^.typ = top_const)
+                  ) then
+                  begin
+                    DebugSWMsg(SSlidingWindow + 'Successfully converted partial match to register-to-register MOV', p);
+                    taicpu(p).opcode := A_MOV;
+                    taicpu(p).opsize := reg2opsize(taicpu(hp1).oper[1]^.reg);
+                    taicpu(p).loadreg(0, taicpu(hp1).oper[1]^.reg);
+
+                    AllocRegBetween(taicpu(hp1).oper[1]^.reg, hp1, p, SWRegState);
+
+                    { Make sure UsedRegs knows about the newly allocated register }
+                    IncludeRegInUsedRegs(taicpu(hp1).oper[1]^.reg, UsedRegs);
+
+                    Result := True;
+                    Exit;
+                  end;
+              end;
+
+            AddToSW(p);
+          end;
+      end;
+
+
+    procedure TX86AsmOptimizer.ResetSW;
+      var
+        X: Integer;
+      begin
+        if DisableSW then
+          Exit;
+
+        for X := 0 to SLIDING_WINDOW_SIZE - 1 do
+          SlidingWindow[X].ai := nil;
+
+        WindowTop := SLIDING_WINDOW_SIZE - 1;
+      end;
+
+
+    procedure TX86AsmOptimizer.AddToSW(var p: tai);
+      begin
+        if DisableSW then
+          Exit;
+
+        Inc(WindowTop);
+        if (WindowTop = SLIDING_WINDOW_SIZE) then
+          WindowTop := 0;
+
+        SlidingWindow[WindowTop].ai := p;
+        TransferUsedRegs(UsedRegs, SlidingWindow[WindowTop].RegState);
+      end;
+
+
+    function TX86AsmOptimizer.FindSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
+      var
+        Index: Cardinal;
+        X: Integer;
+        p_sw: taicpu;
+        hp: taicpu absolute p; { Implicit typecast }
+        Mismatch: Boolean;
+      begin
+        Result := nil;
+        if DisableSW then
+          Exit;
+
+        Index := WindowTop;
+        repeat
+          p_sw := taicpu(SlidingWindow[Index].ai);
+          if not Assigned(p_sw) then
+            { Sliding window hasn't been completely filled; this is as far as
+              we can search }
+            Exit;
+
+          if (p_sw.opcode = hp.opcode) and
+            (p_sw.opsize = hp.opsize) and
+            (p_sw.ops = hp.ops) then
+            begin
+              Mismatch := False;
+
+              { Check to see if all the parameters match }
+              for X := 0 to p_sw.ops - 1 do
+                begin
+                  if not MatchOperand(p_sw.oper[X]^, hp.oper[X]^) then
+                    begin
+                      Mismatch := True;
+                      Break;
+                    end;
+                end;
+
+              { If Mismatch is still false, then we have a match! }
+              if not Mismatch then
+                begin
+                  DebugSWMsg(SSlidingWindow + 'Found match in sliding window (ref = ' + hexstr(p) + ')', p);
+                  DebugSWMsg(SSlidingWindow + 'Reference for match found below (ref = ' + hexstr(p) + ')', p_sw);
+                  Result := p_sw;
+                  CopyUsedRegs(SlidingWindow[Index].RegState, RegState);
+                  Exit;
+                end;
+            end;
+
+          if Index = 0 then
+            Index := SLIDING_WINDOW_SIZE - 1
+          else
+            Dec(Index);
+
+          { Drop out if Index has made a complete loop }
+        until Index = WindowTop;
+
+      end;
+
+
+    function TX86AsmOptimizer.FindPartialSWMatch(const p: tai; out RegState: TAllUsedRegs): tai;
+      var
+        Index: Cardinal;
+        X: Integer;
+        p_sw: taicpu;
+        hp: taicpu absolute p; { Implicit typecast }
+        Mismatch: Boolean;
+      begin
+        Result := nil;
+        if DisableSW then
+          Exit;
+
+        if (hp.oper[hp.ops-1]^.typ <> top_reg) then
+          Exit;
+
+        Index := WindowTop;
+        repeat
+          p_sw := taicpu(SlidingWindow[Index].ai);
+          if not Assigned(p_sw) then
+            { Sliding window hasn't been completely filled; this is as far as
+              we can search }
+            Exit;
+
+          if (p_sw.opcode = hp.opcode) and
+            (p_sw.opsize = hp.opsize) and
+            (p_sw.ops = hp.ops) then
+            begin
+              Mismatch := False;
+
+              { Check to see if all but the final parameters match }
+              for X := 0 to p_sw.ops - 2 do
+                begin
+                  if not MatchOperand(p_sw.oper[X]^, hp.oper[X]^) then
+                    begin
+                      Mismatch := True;
+                      Break;
+                    end;
+                end;
+
+              { If Mismatch is still false, then we have a match! }
+              if not Mismatch and
+                (p_sw.oper[p_sw.ops-1]^.typ = top_reg) then
+                begin
+                  DebugSWMsg(SSlidingWindow + 'Found partial match in sliding window (ref = ' + hexstr(p) + ')', p);
+                  DebugSWMsg(SSlidingWindow + 'Reference for match found below (ref = ' + hexstr(p) + ')', p_sw);
+                  Result := p_sw;
+                  CopyUsedRegs(SlidingWindow[Index].RegState, RegState);
+                  Exit;
+                end;
+            end;
+
+          if Index = 0 then
+            Index := SLIDING_WINDOW_SIZE - 1
+          else
+            Dec(Index);
+
+          { Drop out if Index has made a complete loop }
+        until Index = WindowTop;
+
+      end;
+
+
+    function TX86AsmOptimizer.CheckSWRegisters(p1, p2: tai; var ForwardTrackedRegs: TAllUsedRegs): Boolean;
+      var
+        RegIndex: TSuperRegister;
+        CurrentReg, SearchReg: TRegister;
+      begin
+        Result := False;
+        SearchReg := NR_NO;
+{$ifdef x86_64}
+        for RegIndex := RS_RAX to RS_R15 do
+{$else x86_64}
+        for RegIndex := RS_EAX to RS_RSP do
+{$endif x86_64}
+          begin
+            CurrentReg := newreg(R_INTREGISTER, RegIndex, R_SUBWHOLE);
+            { If the register is not in AllUsedRegs, then it was temporary within the Sliding Window sequence }
+            if ForwardTrackedRegs[R_INTREGISTER].IsUsed(CurrentReg) then
+              begin
+                if SearchReg = NR_NO then
+                  SearchReg := CurrentReg
+                else
+                  begin
+                    { Search two registers at once to save time }
+                    if RegPairModifiedBetween(SearchReg, CurrentReg, p1, p2) then
+                      Exit;
+                    SearchReg := NR_NO;
+                  end;
+              end;
+          end;
+
+{$ifdef x86_64}
+        for RegIndex := RS_XMM0 to RS_XMM31 do
+{$else x86_64}
+        for RegIndex := RS_XMM0 to RS_XMM7 do
+{$endif x86_64}
+          begin
+            CurrentReg := newreg(R_MMREGISTER, RegIndex, R_SUBMMWHOLE);
+            if ForwardTrackedRegs[R_MMREGISTER].IsUsed(CurrentReg) then
+              begin
+                if SearchReg = NR_NO then
+                  SearchReg := CurrentReg
+                else
+                  begin
+                    { Search two registers at once to save time }
+                    if RegPairModifiedBetween(SearchReg, CurrentReg, p1, p2) then
+                      Exit;
+                    SearchReg := NR_NO;
+                  end;
+              end;
+          end;
+
+        { Check leftover loose register }
+        if (SearchReg <> NR_NO) and RegModifiedBetween(SearchReg, p1, p2) then
+          Exit;
+
+        Result := True;
+      end;
+
+
+    procedure TX86AsmOptimizer.AllocAllUsedRegsBetween(p1, p2: tai; var TrackedRegs: TAllUsedRegs; var InitialUsedRegs: TAllUsedRegs);
+      var
+        RegIndex: TSuperRegister;
+        CurrentReg: TRegister;
+      begin
+{$ifdef x86_64}
+        for RegIndex := RS_RAX to RS_R15 do
+{$else x86_64}
+        for RegIndex := RS_EAX to RS_RSP do
+{$endif x86_64}
+          begin
+            CurrentReg := newreg(R_INTREGISTER, RegIndex, R_SUBWHOLE);
+            { If the register is not in InitialUsedRegs, then it was temporary within the Sliding Window sequence }
+            if TrackedRegs[R_INTREGISTER].IsUsed(CurrentReg) then
+              begin
+                TmpUsedRegs[R_INTREGISTER].Clear;
+                IncludeRegInUsedRegs(CurrentReg, InitialUsedRegs);
+                AllocRegBetween(CurrentReg, p1, p2, InitialUsedRegs);
+              end;
+          end;
+
+        for RegIndex := RS_XMM0 to RS_XMM7 do
+          begin
+            CurrentReg := newreg(R_MMXREGISTER, RegIndex, R_SUBMMWHOLE);
+            if TrackedRegs[R_MMXREGISTER].IsUsed(CurrentReg) then
+              begin
+                TmpUsedRegs[R_MMXREGISTER].Clear;
+                IncludeRegInUsedRegs(CurrentReg, InitialUsedRegs);
+                AllocRegBetween(CurrentReg, p1, p2, InitialUsedRegs);
+              end;
+          end;
+
+{$ifdef x86_64}
+        for RegIndex := RS_XMM0 to RS_XMM31 do
+{$else x86_64}
+        for RegIndex := RS_XMM0 to RS_XMM7 do
+{$endif x86_64}
+          begin
+            CurrentReg := newreg(R_MMREGISTER, RegIndex, R_SUBMMWHOLE);
+            if TrackedRegs[R_MMREGISTER].IsUsed(CurrentReg) then
+              begin
+                TmpUsedRegs[R_MMREGISTER].Clear;
+                IncludeRegInUsedRegs(CurrentReg, InitialUsedRegs);
+                AllocRegBetween(CurrentReg, p1, p2, InitialUsedRegs);
+              end;
+          end;
+      end;
+
+
+    function TX86AsmOptimizer.TraceSWSequence(var p: tai; sw_pointer: tai; var SWRegState: TAllUsedRegs): Boolean;
+      var
+        forward_pointer, forward_last, sw_last, hp1: tai;
+        SWTrackedRegs, ForwardTrackedRegs: TAllUsedRegs;
+
+        function VerifySequence: Boolean;
+          begin
+            Result := False;
+            if CheckSWRegisters(sw_last, p, ForwardTrackedRegs) then
+              begin
+                AllocAllUsedRegsBetween(sw_last, forward_last, ForwardTrackedRegs, SWTrackedRegs);
+
+                { Make sure UsedRegs knows about the newly allocated registers }
+                MergeUsedRegs(ForwardTrackedRegs);
+
+                repeat
+                  DebugSWMsg(SSlidingWindow + 'Removed common subexpression', p);
+                  RemoveCurrentP(p);
+                until p = forward_pointer; { One after forward_last }
+
+                Result := True;
+              end;
+          end;
+
+        function CheckRegister(Reg: TRegister): Boolean;
+          begin
+            Result := True;
+            if not RegInUsedRegs(Reg, ForwardTrackedRegs) then
+              begin
+                { Reading from outside register, so it must not change value
+                  between sw_pointer and p; also check sw_pointer itself }
+                if RegModifiedByInstruction(Reg, sw_pointer) or
+                  RegModifiedBetween(Reg, sw_pointer, p) then
+                  begin
+                    Result := False;
+                    Exit;
+                  end;
+
+                IncludeRegInUsedRegs(Reg, ForwardTrackedRegs);
+              end;
+          end;
+
+        function CheckInput(Oper: TOper): Boolean;
+          begin
+            Result := True;
+            case Oper.typ of
+              top_const:
+                { Consts need no special handling };
+              top_reg:
+                if not CheckRegister(Oper.reg) then
+                  begin
+                    Result := False;
+                    Exit;
+                  end;
+
+              top_ref:
+                if Oper.ref^.refaddr = addr_no then
+                  begin
+                    { Add registers to tracking lists }
+
+                    { Reference base relies on an outside register, so it
+                      must not change value between sw_pointer and p; also
+                      check sw_pointer itself }
+                    if (Oper.ref^.base <> NR_NO) and not CheckRegister(Oper.ref^.base) then
+                      begin
+                        Result := False;
+                        Exit;
+                      end;
+
+                    { Reference index relies on an outside register, so it
+                      must not change value between sw_pointer and p; also
+                      check sw_pointer itself }
+                    if (Oper.ref^.index <> NR_NO) and not CheckRegister(Oper.ref^.index) then
+                      begin
+                        Result := False;
+                        Exit;
+                      end;
+                  end;
+              else
+                InternalError(2022021810);
+            end;
+          end;
+
+      begin
+        Result := False;
+
+        forward_pointer := p;
+        forward_last := p;
+        sw_last := sw_pointer;
+
+        CopyUsedRegs(SWRegState, SWTrackedRegs);
+        CreateUsedRegs(ForwardTrackedRegs);
+
+        { Analyse initial input }
+        case taicpu(p).opcode of
+          A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif},
+          A_MOVSS, A_MOVSD, A_MOVAPS, A_MOVUPS, A_MOVAPD, A_MOVUPD, A_MOVDQA, A_MOVDQU, A_MOVD, A_MOVQ,
+          A_MOVNTDQ, A_MOVNTDQA, A_MOVNTPD, A_MOVNTPS,
+          A_VMOVSS, A_VMOVSD, A_VMOVAPS, A_VMOVUPS, A_VMOVAPD, A_VMOVUPD, A_VMOVDQA, A_VMOVDQU, A_VMOVD, A_VMOVQ,
+          A_VMOVNTDQ, A_VMOVNTDQA, A_VMOVNTPD, A_VMOVNTPS:
+            begin
+              if (taicpu(p).ops <> 2) { Wrong MOVSS } or not CheckInput(taicpu(p).oper[0]^) then
+                begin
+                  ReleaseUsedRegs(SWTrackedRegs);
+                  ReleaseUsedRegs(ForwardTrackedRegs);
+                  Exit;
+                end;
+
+              IncludeRegInUsedRegs(taicpu(p).oper[1]^.reg, ForwardTrackedRegs);
+            end;
+          A_IMUL:
+            begin
+              if taicpu(p).ops <> 3 then
+                InternalError(2022022202);
+
+              if not CheckInput(taicpu(p).oper[1]^) then
+                begin
+                  ReleaseUsedRegs(SWTrackedRegs);
+                  ReleaseUsedRegs(ForwardTrackedRegs);
+                  Exit;
+                end;
+
+              IncludeRegInUsedRegs(taicpu(p).oper[taicpu(p).ops-1]^.reg, ForwardTrackedRegs);
+            end;
+          else
+            begin
+              { Don't know how to handle this instruction }
+              ReleaseUsedRegs(SWTrackedRegs);
+              ReleaseUsedRegs(ForwardTrackedRegs);
+              Exit;
+            end;
+        end;
+
+        TransferUsedRegs(TmpUsedRegs);
+
+        { Now start scanning ahead one instruction at a time until a mismatch is found }
+        while GetNextInstruction(forward_pointer, forward_pointer) and GetNextInstruction(sw_pointer, sw_pointer) do
+          begin
+            { NOTE: forward_pointer = forward ahead of p; sw_pointer = reference somewhere behind p }
+
+            if (sw_pointer = p) then
+              { We hit the current instruction - don't optimise this }
+              Break;
+
+            { Use this to look ahead of the forward pointer more accurately to see what's in use }
+            UpdateUsedRegs(TmpUsedRegs, tai(forward_last.Next));
+
+            if RegInUsedRegs(NR_DEFAULTFLAGS, TmpUsedRegs) then
+              { No longer safe to remove subexpressions }
+              Break;
+
+            { Only accept instructions of the form "mov (ref),%reg" or "lea (ref),%reg" }
+            if (forward_pointer.typ <> ait_instruction) or (taicpu(sw_pointer).typ <> ait_instruction) or
+              (taicpu(forward_pointer).opcode <> taicpu(sw_pointer).opcode) or
+              (taicpu(forward_pointer).opsize <> taicpu(sw_pointer).opsize) or
+              (taicpu(forward_pointer).ops <> taicpu(sw_pointer).ops) then
+              Break;
+
+            case taicpu(forward_pointer).opcode of
+              A_CBW, A_CWDE, A_CWD, A_CDQ{$ifdef x86_64}, A_CDQE, A_CQO{$endif x86_64}:
+                { Zero-operand instructions that are fine as is };
+              A_IMUL:
+                begin
+                  case taicpu(forward_pointer).ops of
+                    1:
+                      if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                        not CheckInput(taicpu(forward_pointer).oper[0]^) and
+                        { Implicitly reads one of the operands from EAX }
+                        not CheckRegister(NR_EAX) then
+                        Break;
+                    2:
+                      begin
+                        if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                          not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                          (taicpu(forward_pointer).oper[1]^.reg <> taicpu(sw_pointer).oper[1]^.reg) or
+                          not CheckRegister(taicpu(forward_pointer).oper[1]^.reg) then
+                          Break;
+                      end;
+                    3:
+                      begin
+                        if (taicpu(forward_pointer).oper[0]^.val <> taicpu(sw_pointer).oper[0]^.val) or
+                          not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(sw_pointer).oper[1]^) or
+                          not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                          Break;
+
+                        { This is a special kind of mismatch - the final MOVx/LEA writes to a different register.
+                          If the register in the first chain hasn't been modified, then the entire second chain
+                          can be replaced with a single MOV instruction to write it to the new register }
+                        if (taicpu(forward_pointer).oper[2]^.reg <> taicpu(sw_pointer).oper[2]^.reg) then
+                          begin
+                            UpdateUsedRegs(SWTrackedRegs, tai(sw_last.Next));
+
+                            { Be a little hacky and don't include the assignment of the different target register... }
+                            UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_last.Next));
+                            { ... but do include the sequence's output register so it's monitored }
+                            IncludeRegInUsedRegs(taicpu(sw_pointer).oper[2]^.reg, ForwardTrackedRegs);
+
+                            { Before doing the last instruction, see if we can optimise what's
+                              currently present in case the last line fails }
+                            if VerifySequence then
+                              Result := True;
+
+                            { Look beyond the final instruction that we're replacing to deallocate any
+                              temporary registers that are being used }
+                            UpdateUsedRegsIgnoreNew(SWTrackedRegs, tai(sw_pointer.Next));
+                            UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_pointer.Next));
+
+                            { Add the sequence's output register to the forward tracking array so it's not ignored }
+                            IncludeRegInUsedRegs(taicpu(sw_pointer).oper[2]^.reg, ForwardTrackedRegs);
+
+                            if CheckSWRegisters(sw_pointer, p, ForwardTrackedRegs) then
+                              begin
+                                { This is a valid dereference chain that can be replaced
+                                  with the result of the previous one }
+                                DebugSWMsg(SSlidingWindow + 'Removed common subexpression (different ending register via IMUL)', forward_pointer);
+                                taicpu(forward_pointer).opcode := A_MOV;
+                                taicpu(forward_pointer).loadreg(0, taicpu(sw_pointer).oper[2]^.reg);
+                                taicpu(forward_pointer).loadreg(1, taicpu(forward_pointer).oper[2]^.reg);
+                                taicpu(forward_pointer).clearop(2);
+                                taicpu(forward_pointer).ops := 2;
+
+                                { Remove all remaining instructions between p and forward_pointer }
+                                while p <> forward_pointer do
+                                  begin
+                                    { Use RemoveCurrentP so UsedRegs is updated }
+                                    DebugSWMsg(SSlidingWindow + 'Removed common subexpression', p);
+                                    if not RemoveCurrentP(p) then
+                                      InternalError(2022021701);
+                                  end;
+
+                                { Make sure the sequence's registers are tracked all the way through }
+                                AllocAllUsedRegsBetween(sw_pointer, forward_pointer, ForwardTrackedRegs, SWTrackedRegs);
+
+                                { Make sure UsedRegs knows about the newly allocated registers }
+                                MergeUsedRegs(ForwardTrackedRegs);
+
+                                Result := True;
+                              end;
+
+                            ReleaseUsedRegs(SWTrackedRegs);
+                            ReleaseUsedRegs(ForwardTrackedRegs);
+                            Exit;
+                          end;
+                      end;
+                    else
+                      InternalError(2022022201);
+                  end;
+                end;
+              A_MUL:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                    { Implicitly reads one of the operands from EAX }
+                    not CheckRegister(NR_EAX) then
+                    Break;
+                end;
+              A_DIV, A_IDIV:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                    not CheckRegister(NR_EAX) then
+                    Break;
+
+                  { Word, DWord and QWord versions store part of the numerator in EDX }
+                  if (taicpu(forward_pointer).opsize > S_B) and not CheckRegister(NR_EDX) then
+                    Break;
+                end;
+              A_NOT, A_NEG:
+                begin
+                  if not CheckInput(taicpu(forward_pointer).oper[0]^) then
+                    Break;
+                 end;
+              A_AND, A_OR, A_XOR:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                    not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(sw_pointer).oper[1]^) then
+                    Break;
+
+                  if not CheckInput(taicpu(forward_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                    Break;
+                end;
+              A_SHL, A_SHR, A_SAR, A_ROR, A_ROL, A_ADD, A_SUB:
+                begin
+                  if not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(sw_pointer).oper[1]^) then
+                    Break;
+
+                  if not CheckInput(taicpu(forward_pointer).oper[1]^) then
+                    Break;
+
+                  if (taicpu(forward_pointer).oper[0]^.typ = top_const) then
+                    begin
+                      { A special kind of mismatch - the shift constant is different, but it
+                        might be possible to make a saving if the register isn't modified
+                        between the first and second chains.}
+                      if (taicpu(forward_pointer).oper[0]^.val <> taicpu(sw_pointer).oper[0]^.val) then
+                        begin
+                          UpdateUsedRegs(SWTrackedRegs, tai(sw_last.Next));
+                          UpdateUsedRegs(ForwardTrackedRegs, tai(forward_last.Next));
+
+                          { Before doing the last instruction, see if we can optimise what's
+                            currently present in case the last line fails }
+                          if VerifySequence then
+                            Result := True;
+
+                          { Look beyond the final instruction that we're replacing to deallocate any
+                            temporary registers that are being used }
+                          UpdateUsedRegsIgnoreNew(SWTrackedRegs, tai(sw_pointer.Next));
+                          UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_pointer.Next));
+
+                          if CheckSWRegisters(sw_pointer, p, ForwardTrackedRegs) then
+                            begin
+                              if (taicpu(forward_pointer).oper[0]^.val > taicpu(sw_pointer).oper[0]^.val) then
+                                begin
+                                  { If the second chain has a larger value, this is easy to accommodate as all
+                                    we have to do is keep the second shift/rotate but change the value to be
+                                    equal to the difference between the two original values. }
+
+                                  DebugSWMsg(SSlidingWindow + 'Removed common subexpression (larger immediate)', forward_pointer);
+                                  Dec(taicpu(forward_pointer).oper[0]^.val, taicpu(sw_pointer).oper[0]^.val);
+
+                                  { Remove all remaining instructions between p and forward_pointer }
+                                  while p <> forward_pointer do
+                                    begin
+                                      { Use RemoveCurrentP so UsedRegs is updated }
+                                      DebugSWMsg(SSlidingWindow + 'Removed common subexpression', p);
+                                      if not RemoveCurrentP(p) then
+                                        InternalError(2022021702);
+                                    end;
+                                  Result := True;
+
+                                  { Make sure the sequence's registers are tracked all the way through }
+                                  AllocAllUsedRegsBetween(sw_pointer, forward_pointer, ForwardTrackedRegs, SWTrackedRegs);
+
+                                  { Make sure UsedRegs knows about the newly allocated registers }
+                                  MergeUsedRegs(ForwardTrackedRegs);
+                                end;
+                            end;
+                          ReleaseUsedRegs(SWTrackedRegs);
+                          ReleaseUsedRegs(ForwardTrackedRegs);
+                          Exit;
+                        end;
+                    end
+                  else if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                    not CheckInput(taicpu(forward_pointer).oper[0]^) then
+                    Break;
+                end;
+              A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif},
+              A_MOVSS, A_MOVSD, A_MOVAPS, A_MOVUPS, A_MOVAPD, A_MOVUPD, A_MOVDQA, A_MOVDQU, A_MOVD, A_MOVQ,
+              A_MOVNTDQ, A_MOVNTDQA, A_MOVNTPD, A_MOVNTPS,
+              A_VMOVSS, A_VMOVSD, A_VMOVAPS, A_VMOVUPS, A_VMOVAPD, A_VMOVUPD, A_VMOVDQA, A_VMOVDQU, A_VMOVD, A_VMOVQ,
+              A_VMOVNTDQ, A_VMOVNTDQA, A_VMOVNTPD, A_VMOVNTPS:
+                begin
+                  if taicpu(forward_pointer).ops <> 2 then
+                    { Wrong MOVSS }
+                    Break;
+
+                  if not MatchOperand(taicpu(forward_pointer).oper[0]^, taicpu(sw_pointer).oper[0]^) or
+                    (taicpu(forward_pointer).oper[1]^.typ <> taicpu(sw_pointer).oper[1]^.typ) then
+                    Break;
+
+                  { Check that the input hasn't changed value between the sequence and p }
+                  if not CheckInput(taicpu(forward_pointer).oper[0]^) then
+                    Break;
+
+                  { This is a special kind of mismatch - the final MOVx/LEA writes to a different register.
+                    If the register in the first chain hasn't been modified, then the entire second chain
+                    can be replaced with a single MOV instruction to write it to the new register }
+                  if (taicpu(forward_pointer).oper[1]^.typ = top_reg) then
+                    begin
+                      if (taicpu(forward_pointer).oper[1]^.reg <> taicpu(sw_pointer).oper[1]^.reg) then
+                        begin
+                          { Here is the reason why TmpUsedRegs was being used, so it can accurately
+                            detect whether the destination register is in use up to this point, plus
+                            TmpUsedRegs gets modified after a call to RegUsedAfterInstruction }
+                          if MatchInstruction(forward_pointer, [A_LEA, A_MOV, A_MOVZX, A_MOVSX{$ifdef x86_64}, A_MOVSXD{$endif}], []) and
+                            not (
+                              { Is the value of sw_pointer's register still in use? }
+                              RegUsedAfterInstruction(taicpu(sw_pointer).oper[1]^.reg, forward_pointer, TmpUsedRegs) and
+                              { If so, it must preserve its value through the sdequence of instructions p to forward_pointer }
+                              (
+                                RegModifiedByInstruction(taicpu(sw_pointer).oper[1]^.reg, p) or
+                                RegModifiedBetween(taicpu(sw_pointer).oper[1]^.reg, p, forward_pointer)
+                              )
+                            ) then
+                            begin
+                              UpdateUsedRegs(SWTrackedRegs, tai(sw_last.Next));
+
+                              { Be a little hacky and don't include the assignment of the different target register... }
+                              UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_last.Next));
+                              { ... but do include the sequence's output register so it's monitored }
+                              IncludeRegInUsedRegs(taicpu(sw_pointer).oper[1]^.reg, ForwardTrackedRegs);
+
+                              { Before doing the last instruction, see if we can optimise what's
+                                currently present in case the last line fails }
+                              if VerifySequence then
+                                Result := True;
+
+                              { Look beyond the final instruction that we're replacing to deallocate any
+                                temporary registers that are being used }
+                              UpdateUsedRegsIgnoreNew(SWTrackedRegs, tai(sw_pointer.Next));
+                              UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_pointer.Next));
+
+                              { Add the sequence's output register to the forward tracking array so it's not ignored }
+                              IncludeRegInUsedRegs(taicpu(sw_pointer).oper[1]^.reg, ForwardTrackedRegs);
+
+                              if CheckSWRegisters(sw_pointer, p, ForwardTrackedRegs) then
+                                begin
+                                  { This is a valid dereference chain that can be replaced
+                                    with the result of the previous one }
+                                  DebugSWMsg(SSlidingWindow + 'Removed common subexpression (different ending register)', forward_pointer);
+                                  taicpu(forward_pointer).opcode := A_MOV;
+                                  taicpu(forward_pointer).opsize := reg2opsize(taicpu(sw_pointer).oper[1]^.reg);
+                                  taicpu(forward_pointer).loadreg(0, taicpu(sw_pointer).oper[1]^.reg);
+
+                                  { Remove all remaining instructions between p and forward_pointer }
+                                  while p <> forward_pointer do
+                                    begin
+                                      { Use RemoveCurrentP so UsedRegs is updated }
+                                      DebugSWMsg(SSlidingWindow + 'Removed common subexpression', p);
+                                      if not RemoveCurrentP(p) then
+                                        InternalError(2022021701);
+                                    end;
+
+                                  { Make sure the sequence's registers are tracked all the way through }
+                                  AllocAllUsedRegsBetween(sw_pointer, forward_pointer, ForwardTrackedRegs, SWTrackedRegs);
+
+                                  { Make sure UsedRegs knows about the newly allocated registers }
+                                  MergeUsedRegs(ForwardTrackedRegs);
+
+                                  Result := True;
+                                end;
+
+                              ReleaseUsedRegs(SWTrackedRegs);
+                              ReleaseUsedRegs(ForwardTrackedRegs);
+                              Exit;
+                            end;
+
+                          { Any other kind of mismatch, break out }
+                          Break;
+                        end;
+                    end
+                  else if not MatchOperand(taicpu(forward_pointer).oper[1]^, taicpu(sw_pointer).oper[1]^) then
+                    Break;
+                end;
+              else
+                { Don't know how to handle this instruction }
+                Break;
+            end;
+
+            { Sequence chain is okay so far  }
+
+            UpdateUsedRegs(SWTrackedRegs, tai(sw_last.Next));
+            UpdateUsedRegs(ForwardTrackedRegs, tai(forward_last.Next));
+
+            { Try verifying and removing what we have so far against the Sliding
+              Window sequence (except the current matching instruction) }
+            if VerifySequence then
+              begin
+                { VerifySequence calls AllocAllUsedRegsBetween with TmpUsedRegs as a
+                  parameter, so we need to reinitialise it }
+                TransferUsedRegs(TmpUsedRegs);
+                Result := True;
+              end;
+
+            sw_last := sw_pointer;
+            forward_last := forward_pointer;
+          end;
+
+        { Scan ahead of the sequence's final instruction to deallocate temporary registers }
+        UpdateUsedRegsIgnoreNew(SWTrackedRegs, tai(sw_last.Next));
+        UpdateUsedRegsIgnoreNew(ForwardTrackedRegs, tai(forward_last.Next));
+
+        { Now that we've found a mismatch, attempt to verify the sequence one last time }
+        Result := VerifySequence or Result;
+
+        ReleaseUsedRegs(SWTrackedRegs);
+        ReleaseUsedRegs(ForwardTrackedRegs);
+      end;
+
+
+    procedure TX86AsmOptimizer.Pass1Initialize;
+      begin
+        if (cs_opt_asmcse in current_settings.optimizerswitches) then
+          begin
+            DisableSW := False;
+            ResetSW;
+          end;
+      end;
+
+    procedure TX86AsmOptimizer.Pass2Initialize;
+      begin
+        if (cs_opt_asmcse in current_settings.optimizerswitches) then
+          { Some pass 2 optimisations call pass 1 methods... make sure the
+            sliding window doesn't get used in these instances }
+          DisableSW := True;
       end;
 
 end.
