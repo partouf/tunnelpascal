@@ -542,6 +542,72 @@ implementation
 
 
     function trealconstnode.docompare(p: tnode): boolean;
+
+{$if sizeof(BestReal) = sizeof(Double)}
+      function IsPosZero(Value: BestReal): Boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+        begin
+          Result := (QWord(TCompDoubleRec(Value).bytes) = 0);
+        end;
+
+      function IsNegZero(Value: BestReal): Boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+        begin
+          Result := (QWord(TCompDoubleRec(Value).bytes) = QWord(MathNegZero.bytes));
+        end;
+{$else sizeof(BestReal) = sizeof(Double)}
+      function IsPosZero(Value: BestReal): Boolean;
+        var
+          X, Count: Integer;
+          ByteArray: PByte;
+        begin
+          Result := True;
+          ByteArray := @Value;
+          Count := SizeOf(BestReal);
+
+          { Read raw bytes of floating-point value - must be all zeroes }
+          for X := 0 to Count - 1 do
+            if ByteArray[X] <> 0 then
+              Exit(False);
+        end;
+
+      function IsNegZero(Value: BestReal): Boolean;
+        var
+          X, Count: Integer;
+          ByteArray: PByte;
+        begin
+          Result := True;
+          ByteArray := @Value;
+          Count := SizeOf(BestReal);
+
+          { Read raw bytes of floating-point value - must be all zeroes except
+            for the most significant (sign) bit }
+{$if defined(CPUARM) and defined(FPUFPA)}
+          if (ByteArray[3] <> $80) or (ByteArray[0] <> $0) or
+            (ByteArray[1] <> $0) or (ByteArray[2] <> $0) then
+            Exit(False);
+
+          for X := 4 to Count - 1 do
+            if ByteArray[X] <> 0 then
+              Exit(False);
+{$else}
+{$ifdef FPC_LITTLE_ENDIAN}
+          if ByteArray[Count - 1] <> $80 then
+            Exit(False);
+
+          for X := 0 to Count - 2 do
+            if ByteArray[X] <> 0 then
+              Exit(False);
+{$else FPC_LITTLE_ENDIAN}
+          if ByteArray[0] <> $80 then
+            Exit(False);
+
+          for X := 1 to Count - 1 do
+            if ByteArray[X] <> 0 then
+              Exit(False):
+{$endif FPC_LITTLE_ENDIAN}
+{$endif defined(CPUARM) and defined(FPUFPA)}
+        end;
+{$ifend sizeof(BestReal) = sizeof(Double)}
+
       begin
         docompare :=
           inherited docompare(p) and
@@ -557,9 +623,25 @@ implementation
            (
             (tfloatdef(typedef).floattype<>s64currency) and
             (value_real = trealconstnode(p).value_real) and
-            { floating point compares for non-numbers give strange results usually }
-            is_number_float(value_real) and
-            is_number_float(trealconstnode(p).value_real)
+            (
+              (
+                { Make sure 0.0 and -0.0 are not equated unless fastmath is enabled }
+                (cs_opt_fastmath in current_settings.optimizerswitches) or
+                not (
+                  (
+                    IsPosZero(value_real) and
+                    IsNegZero(trealconstnode(p).value_real)
+                  ) or
+                  (
+                    IsNegZero(value_real) and
+                    IsPosZero(trealconstnode(p).value_real)
+                  )
+                )
+              ) and
+              { floating point compares for non-numbers give strange results usually }
+              is_number_float(value_real) and
+              is_number_float(trealconstnode(p).value_real)
+            )
            )
           );
       end;
