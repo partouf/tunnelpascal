@@ -216,7 +216,7 @@ procedure fpc_dynarray_setlength(var p : pointer;pti : pointer;
           newp:=AllocMem(size);
 {$ifndef VER3_0}
           { call int_InitializeArray for management operators }
-          if assigned(eletypemngd) and (PTypeKind(eletype)^ in [tkRecord, tkObject]) then
+          if assigned(eletypemngd) and NeedsInitializationBeyondZeroing(eletype) then
             int_InitializeArray(pointer(newp)+sizeof(tdynarray), eletype, dims[0]);
 {$endif VER3_0}
        end
@@ -240,7 +240,7 @@ procedure fpc_dynarray_setlength(var p : pointer;pti : pointer;
                  begin
                    fillchar((pointer(newp)+sizeof(tdynarray)+movsize)^,size-sizeof(tdynarray)-movsize,0);
 {$ifndef VER3_0}
-                   if assigned(eletypemngd) and (PTypeKind(eletype)^ in [tkRecord, tkObject]) then
+                   if assigned(eletypemngd) and NeedsInitializationBeyondZeroing(eletype) then
                      int_InitializeArray(pointer(newp)+sizeof(tdynarray)+movsize, eletype, dims[0]-movelen);
 {$endif VER3_0}
                  end;
@@ -277,7 +277,7 @@ procedure fpc_dynarray_setlength(var p : pointer;pti : pointer;
                  (dims[0]-newp^.high-1)*elesize,0);
 {$ifndef VER3_0}
                { call int_InitializeArray for management operators }
-               if assigned(eletypemngd) and (PTypeKind(eletype)^ in [tkRecord, tkObject]) then
+               if assigned(eletypemngd) and NeedsInitializationBeyondZeroing(eletype) then
                  int_InitializeArray(pointer(newp)+sizeof(tdynarray)+elesize*(newp^.high+1),
                    eletype, dims[0]-newp^.high-1);
 {$endif VER3_0}

@@ -140,13 +140,44 @@ begin
   ti:=aligntoqword(ti+2+PByte(ti)[1]);
   Result:=PRecordInfoInit(ti)^.InitRecordOpTable;
 end;
+
+
+function NeedsInitializationBeyondZeroing(typeInfo: Pointer): Boolean;
+
+  function RecordNeedsInitializationBeyondZeroing(typeInfo: Pointer): Boolean;
+  var
+    ri : PRecordInfoInit;
+    i,Count : SizeInt;
+  begin
+    ri:=RTTIRecordOp(typeInfo,typeInfo);
+    if Assigned(ri^.recordop) and Assigned(ri^.recordop^.Initialize) then
+      exit(true);
+    typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+    Count:=PRecordInfoInit(typeInfo)^.Count;
+    typeInfo:=AlignTypeData(Pointer(@PRecordInfoInit(typeInfo)^.Count)+SizeOf(PRecordInfoInit(typeInfo)^.Count));
+    for i:=0 to Count-1 do
+      if NeedsInitializationBeyondZeroing(PRecordElement(typeInfo)[i].TypeInfo^) then
+        exit(true);
+    result:=false;
+  end;
+
+begin
+  result:=false;
+  case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+    tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+    tkRecord: result:=RecordNeedsInitializationBeyondZeroing(typeInfo);
+    tkArray: result:=NeedsInitializationBeyondZeroing(PArrayInfo(aligntoqword(typeInfo+2+PByte(typeInfo)[1]))^.ElInfo^);
+  end;
+end;
 {$endif VER3_0}
 
 
 { if you modify this procedure, fpc_copy must be probably modified as well }
-procedure ArrayRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
+procedure BatchArraysRTTI(Data,TypeInfo:Pointer;arrayscount,stride:SizeInt;rttiproc:TRTTIBatchProc);
 var
-  i,Count,ElSize: SizeInt;
+  Count,i: SizeInt;
   Info: Pointer;
 begin
 {$ifdef VER3_0}
@@ -155,15 +186,124 @@ begin
   typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
 {$endif VER3_0}
   Count:=PArrayInfo(typeInfo)^.ElCount;
-  { no elements to process => exit }
-  if Count = 0 then
-    Exit;
-  ElSize:=PArrayInfo(typeInfo)^.Size div Count;
   Info:=PArrayInfo(typeInfo)^.ElInfo{$ifndef VER3_0}^{$endif};
-  { Process elements }
-  for I:=0 to Count-1 do
-    rttiproc(Data+(I*ElSize),Info);
+  if stride<=PArrayInfo(typeInfo)^.Size then
+    rttiproc(Data,Info,Count*arrayscount,0)
+  else
+    for i:=arrayscount downto 1 do
+      begin
+        rttiproc(Data,Info,Count,0);
+        Inc(Data,stride);
+      end;
 end;
+
+
+{ if you modify this procedure, fpc_copy must be probably modified as well }
+{ To be used from Batch* (and, indirectly, *Array) functions. TypeInfo is System.TypeInfo(), not 'initrtti' as in single RecordRTTI. }
+procedure BatchRecordsRTTI(Data,TypeInfo:Pointer;recordscount,stride:SizeInt;rttiproc:TRTTIProc;batchrttiproc:TRTTIBatchProc
+{$ifndef VER3_0}
+  ; managementOp:TRTTIRecOpType
+{$endif}
+);
+var
+  firstField,curField,endField : PRecordElement;
+  irec,batchrecordscount : SizeInt;
+  curRec : pointer;
+{$ifndef VER3_0}
+  ri : PRecordInfoInit;
+  managementProc : TRTTIRecVarOp;
+{$endif}
+begin
+{$ifndef VER3_0}
+  { if possible try to use more optimal initrtti }
+  ri:=RTTIRecordOp(typeinfo, typeinfo);
+  if stride=0 then
+    stride:=ri^.Size;
+  managementProc:=nil;
+  if Assigned(ri^.recordop) then
+    managementProc:=TRTTIRecVarOp(ri^.recordop^.Ops[managementOp]);
+  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+{$else VER3_0}
+  if stride=0 then
+    stride:=RTTIRecordSize(typeinfo);
+  typeinfo:=RTTIRecordRttiInfoToInitInfo(typeinfo);
+  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+{$endif VER3_0}
+
+  { Get element info, hacky, but what else can we do? }
+  firstField:=AlignTypeData(Pointer(@PRecordInfoInit(typeInfo)^.Count)+SizeOf(PRecordInfoInit(typeInfo)^.Count));
+  endField:=firstField+PRecordInfoInit(typeInfo)^.Count;
+
+  { If this going to be more efficient, initialize fields #0, then fields #1, ... . }
+  if recordscount>=3 then
+    begin
+      { Avoid thrashing the cache too much with large arrays by working in smaller batches than full 'recordscount'. }
+      batchrecordscount:=recordscount;
+      if (batchrecordscount>=16) and (stride*batchrecordscount>32*1024) then
+        if stride<=32*1024 div (16+1) then
+          batchrecordscount:=SizeUint(32*1024) div SizeUint(stride)
+        else
+          batchrecordscount:=16;
+      repeat
+        { "- recordscount shr 2" to not leave too small tail, for example, to not split 101 records into batches of 100 and 1. }
+        if batchrecordscount>=recordscount-recordscount shr 2 then
+          batchrecordscount:=recordscount;
+{$ifndef VER3_0}
+        if Assigned(managementProc) and (managementOp=rotFinalize) then
+          begin
+            curRec:=Data;
+            for irec:=batchrecordscount downto 1 do
+              begin
+                managementProc(curRec);
+                inc(curRec,stride);
+              end;
+          end;
+{$endif}
+        curField:=firstField;
+        while curField<endField do
+          begin
+            batchrttiproc(Data+curField^.Offset,curField^.TypeInfo^,batchrecordscount,stride);
+            inc(curField);
+          end;
+{$ifndef VER3_0}
+        if Assigned(managementProc) and (managementOp<>rotFinalize) then
+          begin
+            curRec:=Data;
+            for irec:=batchrecordscount downto 1 do
+              begin
+                managementProc(curRec);
+                inc(curRec,stride);
+              end;
+          end;
+{$endif}
+        Data:=Data+stride*batchrecordscount;
+        dec(recordscount,batchrecordscount);
+      until recordscount=0;
+    end
+  else
+    begin
+      curRec:=Data;
+      for irec:=recordscount downto 1 do
+        begin
+{$ifndef VER3_0}
+          if Assigned(managementProc) and (managementOp=rotFinalize) then
+            managementProc(curRec);
+{$endif}
+          curField:=firstField;
+          while curField<endField do
+            begin
+              rttiproc(curRec+curField^.Offset,curField^.TypeInfo{$ifndef VER3_0}^{$endif});
+              inc(curField);
+            end;
+{$ifndef VER3_0}
+          if Assigned(managementProc) and (managementOp<>rotFinalize) then
+            managementProc(curRec);
+{$endif}
+          inc(curRec,stride);
+        end;
+    end;
+end;
+
 
 Procedure fpc_Initialize (Data,TypeInfo : pointer);[Public,Alias : 'FPC_INITIALIZE'];  compilerproc;
 begin
@@ -180,7 +320,7 @@ begin
     tkInterface:
       PPAnsiChar(Data)^:=Nil;
     tkArray:
-      arrayrtti(data,typeinfo,@int_initialize);
+      batcharraysrtti(data,typeinfo,1,0,@BatchInitialize);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -223,7 +363,7 @@ begin
   {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
-      arrayrtti(data,typeinfo,@int_finalize);
+      batcharraysrtti(data,typeinfo,1,0,@BatchFinalize);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -274,7 +414,7 @@ begin
       fpc_UnicodeStr_Incr_Ref(PPointer(Data)^);
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
-      arrayrtti(data,typeinfo,@int_addref);
+      batcharraysrtti(data,typeinfo,1,0,@BatchAddRef);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkobject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
@@ -439,56 +579,259 @@ end;
 
 
 procedure fpc_initialize_array(data,typeinfo : pointer;count : SizeInt); [public,alias:'FPC_INITIALIZE_ARRAY']; compilerproc;
+  begin
+    BatchInitialize(data,typeinfo,count,0);
+  end;
+
+
+procedure BatchInitialize(data,typeinfo : pointer;count,stride : SizeInt);
   var
-    i, size : SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    dataend : pointer;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotInitialize, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_initialize(data+size*i,typeinfo);
+    case PTypeKind(typeinfo)^ of
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+      tkDynArray,
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+      tkAstring,
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+      tkWstring,tkUString,
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+      tkInterface:
+        if stride<=sizeof(pointer) then
+          FillChar(data^,count*sizeof(pointer),0)
+        else
+          begin
+            dataend:=data+count*stride;
+            while data<dataend do
+              begin
+                PPointer(data)^:=nil;
+                Inc(data,stride);
+              end;
+          end;
+      tkArray:
+        batcharraysrtti(data,typeinfo,count,stride,@BatchInitialize);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+      tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+      tkRecord:
+        BatchRecordsRTTI(data,typeinfo,count,stride,@int_initialize,@BatchInitialize{$ifndef VER3_0},rotInitialize{$endif});
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+      tkVariant:
+        if stride<=sizeof(tvardata) then
+          FillChar(data^,count*sizeof(tvardata),0) { See variant.inc:fpc_variant_init. }
+        else
+          begin
+            dataend:=data+count*stride;
+            while data<dataend do
+              begin
+                variant_init(PVarData(data)^);
+                Inc(data,stride);
+              end;
+          end;
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    end;
   end;
 
 
 procedure fpc_finalize_array(data,typeinfo : pointer;count : SizeInt); [Public,Alias:'FPC_FINALIZE_ARRAY'];  compilerproc;
+  begin
+    BatchFinalize(data,typeinfo,count,0);
+  end;
+
+
+procedure BatchFinalize(data,typeinfo : pointer;count,stride : SizeInt);
   var
-     i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    DataEnd : pointer;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotFinalize, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_finalize(data+size*i,typeinfo);
+    case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+      tkAstring :
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          DataEnd:=data+count*stride;
+          while Data<DataEnd do
+            begin
+              fpc_AnsiStr_Decr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+      tkUstring :
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          DataEnd:=data+count*stride;
+          while Data<DataEnd do
+            begin
+              fpc_UnicodeStr_Decr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+      tkWstring :
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          DataEnd:=data+count*stride;
+          while Data<DataEnd do
+            begin
+              fpc_WideStr_Decr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+      tkArray :
+        batcharraysrtti(data,typeinfo,count,stride,@BatchFinalize);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+      tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+      tkRecord:
+        BatchRecordsRTTI(data,typeinfo,count,stride,@int_finalize,@BatchFinalize{$ifndef VER3_0},rotFinalize{$endif});
+{$ifdef FPC_HAS_FEATURE_CLASSES}
+      tkInterface:
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          DataEnd:=data+count*stride;
+          while Data<DataEnd do
+            begin
+              Intf_Decr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_CLASSES}
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+      tkDynArray:
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          DataEnd:=data+count*stride;
+          while Data<DataEnd do
+            begin
+              fpc_dynarray_clear(PPointer(Data)^,TypeInfo);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+      tkVariant:
+        begin
+          if stride=0 then
+            stride:=sizeof(TVarData);
+          DataEnd:=data+count*stride;
+          while Data<DataEnd do
+            begin
+              variant_clear(PVarData(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    end;
   end;
 
 
 procedure fpc_addref_array(data,typeinfo: pointer; count: SizeInt); [public,alias:'FPC_ADDREF_ARRAY']; compilerproc;
+  begin
+    BatchAddRef(data,typeinfo,count,0);
+  end;
+
+
+procedure BatchAddRef(data,typeinfo: pointer; count,stride: SizeInt);
   var
-    i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    dataend : pointer;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotAddRef, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_addref(data+size*i,typeinfo);
+    case PTypeKind(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+      tkAstring :
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          dataend:=data+count*stride;
+          while data<dataend do
+            begin
+              fpc_AnsiStr_Incr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+      tkWstring :
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          dataend:=data+count*stride;
+          while data<dataend do
+            begin
+              fpc_WideStr_Incr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+      tkUstring :
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          dataend:=data+count*stride;
+          while data<dataend do
+            begin
+              fpc_UnicodeStr_Incr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+      tkArray :
+        batcharraysrtti(data,typeinfo,count,stride,@BatchAddRef);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+      tkobject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+      tkrecord :
+        BatchRecordsRTTI(data,typeinfo,count,stride,@int_addref,@BatchAddRef{$ifndef VER3_0},rotAddRef{$endif});
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+      tkDynArray:
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          dataend:=data+count*stride;
+          while data<dataend do
+            begin
+              fpc_dynarray_incr_ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_CLASSES}
+      tkInterface:
+        begin
+          if stride=0 then
+            stride:=sizeof(pointer);
+          dataend:=data+count*stride;
+          while data<dataend do
+            begin
+              Intf_Incr_Ref(PPointer(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_CLASSES}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+      tkVariant:
+        begin
+          if stride=0 then
+            stride:=sizeof(TVarData);
+          dataend:=data+count*stride;
+          while data<dataend do
+            begin
+              variant_addref(PVarData(Data)^);
+              Inc(Data,stride);
+            end;
+        end;
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    end;
   end;
 
 { The following two procedures are now obsolete, needed only for bootstrapping }
