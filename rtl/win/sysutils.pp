@@ -1478,58 +1478,17 @@ end;
 Function GetEnvironmentVariable(Const EnvVar : AnsiString) : AnsiString;
 
 var
-   oemenvvar, oemstr : RawByteString;
-   i, hplen : longint;
-   hp,p : PAnsiChar;
+   buf : array[0 .. 32767-1] of ansichar;
 begin
-   oemenvvar:=uppercase(envvar);
-   SetCodePage(oemenvvar,CP_OEMCP);
-   Result:='';
-   p:=GetEnvironmentStringsA;
-   hp:=p;
-   while hp^<>#0 do
-     begin
-        oemstr:=hp;
-        { cache length, may change after uppercasing depending on code page }
-        hplen:=length(oemstr);
-        { all environment variables are encoded in the oem code page }
-        SetCodePage(oemstr,CP_OEMCP,false);
-        i:=pos('=',oemstr);
-        if uppercase(copy(oemstr,1,i-1))=oemenvvar then
-          begin
-             Result:=copy(oemstr,i+1,length(oemstr)-i);
-             break;
-          end;
-        { next string entry}
-        hp:=hp+hplen+1;
-     end;
-   FreeEnvironmentStringsA(p);
+   SetString(Result,PAnsiChar(buf),GetEnvironmentVariableA(PAnsiChar(EnvVar),PAnsiChar(buf),length(buf)));
 end;
 
 Function GetEnvironmentVariable(Const EnvVar : UnicodeString) : UnicodeString;
 
 var
-   s, upperenv : Unicodestring;
-   i : longint;
-   hp,p : pwidechar;
+   buf : array[0 .. 32767-1] of unicodechar;
 begin
-   Result:='';
-   p:=GetEnvironmentStringsW;
-   hp:=p;
-   upperenv:=uppercase(envvar);
-   while hp^<>#0 do
-     begin
-        s:=hp;
-        i:=pos('=',s);
-        if uppercase(copy(s,1,i-1))=upperenv then
-          begin
-             Result:=copy(s,i+1,length(s)-i);
-             break;
-          end;
-        { next string entry}
-        hp:=hp+strlen(hp)+1;
-     end;
-   FreeEnvironmentStringsW(p);
+   SetString(Result,PUnicodeChar(buf),GetEnvironmentVariableW(PUnicodeChar(EnvVar),PUnicodeChar(buf),length(buf)));
 end;
 
 Function GetEnvironmentVariableCount : Integer;
@@ -1694,13 +1653,11 @@ end;
                               Initialization code
 ****************************************************************************}
 
-var
-   kernel32dll : THandle;
-
 Procedure LoadVersionInfo;
 // and getfreespaceex
 Var
    versioninfo : TOSVERSIONINFO;
+   kernel32dll : THandle;
 begin
   GetDiskFreeSpaceEx:=nil;
   versioninfo.dwOSVersionInfoSize:=sizeof(versioninfo);
@@ -1712,17 +1669,15 @@ begin
   Move (versioninfo.szCSDVersion ,Win32CSDVersion[1],128);
   win32CSDVersion[0]:=chr(strlen(PAnsiChar(@versioninfo.szCSDVersion)));
   kernel32dll:=GetModuleHandle('kernel32');
-  if kernel32dll<>0 then
-    GetDiskFreeSpaceEx:=TGetDiskFreeSpaceEx(GetProcAddress(kernel32dll,'GetDiskFreeSpaceExA'));
+  GetDiskFreeSpaceEx:=TGetDiskFreeSpaceEx(GetProcAddress(kernel32dll,'GetDiskFreeSpaceExA'));
   if Win32MajorVersion<6 then
      FindExInfoDefaults := FindExInfoStandard; // also searches SFNs. XP only.
   if (Win32MajorVersion>=6) and (Win32MinorVersion>=1) then 
     FindFirstAdditionalFlags := FIND_FIRST_EX_LARGE_FETCH; // win7 and 2008R2+
   // GetTimeZoneInformationForYear is supported only on Vista and newer
-  if (kernel32dll<>0) and (Win32MajorVersion>=6) then
+  if (Win32MajorVersion>=6) then
     GetTimeZoneInformationForYear:=TGetTimeZoneInformationForYear(GetProcAddress(kernel32dll,'GetTimeZoneInformationForYear'));
-  if (kernel32dll<>0) then
-    GetFinalPathNameByHandle:=TGetFinalPathNameByHandle(GetProcAddress(kernel32dll,'GetFinalPathNameByHandleA'));
+  GetFinalPathNameByHandle:=TGetFinalPathNameByHandle(GetProcAddress(kernel32dll,'GetFinalPathNameByHandleA'));
 end;
 
 Function GetAppConfigDir(Global : Boolean) : String;
