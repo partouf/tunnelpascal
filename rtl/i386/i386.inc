@@ -73,8 +73,7 @@ end;
 {$endif}
 
 {$if not defined(FPC_SYSTEM_HAS_MOVE)
- and not defined(OLD_ASSEMBLER)
- and not defined(darwin)}
+ and not defined(OLD_ASSEMBLER)}
 {$i fastmove.inc}
 {$endif}
 
@@ -1826,12 +1825,12 @@ procedure fpc_shortstr_to_shortstr(out res:shortstring; const sstr: shortstring)
 {$ifdef FPC_SYSTEM_STACKALIGNMENT16}
         lea     -8(%esp), %esp
 {$endif FPC_SYSTEM_STACKALIGNMENT16}
-        call    Move
+        call    {$if declared(Move_Impl) and not defined(FPC_PIC)} Move_Impl {$else} Move {$endif}
 {$ifdef FPC_SYSTEM_STACKALIGNMENT16}
         lea     8(%esp), %esp
 {$endif FPC_SYSTEM_STACKALIGNMENT16}
 {$else FPC_PROFILE}
-        jmp     Move
+        jmp     {$if declared(Move_Impl) and not defined(FPC_PIC)} Move_Impl {$else} Move {$endif}
 {$endif FPC_PROFILE}
   end;
 
@@ -2012,13 +2011,13 @@ asm
 {$ifdef FPC_SYSTEM_STACKALIGNMENT16}
         leal    -12(%esp), %esp
 {$endif FPC_SYSTEM_STACKALIGNMENT16}
-        call    Move
+        call    {$if declared(Move_Impl) and not defined(FPC_PIC)} Move_Impl {$else} Move {$endif}
 {$ifdef FPC_SYSTEM_STACKALIGNMENT16}
         leal    12(%esp), %esp
 {$endif FPC_SYSTEM_STACKALIGNMENT16}
         jmp     .LReturn
 {$else FPC_PROFILE}
-        jmp     Move { can perform a tail call }
+        jmp     {$if declared(Move_Impl) and not defined(FPC_PIC)} Move_Impl {$else} Move {$endif} { can perform a tail call }
 {$endif FPC_PROFILE}
 
 .LEmpty:

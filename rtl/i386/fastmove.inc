@@ -1,12 +1,41 @@
 {$ifndef FPC_SYSTEM_HAS_MOVE}
 {$define FPC_SYSTEM_HAS_MOVE}
 
+procedure Move_8OrLess(const source;var dest;count:SizeInt); assembler; nostackframe;
+{ eax = source, edx = dest, ecx = count (ecx <= 8). }
+asm
+    cmp    $3, %ecx
+    jle    .L3OrLess
+    push   %ebx
+    mov    (%eax), %ebx
+    mov    -4(%eax,%ecx), %eax
+    mov    %ebx, (%edx)
+    mov    %eax, -4(%edx,%ecx)
+    pop    %ebx
+    ret
+
+.L3OrLess:
+    cmp    $1, %ecx
+    jl     .LZero
+    push   %ebx
+    movzbl (%eax), %ebx
+    je     .LOne
+    movzwl -2(%eax,%ecx), %eax
+    mov    %ax, -2(%edx,%ecx)
+.LOne:
+    mov    %bl, (%edx)
+    pop    %ebx
+.LZero:
+end;
+
 { at least valgrind up to 3.3 has a bug which prevents the default code to
   work so we use a rather simple implementation here }
-procedure Move_8OrMore_Valgrind; assembler; nostackframe;
-{ eax = source, edx = dest, ecx = count (ecx >= 8).
-  If FPC_PIC: ebx pushed. }
+procedure Move_Valgrind(const source;var dest;count:SizeInt); assembler; nostackframe;
+{ eax = source, edx = dest, ecx = count. }
 asm
+    test   %ecx, %ecx
+    jle    .LZero
+
     sub    %eax, %edx            { edx = dest - src }
     cmp    %edx, %ecx
     ja     .LBack                { count (ecx) > unsigned(dest - src) (edx) if regions overlap }
@@ -21,15 +50,11 @@ asm
     rep movsb
     pop    %edi
     pop    %esi
-{$ifdef FPC_PIC}
-    pop    %ebx
-{$endif}
+.LZero:
     ret
 
 .LBack:
-{$ifndef FPC_PIC}
     push   %ebx
-{$endif}
     add    %ecx, %eax
 .LNextb:
     dec    %eax
@@ -40,10 +65,12 @@ asm
     pop    %ebx
 end;
 
-procedure Move_8OrMore_IA32; assembler; nostackframe;
-{ eax = source, edx = dest, ecx = count (ecx >= 8).
-  If FPC_PIC: ebx pushed. }
+procedure Move_IA32(const source;var dest;count:SizeInt); assembler; nostackframe;
+{ eax = source, edx = dest, ecx = count. }
 asm
+    cmp    $8, %ecx
+    jle    Move_8OrLess
+
     fildq  (%eax)                { First and last 8 bytes, used both in .L33OrMore and ladder ending (.L9to16). }
     fildq  -8(%eax,%ecx)
     cmp    $16, %ecx
@@ -57,25 +84,19 @@ asm
 .L9to16:
     fistpq -8(%edx,%ecx)         { 9–16 bytes }
     fistpq (%edx)
-{$ifdef FPC_PIC}
-    pop    %ebx
-{$endif}
     ret
 
 .Lcancel:
     fstp   %st(0)                { Pop the “second int64 from the end” .L33OrMore loads. }
     fucompp                      { Pop two elements loaded at the beginning. }
-    pop    %ebx
     ret
-    .byte  102,102,144           { Turns .balign 16 before .Lloop16f into a no-op. }
+    .byte  102,102,102,102,102,102,102,102,102,102,144 { Turns .balign 16 before .Lloop16f into a no-op. }
 
 .L33OrMore:
     fildq  -16(%eax,%ecx)        { Second int64 from the end. }
-{$ifndef FPC_PIC}
-    push   %ebx
-{$endif}
     sub    %edx, %eax            { eax = src - dest }
     jz     .Lcancel              { exit if src=dest }
+    push   %ebx
     mov    %eax, %ebx
     neg    %ebx
     cmp    %ebx, %ecx
@@ -139,20 +160,20 @@ asm
     pop    %ebx
 end;
 
-procedure Move_8OrMore_MMX; assembler; nostackframe;
-{ eax = source, edx = dest, ecx = count (ecx >= 8).
-  If FPC_PIC: ebx pushed. }
+procedure Move_MMX(const source;var dest;count:SizeInt); assembler; nostackframe;
+{ eax = source, edx = dest, ecx = count. }
 asm
     cmp    $72, %ecx             { Size at which using MMX becomes worthwhile. }
-    jl     Move_8OrMore_IA32
-{$ifndef FPC_PIC}
-    push   %ebx
-{$endif}
+    jl     Move_IA32
+
     movq   (%eax), %mm4          { First and last 8 bytes. }
     movq   -8(%eax,%ecx), %mm5
     movq   -16(%eax,%ecx), %mm3  { Second vector from the end. }
+
     sub    %edx, %eax            { eax = src - dest }
     jz     .Lquit                { exit if src=dest }
+
+    push   %ebx
     mov    %eax, %ebx
     neg    %ebx
     cmp    %ebx, %ecx
@@ -181,9 +202,9 @@ asm
     movq   %mm3, (%edx,%ecx)
     movq   %mm5, 8(%edx,%ecx)    { Write first and last 8 bytes after everything else. }
     movq   %mm4, (%ebx)          { Important for <8-byte step between src and dest. }
+    pop    %ebx
 .Lquit:
     emms
-    pop    %ebx
     ret
     .byte  144 { Turns .balign 16 before .Lloop16b into a no-op. }
 
@@ -220,51 +241,45 @@ end;
 
 {$ifndef FASTMOVE_DISABLE_SSE}
 label
-  Move_8OrMore_SSE_9to15, Move_8OrMore_SSE_33OrMore, Move_8OrMore_SSE_CancelERMSBackwards;
+  Move_SSE_8to15, Move_SSE_33OrMore, Move_SSE_CancelERMSBackwards;
 
 const
   Move_NtThreshold = 256 * 1024; { this limit must be processor-specific (1/2 L2 cache size) }
 
-procedure Move_8OrMore_SSE; assembler; nostackframe;
-{ eax = source, edx = dest, ecx = count (ecx >= 8).
-  If FPC_PIC: ebx pushed. }
+procedure Move_SSE(const source;var dest;count:SizeInt); assembler; nostackframe;
+{ eax = source, edx = dest, ecx = count. }
 const
   PrefetchDistance = 512;
 asm
+    cmp    $8, %ecx
+    jl     Move_8OrLess
     cmp    $15, %ecx
-    jle    Move_8OrMore_SSE_9to15
-    movups (%eax), %xmm4         { First and last 16 bytes, used both in Move_8OrMore_SSE_33OrMore and 17–32 branch. }
+    jle    Move_SSE_8to15
+    movups (%eax), %xmm4         { First and last 16 bytes, used both in Move_SSE_33OrMore and 17–32 branch. }
     movups -16(%eax,%ecx), %xmm5
     cmp    $32, %ecx
-    jg     Move_8OrMore_SSE_33OrMore
+    jg     Move_SSE_33OrMore
     movups %xmm4, (%edx)         { 16–32 bytes }
     movups %xmm5, -16(%edx,%ecx)
-{$ifdef FPC_PIC}
-    pop    %ebx
-{$endif}
     ret
 
-Move_8OrMore_SSE_9to15:
+Move_SSE_8to15:
     movlps (%eax), %xmm0
     movlps -8(%eax,%ecx), %xmm1
     movlps %xmm0, (%edx)
     movlps %xmm1, -8(%edx,%ecx)
 .Lquit:
-{$ifdef FPC_PIC}
-    pop    %ebx
-{$endif}
     ret
-    .byte  {$ifndef FPC_PIC}102,{$endif}102,102,102,102,102,102,102,102,102,102,102,102,144 { Turns .balign 16 before .Lloop32f into a no-op. }
+    .byte  102,102,102,102,144   { Turns .balign 16 before .Lloop32f into a no-op. }
 
-Move_8OrMore_SSE_33OrMore:
+Move_SSE_33OrMore:
     movups -32(%eax,%ecx), %xmm3 { Second vector from the end. Wasted read if .Lback branch is taken (it uses second vector from the start instead), }
                                  { but -32(%eax,%ecx) is about to become not accessible so easily, .Lback is rare, and small .Lback is even rarer / matters even less. }
 
     sub    %edx, %eax            { eax = src - dest }
     jz     .Lquit                { exit if src=dest }
-{$ifndef FPC_PIC}
+
     push   %ebx
-{$endif}
     mov    %eax, %ebx
     neg    %ebx
     cmp    %ebx, %ecx
@@ -363,13 +378,11 @@ Move_8OrMore_SSE_33OrMore:
     sfence
     add    $PrefetchDistance+64, %ecx
     jmp    .LRestAfterNTf
-    .byte  {$ifdef FPC_PIC}102,{$endif}102,102,102,144 { Turns .balign 16 before .Lloop32b into a no-op. }
+    .byte  102,102,102,144       { Turns .balign 16 before .Lloop32b into a no-op. }
 
-Move_8OrMore_SSE_CancelERMSBackwards:
-    { Adapt from Move_8OrMore_SSE_ERMS.Lback where eax = src, edx = dest - src, xmm4 and xmm5 aren’t read, ebx isn't pushed if not FPC_PIC. }
-{$ifndef FPC_PIC}
+Move_SSE_CancelERMSBackwards:
+    { Adapt from Move_SSE_ERMS.Lback where eax = src, edx = dest - src, xmm4 and xmm5 aren’t read, ebx isn't pushed. }
     push   %ebx
-{$endif}
     add    %eax, %edx
     movups (%eax), %xmm4
     movups -16(%eax,%ecx), %xmm5
@@ -433,25 +446,23 @@ Move_8OrMore_SSE_CancelERMSBackwards:
     jmp    .LRestAfterNTb
 end;
 
-procedure Move_8OrMore_SSE_ERMS; assembler; nostackframe;
-{ eax = source, edx = dest, ecx = count (ecx >= 8).
-  If FPC_PIC: ebx pushed. }
+procedure Move_SSE_ERMS(const source;var dest;count:SizeInt); assembler; nostackframe;
+{ eax = source, edx = dest, ecx = count. }
 const
     ErmsThreshold = 1536;
 asm
+    cmp    $8, %ecx
+    jl     Move_8OrLess
     cmp    $15, %ecx
-    jle    Move_8OrMore_SSE_9to15
+    jle    Move_SSE_8to15
     cmp    $ErmsThreshold, %ecx
     jae    .LRepMovs
-    movups (%eax), %xmm4         { Same as in Move_8OrMore_SSE. }
+    movups (%eax), %xmm4         { Same as in Move_SSE. }
     movups -16(%eax,%ecx), %xmm5
     cmp    $32, %ecx
-    jg     Move_8OrMore_SSE_33OrMore
+    jg     Move_SSE_33OrMore
     movups %xmm4, (%edx)         { 16–32 bytes }
     movups %xmm5, -16(%edx,%ecx)
-{$ifdef FPC_PIC}
-    pop    %ebx
-{$endif}
     ret
 
 .LRepMovs:
@@ -460,7 +471,7 @@ asm
     cmp    %edx, %ecx            { count (ecx) > unsigned(dest - src) (edx) if regions overlap }
     ja     .Lback
     cmp    $Move_NtThreshold+16, %ecx
-    jae    .LNtF                 { Even enhanced REP MOV does not seem to use NT so falls behind on huge moves. So prioritize NT done by Move_8OrMore_SSE. }
+    jae    .LNtF                 { Even enhanced REP MOV does not seem to use NT so falls behind on huge moves. So prioritize NT done by Move_SSE. }
 .LNtIsNotBetterF:
 
     push   %esi
@@ -471,16 +482,13 @@ asm
     pop    %edi
     pop    %esi
 .Lquit:
-{$ifdef FPC_PIC}
-    pop    %ebx
-{$endif}
     ret
 
 .LNtF:
     cmp    $-Move_NtThreshold, %edx { Check move distance. Bad case for forward NT is 0 < src - dest < NtThreshold => unsigned(dest - src) > unsigned(-NtThreshold). }
-    ja     .LNtIsNotBetterF      { NT is not better and Move_8OrMore_SSE won't perform it either. Use REP MOVSB. }
+    ja     .LNtIsNotBetterF      { NT is not better and Move_SSE won't perform it either. Use REP MOVSB. }
     add    %eax, %edx            { Recover edx = dest. }
-    jmp    Move_8OrMore_SSE      { Will perform NT. }
+    jmp    Move_SSE              { Will perform NT. }
 
 .Lback:
     {         dst = 3
@@ -507,14 +515,12 @@ asm
 
       Only REP MOVs with DF=0 are fast with ERMS, in case you’re wondering why not just use DF=1. }
     cmp    $ErmsThreshold, %edx
-    jb     Move_8OrMore_SSE_CancelERMSBackwards { Unfortunately this branch can’t benefit the common case of small distance (like inserting 1 array element into the beginning). :( }
+    jb     Move_SSE_CancelERMSBackwards { Unfortunately this branch can’t benefit the common case of small distance (like inserting 1 array element into the beginning). :( }
     cmp    $Move_NtThreshold+16, %ecx
     jae    .LNtB
 .LNtIsNotBetterB:
 
-{$ifndef FPC_PIC}
     push   %ebx
-{$endif}
     mov    %ecx, %ebx            { ebx = remaining }
     sub    %edx, %ebx            { edx = dst - src = step; remaining -= step. }
     add    %ecx, %eax
@@ -534,107 +540,55 @@ asm
     sub    %ecx, %eax            { eax = src }
     add    %eax, %edx            { edx = dest }
     pop    %ebx
-    jmp    Move                  { Remaining piece ("a" in the example above). Can save a bit of jumps by doing more checks and jumping to more specific places, but whatever. }
+    jmp    Move_SSE              { Remaining piece ("a" in the example above). By construction, smaller than ERMS threshold. }
 
 .LNtB:
     cmp    $Move_NtThreshold, %edx { Check move distance. Bad case for backward NT is dest - src < NtThreshold; src is always < dest. }
-    jb     .LNtIsNotBetterB      { NT is not better and Move_8OrMore_SSE won't perform it either. Use REP MOVSB. }
+    jb     .LNtIsNotBetterB      { NT is not better and Move_SSE won't perform it either. Use REP MOVSB. }
     add    %eax, %edx            { Recover edx = dest. }
-    jmp    Move_8OrMore_SSE      { Will perform NT. }
+    jmp    Move_SSE              { Will perform NT. }
 end;
 {$endif ndef FASTMOVE_DISABLE_SSE}
 
-procedure Move_8OrMore_Dispatch; forward;
+procedure Move_Dispatch(const source;var dest;count:SizeInt); forward;
 
 var
-  fastmoveproc : pointer = @Move_8OrMore_Dispatch;
+  Move_Impl : procedure(const source;var dest;count:SizeInt) = @Move_Dispatch;
 {$ifndef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
   valgrind_used : boolean;external name '__fpc_valgrind';
 {$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
 
-function Move_8OrMore_HumanFriendlyDispatch: pointer;
+procedure Move_Dispatch(const source;var dest;count:SizeInt);
 begin
+  if not fpc_cpucodeinit_performed then
+    begin
+      Move_IA32(source,dest,count);
+      exit;
+    end;
   { workaround valgrind bug }
 {$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
   if EntryInformation.valgrind_used then
 {$else FPC_HAS_INDIRECT_ENTRY_INFORMATION}
   if valgrind_used then
 {$endif FPC_HAS_INDIRECT_ENTRY_INFORMATION}
-    result:=@Move_8OrMore_Valgrind
+    Move_Impl:=@Move_Valgrind
 {$ifndef FASTMOVE_DISABLE_SSE}
   else if fast_large_repmovstosb then
-    result:=@Move_8OrMore_SSE_ERMS
+    Move_Impl:=@Move_SSE_ERMS
   else if has_sse_support then
-    result:=@Move_8OrMore_SSE
+    Move_Impl:=@Move_SSE
 {$endif ndef FASTMOVE_DISABLE_SSE}
   else if has_mmx_support then
-    result:=@Move_8OrMore_MMX
+    Move_Impl:=@Move_MMX
   else
-    result:=@Move_8OrMore_IA32;
-  if fpc_cpucodeinit_performed then
-    fastmoveproc:=result;
+    Move_Impl:=@Move_IA32;
+  Move_Impl(source,dest,count);
 end;
 
-procedure Move_8OrMore_Dispatch; assembler; nostackframe;
-{ eax = source, edx = dest, ecx = count (ecx >= 8).
-  If FPC_PIC: ebx pushed. }
-asm
-{$ifndef FPC_PIC}
-    push %ebx
-{$endif}
-    push %eax
-    push %edx
-    push %ecx
-    call Move_8OrMore_HumanFriendlyDispatch
-    mov  %eax, %ebx
-    pop  %ecx
-    pop  %edx
-    pop  %eax
-{$ifdef FPC_PIC}
-    jmp  %ebx
-{$else}
-    call %ebx
-    pop  %ebx
-{$endif}
+{ Should preferably be inlined, see systemh.inc declaration. }
+procedure Move(const source;var dest;count:SizeInt); [public, alias: 'FPC_MOVE'];
+begin
+  Move_Impl(source,dest,count);
 end;
 
-procedure Move(const source;var dest;count:SizeInt); [public, alias: 'FPC_MOVE']; assembler; nostackframe;
-asm
-    cmp    $8, %ecx
-    jle    .L8OrLess
-{$ifdef FPC_PIC}
-    push   %ebx
-    call   fpc_geteipasebx
-    addl   $_GLOBAL_OFFSET_TABLE_, %ebx
-    movl   fastmoveproc@GOT(%ebx), %ebx
-    jmp    (%ebx)
-{$else}
-    jmp    fastmoveproc
-{$endif}
-
-.L8OrLess:
-    cmp    $3, %ecx
-    jle    .L3OrLess
-    push   %ebx
-    mov    (%eax), %ebx
-    mov    -4(%eax,%ecx), %eax
-    mov    %ebx, (%edx)
-    mov    %eax, -4(%edx,%ecx)
-    pop    %ebx
-    ret
-
-.L3OrLess:
-    cmp    $1, %ecx
-    jl     .LZero
-    push   %ebx
-    movzbl (%eax), %ebx
-    je     .LOne
-    movzwl -2(%eax,%ecx), %eax
-    mov    %ax, -2(%edx,%ecx)
-.LOne:
-    mov    %bl, (%edx)
-    pop    %ebx
-.LZero:
-end;
-
-{$endif  FPC_SYSTEM_HAS_MOVE}
+{$endif FPC_SYSTEM_HAS_MOVE}
