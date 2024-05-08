@@ -3520,7 +3520,7 @@ begin
   Add('  f = high(word);');
   Add('begin');
   ConvertProgram;
-  CheckSource('TestVarBaseTypes',
+  CheckSource('TestConstBaseTypes',
     LinesToStr([
     'this.i=3;',
     'this.s="foo";',
@@ -3833,8 +3833,8 @@ begin
     'this.HiWord2 = Math.floor(-0x1234CDEF / 4294967296) >>> 0;',
     'this.lo4 = 0x34 & 0xF;',
     'this.hi4 = (0x34 >> 4) & 0xF;',
-    'this.lo5 = (((-0x34 & 255) << 24) >> 24) & 0xFF;',
-    'this.hi5 = ((((-0x34 & 255) << 24) >> 24) >> 8) & 0xFF;',
+    'this.lo5 = -0x34 & 0xFF;',
+    'this.hi5 = (-0x34 >> 8) & 0xFF;',
     'this.lo6 = 0x123456789ABCD >>> 0;',
     'this.hi6 = 74565 >>> 0;',
     'this.lo7 = -0x123456789ABCD >>> 0;',
@@ -4140,25 +4140,25 @@ begin
     LinesToStr([ // this.$main
     '$mod.a = 0x12345678;',
     '$mod.b = 0xEDCBA987;',
-    '$mod.c = rtl.lw(~$mod.a);',
-    '$mod.c = rtl.lw($mod.a & $mod.b);',
-    '$mod.c = rtl.lw($mod.a & 0xffff0000);',
-    '$mod.c = rtl.lw($mod.a | $mod.b);',
-    '$mod.c = rtl.lw($mod.a | 0xff00ff00);',
-    '$mod.c = rtl.lw($mod.a ^ $mod.b);',
-    '$mod.c = rtl.lw($mod.a ^ 0xf0f0f0f0);',
-    '$mod.c = rtl.lw($mod.a << 1);',
-    '$mod.c = rtl.lw($mod.a << 16);',
-    '$mod.c = rtl.lw($mod.a << 24);',
-    '$mod.c = rtl.lw($mod.a << $mod.b);',
-    '$mod.c = rtl.lw($mod.a >>> 1);',
-    '$mod.c = rtl.lw($mod.a >>> 16);',
-    '$mod.c = rtl.lw($mod.a >>> 24);',
-    '$mod.c = rtl.lw($mod.a >>> $mod.b);',
-    '$mod.c = rtl.lw(rtl.lw($mod.b & $mod.c) | rtl.lw($mod.a & $mod.b));',
-    '$mod.c = $mod.i & $mod.a;',
-    '$mod.c = $mod.i | $mod.a;',
-    '$mod.c = $mod.i ^ $mod.a;',
+    '$mod.c = ~$mod.a >>> 0;',
+    '$mod.c = ($mod.a & $mod.b) >>> 0;',
+    '$mod.c = ($mod.a & 0xffff0000) >>> 0;',
+    '$mod.c = ($mod.a | $mod.b) >>> 0;',
+    '$mod.c = ($mod.a | 0xff00ff00) >>> 0;',
+    '$mod.c = ($mod.a ^ $mod.b) >>> 0;',
+    '$mod.c = ($mod.a ^ 0xf0f0f0f0) >>> 0;',
+    '$mod.c = ($mod.a << 1) >>> 0;',
+    '$mod.c = ($mod.a << 16) >>> 0;',
+    '$mod.c = ($mod.a << 24) >>> 0;',
+    '$mod.c = ($mod.a << $mod.b) >>> 0;',
+    '$mod.c = $mod.a >>> 1;',
+    '$mod.c = $mod.a >>> 16;',
+    '$mod.c = $mod.a >>> 24;',
+    '$mod.c = $mod.a >>> $mod.b;',
+    '$mod.c = ((($mod.b & $mod.c) >>> 0) | (($mod.a & $mod.b) >>> 0)) >>> 0;',
+    '$mod.c = ($mod.i & $mod.a) >>> 0;',
+    '$mod.c = ($mod.i | $mod.a) >>> 0;',
+    '$mod.c = ($mod.i ^ $mod.a) >>> 0;',
     '']));
 end;
 
@@ -8152,7 +8152,7 @@ begin
     '$mod.w = $mod.i & 65535;',
     '$mod.sm = (($mod.i & 65535) << 16) >> 16;',
     '$mod.lw = $mod.i >>> 0;',
-    '$mod.li = $mod.i & 0xFFFFFFFF;',
+    '$mod.li = $mod.i | 0;',
     '']));
 end;
 
@@ -8731,7 +8731,7 @@ begin
     '$mod.c = "\uFFFF";',
     '$mod.i = $mod.c.charCodeAt() & 255;',
     '$mod.i = $mod.c.charCodeAt();',
-    '$mod.i = $mod.c.charCodeAt() & 0xFFFFFFFF;',
+    '$mod.i = $mod.c.charCodeAt() | 0;',
     '']));
 end;
 

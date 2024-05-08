@@ -160,6 +160,7 @@ type
     coKeepNotUsedDeclarationsWPO, // -O-
     coShortRefGlobals, // -O2
     coObfuscateLocalIdentifiers, // -O2
+    coTruncateIntegersOnOverflow,
     // source map
     coSourceMapCreate,
     coSourceMapInclude,
@@ -184,7 +185,7 @@ const
   DefaultResourceMode = rmHTML;
 
   coShowAll = [coShowErrors..coShowDebug];
-  coAllOptimizations = [coEnumValuesAsNumbers..coObfuscateLocalIdentifiers];
+  coAllOptimizations = [coEnumValuesAsNumbers..coTruncateIntegersOnOverflow];
   coO0 = [coKeepNotUsedPrivates,coKeepNotUsedDeclarationsWPO];
   coO1 = [coEnumValuesAsNumbers];
   coO2 = coO1+[coShortRefGlobals
@@ -223,6 +224,7 @@ const
     'Keep not used declarations (WPO)',
     'Create short local variables for globals',
     'Obfuscate local identifiers',
+    'Truncate integers in case of overflow',
     'Create source map',
     'Include Pascal sources in source map',
     'Do not shorten filenames in source map',
@@ -1094,6 +1096,11 @@ begin
     Include(Result,{$IFDEF FPC_DOTTEDUNITS}Pas2Js.Compiler.Transpiler{$ELSE}fppas2js{$ENDIF}.coShortRefGlobals);
   if coObfuscateLocalIdentifiers in Compiler.Options then
     Include(Result,{$IFDEF FPC_DOTTEDUNITS}Pas2Js.Compiler.Transpiler{$ELSE}fppas2js{$ENDIF}.coObfuscateLocalIdentifiers);
+
+  if coTruncateIntegersOnOverflow in Compiler.Options then
+    Include(Result,fppas2js.coTruncateIntegersOnOverflow)
+  else
+    Exclude(Result,fppas2js.coTruncateIntegersOnOverflow);
 
   if coLowerCase in Compiler.Options then
     Include(Result,{$IFDEF FPC_DOTTEDUNITS}Pas2Js.Compiler.Transpiler{$ELSE}fppas2js{$ENDIF}.coLowerCase)
@@ -3816,6 +3823,7 @@ begin
         Log.LogPlain('RemoveNotUsedPrivates');
         Log.LogPlain('RemoveNotUsedDeclarations');
         Log.LogPlain('ShortRefGlobals');
+        Log.LogPlain('TruncateIntegersOnOverflow');
       end;
     't':
       // write list of supported targets
@@ -3871,6 +3879,7 @@ begin
      'removenotuseddeclarations': SetOption(coKeepNotUsedDeclarationsWPO,not Enable);
      'shortrefglobals': SetOption(coShortRefGlobals,Enable);
      'obfuscatelocalidentifiers': SetOption(coObfuscateLocalIdentifiers,Enable);
+     'truncateintegersonoverflow': SetOption(coTruncateIntegersOnOverflow,Enable);
     else
       Log.LogMsgIgnoreFilter(nUnknownOptimizationOption,[QuoteStr(aValue)]);
     end;
@@ -4903,6 +4912,7 @@ begin
   {$IFDEF EnableObfuscateIdentifiers}
   w('      -OoObfuscateLocalIdentifiers[-]: Use auto generated names for private and local Pascal identifiers. Default enabled in -O2');
   {$ENDIF}
+  w('      -OoTruncateIntegersOnOverflow [-]: Whether to truncate integers in case of overflow. Default is disabled');
   w('  -P<x>  : Set target processor. Case insensitive:');
   w('    -Pecmascript5: default');
   w('    -Pecmascript6');
@@ -5134,6 +5144,7 @@ begin
   Log.LogPlain('  EnumNumbers');
   Log.LogPlain('  RemoveNotUsedPrivates');
   Log.LogPlain('  ShortRefGlobals');
+  Log.LogPlain('  TruncateIntegersOnOverflow');
   Log.LogLn;
   Log.LogPlain('Supported Whole Program Optimizations:');
   Log.LogPlain('  RemoveNotUsedDeclarations');
