@@ -326,7 +326,7 @@ function strlcomp(str1,str2 : pwidechar;l : SizeInt) : SizeInt;
 { the str* functions are not supposed to support internationalisation;
   system.upcase(widechar) does support it (although this is
   Delphi-incompatible) }
-function simplewideupcase(w: widechar): widechar;
+function simplewideupcase(w: widechar): widechar; {$ifdef FPC_HAS_PURE}pure;{$endif FPC_HAS_PURE}
   begin
     if w in ['a'..'z'] then
       result:=widechar(ord(w)-32)

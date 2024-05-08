@@ -21,6 +21,7 @@
 unit symdef;
 
 {$i fpcdefs.inc}
+{$packenum 1}
 
 interface
 
@@ -858,10 +859,12 @@ interface
          procedure Setinterfacedef(AValue: boolean);virtual;
          function Gethasforward: boolean;
          procedure Sethasforward(AValue: boolean);
-         function GetIsEmpty: boolean;
-         procedure SetIsEmpty(AValue: boolean);
-         function GetHasInliningInfo: boolean;
-         procedure SetHasInliningInfo(AValue: boolean);
+         function GetIsEmpty: boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+         procedure SetIsEmpty(AValue: boolean); {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+         function GetHasInliningInfo: boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+         procedure SetHasInliningInfo(AValue: boolean); {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+         function GetHasPurityInfo: boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+         procedure SetHasPurityInfo(AValue: boolean); {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
          function Getis_implemented: boolean;
          procedure Setis_implemented(AValue: boolean);
          function getwas_anonymous:boolean;
@@ -901,7 +904,8 @@ interface
           import_name : pshortstring;
           { info for inlining the subroutine, if this pointer is nil,
             the procedure can't be inlined }
-          inlininginfo : pinlininginfo;
+          inlininginfo,
+          purityinfo   : pinlininginfo;
           import_nr    : word;
           extnumber    : word;
           { set to a value different from tsk_none in case this procdef is for
@@ -1000,6 +1004,8 @@ interface
           property isempty: boolean read GetIsEmpty write SetIsEmpty;
           { true if all information required to inline this routine is available }
           property has_inlininginfo: boolean read GetHasInliningInfo write SetHasInliningInfo;
+          { true if all information required to calculate return values at compile time is available }
+          property has_purityinfo: boolean read GetHasPurityInfo write SetHasPurityInfo;
           { returns the $parentfp parameter for nested routines }
           property parentfpsym: tsym read getparentfpsym;
           { true if the implementation part for this procdef has been handled }
@@ -5852,7 +5858,7 @@ implementation
          ppufile.getderef(returndefderef);
          proctypeoption:=tproctypeoption(ppufile.getbyte);
          proccalloption:=tproccalloption(ppufile.getbyte);
-         ppufile.getset(tppuset8(procoptions));
+         ppufile.getset(tppuset9(procoptions));
 
          funcretloc[callerside].init;
          if po_explicitparaloc in procoptions then
@@ -5877,7 +5883,7 @@ implementation
          ppufile.do_interface_crc:=false;
          ppufile.putbyte(ord(proctypeoption));
          ppufile.putbyte(ord(proccalloption));
-         ppufile.putset(tppuset8(procoptions));
+         ppufile.putset(tppuset9(procoptions));
          ppufile.do_interface_crc:=oldintfcrc;
 
          if (po_explicitparaloc in procoptions) then
@@ -6387,7 +6393,7 @@ implementation
 
     function tprocdef.store_localst: boolean;
       begin
-        result:=has_inlininginfo or (df_generic in defoptions);
+        result:=has_inlininginfo or has_purityinfo or (df_generic in defoptions);
       end;
 
 
@@ -6535,13 +6541,13 @@ implementation
       end;
 
 
-    function tprocdef.GetIsEmpty: boolean;
+    function tprocdef.GetIsEmpty: boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
       begin
         result:=pio_empty in implprocoptions;
       end;
 
 
-    procedure tprocdef.SetIsEmpty(AValue: boolean);
+    procedure tprocdef.SetIsEmpty(AValue: boolean); {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
       begin
         if AValue then
           include(implprocoptions,pio_empty)
@@ -6550,18 +6556,33 @@ implementation
       end;
 
 
-    function tprocdef.GetHasInliningInfo: boolean;
+    function tprocdef.GetHasInliningInfo: boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
       begin
         result:=pio_has_inlininginfo in implprocoptions;
       end;
 
 
-    procedure tprocdef.SetHasInliningInfo(AValue: boolean);
+    procedure tprocdef.SetHasInliningInfo(AValue: boolean); {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
       begin
         if AValue then
           include(implprocoptions,pio_has_inlininginfo)
         else
           exclude(implprocoptions,pio_has_inlininginfo);
+      end;
+
+
+    function tprocdef.GetHasPurityInfo: boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+      begin
+        result:=pio_has_purityinfo in implprocoptions;
+      end;
+
+
+    procedure tprocdef.SetHasPurityInfo(AValue: boolean); {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+      begin
+        if AValue then
+          include(implprocoptions,pio_has_purityinfo)
+        else
+          exclude(implprocoptions,pio_has_purityinfo);
       end;
 
 
@@ -6625,6 +6646,7 @@ implementation
          import_name:=nil;
          import_nr:=0;
          inlininginfo:=nil;
+         purityinfo:=nil;
          deprecatedmsg:=nil;
          genericdecltokenbuf:=nil;
          if cs_opt_fastmath in current_settings.optimizerswitches then
@@ -6691,6 +6713,18 @@ implementation
              funcretsym:=nil;
            end;
 
+         if has_purityinfo then
+           begin
+             if not has_inlininginfo then
+               ppufile.getderef(funcretsymderef);
+             new(purityinfo);
+             ppufile.getset(tppuset4(purityinfo^.flags));
+           end
+         else
+           begin
+             purityinfo:=nil;
+           end;
+
          aliasnames:=TCmdStrList.create;
          { count alias names }
          aliasnamescount:=ppufile.getbyte;
@@ -6729,14 +6763,23 @@ implementation
           localst:=nil;
          { inline stuff }
          if has_inlininginfo then
-           inlininginfo^.code:=ppuloadnodetree(ppufile);
+           begin
+             inlininginfo^.code:=ppuloadnodetree(ppufile);
+             if has_purityinfo then
+               { Reuse the inline tree to save space }
+               purityinfo^.code:=inlininginfo^.code;
+           end
+         else if has_purityinfo then
+           purityinfo^.code:=ppuloadnodetree(ppufile);
+
          { default values for no persistent data }
          if (cs_link_deffile in current_settings.globalswitches) and
             (tf_need_export in target_info.flags) and
             (po_exports in procoptions) then
            deffile.AddExport(mangledname);
-         { Disable po_has_inlining until the derefimpl is done }
+         { Disable po_has_inlining and purity until the derefimpl is done }
          has_inlininginfo:=false;
+         has_purityinfo:=false;
       end;
 
 
@@ -6863,6 +6906,13 @@ implementation
              ppufile.putset(tppuset4(inlininginfo^.flags));
            end;
 
+         if has_purityinfo then
+           begin
+             if not has_inlininginfo then
+               ppufile.putderef(funcretsymderef);
+             ppufile.putset(tppuset4(purityinfo^.flags));
+           end;
+
          { count alias names }
          aliasnamescount:=0;
          item:=TCmdStrListItem(aliasnames.first);
@@ -6923,7 +6973,11 @@ implementation
          oldintfcrc:=ppufile.do_crc;
          ppufile.do_crc:=false;
          if has_inlininginfo then
-           ppuwritenodetree(ppufile,inlininginfo^.code);
+           ppuwritenodetree(ppufile,inlininginfo^.code)
+         else if has_purityinfo then
+           { Purity info and the inlining info share the same node tree to save
+             space }
+           ppuwritenodetree(ppufile,purityinfo^.code);
          ppufile.do_crc:=oldintfcrc;
       end;
 
@@ -7297,6 +7351,15 @@ implementation
              funcretsymderef.build(funcretsym);
              inlininginfo^.code.buildderefimpl;
            end;
+
+         if has_purityinfo then
+           begin
+             if not has_inlininginfo then
+               funcretsymderef.build(funcretsym);
+
+             if not Assigned(inlininginfo) or (purityinfo^.code <> inlininginfo^.code) then
+               purityinfo^.code.buildderefimpl;
+           end;
       end;
 
 
@@ -7318,6 +7381,10 @@ implementation
          if assigned(inlininginfo) then
            has_inlininginfo:=true;
 
+         { Same with purity info }
+         if assigned(purityinfo) then
+           has_purityinfo:=true;
+
          { Locals }
          if store_localst and assigned(localst) then
            begin
@@ -7325,20 +7392,23 @@ implementation
              tlocalsymtable(localst).derefimpl(false);
            end;
 
-        { Inline }
-        if has_inlininginfo then
+         { Inline }
+         if has_inlininginfo then
+           begin
+             inlininginfo^.code.derefimpl;
+             { funcretsym, this is always located in the localst }
+             funcretsym:=tsym(funcretsymderef.resolve);
+           end;
+
+        { Pure }
+        if has_purityinfo then
           begin
-            inlininginfo^.code.derefimpl;
-            { funcretsym, this is always located in the localst }
-            funcretsym:=tsym(funcretsymderef.resolve);
-          end
-        else
-          begin
-            { safety }
-            { Not safe! A unit may be reresolved after its interface has been
-              parsed but before its implementation has been parsed, and in that
-              case the funcretsym is still required!
-            funcretsym:=nil; }
+            if not has_inlininginfo or (purityinfo^.code <> inlininginfo^.code) then
+              purityinfo^.code.derefimpl;
+
+            if not has_inlininginfo then
+              { funcretsym, this is always located in the localst }
+              funcretsym:=tsym(funcretsymderef.resolve);
           end;
       end;
 

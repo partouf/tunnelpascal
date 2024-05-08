@@ -126,6 +126,7 @@ interface
           procedure ppuwrite(ppufile:tcompilerppufile);override;
           function dogetcopy : tnode;override;
           function simplify(forinline : boolean) : tnode; override;
+          function pure_simplify : tnode; override;
           function pass_1 : tnode;override;
           function pass_typecheck:tnode;override;
 {$ifdef state_tracking}
@@ -135,6 +136,8 @@ interface
           procedure XMLPrintNodeInfo(var T: Text); override;
 {$endif DEBUG_NODE_XML}
           property statements : tnode read left write left;
+       protected
+          function MergeNestedBlock(StatementWrapper: TStatementNode): TStatementNode;
        end;
        tblocknodeclass = class of tblocknode;
 
@@ -363,7 +366,7 @@ implementation
       ppu,
       symconst,symdef,defutil,defcmp,
       pass_1,
-      nutils,nld,ncnv,
+      nutils,nld,ncnv,nflw,
       procinfo
 {$ifdef DEBUG_NODE_XML}
 {$ifndef jvm}
@@ -595,6 +598,8 @@ implementation
 
 
     function tstatementnode.simplify(forinline: boolean) : tnode;
+      var
+        n: TNode;
       begin
         result:=nil;
         { these "optimizations" are only to make it more easy to recognise    }
@@ -603,6 +608,14 @@ implementation
         { because if the main blocknode which makes up a procedure/function   }
         { body were replaced with a statementn/nothingn, this could cause     }
         { problems elsewhere in the compiler which expects a blocknode        }
+
+        { Statement within a statement; probably a result of pure analysis }
+        if (left.nodetype = statementn) then
+          begin
+            n := left;
+            left := tstatementnode(n).PruneKeepLeft();
+            n.Free;
+          end;
 
         { remove next statement if it's a nothing-statement (since if it's }
         { the last, it won't remove itself -- see next simplification)     }
@@ -751,9 +764,33 @@ implementation
       end;
 
 
+    function TBlockNode.MergeNestedBlock(StatementWrapper: TStatementNode): TStatementNode;
+      var
+        last, temp: TStatementNode;
+      begin
+        { Find last statement }
+        Result := TStatementNode(TBlockNode(StatementWrapper.left).PruneKeepLeft());
+        if Assigned(Result) then
+          begin
+            last := Result;
+            while Assigned(last.right) do
+              last := TStatementNode(last.right);
+
+            last.right := TStatementNode(StatementWrapper.PruneKeepRight());
+          end
+        else
+          Result := TStatementNode(StatementWrapper.PruneKeepRight());
+
+        { make sure the nf_usercode_entry flag is safeguarded }
+        Flags := Flags + (StatementWrapper.left.flags * [nf_usercode_entry, nf_block_with_exit]);
+
+        StatementWrapper.Free;
+      end;
+
+
     function tblocknode.simplify(forinline : boolean): tnode;
       var
-        n, p, first, last: tstatementnode;
+        n, p, last: tstatementnode;
 {$ifdef break_inlining}
         a : array[0..3] of tstatementnode;
 {$endif break_inlining}
@@ -842,30 +879,23 @@ implementation
                             if (bnf_strippable in TBlockNode(p.left).blocknodeflags) and
                               ((p.left.flags * [nf_block_with_exit] = []) or no_exit_statement_in_block(p.left)) then
                               begin
-                                { Attempt to merge this block into the main statement
-                                  set }
-
-                                { Find last statement }
-                                first := TStatementNode(TBlockNode(p.left).PruneKeepLeft());
-                                if Assigned(first) then
-                                  begin
-                                    last := first;
-                                    while Assigned(last.right) do
-                                      last := TStatementNode(last.right);
-
-                                    n.right := first;
-                                  end
-                                else
-                                  last := n;
-
-                                last.right := p.PruneKeepRight();
-
-                                { make sure the nf_usercode_entry flag is safeguarded }
-                                Flags := Flags + (p.left.flags * [nf_usercode_entry]);
-
-                                p.Free;
+                                { Merge this block into the main statement set }
+                                n.right := MergeNestedBlock(p);
                                 Continue;
                               end;
+                          goton:
+                            begin
+                              last := TStatementNode(p.Next);
+                              if Assigned(last) and
+                                Assigned(last.statement) and
+                                (TGotoNode(p.statement).labelnode = last.statement) then
+                                begin
+                                  { Goto jumps to a label that immediately follows it }
+                                  n.right := p.PruneKeepRight();
+                                  p.Free;
+                                  Continue;
+                                end;
+                            end;
                           else
                             ;
                         end;
@@ -900,6 +930,42 @@ implementation
 {$endif break_inlining}
       end;
 
+
+    function tblocknode.pure_simplify: TNode;
+      var
+        n, p: TStatementNode;
+      begin
+        { When simplifying block nodes for pure analysis, we're not concerned
+          about exit nodes etc. since the tree is never code-generated, just
+          making the tree as simple as possible }
+
+        { Look one statement ahead in case it can be deleted - we
+          need the previous statement to stitch the tree correctly
+        }
+        n := TStatementNode(left);
+        while Assigned(n) do
+          begin
+
+            p := TStatementNode(n.Next);
+            if not Assigned(p) then
+              Break;
+
+            if Assigned(p.left) and (p.left.nodetype = blockn) then
+              begin
+                { Merge this block into the main statement set }
+                n.right := MergeNestedBlock(p);
+                Continue;
+              end;
+            n := TStatementNode(n.Next);
+          end;
+
+        { Now handle the case where the first statement is a block node }
+        if TStatementNode(left).left.nodetype = blockn then
+          { Merge this block into the main statement set }
+          left := MergeNestedBlock(TStatementNode(left));
+
+        Result := simplify(True);
+      end;
 
     function tblocknode.pass_typecheck:tnode;
       var

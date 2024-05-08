@@ -1340,8 +1340,8 @@ Function  HexStr(Val:Pointer):shortstring;
 {$if defined(VER3_2) or defined(VER3_0)}
 Function Chr(b : byte) : AnsiChar;      [INTERNPROC: fpc_in_chr_byte];
 {$endif defined(VER3_2) or defined(VER3_0)}
-Function  UpCase(c:AnsiChar):AnsiChar;
-Function  LowerCase(c:AnsiChar):AnsiChar; overload;
+Function  UpCase(c:AnsiChar):AnsiChar; {$ifdef FPC_HAS_PURE}pure;{$endif FPC_HAS_PURE}
+Function  LowerCase(c:AnsiChar):AnsiChar; overload; {$ifdef FPC_HAS_PURE}pure;{$endif FPC_HAS_PURE}
 function  Pos(const substr : shortstring;c:Ansichar; Offset: Sizeint = 1): SizeInt;
 
 

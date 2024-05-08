@@ -333,6 +333,7 @@ implementation
          n.symtableentry:=symtableentry;
          n.fprocdef:=fprocdef;
          n.loadnodeflags:=loadnodeflags;
+
          if symtableentry.typ=labelsym then
            begin
              { see the comments for the tgotonode.labelsym field }

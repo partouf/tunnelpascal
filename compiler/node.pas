@@ -338,6 +338,10 @@ interface
          { tries to simplify the node, returns a value <>nil if a simplified
            node has been created }
          function simplify(forinline : boolean) : tnode;virtual;
+
+         { tries to simplify the node for pure function analysis.  By default,
+           just calls simplify(True). }
+         function pure_simplify : tnode; dynamic;
 {$ifdef state_tracking}
          { Does optimizations by keeping track of the variable states
            in a procedure }
@@ -829,6 +833,12 @@ implementation
     function tnode.simplify(forinline : boolean) : tnode;
       begin
         result:=nil;
+      end;
+
+
+    function tnode.pure_simplify : tnode;
+      begin
+        result:=simplify(True);
       end;
 
 

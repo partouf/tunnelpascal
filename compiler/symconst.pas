@@ -454,7 +454,9 @@ type
       and returns and it can be called.) }
     po_wasm_funcref,
     { WebAssembly suspending external }
-    po_wasm_suspending
+    po_wasm_suspending,
+    { Is a pure function }
+    po_pure
   );
   tprocoptions=set of tprocoption;
 
@@ -474,7 +476,9 @@ type
     { compiled with fastmath enabled }
     pio_fastmath,
     { inline is forbidden (calls get_frame) }
-    pio_inline_forbidden
+    pio_inline_forbidden,
+    { This is a pure function with a valid node tree }
+    pio_has_purityinfo
   );
   timplprocoptions = set of timplprocoption;
 
@@ -1133,7 +1137,8 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       'objc-related-result-type', {po_objc_related_result_type}
       'po_anonymous', {po_anonymous}
       '"WASMFUNCREF"', {po_wasm_funcref}
-      '"SUSPENDING"' {po_wasm_suspending}
+      '"SUSPENDING"', {po_wasm_suspending}
+      '"PURE"' {po_pure}
     );
 
 implementation

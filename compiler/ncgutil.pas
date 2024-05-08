@@ -335,6 +335,13 @@ implementation
                          cg.a_jmp_always(list,falselabel);
                        end;
 {$endif cpuflags}
+                     LOC_CONSTANT:
+                       begin
+                         if p.location.value = 0 then
+                           cg.a_jmp_always(list,falselabel)
+                         else
+                           cg.a_jmp_always(list,truelabel);
+                       end;
                      else
                        internalerror(200308241);
                    end;

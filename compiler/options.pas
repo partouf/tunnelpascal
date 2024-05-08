@@ -4866,6 +4866,7 @@ begin
 { Temporary defines, until things settle down }
   def_system_macro('FPC_HAS_OPERATOR_ENUMERATOR');
   def_system_macro('FPC_HAS_CONSTREF');
+  def_system_macro('FPC_HAS_PURE');
   def_system_macro('FPC_STATICRIPFIXED');
   def_system_macro('FPC_VARIANTCOPY_FIXED');
   def_system_macro('FPC_DYNARRAYCOPY_FIXED');

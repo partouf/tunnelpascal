@@ -46,6 +46,7 @@ interface
         procedure swap_tempflags;
         function store_node_tempflags(var n: tnode; arg: pointer): foreachnoderesult;
         procedure CreateInlineInfo;
+        procedure CreatePurityInfo;
         { returns the node which is the start of the user code, this is needed by the dfa }
         function GetUserCode: tnode;
         procedure maybe_add_constructor_wrapper(var tocode: tnode; withexceptblock: boolean);
@@ -267,6 +268,131 @@ implementation
                 ;
             end;
         end;
+        result:=true;
+      end;
+
+
+    const
+      SNoPureReasons: array[0..4] of ansistring = (
+        'global variable access',
+        'writable constants',
+        'call to impure function',
+        'pointer dereference',
+        'use of address-of operator'
+      );
+
+
+    function preliminarypurenodescan(var n: tnode; arg: Pointer): foreachnoderesult;
+      begin
+        result:=fen_false;
+        case n.nodetype of
+          loadn:
+            if (TLoadNode(n).symtableentry.typ = staticvarsym) then
+              begin
+(*                if (
+                    { Take no chances }
+                    (cs_typed_const_writable in current_settings.localswitches) and
+                    (vo_is_typed_const in TAbstractVarSym(TLoadNode(n).symtableentry).varoptions)
+                  ) then
+                  begin
+                    result := fen_norecurse_true;
+                    PInteger(arg)^ := 1;
+                  end
+                else *)if (TAbstractVarSym(TLoadNode(n).symtableentry).varoptions * [vo_is_const(*, vo_is_typed_const*)]) = [] then
+                  begin
+                    result := fen_norecurse_true;
+                    PInteger(arg)^ := 0;
+                  end;
+              end;
+          calln:
+            if not(Assigned(TCallNode(n).procdefinition)) or
+              { Note that the presence of these options don't guarantee success }
+              (([po_compilerproc, po_internconst, po_inline, po_pure] * TCallNode(n).procdefinition.procoptions) = []) then
+              begin
+                result := fen_norecurse_true;
+                PInteger(arg)^ := 2;
+              end;
+          derefn:
+            begin
+              { Not allowed to dereference a pointer }
+              result := fen_norecurse_true;
+              PInteger(arg)^ := 3;
+            end;
+          addrn:
+            begin
+              { Not allowed to take the address of a variable }
+              result := fen_norecurse_true;
+              PInteger(arg)^ := 4;
+            end;
+          else
+            ;
+        end;
+      end;
+
+
+    function checknodepurity(procdef: tprocdef; coderoot: TNode): boolean;
+
+      procedure _no_pure(const reason: TMsgStr);
+        begin
+          Message2(parser_w_pure_ineligible,tprocdef(procdef).procsym.realname,reason);
+        end;
+
+      var
+        X: Integer;
+        MsgIdx: Integer;
+      begin
+        result := false;
+        { this code will never be used (only specialisations can be pure),
+          and moreover contains references to defs that are not stored in the
+          ppu file }
+        if df_generic in current_procinfo.procdef.defoptions then
+          exit;
+
+        for X := 0 to procdef.paras.Count - 1 do
+          if not (TAbstractVarSym(procdef.paras[X]).varspez in [vs_value, vs_const, vs_out]) and
+            (
+              { Make an exception for the function result }
+              (TAbstractVarSym(procdef.paras[X]).varspez <> vs_var) or
+              not (vo_is_funcret in TAbstractVarSym(procdef.paras[X]).varoptions)
+            ) then
+            begin
+              _no_pure('parameter ' + (TAbstractVarSym(procdef.paras[X]).vardef).GetTypeName + ' is not passed by value');
+              exit;
+            end;
+
+        MsgIdx := 0;
+        if foreachnodestatic(pm_postprocess, coderoot, @preliminarypurenodescan, @MsgIdx) then
+          begin
+            _no_pure(SNoPureReasons[MsgIdx]);
+            exit;
+          end;
+
+        if pi_is_assembler in current_procinfo.flags then
+          begin
+            _no_pure('assembler');
+            exit;
+          end;
+        if pi_has_assembler_block in current_procinfo.flags then
+          begin
+            _no_pure('assembler');
+            exit;
+          end;
+        if (pi_has_global_goto in current_procinfo.flags) or
+           (pi_has_interproclabel in current_procinfo.flags) then
+          begin
+            _no_pure('global goto');
+            exit;
+          end;
+        if pi_has_inherited in current_procinfo.flags then
+          begin
+            _no_pure('inherited');
+            exit;
+          end;
+        if pi_uses_get_frame in current_procinfo.flags then
+          begin
+            _no_pure('get_frame');
+            exit;
+          end;
         result:=true;
       end;
 
@@ -1581,6 +1707,8 @@ implementation
               PrintOption('noreturn');
             if po_noinline in procdef.procoptions then
               PrintOption('noinline');
+            if po_pure in procdef.procoptions then
+              PrintOption('pure');
           end;
 
           if Assigned(Code) then
@@ -1744,16 +1872,27 @@ implementation
 
      procedure TCGProcinfo.CreateInlineInfo;
        begin
-        new(procdef.inlininginfo);
-        procdef.inlininginfo^.code:=code.getcopy;
-        procdef.inlininginfo^.flags:=flags;
-        { The blocknode needs to set an exit label }
-        if procdef.inlininginfo^.code.nodetype=blockn then
-          include(procdef.inlininginfo^.code.flags,nf_block_with_exit);
-        procdef.has_inlininginfo:=true;
-        export_local_ref_syms;
-        export_local_ref_defs;
+         new(procdef.inlininginfo);
+         procdef.inlininginfo^.code:=code.getcopy;
+         procdef.inlininginfo^.flags:=flags;
+         procdef.has_inlininginfo:=true;
+         export_local_ref_syms;
+         export_local_ref_defs;
        end;
+
+
+     procedure TCGProcinfo.CreatePurityInfo;
+       begin
+         new(procdef.purityinfo);
+         if Assigned(procdef.inlininginfo) then
+           { Reuse the inline nodes to save space }
+           procdef.purityinfo^.code:=procdef.inlininginfo^.code
+         else
+           procdef.purityinfo^.code:=code.getcopy;
+         procdef.purityinfo^.flags:=flags;
+         procdef.has_purityinfo:=true;
+      end;
+
 
     procedure searchthreadvar(p: TObject; arg: pointer);
       var
@@ -2556,6 +2695,11 @@ implementation
            { Can we inline this procedure? }
            checknodeinlining(procdef) then
            CreateInlineInfo;
+
+         if (po_pure in procdef.procoptions) and
+           { Can this routine be made pure? }
+           checknodepurity(procdef, code) then
+           CreatePurityInfo;
 
          { Print the node to tree.log }
          if paraprintnodetree <> 0 then
