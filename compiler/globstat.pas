@@ -57,6 +57,7 @@ type
     oldcurrent_filepos      : tfileposinfo;
     old_current_module : tmodule;
     oldcurrent_procinfo : tprocinfo;
+    oldcurrent_proc_block_lvl : Integer;
     old_settings : tsettings;
     old_switchesstatestack : tswitchesstatestack;
     old_switchesstatestackpos : Integer;
@@ -150,6 +151,7 @@ var
       oldsymtablestack:=symtablestack;
       oldmacrosymtablestack:=macrosymtablestack;
       oldcurrent_procinfo:=current_procinfo;
+      oldcurrent_proc_block_lvl := current_proc_block_lvl;
 
       { save scanner state }
       oldc:=c;
@@ -209,6 +211,7 @@ var
       symtablestack:=oldsymtablestack;
       macrosymtablestack:=oldmacrosymtablestack;
       current_procinfo:=oldcurrent_procinfo;
+      current_proc_block_lvl := oldcurrent_proc_block_lvl;
       current_filepos:=oldcurrent_filepos;
       current_settings:=old_settings;
       status.verbosity:=old_verbosity;
