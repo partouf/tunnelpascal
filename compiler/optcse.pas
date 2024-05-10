@@ -608,9 +608,9 @@ unit optcse;
         Result:=(n.nodetype=loadn) and (tloadnode(n).symtableentry.typ=staticvarsym)
           and ((vo_is_thread_var in tstaticvarsym(tloadnode(n).symtableentry).varoptions) or
             (cs_create_pic in current_settings.moduleswitches)
-{$if defined(aarch64)}
+{$if defined(aarch64) or defined(sparc)}
             or (not(tabstractvarsym(tloadnode(n).symtableentry).is_regvar(false)))
-{$endif defined(aarch64)}
+{$endif defined(aarch64) or defined(sparc)}
            );
       end;
 
@@ -813,7 +813,7 @@ unit optcse;
                         createblock:=internalstatements(creates);
                         deleteblock:=internalstatements(deletes);
                       end;
-                     constentries[i].temp:=ctempcreatenode.create(voidpointertype,
+                     constentries[i].temp:=ctempcreatenode.create(cpointerdef.getreusable(constentries[i].valuenode.resultdef),
                        voidpointertype.size,tt_persistent,true);
                      addstatement(creates,constentries[i].temp);
                      addstatement(creates,cassignmentnode.create_internal(ctemprefnode.create(constentries[i].temp),
