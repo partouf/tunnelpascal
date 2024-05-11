@@ -27,11 +27,15 @@ jobs:
           cd utils
           fpcmake -v
           make fpts2junit
-      - name: Run Tests
+      - name: Aggregate Results
         run: |
           FPC_SRC=$(pwd)
           PP=$FPC_SRC/compiler/ppcx64
           tests/utils/fpts2junit $FPC_SRC/tests/output/x86_64-linux/ testresult.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testresult.xml
+          path: ./testresult.xml
       - name: Report
         uses: mikepenz/action-junit-report@v4
         if: success() || failure()
