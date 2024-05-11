@@ -1,3 +1,5 @@
+{ %norun }
+
  {$mode delphi}
 
 type

@@ -7,6 +7,7 @@ var
   j,i : longint;
 
 begin
+  i:=0;
   j:=paramcount;
   if j=1 then
     i:=1;

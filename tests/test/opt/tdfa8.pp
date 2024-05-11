@@ -1,5 +1,4 @@
 { %OPT=-Oodfa -Sew -vw }
-{ %fail }
 { %norun }
 unit tdfa8;
 

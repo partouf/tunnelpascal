@@ -1,4 +1,8 @@
 { %target=win32,win64,wince,darwin,linux,freebsd,solaris,beos,aix,android,haiku }
+{ %norun }
+
+{ Don't run, because tw9089b.pp was disabled and the txt file will not be there}
+
 uses
   SysUtils;
 
