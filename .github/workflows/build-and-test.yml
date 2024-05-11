@@ -1,0 +1,34 @@
+name: Compiler Explorer
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        run: sudo apt-get install -y fpc-3.2.2
+      - name: Build FPC
+        run: |
+          fpcmake
+          make -j 4 all FPMAKEOPT="-T 4" "OPT=-Oodfa"
+      - name: Build Tests
+        run: |
+          FPC_SRC=$(pwd)
+          PP=$FPC_SRC/compiler/ppcx64
+          cd tests
+          fpcmake -v
+          make full TEST_FPC=$PP TEST_DELTEMP=1 -j 4
+          cd utils
+          fpcmake -v
+          make fpts2junit
+      - name: Run Tests
+        run: |
+          FPC_SRC=$(pwd)
+          PP=$FPC_SRC/compiler/ppcx64
+          tests/utils/fpts2junit $FPC_SRC/tests/output/x86_64-linux/ testresult.xml
