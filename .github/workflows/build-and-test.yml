@@ -2,6 +2,11 @@ name: TestBuild (x86_64)
 
 on: [push, pull_request]
 
+env:
+  LANG: "en_US.UTF-8"
+  LANGUAGE: "en_US:en"
+  LC_ALL: "en_US.UTF-8"
+
 jobs:
   testbuild:
     runs-on: ubuntu-latest
