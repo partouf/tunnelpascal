@@ -1,3 +1,5 @@
+(* Note: test is flaky, depends on Locale *)
+
 {$codepage utf-8}
 
 {$ifdef go32v2}
