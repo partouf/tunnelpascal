@@ -4,7 +4,7 @@ on: [push, pull_request]
 
 jobs:
   testbuild:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
@@ -22,10 +22,10 @@ jobs:
           FPC_SRC=$(pwd)
           PP=$FPC_SRC/compiler/ppcx64
           cd tests
-          fpcmake -v
+          fpcmake
           make full TEST_FPC=$PP TEST_DELTEMP=1 -j 4
           cd utils
-          fpcmake -v
+          fpcmake
           make fpts2junit
       - name: Aggregate Results
         run: |
