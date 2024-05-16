@@ -127,6 +127,7 @@ implementation
          set_current_module(nil);
          current_asmdata:=nil;
          current_procinfo:=nil;
+         current_proc_block_lvl := 0;
          current_structdef:=nil;
          current_genericdef:=nil;
          current_specializedef:=nil;
@@ -257,6 +258,7 @@ implementation
            reference the data that might already be destroyed }
          set_current_module(nil);
          current_procinfo:=nil;
+         current_proc_block_lvl := 0;
          current_asmdata:=nil;
          current_structdef:=nil;
          current_genericdef:=nil;

@@ -2406,6 +2406,7 @@ implementation
     procedure tcgprocinfo.parse_body;
       var
          old_current_procinfo : tprocinfo;
+         oldcurrent_proc_block_lvl : Integer;
          old_block_type : tblock_type;
          st : TSymtable;
          old_current_structdef: tabstractrecorddef;
@@ -2414,8 +2415,11 @@ implementation
          parentfpinitblock: tnode;
          old_parse_generic: boolean;
          recordtokens : boolean;
+         sym : TObject;
+         ind : Integer;
       begin
          old_current_procinfo:=current_procinfo;
+         oldcurrent_proc_block_lvl := current_proc_block_lvl;
          old_block_type:=block_type;
          old_current_structdef:=current_structdef;
          old_current_genericdef:=current_genericdef;
@@ -2423,6 +2427,7 @@ implementation
          old_parse_generic:=parse_generic;
 
          current_procinfo:=self;
+         current_proc_block_lvl := 0;       
          current_structdef:=procdef.struct;
 
 
@@ -2568,6 +2573,14 @@ implementation
            XMLPrintProc(True);
 {$endif DEBUG_NODE_XML}
 
+        //rename variables back to normal name to have possibility to acces them from debugger (if someday it will be supported by lazarus then remove/change this)
+        for ind := 0 to current_procinfo.procdef.localst.SymList.Count -1 do
+        begin
+          sym := current_procinfo.procdef.localst.SymList[ind];
+          if (sym is tlocalvarsym) and (tlocalvarsym(sym).scope_lvl = -1) then
+            tlocalvarsym(sym).RealName := StringReplace(StringReplace(tlocalvarsym(sym).RealName, '$0', '', []), '$', '___', []);
+        end;
+
          { ... remove symbol tables }
          remove_from_symtablestack;
 
@@ -2579,6 +2592,7 @@ implementation
          current_genericdef:=old_current_genericdef;
          current_specializedef:=old_current_specializedef;
          current_procinfo:=old_current_procinfo;
+         current_proc_block_lvl := oldcurrent_proc_block_lvl;
          parse_generic:=old_parse_generic;
 
          { Restore old state }
