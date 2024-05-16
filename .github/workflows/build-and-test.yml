@@ -37,7 +37,17 @@ jobs:
           FPC_SRC=$(pwd)
           PP=$FPC_SRC/compiler/ppcx64
           tests/utils/fpts2junit $FPC_SRC/tests/output/x86_64-linux/ testresult.xml
+          ERRORS=$(xmllint testresult.xml --xpath "string(/testsuite/@errors)")
+          FAILURES=$(xmllint testresult.xml --xpath "string(/testsuite/@failures)")
+          ALL=$((ERRORS + FAILURES))
+          if [[ $ALL -ne 0 ]]; then
+              echo "Numbers of errors: $ALL"
+              exit 1
+          else
+              echo "No errors"
+          fi
       - uses: actions/upload-artifact@v4
+        if: success() || failure()
         with:
           name: testresult.xml
           path: ./testresult.xml
