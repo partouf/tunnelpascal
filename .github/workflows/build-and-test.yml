@@ -95,9 +95,9 @@ jobs:
           LIBDIR=$PACKDIR/lib/fpc/3.3.1
           PP=$LIBDIR/ppcx64
           mkdir "$PACKDIR"
-          echo "PACKDIR=$PACKDIR\n" >> "$GITHUB_ENV"
-          echo "LIBDIR=$LIBDIR\n" >> "$GITHUB_ENV"
-          echo "PP=$PP\n" >> "$GITHUB_ENV"
+          echo "PACKDIR=$PACKDIR" >> "$GITHUB_ENV"
+          echo "LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
+          echo "PP=$PP" >> "$GITHUB_ENV"
       - name: Build Compiler (bootstrap)
         run: |
           make -C compiler FPMAKEOPT="-T 4" "OPTS=-O3 -dEXTDEBUG" "INSTALL_PREFIX=$PACKDIR" all
