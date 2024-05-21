@@ -93,16 +93,16 @@ jobs:
           FPC_SRC="$(pwd)"
           PACKDIR="$FPC_SRC/build"
           LIBDIR=$PACKDIR/lib/fpc/3.3.1
-          PP=$LIBDIR/ppcx64
           mkdir "$PACKDIR"
           echo "PACKDIR=$PACKDIR" >> "$GITHUB_ENV"
           echo "LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
-          echo "PP=$PP" >> "$GITHUB_ENV"
       - name: Build Compiler (bootstrap)
         run: |
           make -C compiler FPMAKEOPT="-T 4" "OPTS=-O3 -dEXTDEBUG" "INSTALL_PREFIX=$PACKDIR" all
           make -C compiler "INSTALL_PREFIX=$PACKDIR" ZIPINSTALL=1 install
           mv "$PACKDIR/lib/fpc/3.2.2" "$LIBDIR"
+          PP=$LIBDIR/ppcx64
+          echo "PP=$PP" >> "$GITHUB_ENV"
       - name: Build RTL for FPMAKE
         run: |
           make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" all
