@@ -1,0 +1,59 @@
+name: TestBuild (x86_64)
+
+on: [push, pull_request]
+
+env:
+  LANG: "en_US.UTF-8"
+  LANGUAGE: "en_US:en"
+  LC_ALL: "en_US.UTF-8"
+
+jobs:
+  testbuild:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        run: sudo apt-get install -y fpc-3.2.2
+      - name: Build FPC
+        run: |
+          fpcmake
+          make -j 4 all FPMAKEOPT="-T 4" "OPT=-Oodfa"
+      - name: Build Tests
+        run: |
+          FPC_SRC=$(pwd)
+          PP=$FPC_SRC/compiler/ppcx64
+          cd tests
+          fpcmake
+          make full TEST_FPC=$PP TEST_DELTEMP=1 -j 4
+          cd utils
+          fpcmake
+          make fpts2junit
+      - name: Aggregate Results
+        run: |
+          FPC_SRC=$(pwd)
+          PP=$FPC_SRC/compiler/ppcx64
+          tests/utils/fpts2junit $FPC_SRC/tests/output/x86_64-linux/ testresult.xml
+          ERRORS=$(xmllint testresult.xml --xpath "string(/testsuite/@errors)")
+          FAILURES=$(xmllint testresult.xml --xpath "string(/testsuite/@failures)")
+          ALL=$((ERRORS + FAILURES))
+          if [[ $ALL -ne 0 ]]; then
+              echo "Numbers of errors: $ALL"
+              exit 1
+          else
+              echo "No errors"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: testresult.xml
+          path: ./testresult.xml
+      - name: Report
+        uses: mikepenz/action-junit-report@v4
+        if: success() || failure()
+        with:
+          report_paths: './testresult.xml'
