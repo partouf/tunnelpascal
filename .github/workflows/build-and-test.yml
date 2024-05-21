@@ -91,7 +91,7 @@ jobs:
       - name: Prepare
         run: |
           FPC_SRC="$(pwd)"
-          PACKDIR="$PACKDIR/build"
+          PACKDIR="$FPC_SRC/build"
           LIBDIR=$PACKDIR/lib/fpc/3.3.1
           PP=$LIBDIR/ppcx64
           mkdir "$PACKDIR"
