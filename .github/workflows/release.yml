@@ -26,7 +26,7 @@ jobs:
       - name: Release
         uses: fnkr/github-action-ghr@v1
         env:
-          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/fpc-regular.x86_64-linux.tar.gz
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-regular.x86_64-linux.tar.gz
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   bleeding-edge-build:
