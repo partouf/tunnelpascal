@@ -1,0 +1,79 @@
+name: Release (x86_64)
+
+on: [push]
+
+env:
+  LANG: "en_US.UTF-8"
+  LANGUAGE: "en_US:en"
+  LC_ALL: "en_US.UTF-8"
+
+jobs:
+  release-build:
+    runs-on: ubuntu-22.04
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        run: sudo apt-get install -y fpc-3.2.2
+      - name: Build FPC
+        run: |
+          fpcmake
+          make -j 4 zipinstall FPMAKEOPT="-T 4" "OPT=-Oodfa"
+          mv fpc-*.x86_64-linux.tar.gz fpc-regular.x86_64-linux.tar.gz
+      - name: Release
+        uses: fnkr/github-action-ghr@v1
+        env:
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/fpc-regular.x86_64-linux.tar.gz
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bleeding-edge-build:
+    runs-on: ubuntu-22.04
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        run: sudo apt-get install -y fpc-3.2.2
+      - name: Prepare
+        run: |
+          FPC_SRC="$(pwd)"
+          PACKDIR="$FPC_SRC/build"
+          LIBDIR=$PACKDIR/lib/fpc/3.3.1
+          mkdir "$PACKDIR"
+          echo "PACKDIR=$PACKDIR" >> "$GITHUB_ENV"
+          echo "LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
+      - name: Build Compiler (bootstrap)
+        run: |
+          make -C compiler FPMAKEOPT="-T 4" "OPTS=-O3 -dEXTDEBUG" "INSTALL_PREFIX=$PACKDIR" all
+          make -C compiler "INSTALL_PREFIX=$PACKDIR" ZIPINSTALL=1 install
+          mv "$PACKDIR/lib/fpc/3.2.2" "$LIBDIR"
+          PP=$LIBDIR/ppcx64
+          echo "PP=$PP" >> "$GITHUB_ENV"
+      - name: Build RTL for FPMAKE
+        run: |
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" all
+          make -C packages "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" fpmake
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" clean
+      - name: Build RTL and packages with DottedUnits
+        run: |
+          make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" all
+          make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" install
+          make -C packages "FPC_DOTTEDUNITS=1" "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" all
+          make -C packages "FPC_DOTTEDUNITS=1" "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" install
+      - name: Create tgz
+        run: |
+          pushd build
+          tar -cf ../tunnel-pascal.tar *
+          popd
+          gzip tunnel-pascal.tar
+          mv tunnel-pascal.tar.gz tunnel-pascal-bleeding-edge.x86_64-linux.tar.gz
+      - name: Release
+        uses: fnkr/github-action-ghr@v1
+        env:
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-bleeding-edge.x86_64-linux.tar.gz
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
