@@ -1,6 +1,6 @@
 name: TestBuild (x86_64)
 
-on: [push, pull_request]
+on: [push]
 
 env:
   LANG: "en_US.UTF-8"
@@ -91,7 +91,7 @@ jobs:
       - name: Prepare
         run: |
           FPC_SRC="$(pwd)"
-          PACKDIR="$(PACKDIR)/build"
+          PACKDIR="$PACKDIR/build"
           LIBDIR=$PACKDIR/lib/fpc/3.3.1
           PP=$LIBDIR/ppcx64
           mkdir "$PACKDIR"
