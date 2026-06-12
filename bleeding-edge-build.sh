@@ -15,6 +15,10 @@ make -C compiler "INSTALL_PREFIX=$PACKDIR" ZIPINSTALL=1 install
 mv "$PACKDIR/lib/fpc/3.2.2" "$LIBDIR"
 PP=$LIBDIR/ppcx64
 
+# Clean the RTL first: the compiler bootstrap above builds it with the
+# bootstrap fpc (PPU v207); rebuild it with the freshly built $PP (PPU v208)
+# so fpmake doesn't choke on a stale system.ppu ("Can't find unit system").
+make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" clean
 make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" all
 make -C packages "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" fpmake
 

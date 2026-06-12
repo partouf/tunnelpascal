@@ -56,6 +56,11 @@ jobs:
           echo "PP=$PP" >> "$GITHUB_ENV"
       - name: Build RTL for FPMAKE
         run: |
+          # The bootstrap step compiles the in-tree RTL with the apt fpc-3.2.2
+          # (PPU v207). Clean it first so it is rebuilt with the freshly built
+          # compiler ($PP, PPU v208); otherwise fpmake loads the stale v207
+          # system.ppu and fails with "Can't find unit system".
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" clean
           make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" all
           make -C packages "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" fpmake
           make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" clean
