@@ -312,9 +312,9 @@ implementation
         list := TFPObjectList.Create(False);
         repeat
           if isConst then
-            list.add(clocalvarsym.create(orgpattern, vs_const, generrordef, []))
+            list.add(clocalvarsym.create(current_scanner.orgpattern, vs_const, generrordef, []))
           else
-            list.add(clocalvarsym.create(orgpattern, vs_value, generrordef, []));
+            list.add(clocalvarsym.create(current_scanner.orgpattern, vs_value, generrordef, []));
           consume(_ID);
         until not try_to_consume(_COMMA);
         
@@ -914,7 +914,7 @@ implementation
          
          if try_to_consume(_VAR) then //inline for var
          begin
-           sym := clocalvarsym.create(orgpattern, vs_value, generrordef, []);
+           sym := clocalvarsym.create(current_scanner.orgpattern, vs_value, generrordef, []);
            sym.scope_lvl := current_proc_block_lvl;
            consume(_ID);
            
