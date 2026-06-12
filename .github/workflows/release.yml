@@ -22,7 +22,8 @@ jobs:
         run: |
           fpcmake
           make -j 4 zipinstall FPMAKEOPT="-T 4" "OPT=-Oodfa"
-          mv fpc-*.x86_64-linux.tar.gz fpc-regular.x86_64-linux.tar.gz
+          # Name must match GHR_PATH in the Release step below.
+          mv fpc-*.x86_64-linux.tar.gz tunnel-pascal-regular.x86_64-linux.tar.gz
       - name: Release
         uses: fnkr/github-action-ghr@v1
         env:
