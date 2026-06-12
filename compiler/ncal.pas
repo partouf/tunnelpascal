@@ -4318,25 +4318,42 @@ implementation
                       ignoregenericparacall:=false;
                       if assigned(current_procinfo) and (df_generic in current_procinfo.procdef.defoptions) then
                         begin
-                          { in tp mode we can try to convert to procvar if
-                            there are no parameters specified }
-                          if not(assigned(left)) and
-                             ([cnf_inherited,cnf_no_convert_procvar,cnf_parameters_specified]*callnodeflags=[]) and
-                             ((m_tp_procvar in current_settings.modeswitches) or
-                              (m_mac_procvar in current_settings.modeswitches)) and
-                             (not assigned(methodpointer) or
-                              (methodpointer.nodetype <> typen)) then
+                          { if any argument still has an undefined (generic)
+                            type, defer overload resolution to specialization
+                            instead of complaining here }
+                          pt:=tcallparanode(left);
+                          while assigned(pt) do
+                           begin
+                             if is_undefined_recursive(pt.resultdef) then
+                               begin
+                                 ignoregenericparacall:=true;
+                                 break;
+                               end;
+                             pt:=tcallparanode(pt.right);
+                           end;
+
+                          if not ignoregenericparacall then
                             begin
-                              hpt:=cloadnode.create(tprocsym(symtableprocentry),symtableproc);
-                              if assigned(methodpointer) then
-                                tloadnode(hpt).set_mp(methodpointer.getcopy);
-                              typecheckpass(hpt);
-                              result:=hpt;
-                            end
-                          else
-                            begin
-                              CGMessagePos1(fileinfo,parser_e_wrong_parameter_size,symtableprocentry.realname);
-                              symtableprocentry.write_parameter_lists(nil);
+                              { in tp mode we can try to convert to procvar if
+                                there are no parameters specified }
+                              if not(assigned(left)) and
+                                 ([cnf_inherited,cnf_no_convert_procvar,cnf_parameters_specified]*callnodeflags=[]) and
+                                 ((m_tp_procvar in current_settings.modeswitches) or
+                                  (m_mac_procvar in current_settings.modeswitches)) and
+                                 (not assigned(methodpointer) or
+                                  (methodpointer.nodetype <> typen)) then
+                                begin
+                                  hpt:=cloadnode.create(tprocsym(symtableprocentry),symtableproc);
+                                  if assigned(methodpointer) then
+                                    tloadnode(hpt).set_mp(methodpointer.getcopy);
+                                  typecheckpass(hpt);
+                                  result:=hpt;
+                                end
+                              else
+                                begin
+                                  CGMessagePos1(fileinfo,parser_e_wrong_parameter_size,symtableprocentry.realname);
+                                  symtableprocentry.write_parameter_lists(nil);
+                                end;
                             end;
                         end;
 
