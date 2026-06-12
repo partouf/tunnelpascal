@@ -134,7 +134,7 @@ implementation
              { :-(, we must generate a new entry }
              if not(assigned(lab_real)) then
                begin
-                  current_asmdata.getglobaldatalabel(lastlabel);
+                  current_asmdata.getdatalabel(lastlabel);
                   entry^.Data:=lastlabel;
                   lab_real:=lastlabel;
                   maybe_new_object_file(current_asmdata.asmlists[al_typedconsts]);
@@ -178,6 +178,8 @@ implementation
                       internalerror(10120);
 {$endif not cpufloat128}
                   end;
+                  if (tf_needs_symbol_size in target_info.flags) then
+                    current_asmdata.asmlists[al_typedconsts].concat(Tai_symbol_end.Create(lastlabel));
                end;
           end;
         location.reference.symbol:=lab_real;
@@ -217,7 +219,6 @@ implementation
     procedure tcgstringconstnode.pass_generate_code;
       var
          lastlabel: tasmlabofs;
-         pc: pchar;
          l: longint;
          pool: THashSet;
          entry: PHashSetItem;
@@ -226,6 +227,8 @@ implementation
          strpointerdef: tdef;
          datatcb: ttai_typedconstbuilder;
          datadef: tdef;
+         t : tai_string;
+
 
       const
         PoolMap: array[tconststringtype] of TConstPoolType = (
@@ -268,12 +271,12 @@ implementation
               pool := current_asmdata.ConstPools[PoolMap[cst_type]];
 
               if cst_type in [cst_widestring, cst_unicodestring] then
-                entry := pool.FindOrAdd(pcompilerwidestring(value_str)^.data,len*cwidechartype.size)
+                entry := pool.FindOrAdd(pointer(valuews.data),len*cwidechartype.size)
               else
               if cst_type = cst_ansistring then
-                entry := PHashSetItem(TTagHashSet(pool).FindOrAdd(value_str,len,tstringdef(resultdef).encoding))
+                entry := PHashSetItem(TTagHashSet(pool).FindOrAdd(pointer(valueas),len,tstringdef(resultdef).encoding))
               else
-                entry := pool.FindOrAdd(value_str,len);
+                entry := pool.FindOrAdd(pointer(valueas),len);
 
               lab_str := TAsmLabel(entry^.Data);  // is it needed anymore?
 
@@ -288,7 +291,7 @@ implementation
                              InternalError(2008032301)   { empty string should be handled above }
                            else
                              begin
-                               lastlabel:=datatcb.emit_ansistring_const(current_asmdata.AsmLists[al_typedconsts],value_str,len,tstringdef(resultdef).encoding);
+                               lastlabel:=datatcb.emit_ansistring_const(current_asmdata.AsmLists[al_typedconsts],asconstpchar,len,tstringdef(resultdef).encoding);
                                { because we hardcode the offset below due to it
                                  not being stored in the hashset, check here }
                                if lastlabel.ofs<>datatcb.get_string_symofs(st_ansistring,false) then
@@ -306,7 +309,7 @@ implementation
                            else
                              begin
                                lastlabel:=datatcb.emit_unicodestring_const(current_asmdata.AsmLists[al_typedconsts],
-                                               value_str,
+                                               valuews,
                                                tstringdef(resultdef).encoding,
                                                winlikewidestring);
                                { because we hardcode the offset below due to it
@@ -320,21 +323,20 @@ implementation
                         end;
                       cst_shortstring:
                         begin
-                          current_asmdata.getglobaldatalabel(lastlabel.lab);
+                          current_asmdata.getdatalabel(lastlabel.lab);
 
                           { truncate strings larger than 255 chars }
                           if len>255 then
                            l:=255
                           else
                            l:=len;
+
                           { include length and terminating zero for quick conversion to pchar }
-                          getmem(pc,l+2);
-                          move(value_str^,pc[1],l);
-                          pc[0]:=chr(l);
-                          pc[l+1]:=#0;
                           datadef:=carraydef.getreusable(cansichartype,l+2);
                           datatcb.maybe_begin_aggregate(datadef);
-                          datatcb.emit_tai(Tai_string.Create_pchar(pc,l+2),datadef);
+                          datatcb.emit_tai(Tai_const.Create_8bit(l),cansichartype);
+                          t:=Tai_string.Create_Data(asconstpchar,l,true);
+                          datatcb.emit_tai(t,datadef);
                           datatcb.maybe_end_aggregate(datadef);
                           current_asmdata.asmlists[al_typedconsts].concatList(
                             datatcb.get_final_asmlist(lastlabel.lab,datadef,sec_rodata_norel,lastlabel.lab.name,const_align(sizeof(pint)))
@@ -342,19 +344,16 @@ implementation
                         end;
                       cst_conststring:
                         begin
-                          current_asmdata.getglobaldatalabel(lastlabel.lab);
+                          current_asmdata.getdatalabel(lastlabel.lab);
 
-                          { include terminating zero }
-                          getmem(pc,len+1);
-                          move(value_str^,pc[0],len);
-                          pc[len]:=#0;
                           { the data includes the terminating #0 because this
                             string can be used for pchar assignments (but it's
                             also used for array-of-char assignments, in which
                             case the terminating #0 is not part of the data) }
                           datadef:=carraydef.getreusable(cansichartype,len+1);
                           datatcb.maybe_begin_aggregate(datadef);
-                          datatcb.emit_tai(Tai_string.Create_pchar(pc,len+1),datadef);
+                          t:=Tai_string.Create_Data(asconstpchar,len,true);
+                          datatcb.emit_tai(t,datadef);
                           datatcb.maybe_end_aggregate(datadef);
                           current_asmdata.asmlists[al_typedconsts].concatList(
                             datatcb.get_final_asmlist(lastlabel.lab,datadef,sec_rodata_norel,lastlabel.lab.name,const_align(sizeof(pint)))
@@ -364,6 +363,7 @@ implementation
                         internalerror(2013120103);
                    end;
                    datatcb.free;
+                   datatcb := nil;
                    lab_str:=lastlabel.lab;
                    entry^.Data:=lastlabel.lab;
                 end;
@@ -406,7 +406,7 @@ implementation
         i: longint;
         tcb: ttai_typedconstbuilder;
       begin
-        current_asmdata.getglobaldatalabel(lab);
+        current_asmdata.getdatalabel(lab);
         result:=lab;
         lab_set:=lab;
         tcb:=ctai_typedconstbuilder.create([tcalo_is_lab,tcalo_make_dead_strippable,tcalo_apply_constalign]);
@@ -421,6 +421,7 @@ implementation
         current_asmdata.asmlists[al_typedconsts].concatlist(tcb.get_final_asmlist(
           result,resultdef,sec_rodata_norel,result.name,const_align(8)));
         tcb.free;
+        tcb := nil;
       end;
 
 
@@ -510,12 +511,13 @@ implementation
              { :-(, we must generate a new entry }
              if not assigned(entry^.Data) then
                begin
-                 current_asmdata.getglobaldatalabel(lastlabel);
+                 current_asmdata.getdatalabel(lastlabel);
                  datatcb:=ctai_typedconstbuilder.create([tcalo_is_lab,tcalo_make_dead_strippable,tcalo_apply_constalign]);
                  datatcb.emit_guid_const(value);
                  current_asmdata.asmlists[al_typedconsts].concatList(
                    datatcb.get_final_asmlist(lastlabel,rec_tguid,sec_rodata_norel,lastlabel.name,const_align(16)));
                  datatcb.free;
+                 datatcb := nil;
                  lab_set:=lastlabel;
                  entry^.Data:=lastlabel;
                end;

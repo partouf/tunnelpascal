@@ -2,7 +2,7 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
   {$ifdef unix}
   cthreads,
   {$endif}
@@ -21,7 +21,7 @@ begin
     begin
     P:=AddPackage('utils-lexyacc');
     P.ShortName:='tply';
-    { java and jvm-android do not support 
+    { java and jvm-android do not support
       fpc_get_output used in these sources }
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
@@ -35,7 +35,7 @@ begin
     { wasm32 CPU does not support
       goto used in these sources }
     if Defaults.CPU=wasm32 then
-      P.OSes := P.OSes - [wasi,embedded];
+      P.OSes := P.OSes - [wasip1,wasip1threads,wasip2,embedded];
 
     P.Author := '<various>';
     P.License := 'LGPL with modification';

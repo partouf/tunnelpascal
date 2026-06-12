@@ -384,7 +384,7 @@ implementation
       if assigned(fcalledvmtentries) then
         begin
           for i:=0 to fcalledvmtentries.count-1 do
-            tcalledvmtentries(fcalledvmtentries[i]).free;
+            tcalledvmtentries(fcalledvmtentries[i]).free; // no nil needed
           fcalledvmtentries.free;
           fcalledvmtentries:=nil;
         end;
@@ -529,7 +529,7 @@ implementation
                   if assigned(fdest.wpoinfouse[wpotype]) then
                     begin
                       cgmessage2(wpo_duplicate_wpotype,wpo2str[wpotype],sectionname);
-                      fdest.wpoinfouse[wpotype].free;
+                      FreeAndNil(fdest.wpoinfouse[wpotype]);
                     end;
                   { process the section }
                   fdest.wpoinfouse[wpotype]:=sectionhandler.create;
@@ -597,6 +597,7 @@ implementation
   destructor twpofilewriter.destroy;
     begin
       fsectioncontents.free;
+      fsectioncontents := nil;
       inherited destroy;
     end;
 
@@ -800,7 +801,7 @@ implementation
       fwpocomponents:=nil;
       for i:=low(wpoinfouse) to high(wpoinfouse) do
         if assigned(wpoinfouse[i]) then
-          wpoinfouse[i].free;
+          FreeAndNil(wpoinfouse[i]);
       inherited destroy;
     end;
 
@@ -822,13 +823,14 @@ implementation
       calledentries:=tbitset.create_bytesize(len);
       if (len <> calledentries.datasize) then
         internalerror(2009060301);
-      ppufile.readdata(calledentries.data^,len);
+      ppufile.readdata(calledentries.data);
     end;
 
 
   destructor tcalledvmtentries.destroy;
     begin
       fcalledentries.free;
+      fcalledentries := nil;
       inherited destroy;
     end;
 
@@ -837,7 +839,7 @@ implementation
     begin
       ppufile.putderef(objdefderef);
       ppufile.putlongint(calledentries.datasize);
-      ppufile.putdata(calledentries.data^,calledentries.datasize);
+      ppufile.putdata(calledentries.data);
     end;
 
 

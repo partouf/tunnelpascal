@@ -28,6 +28,14 @@ uses
   Classes, SysUtils, webidldefs, webidltopas, webidlscanner, webidlparser, Contnrs;
 {$ENDIF FPC_DOTTEDUNITS}
 
+{
+  Todo:
+  - Allocate Aliased types (TIDLUserTypeDefinition) and simple types (TIDLSimpleTypeDefinition) as TIDLTypeDefinition descendants.
+    (so no more special cases are needed)
+  - Allocate Interface names so no more pasintfname etc. is needed
+}
+
+
 type
   TJOB_JSValueKind = (
     jjvkUndefined,
@@ -79,6 +87,7 @@ type
     NativeType: TPascalNativeType;
     NativeTypeName,
     ResolvedTypeName,
+    CallBackName,
     FuncName: TIDLString;
   end;
 
@@ -99,6 +108,9 @@ type
     function GetAccessorNames(Attr: TIDLPropertyDefinition; out aGetter, aSetter: TIDLString): Boolean;
     function GetArgName(d: TIDLDefinition): string;
     function GetFunctionSuffix(aDef: TIDLFunctionDefinition; Overloads: TFPObjectList): String;
+    function ExtractAliasName(aTypeName: string): String;
+    function ExtractAliasInvokeClass(aName: String): string;
+    function ExtractAliasInvokeFunction(aName: String): string;
     function GetInvokeClassName(aMethodInfo : TMethodCallInfo; aDef: TIDLFunctionDefinition=nil): TIDLString;
     function GetInvokeClassName(aResultDef: TIDLDefinition; aName: TIDLString; aDef: TIDLFunctionDefinition=nil): TIDLString;
     function GetInvokeClassNameFromTypeAlias(aName: TIDLString; aDef: TIDLDefinition): TIDLString;
@@ -116,6 +128,8 @@ type
     function BaseUnits: String; override;
     function DottedBaseUnits: String; override;
     function IsStub : Boolean; virtual;
+    function IsKeyWord(const S: String): Boolean; override;
+
     // Auxiliary routines
     function DefaultForNativeType(aNativeType: TPascalNativeType; aReturnTypeName: String): String;
     function GetAliasPascalType(D: TIDLDefinition; out PascalTypeName : string): TPascalNativeType; override;
@@ -126,9 +140,9 @@ type
     function GetPascalTypeName(const aTypeName: String; ForTypeDef: Boolean=False): String; override;
     function GetPasIntfName(Intf: TIDLDefinition): TIDLString;
     function GetResolvedType(aDef: TIDLTypeDefDefinition; Out PascalNativeType : TPascalNativeType; out aTypeName, aResolvedTypename: String): TIDLTypeDefinition; overload; override;
-{$IF SIZEOF(CHAR)=1}      
+{$IF SIZEOF(CHAR)=1}
     function GetResolvedType(aDef: TIDLTypeDefDefinition; Out PascalNativeType : TPascalNativeType; out aTypeName, aResolvedTypename: TIDLString): TIDLDefinition; overload;
-{$ENDIF}      
+{$ENDIF}
     function GetInterfaceDefHead(Intf: TIDLInterfaceDefinition): String; override;
     function GetNamespaceDefHead(aNamespace: TIDLNamespaceDefinition): String; override;
     function GetDictionaryDefHead(const CurClassName: String; Dict: TIDLDictionaryDefinition): String; override;
@@ -137,14 +151,14 @@ type
     function WriteOtherImplicitTypes(Intf: TIDLStructuredDefinition; aMemberList: TIDLDefinitionList): Integer; override;
     // Code generation routines. Return the number of actually written defs.
     function WriteDictionaryPrivateFields(aParent: TIDLStructuredDefinition; aList: TIDLDefinitionList): Integer; virtual;
-    function WritePrivateGetters(aParent: TIDLStructuredDefinition; aList: TIDLDefinitionList): Integer; override;
-    function WritePrivateSetters(aParent: TIDLStructuredDefinition; aList: TIDLDefinitionList): Integer; override;
+    function WriteGetters(aParent: TIDLStructuredDefinition; aList: TIDLDefinitionList): Integer; override;
+    function WriteSetters(aParent: TIDLStructuredDefinition; aList: TIDLDefinitionList): Integer; override;
     function WriteProperties(aParent: TIDLDefinition; aList: TIDLDefinitionList): Integer; override;
     function WriteUtilityMethods(Intf: TIDLStructuredDefinition): Integer;  override;
     // Maplike
     function WriteMapLikeProperties(aParent: TIDLDefinition; aMap: TIDLMapLikeDefinition): Integer; override;
     function WriteMapLikePrivateReadOnlyFields(aParent: TIDLDefinition; aMap: TIDLMapLikeDefinition): Integer; override;
-    function WriteMapLikePrivateGetters(aParent: TIDLStructuredDefinition; aMap: TIDLMapLikeDefinition): Integer; override;
+    function WriteMapLikeGetters(aParent: TIDLStructuredDefinition; aMap: TIDLMapLikeDefinition): Integer; override;
     // Definitions. Return true if a definition was written.
     function WriteEnumDef(aDef: TIDLEnumDefinition): Boolean; override;
     function WriteDictionaryDef(aDict: TIDLDictionaryDefinition): Boolean; override;
@@ -185,6 +199,7 @@ type
     procedure WriteUtilityMethodImplementations(aDef: TIDLStructuredDefinition; ML: TIDLDefinitionList);virtual;
     Procedure WritePrivateGetterImplementation(aParent: TIDLStructuredDefinition; aProp: TIDLPropertyDefinition); virtual;
     Procedure WritePrivateSetterImplementation(aParent: TIDLStructuredDefinition; aProp: TIDLPropertyDefinition);virtual;
+    procedure WriteDictionaryConstructor(aDict: TIDLDictionaryDefinition); virtual;
     // MapLike
     procedure WriteMapLikePrivateSetterImplementation(aParent: TIDLStructuredDefinition; aMap: TIDLMapLikeDefinition); virtual;
     procedure WriteMapLikePrivateGetterImplementation(aParent: TIDLStructuredDefinition; aMap: TIDLMapLikeDefinition); virtual;
@@ -240,6 +255,13 @@ end;
 function TWebIDLToPasWasmJob.IsStub: Boolean;
 begin
   Result:=False;
+end;
+
+function TWebIDLToPasWasmJob.IsKeyWord(const S: String): Boolean;
+begin
+  Result:=inherited IsKeyWord(S);
+  if not Result then
+    Result:=SameText(s,'create');
 end;
 
 function TWebIDLToPasWasmJob.GetAliasPascalType(D: TIDLDefinition; out PascalTypeName: string): TPascalNativeType;
@@ -401,7 +423,7 @@ function TWebIDLToPasWasmJob.GetResolvedType(aDef: TIDLTypeDefDefinition; out Pa
 
 Var
   TN,RTN : String;
-  
+
 begin
   Result:=GetResolvedType(aDef,PascalNativeType,TN,RTN);
   aTypeName:=TN;
@@ -414,7 +436,9 @@ function TWebIDLToPasWasmJob.GetResolvedType(aDef: TIDLTypeDefDefinition; out Pa
 begin
   Result:=inherited GetResolvedType(aDef, PascalNativeType, aTypeName, aResolvedTypename);
   if Result is TIDLInterfaceDefinition then
-    aTypeName:=GetPasClassName(aTypeName)
+    aTypeName:=GetPasIntfName(Result)
+  else if Result is TIDLDictionaryDefinition then
+    aTypeName:=GetPasIntfName(Result)
   else if Result is TIDLPromiseTypeDefDefinition then
     aTypeName:=PasInterfacePrefix+'Promise'+PasInterfaceSuffix;
 end;
@@ -528,8 +552,8 @@ begin
     AddLn('['''+ComputeGUID(Decl,aMemberList)+''']');
 
     // private members
-    WritePrivateGetters(Intf,aMemberList);
-    WritePrivateSetters(Intf,aMemberList);
+    WriteGetters(Intf,aMemberList);
+    WriteSetters(Intf,aMemberList);
 
     // public members
     if StructType<>sdDictionary then
@@ -554,12 +578,12 @@ begin
   // Do nothing, used in stub
 end;
 
-function TWebIDLToPasWasmJob.WritePrivateGetters(aParent: TIDLStructuredDefinition;
+function TWebIDLToPasWasmJob.WriteGetters(aParent: TIDLStructuredDefinition;
   aList: TIDLDefinitionList): Integer;
 var
   D: TIDLDefinition;
 begin
-  Result:=Inherited WritePrivateGetters(aParent,aList);
+  Result:=Inherited WriteGetters(aParent,aList);
   for D in aList do
     if D is TIDLPropertyDefinition then
       if ConvertDef(D) then
@@ -567,12 +591,12 @@ begin
           inc(Result);
 end;
 
-function TWebIDLToPasWasmJob.WritePrivateSetters(
+function TWebIDLToPasWasmJob.WriteSetters(
   aParent: TIDLStructuredDefinition; aList: TIDLDefinitionList): Integer;
 var
   D: TIDLDefinition;
 begin
-  Result:=Inherited WritePrivateSetters(aParent,aList);
+  Result:=Inherited WriteSetters(aParent,aList);
   for D in aList do
     if D is TIDLPropertyDefinition then
       if ConvertDef(D) then
@@ -597,12 +621,18 @@ end;
 function TWebIDLToPasWasmJob.WriteUtilityMethods(Intf: TIDLStructuredDefinition
   ): Integer;
 var
-  aPasIntfName: TIDLString;
+  CurrClassName,aPasIntfName: TIDLString;
 begin
   Result:=0;
   aPasIntfName:=GetPasIntfName(Intf);
+  if Intf is TIDLDictionaryDefinition then
+    begin
+    CurrClassName:=GetPasName(TIDLDictionaryDefinition(Intf));
+    AddLn('constructor create(const aDict : '+CurrClassName+'Rec); overload;');
+    end;
   AddLn('class function JSClassName: UnicodeString; override;');
   AddLn('class function Cast(const Intf: IJSObject): '+aPasIntfName+';');
+
 end;
 
 function TWebIDLToPasWasmJob.WriteMapLikeProperties(aParent: TIDLDefinition; aMap: TIDLMapLikeDefinition): Integer;
@@ -618,7 +648,7 @@ begin
   Result:=0;
 end;
 
-function TWebIDLToPasWasmJob.WriteMapLikePrivateGetters(aParent: TIDLStructuredDefinition; aMap: TIDLMapLikeDefinition): Integer;
+function TWebIDLToPasWasmJob.WriteMapLikeGetters(aParent: TIDLStructuredDefinition; aMap: TIDLMapLikeDefinition): Integer;
 
 begin
   if (aParent=Nil) and (aMap=Nil) then ; // Silence compiler warning
@@ -651,8 +681,14 @@ begin
   AddLn('Private');
   Indent;
   WriteDictionaryPrivateFields(aDict,DefList);
-  WritePrivateGetters(aDict,DefList);
-  WritePrivateSetters(aDict,DefList);
+  if not (coPrivateMethods in BaseOptions) then
+    begin
+    Undent;
+    AddLn('Protected');
+    Indent;
+    end;
+  WriteGetters(aDict,DefList);
+  WriteSetters(aDict,DefList);
   Undent;
   AddLn('Public');
   Indent;
@@ -665,7 +701,7 @@ end;
 
 function TWebIDLToPasWasmJob.WriteDictionaryField(aDict: TIDLDictionaryDefinition; aField: TIDLDictionaryMemberDefinition): Boolean;
 var
-  N, TN: TIDLString;
+  aDef, N, TN: TIDLString;
 begin
   if (aDict=Nil) then ; // Silence compiler warning
   Result:=True;
@@ -673,7 +709,10 @@ begin
   TN:=GetPasName(aField.MemberType);
   if SameText(N,TN) then
     N:='_'+N;
-  AddLn(N+': '+TN+';');
+  aDef:=N+': '+TN+';';
+  if aField.IsRequired then
+    aDef:=aDef+' // required';
+  AddLn(aDef);
 end;
 
 function TWebIDLToPasWasmJob.WriteForwardClassDef(D: TIDLStructuredDefinition
@@ -696,11 +735,13 @@ end;
 
 function TWebIDLToPasWasmJob.GetInvokeNameFromAliasName(const aTypeName : TIDLString; aType : TIDLDefinition) : string;
 // Heuristic to determine what the base type of an aliased type is.
-// We could enhance this by having support for aType=aAlias,InvokeType:InvokeClass
 var
   aLower : String;
 begin
   if aType=nil then ; // Silence compiler warning;
+  Result:=ExtractAliasInvokeFunction(aTypeName);
+  if Result<>'' then
+    exit;
   aLower:=LowerCase(aTypeName);
   if Pos('bool',aLower)>0 then
     Result:='InvokeJSBooleanResult'
@@ -768,7 +809,7 @@ begin
       Result:=GetInvokeNameFromAliasName((aType as TIDLTypeDefDefinition).TypeName,aType);
     if (Result='') and (TypeAliases.IndexOfName(GetPasName(aType))<>-1) then
       Result:=GetInvokeNameFromAliasName(GetPasName(aType),aType)
-    else
+    else if Result='' then
       Result:='InvokeJSObjectResult';
     if Result='' then
       Raise EConvertError.CreateFmt('Unable to determine invoke name from alias type %s',[aTypeName]);
@@ -780,14 +821,66 @@ begin
 
 end;
 
-function TWebIDLToPasWasmJob.GetInvokeClassNameFromTypeAlias(aName : TIDLString; aDef : TIDLDefinition): TIDLString;
+function TWebIDLToPasWasmJob.ExtractAliasInvokeClass(aName :String) : string;
 
+// Alias is encoded as:
+// aType=aAlias[,InvokeClass[:InvokeFunctionName]]
+
+var
+  P : Integer;
+
+begin
+  Result:=TypeAliases.Values[aName];
+  P:=Pos(',',Result);
+  if P>0 then
+    begin
+    Result:=Copy(Result,P+1);
+    P:=Pos(':',Result);
+    if P>0 then
+      Result:=Copy(Result,1,P-1);
+    end
+  else
+    // if it is an interface, we can simply assume the class is the same but with IJS -> TJS
+    if (LeftStr(Result,length(PasInterfacePrefix))=PasInterfacePrefix) then
+      Result:=IntfToPasClassName(Result)
+    else
+      Result:='';
+end;
+
+function TWebIDLToPasWasmJob.ExtractAliasInvokeFunction(aName: String): string;
+// Alias is encoded as:
+// aType=aAlias[,InvokeClass[:InvokeFunctionName]]
+
+var
+  P : Integer;
+
+begin
+  Result:=TypeAliases.Values[aName];
+  P:=Pos(',',Result);
+  if P>0 then
+    begin
+    Result:=Copy(Result,P+1);
+    P:=Pos(':',Result);
+    if P>0 then
+      Result:=Copy(Result,P+1);
+    end
+  else
+    // if it is an interface, we can simply assume 'InvokeJSObjectResult'
+    if (LeftStr(Result,length(PasInterfacePrefix))=PasInterfacePrefix) then
+      Result:='InvokeJSObjectResult'
+    else
+      Result:='';
+end;
+
+function TWebIDLToPasWasmJob.GetInvokeClassNameFromTypeAlias(aName : TIDLString; aDef : TIDLDefinition): TIDLString;
 // Heuristic to determine what the base type of an aliased type is.
-// We could enhance this by having support for aType=aAlias,InvokeType:InvokeClass
 var
   aLower : String;
 begin
   if aDef<>Nil then ; // Silence compiler warning
+  Result:=ExtractAliasInvokeClass(aName);
+  if Result<>'' then
+    exit;
   aLower:=LowerCase(aName);
   if Pos('array',aLower)>0 then
     Result:='TJSArray'
@@ -1118,6 +1211,7 @@ begin
           end;
         Undent;
         AddLn('end;');
+        AddLn('');
       finally
         ArgNames.Free;
       end;
@@ -1376,10 +1470,7 @@ begin
       GetFunc:=GetNativeTypeHelperGetterName(ANT);
       if aNt=ntObject then
         begin
-        if argType is TIDLDictionaryDefinition then
-          ArgResolvedTypename:='TJSObject'
-        else
-          ArgResolvedTypename:=IntfToPasClassName(ArgResolvedTypename);
+        ArgResolvedTypename:=IntfToPasClassName(ArgResolvedTypename);
         GetFunc:='GetObject('+ArgResolvedTypename+') as '+ArgTypeName
         end
       else if aNt=ntArray then
@@ -1459,11 +1550,23 @@ begin
     AddLn(GetFunc);
     undent;
     AddLn('end;');
+    AddLn('');
   finally
     ArgNames.Free;
   end;
 end;
 
+function TWebIDLToPasWasmJob.ExtractAliasName(aTypeName : string) : String;
+
+var
+  P : Integer;
+
+begin
+  Result:=TypeAliases.Values[aTypeName];
+  P:=Pos(',',Result);
+  if P>0 then
+    Result:=Copy(Result,1,P-1);
+end;
 function TWebIDLToPasWasmJob.GetReadPropertyCall(aInfo : TAccessorInfo; aMemberName: String): string;
 
 var
@@ -1506,7 +1609,7 @@ begin
         // Check if we have a typedef for an aliased type. Example: BigInteger = Uint8Array
         // must result in TJSUint8Array.
         TypeName:=TIDLTypeDefDefinition(aInfo.PropType).TypeName;
-        TypeName:=TypeAliases.Values[TypeName];
+        TypeName:=ExtractAliasName(TypeName);
         if TypeName<>'' then
           ObjClassName:=IntfToPasClassName(TypeName)
         end;
@@ -1537,6 +1640,8 @@ begin
   aAccessInfo.PropType:=aType;
   if aType is TIDLInterfaceDefinition then
     aAccessInfo.NativeTypeName:=GetPasIntfName(aType)
+  else if aType is TIDLDictionaryDefinition then
+      aAccessInfo.NativeTypeName:=GetPasIntfName(aType)
   else if aType is TIDLFunctionDefinition then
     // exit // not supported yet
   else if aType is TIDLEnumDefinition then
@@ -1566,8 +1671,11 @@ begin
   Call:=GetReadPropertyCall(Info,aProp.Name);
   Addln('function '+aClassName+'.'+info.FuncName+': '+Info.NativeTypeName+';');
   Addln('begin');
-  Addln('  Result:='+Call+';');
+  Indent;
+  Addln('Result:='+Call+';');
+  Undent;
   Addln('end;');
+  AddLn('');
 end;
 
 function TWebIDLToPasWasmJob.WritePrivateGetter(aParent: TIDLStructuredDefinition; aProp: TIDLPropertyDefinition): boolean;
@@ -1617,8 +1725,12 @@ begin
   aAccessInfo.PropType:=aType;
   if aType is TIDLInterfaceDefinition then
     aAccessInfo.NativeTypeName:=GetPasIntfName(aType)
+  else if aType is TIDLDictionaryDefinition then
+    aAccessInfo.NativeTypeName:=GetPasIntfName(aType)
   else if aType is TIDLFunctionDefinition then
-    // exit // not supported yet
+    aAccessInfo.ResolvedTypeName:=GetPasName(aType)
+  else if aType is TIDLCallbackDefinition then
+    aAccessInfo.CallBackName:='JobCall'+GetPasName(TIDLCallbackDefinition(aType).FunctionDef) // callback
   else if aType is TIDLEnumDefinition then
     aAccessInfo.ResolvedTypeName:='UnicodeString';
   Result:=True;
@@ -1673,13 +1785,36 @@ begin
   aClassName:=GetPasName(aParent);
   if not GetPrivateSetterInfo(aProp,Info) then
     exit;
-  Call:=GetWritePropertyCall(Info, aProp.Name);
   Addln('procedure %s.%s(const aValue : %s);',[aClassName,info.FuncName,Info.NativeTypeName]);
-  Addln('begin');
-  indent;
-  Addln(Call+';');
+  if Info.PropType is TIDLCallbackDefinition then
+    begin
+    Addln('var');
+    Indent;
+    AddLn('m : TJOB_Method;');
+    Undent;
+    Addln('begin');
+    indent;
+    Addln('m:=TJOB_Method.create(TMethod(aValue),@%s);',[Info.CallBackName]);
+    Addln('try');
+    indent;
+    Addln('InvokeJSNoResult(''%s'',[m],jiSet);',[aProp.Name]);
+    undent;
+    Addln('finally');
+    indent;
+    Addln('m.free');
+    undent;
+    Addln('end;');
+    end
+  else
+    begin
+    Call:=GetWritePropertyCall(Info, aProp.Name);
+    Addln('begin');
+    indent;
+    Addln(Call+';');
+    end;
   undent;
   Addln('end;');
+  Addln('');
 end;
 
 
@@ -1745,6 +1880,8 @@ begin
   PropName:=GetPasName(aProp);
   aType:=GetResolvedType(aProp.PropertyType,ANT,aTypeName,aResolvedTypeName);
   if aType is TIDLInterfaceDefinition then
+    aTypeName:=GetPasIntfName(aType)
+  else if aType is TIDLDictionaryDefinition then
     aTypeName:=GetPasIntfName(aType);
   GetAccessorNames(aProp,GetterName,SetterName);
   Code:='property '+PropName+': '+aTypeName+' read '+GetterName;
@@ -1753,6 +1890,9 @@ begin
   Code:=Code+';';
   if aType is TIDLFunctionDefinition then
     Code:='// '+Code;
+  if (aProp is TIDLDictionaryMemberDefinition) then
+    if TIDLDictionaryMemberDefinition(aProp).IsRequired then
+      Code:=Code+' // required';
   AddLn(Code);
   Result:=true;
 end;
@@ -1816,7 +1956,8 @@ begin
   iDef:=FindGlobalDef(JSClassName);
   if iDef=nil then
     raise EConvertError.Create('missing global var "'+PasVarName+'" type "'+JSClassName+'"');
-  AddLn(PasVarName+': '+GetPasName(iDef)+';');
+  if ConvertDef(iDef) then
+    AddLn(PasVarName+': '+GetPasName(iDef)+';');
 end;
 
 procedure TWebIDLToPasWasmJob.WriteEnumImplementation(aDef : TIDLEnumDefinition);
@@ -2130,6 +2271,31 @@ begin
   end;
 end;
 
+procedure TWebIDLToPasWasmJob.WriteDictionaryConstructor(aDict: TIDLDictionaryDefinition);
+
+var
+  CurrClassName: TIDLString;
+  IDL : TIDLDefinition;
+  MD : TIDLDictionaryMemberDefinition absolute IDL;
+  aName : string;
+
+begin
+  CurrClassName:=GetPasName(aDict);
+  AddLn('constructor %s.create(const aDict : %sRec); overload;',[CurrClassName,CurrClassName]);
+  Addln('begin');
+  Indent;
+  For IDl in aDict.Members do
+    if IDL is TIDLDictionaryMemberDefinition then
+      if convertDef(Idl) then
+        begin
+        aName:=GetPasName(MD);
+        AddLn('Self.%s:=aDict.%s;',[aName,aName]);
+        end;
+  Undent;
+  AddLn('end;');
+  AddLn('');
+end;
+
 procedure TWebIDLToPasWasmJob.WriteUtilityMethodImplementations(aDef : TIDLStructuredDefinition; ML : TIDLDefinitionList);
 
 var
@@ -2140,7 +2306,10 @@ begin
   aClassName:=GetPasName(aDef);
   aPasIntfName:=GetPasIntfName(aDef);
   if aDef.StructuredType=sdDictionary then
+    begin
+    WriteDictionaryConstructor(aDef as TIDLDictionaryDefinition);
     aJSClassName:='Object'
+    end
   else
     aJSClassName:=aDef.Name;
   AddLn('class function %s.JSClassName: UnicodeString;',[aClassName]);
@@ -2156,6 +2325,7 @@ begin
   AddLn('Result:=%s.JOBCast(Intf);',[aClassName]);
   Undent;
   AddLn('end;');
+  AddLn('');
 end;
 
 
@@ -2243,8 +2413,8 @@ begin
       aDef:=FindGlobalDef(JSClassName);
       if IsStub then
         AddLn(PasVarName+':='+GetPasName(aDef)+'.Create();')
-      else
-        AddLn(PasVarName+':='+GetPasName(aDef)+'.CreateGlobal('''+JOBRegisterName+''');');
+      else if ConvertDef(aDef) then
+        AddLn(PasVarName+':='+GetPasName(aDef)+'.JOBCreateGlobal('''+JOBRegisterName+''');');
       end;
     for I:=0 to Context.Definitions.Count-1 do
       begin
@@ -2256,7 +2426,7 @@ begin
             PasVarName:=Context.Definitions[i].Name;
             if IsStub then
               AddLn(PasVarName+':='+GetPasName(aDef)+'.Create();')
-            else
+            else if ConvertDef(aDef) then
               AddLn(PasVarName+':='+GetPasName(aDef)+'.JOBCreateGlobal('''+PasVarName+''');');
             end;
       end;
@@ -2267,7 +2437,9 @@ begin
     for i:=0 to GlobalVars.Count-1 do
       begin
       SplitGlobalVar(GlobalVars[i],PasVarName,JSClassName,JOBRegisterName);
-      AddLn(PasVarName+'.Free;');
+      aDef:=FindGlobalDef(JSClassName);
+      if ConvertDef(aDef) then
+        AddLn(PasVarName+'.Free;');
       end;
     for I:=0 to Context.Definitions.Count-1 do
       begin

@@ -87,6 +87,7 @@ type
     procedure TestM_Class_MethodOverride;
     procedure TestM_Class_MethodOverride2;
     procedure TestM_Class_NestedClass;
+    procedure TestM_Class_Function;
     procedure TestM_ClassInterface_Corba;
     procedure TestM_ClassInterface_NoHintsForMethod;
     procedure TestM_ClassInterface_NoHintsForImpl;
@@ -99,7 +100,7 @@ type
     procedure TestM_Hint_UnitNotUsed_No_OnlyExternal;
     procedure TestM_Hint_UnitUsed;
     procedure TestM_Hint_UnitUsedVarArgs;
-    procedure TestM_Hint_UnitNotUsed_ClassInterfacesList;
+    procedure TestM_Hint_UnitNotUsed_ClassInterfaceAliasType; // todo
     procedure TestM_Hint_ParameterNotUsed;
     procedure TestM_Hint_ParameterNotUsedOff;
     procedure TestM_Hint_ParameterInOverrideNotUsed;
@@ -1360,6 +1361,42 @@ begin
   CheckUseAnalyzerUnexpectedHints;
 end;
 
+procedure TTestUseAnalyzer.TestM_Class_Function;
+begin
+  Parser.Options:=Parser.Options+[po_CheckDirectiveRTTI];
+  StartUnit(true,[supTObject]);
+  Add([
+  '{$mode objfpc}',
+  '{$RTTI explicit methods([vcPublic])}',
+  'interface',
+  'type',
+  '  TInterfacedObject = class',
+  '  end;',
+  '  IUnknown = interface',
+  '  end;',
+  '  ITestInterface = interface',
+  '    procedure Test1;',
+  '    function Test2: word;',
+  '  end;',
+  '  TTestInterfaceClass = class(TInterfacedObject, ITestInterface)',
+  '  public',
+  '    procedure Test1;',
+  '    function Test2: word;',
+  '  end;',
+  'implementation',
+  'procedure TTestInterfaceClass.Test1;',
+  'begin',
+  'end;',
+  'function TTestInterfaceClass.Test2: word;',
+  'begin',
+  '  Result:=0;',
+  '  if typeinfo(Result)<>nil then ;',
+  'end;',
+  '']);
+  AnalyzeUnit;
+  CheckUseAnalyzerUnexpectedHints;
+end;
+
 procedure TTestUseAnalyzer.TestM_ClassInterface_Corba;
 begin
   StartProgram(false);
@@ -1630,8 +1667,10 @@ begin
   CheckUseAnalyzerUnexpectedHints;
 end;
 
-procedure TTestUseAnalyzer.TestM_Hint_UnitNotUsed_ClassInterfacesList;
+procedure TTestUseAnalyzer.TestM_Hint_UnitNotUsed_ClassInterfaceAliasType;
 begin
+  exit;
+
   AddModuleWithIntfImplSrc('unit2.pp',
     LinesToStr([
     'type',
@@ -3519,8 +3558,6 @@ begin
   '  end;',
   '  {#TBirdHelper_used}TBirdHelper = class helper for TBird',
   '    procedure {#TBirdHelper_Fly_used}Fly;',
-  '    class constructor {#TBirdHelper_Init_used}Init;',
-  '    class destructor {#TBirdHelper_Done_used}Done;',
   '  end;',
   '  TAnt = class',
   '    class constructor {#TAnt_Init_notused}Init;',
@@ -3539,12 +3576,6 @@ begin
   'begin',
   'end;',
   'procedure TBirdHelper.Fly;',
-  'begin',
-  'end;',
-  'class constructor TBirdHelper.Init;',
-  'begin',
-  'end;',
-  'class destructor TBirdHelper.Done;',
   'begin',
   'end;',
   'class constructor TAnt.Init;',

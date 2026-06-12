@@ -379,7 +379,7 @@ begin
   try
     if Assigned(ContentStream) then
       memstrm.CopyFrom(ContentStream, ContentStream.Size)
-    else
+    else if Length(Content)>0 then
       MemStrm.Write(Content[1],Length(Content));
     chunk := Default(HTTP_DATA_CHUNK);
     chunk.DataChunkType := HttpDataChunkFromMemory;
@@ -458,7 +458,7 @@ begin
         else if name = HeaderXRequestedWith then
           hv := hvXRequestedWith;
         if hv <> hvUnknown then
-          SetHTTPVariable(hvSetCookie, value)
+          SetHTTPVariable(hv, value)
         else
           SetCustomHeader(name, value);
       end;
@@ -532,7 +532,7 @@ procedure THTTPSysRequest.FillHTTPVariables(aRequest: PHTTP_REQUEST);
     len := 32;
     SetLength(Result, len - 1);
 
-    if WSAAddressToString(aRequest^.Address.pRemoteAddress^, size, Nil, PAnsiChar(Result), len) <> 0 then begin
+    if WSAAddressToString(aRequest^.Address.pRemoteAddress^, size, Nil, {$IF SIZEOF(CHAR)=1}PAnsiChar{$ELSE}PWideChar{$ENDIF}(Result), len) <> 0 then begin
       //Writeln('Failed to retrieve address string; error: ', WSAGetLastError);
       Exit('');
     end;

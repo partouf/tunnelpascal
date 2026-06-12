@@ -16,8 +16,6 @@ unit System;
 
 interface
 
-
-{$DEFINE SYSTEM_HAS_FEATURE_MONITOR}
 {$define FPC_IS_SYSTEM}
 
 {$linklib m}
@@ -110,7 +108,7 @@ function paramstr(l: longint) : shortstring;
   s: shortstring;
   s1: shortstring;
  begin
-   { stricly conforming POSIX applications  }
+   { strictly conforming POSIX applications }
    { have the executing filename as argv[0] }
 //   if l=0 then
 //     begin
@@ -201,7 +199,7 @@ var
 
   procedure AddBuf;
   begin
-    reallocmem(cmdline,size+bufsize);
+    sysreallocmem(cmdline,size+bufsize);
     move(buf^,cmdline[size],bufsize);
     inc(size,bufsize);
     bufsize:=0;

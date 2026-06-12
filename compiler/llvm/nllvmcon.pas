@@ -65,7 +65,7 @@ implementation
         inherited;
         if def=llvm_metadatatype then
           begin
-            { astringdef is only used if the constant type is ansitring }
+            { astringdef is only used if the constant type is ansistring }
             cst_type:=cst_ansistring;
             astringdef:=def;
           end;
@@ -104,7 +104,7 @@ implementation
         if astringdef=llvm_metadatatype then
           begin
             location_reset(location,LOC_CREGISTER,OS_ADDR);
-            location.register:=tllvmmetadata.getpcharreg(value_str,len);
+            location.register:=tllvmmetadata.getpcharreg(@valueas[0],len);
             exit;
           end;
         inherited pass_generate_code;

@@ -131,12 +131,6 @@ end;
 {$define FPC_SYSTEM_HAS_FILLCHAR}
 procedure FillChar(var x; count : longint; value : byte); assembler; register; nostackframe;
 asm
-{$ifdef VER3_0}
-  move.l   x,a0
-  move.l   count,d0
-  clr.l    d1
-  move.b   value,d1
-{$endif VER3_0}
   { a0 is x, d0 is count, d1 is value }
   tst.l    d0             { anything to fill at all?      }
   ble      @Lquit
@@ -377,7 +371,7 @@ asm
        bmi     @LSTRCONCAT2
        or.l    d0,d0      { Make sure to set Zerfo flag to 0          }
     @LSTRCONCAT5:
-       { Workaroung for GAS v.134 bug }
+       { Workaround for GAS v.134 bug }
        {  old: cmp.b (a1)+,(a0)+      }
        cmpm.b  (a1)+,(a0)+
     @LSTRCONCAT4:
@@ -488,7 +482,12 @@ asm
 end;
 {$ENDIF}
 
+{$IFDEF VER3_2}
 function InterLockedDecrement (var Target: longint) : longint;
+{$ELSE VER3_2}
+{$DEFINE FPC_SYSTEM_HAS_ATOMIC_DEC_32}
+function fpc_atomic_dec_32 (var Target: longint) : longint;
+{$ENDIF VER3_2}
 {$IFDEF CPUM68K_HAS_CAS}
   register; assembler;
   asm
@@ -509,7 +508,12 @@ function InterLockedDecrement (var Target: longint) : longint;
   end;
 {$ENDIF}
 
+{$IFDEF VER3_2}
 function InterLockedIncrement (var Target: longint) : longint;
+{$ELSE VER3_2}
+{$DEFINE FPC_SYSTEM_HAS_ATOMIC_INC_32}
+function fpc_atomic_inc_32 (var Target: longint) : longint;
+{$ENDIF VER3_2}
 {$IFDEF CPUM68K_HAS_CAS}
   register; assembler;
   asm
@@ -530,7 +534,12 @@ function InterLockedIncrement (var Target: longint) : longint;
   end;
 {$ENDIF}
 
+{$IFDEF VER3_2}
 function InterLockedExchange (var Target: longint;Source : longint) : longint;
+{$ELSE VER3_2}
+{$DEFINE FPC_SYSTEM_HAS_ATOMIC_XCHG_32}
+function fpc_atomic_xchg_32 (var Target: longint;Source : longint) : longint;
+{$ENDIF VER3_2}
 {$IFDEF CPUM68K_HAS_CAS}
   register; assembler;
   asm
@@ -549,11 +558,20 @@ function InterLockedExchange (var Target: longint;Source : longint) : longint;
   end;
 {$ENDIF}
 
+{$IFDEF VER3_2}
 function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint;
+{$ELSE VER3_2}
+{$DEFINE FPC_SYSTEM_HAS_ATOMIC_ADD_32}
+function fpc_atomic_add_32 (var Target: longint;Value : longint) : longint;
+{$ENDIF VER3_2}
 {$IFDEF CPUM68K_HAS_CAS}
   register; assembler;
   asm
+{$IFDEF VER3_2}
     move.l  Source, a1
+{$ELSE VER3_2}
+    move.l  Value, a1
+{$ENDIF VER3_2}
     move.l  (a0), d0
     @loop:
     move.l  a1, d1
@@ -565,13 +583,18 @@ function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint
   begin
     getSpinLock;
     Result := Target;
-    Target := Target + Source;
+    Target := Target + {$IFDEF VER3_2}Source{$ELSE}Value{$ENDIF};
     releaseSpinLock;
   end;
 {$ENDIF}
 
 
+{$IFDEF VER3_2}
 function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint;
+{$ELSE VER3_2}
+{$DEFINE FPC_SYSTEM_HAS_ATOMIC_CMP_XCHG_32}
+function fpc_atomic_cmp_xchg_32 (var Target: longint; NewValue: longint; Comparand: longint) : longint; [public,alias:'FPC_ATOMIC_CMP_XCHG_32'];
+{$ENDIF VER3_2}
 {$IFDEF CPUM68K_HAS_CAS}
   register; assembler;
   asm
@@ -583,7 +606,7 @@ function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comp
   begin
     getSpinLock;
     Result := Target;
-    if Target = Comperand then
+    if Target = {$IFDEF VER3_2}Comperand{$ELSE}Comparand{$ENDIF} then
       Target := NewValue;
     releaseSpinLock;
   end;

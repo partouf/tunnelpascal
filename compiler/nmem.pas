@@ -1408,7 +1408,7 @@ implementation
                  ctypeconvnode.create_internal(left,voidpointertype),nil)),
                left.resultdef);
              firstpass(left);
-             { double resultdef passes somwhere else may cause this to be }
+             { double resultdef passes somewhere else may cause this to be }
              { reset though :/                                             }
              exclude(vecnodeflags,vnf_callunique);
            end
@@ -1460,7 +1460,7 @@ implementation
                   it does not matter as a 32 bit host cannot handle such long strings anyways due to memory limitations
                 }
                 Result := COrdConstNode.create(
-                  PCompilerWideString(TStringConstNode(left).value_str)^.data[PtrUInt(TOrdConstNode(right).value.uvalue) - 1],
+                  TStringConstNode(left).valuews.data[PtrUInt(TOrdConstNode(right).value.uvalue) - 1],
                   resultdef,
                   False
                 );
@@ -1470,7 +1470,7 @@ implementation
                   it does not matter as a 32 bit host cannot handle such long strings anyways due to memory limitations
                 }
                 Result := COrdConstNode.create(
-                  Byte(TStringConstNode(left).value_str[PtrUInt(TOrdConstNode(right).value.uvalue) - 1]),
+                  Byte(TStringConstNode(left).valueas[PtrUInt(TOrdConstNode(right).value.uvalue) - 1]),
                   resultdef,
                   False
                 );
@@ -1520,7 +1520,7 @@ implementation
         more complicated than regular arrays, because the bounds must
         be checked dynamically. Additionally, in case of array of const
         and open array we need the high parameter, which must not be
-        made a regvar in case this is a nested rountine relative to the
+        made a regvar in case this is a nested routine relative to the
         array parameter -> generate te check at the node tree level
         rather than in the code generator }
       if (cs_check_range in current_settings.localswitches) and

@@ -28,7 +28,7 @@ interface
 uses
   globtype,verbose,
   aasmbase,aasmtai,aasmdata,aasmsym,
-  cpubase,cgbase,cgutils;
+  cpubase,cpuinfo,cgbase,cgutils;
 
     const
       { "mov reg,reg" source operand number }
@@ -53,6 +53,7 @@ uses
          constructor op_reg_ref(op : tasmop;_op1 : tregister;const _op2 : treference);
          constructor op_reg_const(op:tasmop; _op1: tregister; _op2: aint);
          constructor op_const_reg(op:tasmop; _op1: aint; _op2: tregister);
+         constructor op_reg_realconst(op:tasmop; _op1: tregister; _op2: bestreal;special_value: TAsmRealSpecialValue);
 
          constructor op_const_const(op : tasmop;_op1,_op2 : aint);
 
@@ -63,6 +64,7 @@ uses
          constructor op_reg_reg_const(op : tasmop;_op1,_op2 : tregister; _op3: aint);
          constructor op_reg_reg_sym_ofs(op : tasmop;_op1,_op2 : tregister; _op3: tasmsymbol;_op3ofs: aint);
          constructor op_reg_reg_ref(op : tasmop;_op1,_op2 : tregister; const _op3: treference);
+         constructor op_reg_ref_reg(op : tasmop;_op1: tregister; const _op2: treference;_op3 : tregister);
          constructor op_const_reg_reg(op : tasmop;_op1 : aint;_op2, _op3 : tregister);
          constructor op_const_reg_const(op : tasmop;_op1 : aint;_op2 : tregister;_op3 : aint);
          constructor op_const_const_const(op : tasmop;_op1 : aint;_op2 : aint;_op3 : aint);
@@ -90,6 +92,7 @@ uses
          procedure loadroundingmode(opidx:aint;_roundmode:TRoundingMode);
          procedure loadfenceflags(opidx:aint;_flags:TFenceFlags);
          procedure loadbool(opidx:aint;_b:boolean);
+         procedure loadrealconst(opidx:longint;const _value:bestreal;_special_value:TAsmRealSpecialValue);
 
          function is_same_reg_move(regtype: Tregistertype):boolean; override;
 
@@ -128,6 +131,20 @@ uses cutils, cclasses;
            b:=_b;
            typ:=top_bool;
          end;
+      end;
+
+
+    procedure taicpu.loadrealconst(opidx:longint;const _value:bestreal;_special_value:TAsmRealSpecialValue);
+      begin
+        allocate_oper(opidx+1);
+        with oper[opidx]^ do
+          begin
+            if typ<>top_realconst then
+              clearop(opidx);
+            special_value:=special_value;
+            val_real:=_value;
+            typ:=top_realconst;
+          end;
       end;
 
 
@@ -184,6 +201,15 @@ uses cutils, cclasses;
          loadconst(0,_op1);
          loadreg(1,_op2);
       end;
+
+
+     constructor taicpu.op_reg_realconst(op: tasmop; _op1: tregister; _op2: bestreal; special_value: TAsmRealSpecialValue);
+       begin
+         inherited create(op);
+         ops:=2;
+         loadreg(0,_op1);
+         loadrealconst(1,_op2,special_value);
+       end;
 
 
     constructor taicpu.op_reg_ref(op : tasmop;_op1 : tregister;const _op2 : treference);
@@ -261,6 +287,15 @@ uses cutils, cclasses;
          loadref(2,_op3);
       end;
 
+     constructor taicpu.op_reg_ref_reg(op : tasmop;_op1: tregister; const _op2: treference;_op3 : tregister);
+       begin
+         inherited create(op);
+         ops:=3;
+         loadreg(0,_op1);
+         loadref(1,_op2);
+         loadreg(2,_op3);
+      end;
+
     constructor taicpu.op_const_reg_reg(op : tasmop;_op1 : aint;_op2, _op3 : tregister);
       begin
          inherited create(op);
@@ -315,9 +350,9 @@ uses cutils, cclasses;
          inherited create(op);
          ops:=4;
          loadreg(0,_op1);
-         loadbool(0,_op2);
-         loadreg(0,_op3);
-         loadconst(0,cardinal(_op4));
+         loadbool(1,_op2);
+         loadreg(2,_op3);
+         loadconst(3,cardinal(_op4));
       end;
 
      constructor taicpu.op_reg_reg_reg_const(op : tasmop; _op1, _op2, _op3 : tregister; _op4 : aint);
@@ -480,7 +515,7 @@ uses cutils, cclasses;
 
           // I type
           A_JALR,
-          A_LB,A_LH,A_LW,A_LBU,A_LHU,
+          A_LA,A_LB,A_LH,A_LW,A_LBU,A_LHU,A_LI,
           A_ADDI,A_SLTI,A_SLTIU,
           A_XORI,A_ORI,A_ANDI,
           A_SLLI,A_SRLI,A_SRAI,
@@ -496,15 +531,9 @@ uses cutils, cclasses;
             else
               result:=operand_read;
 
-          A_FLW,
-          A_FLD:
-            if opnr=0 then
-              result:=operand_write
-            else
-              result:=operand_read;
-
           // SB type
-          A_Bxx:
+          A_BEQZ,A_BNEZ,A_BLEZ,A_BGEZ,A_BLTZ,A_BGTZ,A_BGT,A_BLE,
+          A_BGTU,A_BLEU,A_Bxx:
             result:=operand_read;
 
           // S type
@@ -518,6 +547,8 @@ uses cutils, cclasses;
           A_ADD,A_SUB,A_SLL,A_SLT,A_SLTU,
           A_XOR,A_OR,A_AND,A_SRL,A_SRA,
 
+          A_ROR,A_ROL,A_RORI,
+
           A_MUL,A_MULH,A_MULHSU,A_MULHU,
           A_DIV,A_DIVU,A_REM,A_REMU,
 
@@ -529,14 +560,17 @@ uses cutils, cclasses;
           A_FMIN_S,A_FMAX_S,
           A_FMV_X_S,A_FEQ_S,A_FLT_S,A_FLE_S,A_FCLASS_S,
           A_FCVT_W_S,A_FCVT_WU_S,A_FCVT_S_W,A_FCVT_S_WU,
-          A_FMV_S_X,
+          A_FMV_S_X,A_FMV_W_X,
 
           A_FADD_D,A_FSUB_D,A_FMUL_D,A_FDIV_D,
           A_FSQRT_D,A_FSGNJ_D,A_FSGNJN_D,A_FSGNJX_D,
           A_FMIN_D,A_FMAX_D,
           A_FEQ_D,A_FLT_D,A_FLE_D,A_FCLASS_D,
           A_FCVT_D_S,A_FCVT_S_D,
-          A_FCVT_W_D,A_FCVT_WU_D,A_FCVT_D_W,A_FCVT_D_WU:
+          A_FCVT_W_D,A_FCVT_WU_D,A_FCVT_D_W,A_FCVT_D_WU,
+          A_FLW,
+          A_FLD,
+          A_FNEG_S,A_FNEG_D,A_FNEG_Q:
             if opnr=0 then
               result:=operand_write
             else
@@ -557,6 +591,8 @@ uses cutils, cclasses;
           A_MULW,
           A_DIVW,A_DIVUW,A_REMW,A_REMUW,
 
+          A_RORIW,A_RORW,A_ROLW,
+
           A_FCVT_L_S,A_FCVT_LU_S,
           A_FCVT_S_L,A_FCVT_S_LU,
 
@@ -565,7 +601,8 @@ uses cutils, cclasses;
 
           A_ADDIW,A_SLLIW,A_SRLIW,A_SRAIW,
           A_ADDW,A_SLLW,A_SRLW,A_SUBW,A_SRAW,
-          A_LD,A_LWU:
+          A_LD,A_LWU,
+          A_ZEXT_B,A_ZEXT_H,A_ZEXT_W,A_SEXT_B,A_SEXT_H,A_SEXT_W:
             if opnr=0 then
               result:=operand_write
             else
@@ -575,7 +612,8 @@ uses cutils, cclasses;
             result:=operand_read;
 {$endif RISCV64}
           else
-            ;
+            { got bitten already by this, so play safe and do not do nothing by default }
+            Internalerror(2025021601);
         end;
       end;
 

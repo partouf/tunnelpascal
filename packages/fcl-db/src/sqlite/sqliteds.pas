@@ -6,7 +6,7 @@ unit SQLiteDS;
   This is TSqliteDataset, a TDataset descendant class for use with fpc compiler
   Copyright (C) 2004  Luiz Américo Pereira Câmara
   Email: pascalive@bol.com.br
-    
+
   This library is free software; you can redistribute it and/or modify it
   under the terms of the GNU Library General Public License as published by
   the Free Software Foundation; either version 2 of the License, or (at your
@@ -148,8 +148,7 @@ begin
     ColumnStr := UpperCase(String(ColumnNames[i + ColumnCount]));
     if (ColumnStr = 'INTEGER') or (ColumnStr = 'INT') then
     begin
-      if AutoIncrementKey and
-           (UpperCase(String(ColumnNames[i])) = UpperCase(PrimaryKey)) then
+      if AutoIncrementKey and SameText(String(ColumnNames[i]),PrimaryKey) then
       begin
         AType := ftAutoInc;
         FAutoIncFieldNo := i;
@@ -346,7 +345,7 @@ function TSqliteDataset.GetSqliteEncoding: String;
 begin
   Result := String(sqlite_encoding);
 end;
-  
+
 class function TSqliteDataset.SqliteVersion: String;
 begin
   Result := String(sqlite_version);
@@ -357,7 +356,7 @@ var
   vm: Pointer;
   ColumnNames, ColumnValues: PPAnsiChar;
   ColCount: Integer;
-  
+
   procedure FillStrings;
   begin
     while FReturnCode = SQLITE_ROW do
@@ -375,7 +374,7 @@ var
         TObject(PtrInt(StrToInt(String(ColumnValues[1])))));
       FReturnCode := sqlite_step(vm, @ColCount, @ColumnValues, @ColumnNames);
     end;
-  end;    
+  end;
 begin
   if FSqliteHandle = nil then
     GetSqliteHandle;
@@ -383,21 +382,21 @@ begin
   FReturnCode := sqlite_compile(FSqliteHandle, PAnsiChar(ASQL), nil, @vm, nil);
   if FReturnCode <> SQLITE_OK then
     DatabaseError(ReturnString,Self);
-    
+
   FReturnCode := sqlite_step(vm, @ColCount, @ColumnValues, @ColumnNames);
   if (FReturnCode = SQLITE_ROW) and (ColCount > 0) then
   begin
     Result := String(ColumnValues[0]);
     if AStrList <> nil then
-    begin   
+    begin
       if FillObjects and (ColCount > 1) then
         FillStringsAndObjects
       else
         FillStrings;
-    end;          
-  end;  
-  sqlite_finalize(vm, nil); 
+    end;
+  end;
+  sqlite_finalize(vm, nil);
 end;
-    
+
 end.
 

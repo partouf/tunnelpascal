@@ -51,7 +51,7 @@ end;
 
 {$ifndef FPC_HAS_SHORTSTR_DELETE}
 {$define FPC_HAS_SHORTSTR_DELETE}
-procedure {$ifdef VER3_0}delete{$else}fpc_shortstr_delete{$endif}(var s : shortstring;index : SizeInt;count : SizeInt);
+procedure fpc_shortstr_delete(var s : shortstring;index : SizeInt;count : SizeInt);
 begin
   if index<=0 then
      exit;
@@ -69,7 +69,7 @@ end;
 
 {$ifndef FPC_HAS_SHORTSTR_INSERT}
 {$define FPC_HAS_SHORTSTR_INSERT}
-procedure {$ifdef ver3_0}insert{$else}fpc_shortstr_insert{$endif}(const source : shortstring;var s : shortstring;index : SizeInt);
+procedure fpc_shortstr_insert(const source : shortstring;var s : shortstring;index : SizeInt);
 var
   cut,srclen,indexlen : SizeInt;
 begin
@@ -103,7 +103,7 @@ end;
 
 {$ifndef FPC_HAS_SHORTSTR_INSERT_CHAR}
 {$define FPC_HAS_SHORTSTR_INSERT_CHAR}
-procedure {$ifdef ver3_0}insert{$else}fpc_shortstr_insert_char{$endif}(source : AnsiChar;var s : shortstring;index : SizeInt);
+procedure fpc_shortstr_insert_char(source : AnsiChar;var s : shortstring;index : SizeInt);
 var
   indexlen : SizeInt;
 begin
@@ -518,10 +518,7 @@ type
     Common: TRttiDataCommon;
 {$endif}
     case TTypeKind of
-{$ifndef VER3_0}
-      tkInt64,tkQWord,
-{$endif VER3_0}
-      tkInteger,tkChar,tkEnumeration,tkBool,tkWChar: (
+      tkInt64,tkQWord,tkInteger,tkChar,tkEnumeration,tkBool,tkWChar: (
          OrdType : Byte;
          case TTypeKind of
             tkInteger,tkChar,tkEnumeration,tkBool,tkWChar: (
@@ -530,14 +527,12 @@ type
                 tkEnumeration: (
                   BaseTypeRef : pointer
                   );
-{$ifndef VER3_0}
             {tkBool with OrdType=otSQWord }
             tkInt64:
               (MinInt64Value, MaxInt64Value: Int64);
             {tkBool with OrdType=otUQWord }
             tkQWord:
               (MinQWordValue, MaxQWordValue: QWord);
-{$endif VER3_0}
          );
     );
     { more data here, but not needed }
@@ -587,11 +582,7 @@ begin
         does nothing) in case FPC_REQUIRES_PROPER_ALIGNMENT is not set
         to avoid the need for an if in this situation }
 
-{$ifdef VER3_0}
-      body:=Penum_typedata(aligntoptr(pointer(header) + 2 * sizeof(byte) { kind, num_chars } + header^.num_chars));
-{$else VER3_0}
       body:=Penum_typedata(aligntoqword(pointer(header) + 2 * sizeof(byte) { kind, num_chars } + header^.num_chars));
-{$endif VER3_0}
 
       with body^ do
         begin
@@ -786,7 +777,7 @@ begin
 			  inc(reslen);
 			  inc(tlen);
 			end;
-		end;		
+		end;
     end;
   { preparing result string }
   if reslen<len then
@@ -1083,153 +1074,177 @@ end;
                            Val() Functions
 *****************************************************************************}
 
-Function InitVal(const s:shortstring;out negativ:boolean;out base:byte):ValSInt;
+type
+  ValCommon=record
+    negative:boolean;
+    base,baseIndex:byte; { baseIndex is flattened base for lookups: 0 — base 10, 1 — base 16, 2 — base 2, 3 — base 8. }
+    minusPos:SizeInt;
+  end;
+
+Function InitVal(const s:shortstring;out vc:ValCommon):ValSInt;
 var
-  Code : SizeInt;
+  ns : SizeInt;
 begin
-  code:=1;
-  negativ:=false;
-  base:=10;
-  if length(s)=0 then
-    begin
-      InitVal:=code;
-      Exit;
-    end;
+  result:=1;
+  vc.negative:=false;
+  vc.base:=10;
+  vc.baseIndex:=0;
+  ns:=length(s);
 {Skip Spaces and Tab}
-  while (code<=length(s)) and (s[code] in [' ',#9]) do
-   inc(code);
+  while (result<=ns) and (s[result] in [' ',#9]) do
+   inc(result);
 {Sign}
-  case s[code] of
-   '-' : begin
-           negativ:=true;
-           inc(code);
-         end;
-   '+' : inc(code);
-  end;
+  if result<=ns then
+   case s[result] of
+    '-' : begin
+            vc.negative:=true;
+            vc.minusPos:=result;
+            inc(result);
+          end;
+    '+' : inc(result);
+   end;
 {Base}
-  if code<=length(s) then
-   begin
-     case s[code] of
-      '$',
-      'X',
-      'x' : begin
-              base:=16;
-              inc(code);
-            end;
-      '%' : begin
-              base:=2;
-              inc(code);
-            end;
-      '&' : begin
-              Base:=8;
-              inc(code);
-            end;
-      '0' : begin
-              if (code < length(s)) and (s[code+1] in ['x', 'X']) then
-              begin
-                inc(code, 2);
-                base := 16;
-              end;
-            end;
-     end;
-  end;
+  if result<=ns then
+   case s[result] of
+    '$',
+    'X',
+    'x' : begin
+            vc.base:=16;
+            vc.baseIndex:=1;
+            inc(result);
+          end;
+    '%' : begin
+            vc.base:=2;
+            vc.baseIndex:=2;
+            inc(result);
+          end;
+    '&' : begin
+            vc.base:=8;
+            vc.baseIndex:=3;
+            inc(result);
+          end;
+    '0' : if (result<ns) and (s[result+1] in ['x', 'X']) then
+          begin
+            vc.base:=16;
+            vc.baseIndex:=1;
+            inc(result, 2);
+          end;
+   end;
   { strip leading zeros }
-  while ((code < length(s)) and (s[code] = '0')) do begin
-    inc(code);
-  end;
-  InitVal:=code;
+  while (result<ns) and (s[result]='0') and (s[result+1]<>#0) do
+    inc(result);
 end;
 
 const
-  ValValueArray : array['0'..'f'] of byte = (0,1,2,3,4,5,6,7,8,9,$FF,$FF,$FF,$FF,$FF,$FF,$FF,10,11,12,13,14,15,
-                                             $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,
-                                             10,11,12,13,14,15);
+  ValData: record
+    ValueArray: array[0..ord('f')-ord('0')] of byte;
+    MaxDigits: array[0 .. 2 { unsigned / signed positive / signed negative }, 0 .. 3 { base index }, 0 .. 3 { Bsr(DestSize) }] of byte;
+  end =
+  (
+    ValueArray:
+    (
+      0,1,2,3,4,5,6,7,8,9,$FF,$FF,$FF,$FF,$FF,$FF,$FF,10,11,12,13,14,15,
+      $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,
+      10,11,12,13,14,15
+    );
+
+    { If VAL input has exactly this many digits (without leading zeros), then it may overflow.
+      If it has more digits, it definitely overflows.
+      If it has less, it definitely doesn’t overflow. }
+    MaxDigits:
+    (
+      ( { unsigned }
+        (3, 5, 10, 20), { base 10: 255 / 65535 / 4_294_967_295 / 18_446_744_073_709_551_615 }
+        (2, 4, 8, 16), { base 16: $FF / $FFFF / $FFFF_FFFF / $FFFF_FFFF_FFFF_FFFF }
+        (8, 16, 32, 64), { base 2: %1111_1111 / %1111_1111_1111_1111 / %1111_1111_1111_1111_1111_1111_1111_1111 / %1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111 }
+        (3, 6, 11, 22) { base 8: &377 / &17_7777 / &377_7777_7777 / &17_7777_7777_7777_7777_7777 }
+      ),
+      ( { signed positive }
+        (3, 5, 10, 19), { base 10: 127 / 32767 / 2_147_483_647 / 9_223_372_036_854_775_807 }
+        (2, 4, 8, 16), { base 16: $7F / $7FFF / $7FFF_FFFF / $7FFF_FFFF_FFFF_FFFF }
+        (7, 15, 31, 63), { base 2: %111_1111 / %111_1111_1111_1111 / %111_1111_1111_1111_1111_1111_1111_1111 / %111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111 }
+        (3, 5, 11, 21) { base 8: &177 / &7_7777 / &177_7777_7777 / &7_7777_7777_7777_7777_7777 }
+      ),
+      ( { signed negative }
+        (3, 5, 10, 19), { base 10: 128 / 32768 / 2_147_483_648 / 9_223_372_036_854_775_808 }
+        (2, 4, 8, 16), { base 16: $80 / $8000 / $8000_0000 / $8000_0000_0000_0000 }
+        (8, 16, 32, 64), { base 2: %1000_0000 / %1000_0000_0000_0000 / %1000_0000_0000_0000_0000_0000_0000_0000 / %1000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000 }
+        (3, 6, 11, 22) { base 8: &200 / &10_0000 / &200_0000_0000 / &10_0000_0000_0000_0000_0000 }
+      )
+    )
+  );
+
+type
+  ValNonZeroBase = 1 .. ord(High(ValCommon.base));
+  ValNonZeroDestSize = 1 .. ord(High(uint32));
 
 Function fpc_Val_SInt_ShortStr(DestSize: SizeInt; Const S: ShortString; out Code: ValSInt): ValSInt; [public, alias:'FPC_VAL_SINT_SHORTSTR']; compilerproc;
 var
-  temp, prev, maxPrevValue: ValUInt;
-  base,u : byte;
-  negative: boolean;
-  UnsignedUpperLimit: ValUInt;
+  sp,ns : SizeInt;
+  u : SizeUInt;
+  digitsLeft,sh : ALUSint;
+  temp, prev, lim: ValUInt;
+  vc: ValCommon;
 begin
-  fpc_Val_SInt_ShortStr := 0;
-  Temp:=0;
-  Code:=InitVal(s,negative,base);
-
-  { avoid error about being uninitialized }
-  UnsignedUpperLimit := 0;
-
-  if (base=10) or negative then
-    begin //always limit to either Low(DestType) or High(DestType)
-      case DestSize of
-        1: UnsignedUpperLimit := ValUInt(High(ShortInt))+Ord(negative);
-        2: UnsignedUpperLimit := ValUInt(High(SmallInt))+Ord(negative);
-        4: UnsignedUpperLimit := ValUInt(High(LongInt))+Ord(negative);
-        {$ifdef CPU64}
-        8: UnsignedUpperLimit := ValUInt(High(Int64))+Ord(negative);
-        {$endif CPU64}
-      end;
-    end
-  else
-    begin //not decimal and not negative
-      case DestSize of
-        1: UnsignedUpperLimit := High(Byte);
-        2: UnsignedUpperLimit := High(Word);
-        4: UnsignedUpperLimit := High(DWord);
-        {$ifdef CPU64}
-        8: UnsignedUpperLimit := High(UInt64);
-        {$endif CPU64}
-      end;
-    end;
-
-  if Code>length(s) then
-   exit;
-  if (s[Code]=#0) then
-    begin
-      if (Code>1) and (s[Code-1]='0') then
-        Code:=0;
-      exit;
-    end;
-
-  maxPrevValue := ValUInt(MaxUIntValue) div ValUInt(Base);
-
-  while Code<=Length(s) do
+  fpc_Val_SInt_ShortStr:=0;
+  sp:=InitVal(s,vc);
+  ns:=length(s);
+  if (sp>ns) or (s[sp]=#0) then
    begin
-     u:=16;
-     case s[code] of
-       '0'..'f' : u:=ValValueArray[S[Code]];
-       #0 : break;
-     else
-       ;
-     end;
-
-     Prev := Temp;
-     Temp := Temp*ValUInt(base);
-
-     If (u >= base) or
-        (prev > maxPrevValue)
-        or ((Temp)>(UnsignedUpperLimit-u)) Then
-       Begin
-         fpc_Val_SInt_ShortStr := 0;
-         Exit
-       End;
-     Temp:=Temp+u;
-     inc(code);
+     Code:=sp;
+     exit;
    end;
-  code := 0;
 
+  digitsLeft:=ValData.MaxDigits[ord((vc.base=10) or vc.negative)+ord(vc.negative), vc.baseIndex, BsrDWord(ValNonZeroDestSize(DestSize))];
+  Temp:=0;
+  prev:=0;
+  repeat
+    u:=SizeUint(ord(s[sp])-ord('0'));
+    if u>=length(ValData.ValueArray) then
+      break;
+    u:=ValData.ValueArray[u];
+    If u>=vc.base then
+      break;
+    dec(digitsLeft);
+    if digitsLeft<0 then
+      break;
+    prev:=Temp;
+    Temp:=Temp*ValUInt(vc.base)+u;
+    inc(sp);
+  until sp>ns;
+
+  if digitsLeft<=0 then { Maybe an overflow. If so, step 1 digit back. }
+   begin
+     if sp<=ns then { If the loop was stopped not by sp>ns check... }
+       u:=ValData.ValueArray[ord(s[sp-1])-ord('0')]; { Then recover previous u. }
+     lim:=High(lim) shr (bitsizeof(lim)-8*DestSize);
+     if (vc.base=10) or vc.negative then
+       lim:=lim shr 1+Ord(vc.negative); { Convert to signed limit. }
+     if prev>ValUInt(lim-u) div ValNonZeroBase(vc.base) then
+       dec(sp); { Overflow. Step 1 digit back. }
+   end;
+
+  if (sp<=ns) and (s[sp]<>#0) then
+   begin
+     Code:=sp;
+     exit;
+   end;
+
+  Code:=0;
   fpc_Val_SInt_ShortStr := ValSInt(Temp);
-  If Negative Then
+  If vc.Negative Then
     fpc_Val_SInt_ShortStr := -fpc_Val_SInt_ShortStr;
 
-  If Not(Negative) and (base <> 10) Then
-   {sign extend the result to allow proper range checking}
-    Case DestSize of
-      1: fpc_Val_SInt_ShortStr := shortint(fpc_Val_SInt_ShortStr);
-      2: fpc_Val_SInt_ShortStr := smallint(fpc_Val_SInt_ShortStr);
-{$ifdef cpu64}
-      4: fpc_Val_SInt_ShortStr := longint(fpc_Val_SInt_ShortStr);
-{$endif cpu64}
+  If Not(vc.Negative) and (vc.base<>10) and (DestSize<sizeof(fpc_Val_SInt_ShortStr)) Then
+   begin
+     {sign extend the result to allow proper range checking}
+     sh:=bitsizeof(fpc_Val_SInt_ShortStr)-8*DestSize;
+     fpc_Val_SInt_ShortStr:=
+{$if sizeof(ValSint)=sizeof(int64)} SarInt64
+{$elseif sizeof(ValSint)=sizeof(int32)} SarLongint
+{$elseif sizeof(ValSint)=sizeof(int16)} SarSmallint
+{$else} {$error unknown ValSint size}
+{$endif} (fpc_Val_SInt_ShortStr shl sh, sh);
     End;
 end;
 
@@ -1244,66 +1259,53 @@ Function int_Val_SInt_ShortStr(DestSize: SizeInt; Const S: ShortString; out Code
 
 Function fpc_Val_UInt_Shortstr({$ifndef VER3_2}DestSize: SizeInt;{$endif VER3_2} Const S: ShortString; out Code: ValSInt): ValUInt; [public, alias:'FPC_VAL_UINT_SHORTSTR']; compilerproc;
 var
-  base,u : byte;
-  negative : boolean;
-  UpperLimit: ValUInt;
+  sp,ns : SizeInt;
+  u : SizeUInt;
+  digitsLeft : ALUSint;
+  prev: ValUInt;
+  vc: ValCommon;
 begin
   fpc_Val_UInt_Shortstr:=0;
-  Code:=InitVal(s,negative,base);
-  If Negative or (Code>length(s)) Then
+  sp:=InitVal(s,vc);
+  ns:=length(s);
+  If vc.negative or (sp>ns) or (s[sp]=#0) Then
     begin
-      if Negative then Code:=Pos('-',S);
+      if vc.negative then sp:=vc.minusPos;
+      Code:=sp;
       Exit;
     end;
-  if (s[Code]=#0) then
-    begin
-      if (Code>1) and (s[Code-1]='0') then
-        Code:=0;
-      exit;
-    end;
-  {$ifndef VER3_2}
-  case DestSize of
-    1: UpperLimit:=High(Byte);
-    2: UpperLimit:=High(Word);
-    4: UpperLimit:=High(DWord);
-    {$ifdef CPU64}
-    8: UpperLimit:=High(QWord);
-    {$endif CPU64}
-    else
-      { avoid error about being uninitialized }
-      UpperLimit:=0;
-  end;
-  {$else VER3_2}
-  UpperLimit:=High(ValUInt);  //this preserves 3.2 (and earlier) behaviour
-  {$ENDIF}
-  while Code<=Length(s) do
-   begin
-     u:=16;
-     case s[code] of
-       '0'..'f' : u:=ValValueArray[S[Code]];
-       #0 : break;
-     else
-       ;
-     end;
 
-     If (u>=base) or
-        (ValUInt(UpperLimit-u) div ValUInt(Base)<fpc_val_uint_shortstr) then
-      begin
-        fpc_Val_UInt_Shortstr:=0;
-        exit;
-      end;
-     fpc_Val_UInt_Shortstr:=fpc_Val_UInt_Shortstr*ValUInt(base) + u;
-     inc(code);
+  digitsLeft:=ValData.MaxDigits[0, vc.baseIndex, BsrDWord(ValNonZeroDestSize({$ifndef VER3_2}DestSize{$else}sizeof(fpc_Val_UInt_Shortstr){$endif}))];
+  prev:=0;
+  repeat
+    u:=SizeUint(ord(s[sp])-ord('0'));
+    if u>=length(ValData.ValueArray) then
+      break;
+    u:=ValData.ValueArray[u];
+    If u>=vc.base then
+      break;
+    dec(digitsLeft);
+    if digitsLeft<0 then
+      break;
+    prev:=fpc_Val_UInt_Shortstr;
+    fpc_Val_UInt_Shortstr:=fpc_Val_UInt_Shortstr*ValUInt(vc.base)+u;
+    inc(sp);
+  until sp>ns;
+
+  if digitsLeft<=0 then { Maybe an overflow. If so, step 1 digit back. }
+   begin
+     if sp<=ns then { If the loop was stopped not by sp>ns check... }
+       u:=ValData.ValueArray[ord(s[sp-1])-ord('0')]; { Then recover previous u. }
+     if prev>ValUInt(High(result) {$ifndef VER3_2} shr (bitsizeof(result)-8*DestSize) {$endif}-u) div ValNonZeroBase(vc.base) then
+       dec(sp);
    end;
-  code := 0;
-  {$ifndef VER3_2}
-  case DestSize of
-    1: fpc_Val_UInt_Shortstr:=Byte(fpc_Val_UInt_Shortstr);
-    2: fpc_Val_UInt_Shortstr:=Word(fpc_Val_UInt_Shortstr);
-    4: fpc_Val_UInt_Shortstr:=DWord(fpc_Val_UInt_Shortstr);
-    //8: no typecast needed for QWord
-  end;
-  {$ENDIF}
+
+  code:=0;
+  if (sp<=ns) and (s[sp]<>#0) then
+   begin
+     Code:=sp;
+     fpc_Val_UInt_Shortstr:=0;
+   end;
 end;
 
 
@@ -1312,117 +1314,127 @@ end;
   Function fpc_val_int64_shortstr(Const S: ShortString; out Code: ValSInt): Int64; [public, alias:'FPC_VAL_INT64_SHORTSTR']; compilerproc;
 
   var  u : sizeuint;
-       temp, prev, maxprevvalue, maxnewvalue : qword;
-       base : byte;
-       negative : boolean;
-
-  const maxint64=qword($7fffffffffffffff);
-        minint64_unsigned=qword($8000000000000000);
-        maxqword=qword($ffffffffffffffff);
+       sp,ns : sizeint;
+       digitsLeft : ALUSint;
+       temp, prev, lim : qword;
+       vc : ValCommon;
 
   begin
   {$ifdef EXCLUDE_COMPLEX_PROCS}
     runerror(219);
   {$else EXCLUDE_COMPLEX_PROCS}
     fpc_val_int64_shortstr := 0;
-    Temp:=0;
-    Code:=InitVal(s,negative,base);
-    if Code>length(s) then
-     exit;
-    if (s[Code]=#0) then
-      begin
-        if (Code>1) and (s[Code-1]='0') then
-          Code:=0;
-        exit;
-      end;
-    maxprevvalue := maxqword div base;
-    if (base = 10) then
-      maxnewvalue := maxint64 + ord(negative)
-    else
-      maxnewvalue := maxqword;
-
-    while Code<=Length(s) do
+    sp:=InitVal(s,vc);
+    ns:=length(s);
+    if (sp>ns) or (s[sp]=#0) then
      begin
-       u:=16;
-       case s[code] of
-         '0'..'f' : u:=ValValueArray[S[Code]];
-         #0 : break;
-       else
-         ;
-       end;
-
-       Prev:=Temp;
-       Temp:=Temp*qword(base);
-       If (u >= base) or
-         (qword(maxnewvalue-u) < temp) or
-         (prev > maxprevvalue) or
-         ((base<>10) and (negative) and ((Temp+u)>minint64_unsigned)) Then
-         Begin
-           fpc_val_int64_shortstr := 0;
-           Exit
-         End;
-       Temp:=Temp+u;
-       inc(code);
+       Code:=sp;
+       exit;
      end;
+
+    digitsLeft:=ValData.MaxDigits[ord((vc.base=10) or vc.negative)+ord(vc.negative), vc.baseIndex, 3];
+    Temp:=0;
+    prev:=0;
+    repeat
+      u:=SizeUint(ord(s[sp])-ord('0'));
+      if u>=length(ValData.ValueArray) then
+        break;
+      u:=ValData.ValueArray[u];
+      If u>=vc.base then
+        break;
+      dec(digitsLeft);
+      if digitsLeft<0 then
+        break;
+      prev:=Temp;
+      Temp:=Temp*vc.base+u;
+      inc(sp);
+    until sp>ns;
+
+    if digitsLeft<=0 then { Maybe an overflow. If so, step 1 digit back. }
+     begin
+       if sp<=ns then { If the loop was stopped not by sp>ns check... }
+         u:=ValData.ValueArray[ord(s[sp-1])-ord('0')]; { Then recover previous u. }
+       lim:=High(lim);
+       if (vc.base=10) or vc.negative then
+        begin
+          lim:=uint64(High(int64));
+          if vc.negative then { lim:=uint64(High(int64))+ord(vc.negative) triggers #41148. }
+            lim:=uint64(Low(int64));
+        end;
+       if prev>uint64(lim-u) div ValNonZeroBase(vc.base) then
+         dec(sp); { Overflow. Step 1 digit back. }
+     end;
+
+    if (sp<=ns) and (s[sp]<>#0) then
+     begin
+       Code:=sp;
+       exit;
+     end;
+
     code:=0;
     fpc_val_int64_shortstr:=int64(Temp);
-    If Negative Then
+    if vc.negative then
       fpc_val_int64_shortstr:=-fpc_val_int64_shortstr;
   {$endif EXCLUDE_COMPLEX_PROCS}
   end;
 
   Function fpc_val_qword_shortstr(Const S: ShortString; out Code: ValSInt): QWord; [public, alias:'FPC_VAL_QWORD_SHORTSTR']; compilerproc;
-
-  var  u : sizeuint;
-       base : byte;
-       negative : boolean;
-
-  const maxqword=qword($ffffffffffffffff);
+  var
+    sp,ns : SizeInt;
+    u : SizeUInt;
+    digitsLeft : ALUSint;
+    prev: qword;
+    vc: ValCommon;
   begin
     fpc_val_qword_shortstr:=0;
-    Code:=InitVal(s,negative,base);
-    If Negative or (Code>length(s)) Then
+    sp:=InitVal(s,vc);
+    ns:=length(s);
+    If vc.negative or (sp>ns) or (s[sp]=#0) Then
       begin
-        if Negative then Code:=Pos('-',S);
+        if vc.negative then sp:=vc.minusPos;
+        Code:=sp;
         Exit;
       end;
-    if (s[Code]=#0) then
-      begin
-        if (Code>1) and (s[Code-1]='0') then
-          Code:=0;
-        exit;
-      end;
-    while Code<=Length(s) do
+
+    prev:=0;
+    digitsLeft:=ValData.MaxDigits[0, vc.baseIndex, 3];
+    repeat
+      u:=SizeUint(ord(s[sp])-ord('0'));
+      if u>=length(ValData.ValueArray) then
+        break;
+      u:=ValData.ValueArray[u];
+      If u>=vc.base then
+        break;
+      dec(digitsLeft);
+      if digitsLeft<0 then
+        break;
+      prev:=fpc_val_qword_shortstr;
+      fpc_val_qword_shortstr:=fpc_val_qword_shortstr*vc.base+u;
+      inc(sp);
+    until sp>ns;
+
+    if digitsLeft<=0 then { Maybe an overflow. If so, step 1 digit back. }
      begin
-       u:=16;
-       case s[code] of
-         '0'..'f' : u:=ValValueArray[S[Code]];
-         #0 : break;
-       else
-         ;
-       end;
-
-       If (u>=base) or
-         ((QWord(maxqword-u) div QWord(base))<fpc_val_qword_shortstr) then
-         Begin
-           fpc_val_qword_shortstr := 0;
-           Exit
-         End;
-       fpc_val_qword_shortstr:=fpc_val_qword_shortstr*QWord(base) + u;
-       inc(code);
+       if sp<=ns then { If the loop was stopped not by sp>ns check... }
+         u:=ValData.ValueArray[ord(s[sp-1])-ord('0')]; { Then recover previous u. }
+       if prev>qword(High(qword)-u) div ValNonZeroBase(vc.base) then
+         dec(sp);
      end;
-    code := 0;
+
+    code:=0;
+    if (sp<=ns) and (s[sp]<>#0) then
+     begin
+       Code:=sp;
+       fpc_val_qword_shortstr:=0;
+     end;
   end;
-
-
 {$endif CPU64}
 
 {$if defined(CPU16) or defined(CPU8)}
   Function fpc_val_longint_shortstr(Const S: ShortString; out Code: ValSInt): LongInt; [public, alias:'FPC_VAL_LONGINT_SHORTSTR']; compilerproc;
 
   var  u, temp, prev, maxprevvalue, maxnewvalue : longword;
-       base : byte;
-       negative : boolean;
+       vc : ValCommon;
 
   const maxlongint=longword($7fffffff);
         maxlongword=longword($ffffffff);
@@ -1430,18 +1442,12 @@ end;
   begin
     fpc_val_longint_shortstr := 0;
     Temp:=0;
-    Code:=InitVal(s,negative,base);
-    if Code>length(s) then
-     exit;
-    if (s[Code]=#0) then
-      begin
-        if (Code>1) and (s[Code-1]='0') then
-          Code:=0;
-        exit;
-      end;
-    maxprevvalue := maxlongword div base;
-    if (base = 10) then
-      maxnewvalue := maxlongint + ord(negative)
+    Code:=InitVal(s,vc);
+    if (Code>length(s)) or (s[Code]=#0) then
+      exit;
+    maxprevvalue := maxlongword div vc.base;
+    if (vc.base = 10) then
+      maxnewvalue := maxlongint + ord(vc.negative)
     else
       maxnewvalue := maxlongword;
 
@@ -1449,15 +1455,15 @@ end;
      begin
        u:=16;
        case s[code] of
-         '0'..'f' : u:=ValValueArray[S[Code]];
+         '0'..'f' : u:=ValData.ValueArray[ord(S[Code])-ord('0')];
          #0 : break;
        else
          ;
        end;
 
        Prev:=Temp;
-       Temp:=Temp*longword(base);
-       If (u >= base) or
+       Temp:=Temp*longword(vc.base);
+       If (u >= vc.base) or
          (longword(maxnewvalue-u) < temp) or
          (prev > maxprevvalue) Then
          Begin
@@ -1469,7 +1475,7 @@ end;
      end;
     code:=0;
     fpc_val_longint_shortstr:=longint(Temp);
-    If Negative Then
+    If vc.Negative Then
       fpc_val_longint_shortstr:=-fpc_val_longint_shortstr;
   end;
 
@@ -1477,39 +1483,32 @@ end;
   Function fpc_val_longword_shortstr(Const S: ShortString; out Code: ValSInt): LongWord; [public, alias:'FPC_VAL_LONGWORD_SHORTSTR']; compilerproc;
 
   var  u, prev: LongWord;
-       base : byte;
-       negative : boolean;
+       vc: ValCommon;
 
   const UpperLimit=High(longword);
 
   begin
     fpc_val_longword_shortstr:=0;
-    Code:=InitVal(s,negative,base);
-    If Negative or (Code>length(s)) Then
+    Code:=InitVal(s,vc);
+    If vc.Negative or (Code>length(s)) or (s[Code]=#0) Then
       Exit;
-    if (s[Code]=#0) then
-      begin
-        if (Code>1) and (s[Code-1]='0') then
-          Code:=0;
-        exit;
-      end;
     while Code<=Length(s) do
      begin
        u:=16;
        case s[code] of
-         '0'..'f' : u:=ValValueArray[S[Code]];
+         '0'..'f' : u:=ValData.ValueArray[ord(S[Code])-ord('0')];
          #0 : break;
        else
          ;
        end;
 
-       If (u>=base) or
-          (LongWord(UpperLimit-u) div LongWord(Base)<fpc_val_longword_shortstr) then
+       If (u>=vc.base) or
+          (LongWord(UpperLimit-u) div LongWord(vc.Base)<fpc_val_longword_shortstr) then
         begin
           fpc_val_longword_shortstr:=0;
           exit;
         end;
-       fpc_val_longword_shortstr:=fpc_val_longword_shortstr*base + u;
+       fpc_val_longword_shortstr:=fpc_val_longword_shortstr*vc.base + u;
        inc(code);
      end;
     code := 0;
@@ -1519,40 +1518,33 @@ end;
   Function fpc_val_smallint_shortstr(Const S: ShortString; out Code: ValSInt): SmallInt; [public, alias:'FPC_VAL_SMALLINT_SHORTSTR']; compilerproc;
 
   var  u, temp, prev, maxprevvalue : word;
-       base : byte;
-       negative : boolean;
        UnsignedUpperLimit: ValUInt;
+       vc: ValCommon;
   begin
     fpc_val_smallint_shortstr := 0;
     Temp:=0;
-    Code:=InitVal(s,negative,base);
-    if (base=10) or negative then
-      UnsignedUpperLimit := Word(High(SmallInt))+Ord(negative)
+    Code:=InitVal(s,vc);
+    if (vc.base=10) or vc.negative then
+      UnsignedUpperLimit := Word(High(SmallInt))+Ord(vc.negative)
     else
       UnsignedUpperLimit := High(Word);
-    if Code>length(s) then
+    if (Code>length(s)) or (s[Code]=#0) then
      exit;
-    if (s[Code]=#0) then
-      begin
-        if (Code>1) and (s[Code-1]='0') then
-          Code:=0;
-        exit;
-      end;
-    maxprevvalue := High(Word) div base;
+    maxprevvalue := High(Word) div vc.base;
 
     while Code<=Length(s) do
      begin
        u:=16;
        case s[code] of
-         '0'..'f' : u:=ValValueArray[S[Code]];
+         '0'..'f' : u:=ValData.ValueArray[ord(S[Code])-ord('0')];
          #0 : break;
        else
          ;
        end;
 
        Prev:=Temp;
-       Temp:=Temp*longword(base);
-       If (u >= base) or
+       Temp:=Temp*longword(vc.base);
+       If (u >= vc.base) or
         (prev > maxPrevValue) or
         ((Temp)>(UnsignedUpperLimit-u)) Then
        Begin
@@ -1564,7 +1556,7 @@ end;
      end;
     code:=0;
     fpc_val_smallint_shortstr:=SmallInt(Temp);
-    If Negative Then
+    If vc.Negative Then
       fpc_val_smallint_shortstr:=-fpc_val_smallint_shortstr;
   end;
 
@@ -1572,42 +1564,35 @@ end;
   Function fpc_val_word_shortstr(Const S: ShortString; out Code: ValSInt): Word; [public, alias:'FPC_VAL_WORD_SHORTSTR']; compilerproc;
 
   var  u, prev: word;
-       base : byte;
-       negative : boolean;
+       vc: ValCommon;
 
   const UpperLimit=High(Word);  //this preserves 3.2 (and earlier) behaviour
 
   begin
     fpc_val_word_shortstr:=0;
-    Code:=InitVal(s,negative,base);
-    If Negative or (Code>length(s)) Then
+    Code:=InitVal(s,vc);
+    If vc.Negative or (Code>length(s)) or (s[Code]=#0) Then
       begin
-        if Negative then Code:=Pos('-',S);
+        if vc.Negative then Code:=vc.minusPos;
         Exit;
-      end;
-    if (s[Code]=#0) then
-      begin
-        if (Code>1) and (s[Code-1]='0') then
-          Code:=0;
-        exit;
       end;
     while Code<=Length(s) do
      begin
        u:=16;
        case s[code] of
-         '0'..'f' : u:=ValValueArray[S[Code]];
+         '0'..'f' : u:=ValData.ValueArray[ord(S[Code])-ord('0')];
          #0 : break;
        else
          ;
        end;
 
-       If (u>=base) or
-          (Word(UpperLimit-u) div Word(Base)<fpc_val_word_shortstr) then
+       If (u>=vc.base) or
+          (Word(UpperLimit-u) div Word(vc.Base)<fpc_val_word_shortstr) then
         begin
           fpc_val_word_shortstr:=0;
           exit;
         end;
-       fpc_val_word_shortstr:=fpc_val_word_shortstr*base + u;
+       fpc_val_word_shortstr:=fpc_val_word_shortstr*vc.base + u;
        inc(code);
      end;
     code := 0;
@@ -1624,37 +1609,6 @@ end;
 {$ifndef FPC_STR_ENUM_INTERN}
 function fpc_val_enum_shortstr(str2ordindex:pointer;const s:shortstring;out code:valsint):longint; [public, alias:'FPC_VAL_ENUM_SHORTSTR']; compilerproc;
 
-    function string_compare(const s1,s2:shortstring):sizeint;
-
-    {We cannot use the > and < operators to compare a string here, because we if the string is
-     not found in the enum, we need to return the position of error in "code". Code equals the
-     highest matching character of all string compares, which is only known inside the string
-     comparison.}
-
-    var i,l:byte;
-        c1,c2:AnsiChar;
-
-    begin
-      l:=length(s1);
-      if length(s1)>length(s2) then
-        l:=length(s2);
-      i:=1;
-      while i<=l do
-        begin
-          c1:=s1[i];
-          c2:=s2[i];
-          if c1<>c2 then
-            break;
-          inc(i);
-        end;
-      if i>code then
-        code:=i;
-      if i<=l then
-        string_compare:=byte(c1)-byte(c2)
-      else
-        string_compare:=length(s1)-length(s2);
-    end;
-
 type  Psorted_array=^Tsorted_array;
       Tsorted_array={$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}packed{$endif}record
         o:longint;
@@ -1667,43 +1621,77 @@ type  Psorted_array=^Tsorted_array;
         data:array[0..0] of Tsorted_array;
       end;
 
-var l,h,m:cardinal;
-    c:sizeint;
-    sorted_array:^Tsorted_array;
-    spaces:byte;
-    t:shortstring;
+var l,r,l2,r2,m,sp,isp:SizeInt;
+    c:char;
 
 begin
   {Val for numbers accepts spaces at the start, so lets do the same
    for enums. Skip spaces at the start of the string.}
-  spaces:=1;
-  code:=1;
-  while (spaces<=length(s)) and (s[spaces]=' ')  do
-    inc(spaces);
-  t:=upcase(copy(s,spaces,255));
-  sorted_array:=pointer(@Pstring_to_ord(str2ordindex)^.data);
-  {Use a binary search to get the string.}
-  l:=1;
-  h:=Pstring_to_ord(str2ordindex)^.count;
+  sp:=1;
+  while (sp<=length(s)) and (s[sp]=' ')  do
+    inc(sp);
+
+  { Let input be “abd” and sorted names be: _hm a aa ab aba abb abc abd ac ad b c
+    Start:                                  L                                    ┘R (R points PAST the last item in the range.)
+    After iteration 0 (“a” analyzed):           L                            ┘R
+    After iteration 1 (“ab” analyzed):               L                 ┘R
+    After iteration 2 (“abd” analyzed):                             L  ┘R }
+  l:=0;
+  r:=Pstring_to_ord(str2ordindex)^.count;
+  dec(sp); { sp/isp are incremented at the beginning of the loop so that 'continue's advance sp/isp. }
+  isp:=0; { isp is the position without spaces. }
   repeat
-    m:=(l+h) div 2;
-    c:=string_compare(t,upcase(sorted_array[m-1].s^));
-    if c>0 then
-      l:=m+1
-    else if c<0 then
-      h:=m-1
-    else
+    inc(sp);
+    if sp>length(s) then
       break;
-    if l>h then
+    inc(isp);
+    c:=UpCase(s[sp]);
+    { Among all strings beginning with, say, ‘ab’, the ‘ab’ itself will be the first.
+      So after this check, “isp ≤ length(any string in the range)” is guaranteed. }
+    if isp>length(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[l].s^) then
       begin
-        {Not found...}
-        inc(code,spaces-1); {Add skipped spaces again.}
-        {The result of val in case of error is undefined, don't assign a function result.}
-        exit;
+        inc(l);
+        if l=r then
+          break;
       end;
+    if UpCase(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[l].s^[isp])=c then { Shortcut: L may be already correct (enums often have common prefixes). }
+      begin
+        if l+1=r then { Shortcut: the only string left (enums often have different suffixes). }
+          continue;
+      end
+    else
+      begin
+        r2:=r; { Search for new L. }
+        repeat
+          m:=SizeUint(l+r2) div 2;
+          if UpCase(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[m].s^[isp])<c then
+            l:=m+1
+          else
+            r2:=m;
+        until l=r2;
+        if l=r then
+          break;
+      end;
+    if UpCase(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[r-1].s^[isp])=c then { Shortcut: R−1 may be already correct. }
+      continue;
+    l2:=l; { Search for new R. }
+    repeat
+      m:=SizeUint(l2+r) div 2;
+      if UpCase(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[m].s^[isp])<=c then
+        l2:=m+1
+      else
+        r:=m;
+    until l2=r;
+    if l=r then { Better not to make it the loop condition, or ‘continue’s may jump to it instead of the beginning. }
+      break;
   until false;
-  code:=0;
-  fpc_val_enum_shortstr:=sorted_array[m-1].o;
+  if (l<r) and (isp=length(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[l].s^)) then
+    begin
+      code:=0;
+      exit(Psorted_array(Pstring_to_ord(str2ordindex)^.data)[l].o);
+    end;
+  code:=sp;
+  result:=-1; { Formally undefined, but −1 is very likely the invalid value prone to crashing, which is better than accidentally working. }
 end;
 
 {Redeclare fpc_val_enum_shortstr for internal use in the system unit.}
@@ -1860,7 +1848,7 @@ end;
 
 {$ifndef FPC_HAS_SETSTRING_SHORTSTR}
 {$define FPC_HAS_SETSTRING_SHORTSTR}
-Procedure {$ifdef FPC_HAS_CPSTRING}fpc_setstring_shortstr{$else}SetString{$endif}(Out S : Shortstring; Buf : PAnsiChar; Len : SizeInt); {$ifdef FPC_HAS_CPSTRING} compilerproc; {$endif FPC_HAS_CPSTRING}
+Procedure fpc_setstring_shortstr(Out S : Shortstring; Buf : PAnsiChar; Len : SizeInt); compilerproc;
 begin
   If Len > High(S) then
     Len := High(S);

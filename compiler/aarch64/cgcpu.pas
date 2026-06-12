@@ -84,7 +84,7 @@ interface
 
         procedure a_opmm_reg_reg(list: TAsmList; Op: TOpCG; size: tcgsize; src, dst: tregister; shuffle: pmmshuffle); override;
 
-        procedure a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); override;
+        procedure a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); override;
         { comparison operations }
         procedure a_cmp_const_reg_label(list: TAsmList; size: tcgsize; cmp_op: topcmp; a: tcgint; reg: tregister; l: tasmlabel);override;
         procedure a_cmp_reg_reg_label(list: TAsmList; size: tcgsize; cmp_op: topcmp; reg1, reg2: tregister; l: tasmlabel);override;
@@ -149,7 +149,7 @@ implementation
             ref.base:=ref.index;
             ref.index:=NR_NO;
           end;
-        { no abitrary scale factor support (the generic code doesn't set it,
+        { no arbitrary scale factor support (the generic code doesn't set it,
           AArch-specific code shouldn't either) }
         if not(ref.scalefactor in [0,1]) then
           internalerror(2014111002);
@@ -312,6 +312,9 @@ implementation
         { base + offset }
         if ref.base<>NR_NO then
           begin
+            if ref.offset=0 then
+              exit;
+
             { valid offset for LDUR/STUR -> use that }
             if (ref.addressmode=AM_OFFSET) and
                (op in [A_LDR,A_STR]) and
@@ -369,7 +372,7 @@ implementation
                           begin
                             if preferred_newbasereg=NR_NO then
                               preferred_newbasereg:=getaddressregister(list);
-                            { can we split the offset beween an
+                            { can we split the offset between an
                               "add/sub (imm12 shl 12)" and the load (also an
                               imm12)?
                               -- the offset from the load will always be added,
@@ -1054,7 +1057,22 @@ implementation
                 list.concat(taicpu.op_reg_reg_const_const(A_UBFIZ,makeregsize(reg2,OS_64),makeregsize(reg1,OS_64),0,32));
               OS_64,
               OS_S64:
-                list.concat(taicpu.op_reg_reg(A_SXTW,reg2,makeregsize(reg1,OS_32)));
+                case fromsize of
+                  OS_8:
+                    list.concat(taicpu.op_reg_reg(A_UXTB,reg2,makeregsize(reg1,OS_64)));
+                  OS_S8:
+                    list.concat(taicpu.op_reg_reg(A_SXTB,reg2,makeregsize(reg1,OS_32)));
+                  OS_16:
+                    list.concat(taicpu.op_reg_reg(A_UXTH,reg2,makeregsize(reg1,OS_64)));
+                  OS_S16:
+                    list.concat(taicpu.op_reg_reg(A_SXTH,reg2,makeregsize(reg1,OS_32)));
+                  OS_32:
+                    list.concat(taicpu.op_reg_reg_const_const(A_UBFIZ,makeregsize(reg2,OS_64),makeregsize(reg1,OS_64),0,32));
+                  OS_S32:
+                    list.concat(taicpu.op_reg_reg(A_SXTW,reg2,makeregsize(reg1,OS_32)));
+                  else
+                    internalerror(2024070701);
+                end;
               else
                 internalerror(2002090901);
             end;
@@ -1274,20 +1292,17 @@ implementation
       end;
 
 
-    procedure tcgaarch64.a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
+    procedure tcgaarch64.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
       var
         bitsize: longint;
       begin
         if srcsize in [OS_64,OS_S64] then
-          begin
-            bitsize:=64;
-          end
+          bitsize:=64
         else
-          begin
-            bitsize:=32;
-          end;
-        { source is 0 -> dst will have to become 255 }
-        list.concat(taicpu.op_reg_const(A_CMP,src,0));
+          bitsize:=32;
+        if not(not_zero) then
+          { source is 0 -> dst will have to become 255 }
+          list.concat(taicpu.op_reg_const(A_CMP,src,0));
         if reverse then
           begin
             list.Concat(taicpu.op_reg_reg(A_CLZ,makeregsize(dst,srcsize),src));
@@ -1301,10 +1316,13 @@ implementation
             list.Concat(taicpu.op_reg_reg(A_CLZ,dst,dst));
           end;
         { set dst to -1 if src was 0 }
-        list.Concat(taicpu.op_reg_reg_reg_cond(A_CSINV,dst,dst,makeregsize(NR_XZR,dstsize),C_NE));
-        { mask the -1 to 255 if src was 0 (anyone find a two-instruction
-          branch-free version? All of mine are 3...) }
-        list.Concat(taicpu.op_reg_reg(A_UXTB,makeregsize(dst,OS_32),makeregsize(dst,OS_32)));
+        if not(not_zero) then
+          begin
+            list.Concat(taicpu.op_reg_reg_reg_cond(A_CSINV,dst,dst,makeregsize(NR_XZR,dstsize),C_NE));
+            { mask the -1 to 255 if src was 0 (anyone find a two-instruction
+              branch-free version? All of mine are 3...) }
+            list.Concat(taicpu.op_reg_reg(A_UXTB,makeregsize(dst,OS_32),makeregsize(dst,OS_32)));
+          end;
       end;
 
 
@@ -1620,7 +1638,7 @@ implementation
 
 
 
-  {*************** compare instructructions ****************}
+  {*************** compare instructions ****************}
 
     procedure tcgaarch64.a_cmp_const_reg_label(list: TAsmList; size: tcgsize; cmp_op: topcmp; a: tcgint; reg: tregister; l: tasmlabel);
       var
@@ -1871,6 +1889,7 @@ implementation
         hitem: tlinkedlistitem;
         seh_proc: tai_seh_directive;
         templist: TAsmList;
+        genloadframeforexcept,
         suppress_endprologue: boolean;
         ref: treference;
         totalstackframesize: longint;
@@ -1887,6 +1906,7 @@ implementation
           SEH directives in assembler body. In this case, .seh_endprologue
           is expected to be one of those directives, and not generated here. }
         suppress_endprologue:=(pi_has_unwind_info in current_procinfo.flags);
+        genloadframeforexcept:=false;
 
         if not nostackframe then
           begin
@@ -1916,7 +1936,12 @@ implementation
                   end
                 else
                   begin
-                    gen_load_frame_for_exceptfilter(list);
+                    { do this after the prologue is done for aarch64-win64 as
+                      there is no SEH directive for setting FP to a register }
+                    if target_info.system<>system_aarch64_win64 then
+                      gen_load_frame_for_exceptfilter(list)
+                    else
+                      genloadframeforexcept:=true;
                     localsize:=current_procinfo.maxpushedparasize;
                   end;
               end;
@@ -1976,7 +2001,11 @@ implementation
           end;
 
         if not (pi_has_unwind_info in current_procinfo.flags) then
-          exit;
+          begin
+            if genloadframeforexcept then
+              gen_load_frame_for_exceptfilter(list);
+            exit;
+          end;
 
         { Generate unwind data for aarch64-win64 }
         seh_proc:=cai_seh_directive.create_name(ash_proc,current_procinfo.procdef.mangledname);
@@ -1997,6 +2026,9 @@ implementation
         else
           list.concatlist(templist);
         templist.free;
+
+        if genloadframeforexcept then
+          gen_load_frame_for_exceptfilter(list);
       end;
 
 
@@ -2131,11 +2163,24 @@ implementation
                   handle_reg_imm12_reg(list,A_ADD,OS_ADDR,NR_SP,current_procinfo.final_localsize,NR_SP,NR_IP0,false,true);
                 load_regs(list,R_MMREGISTER,RS_D8,RS_D15,R_SUBMMD);
                 load_regs(list,R_INTREGISTER,RS_X19,RS_X28,R_SUBWHOLE);
+                { on Windows also restore SP even if the add should be enough
+                  to have matching exit sequence to the entry sequence }
+                if target_info.system=system_aarch64_win64 then
+                  a_load_reg_reg(list,OS_ADDR,OS_ADDR,NR_FP,NR_SP);
               end
             else if current_procinfo.final_localsize<>0 then
               begin
                 { restore stack pointer }
-                if pi_no_framepointer_needed in current_procinfo.flags then
+                { Note: for Windows we need to restore the stack using an ADD
+                        and to set FP back to SP }
+                if target_info.system=system_aarch64_win64 then
+                  begin
+                    handle_reg_imm12_reg(list,A_ADD,OS_ADDR,current_procinfo.framepointer,current_procinfo.final_localsize,
+                      current_procinfo.framepointer,NR_IP0,false,true);
+                    if not (pi_no_framepointer_needed in current_procinfo.flags) then
+                      a_load_reg_reg(list,OS_ADDR,OS_ADDR,NR_FP,NR_SP);
+                  end
+                else if pi_no_framepointer_needed in current_procinfo.flags  then
                   handle_reg_imm12_reg(list,A_ADD,OS_ADDR,current_procinfo.framepointer,current_procinfo.final_localsize,
                     current_procinfo.framepointer,NR_IP0,false,true)
                 else

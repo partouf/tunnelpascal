@@ -2,7 +2,7 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
   {$ifdef unix}
   cthreads,
   {$endif}
@@ -20,7 +20,7 @@ begin
     begin
     P:=AddPackage('utils-fpcres');
     P.ShortName:='fprs';
-    P.OSes:=AllOSes-[atari,embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,wasi,human68k];
+    P.OSes:=AllOSes-[atari,embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,wasip1,wasip1threads,wasip2,human68k,ps1];
     //P.OSes:=[win32,win64,wince,haiku,linux,freebsd,openbsd,netbsd,darwin,iphonesim,ios,solaris,os2,emx,aix,aros,amiga,morphos];
 
     if Defaults.CPU=jvm then
@@ -56,12 +56,32 @@ begin
     T.Dependencies.AddUnit('target');
     T.Dependencies.AddUnit('jarsourcehandler');
 
-    P.Targets.AddUnit('closablefilestream.pas').install:=false;
-    P.Targets.AddUnit('msghandler.pas').install:=false;
-    P.Targets.AddUnit('paramparser.pas').install:=false;
-    P.Targets.AddUnit('sourcehandler.pas').install:=false;
-    P.Targets.AddUnit('target.pas').install:=false;
-    P.Targets.AddUnit('jarsourcehandler.pas').install:=false;
+    T:=P.Targets.AddUnit('closablefilestream.pas');
+    T.install:=false;
+
+    T:=P.Targets.AddUnit('msghandler.pas');
+    T.install:=false;
+
+    T:=P.Targets.AddUnit('paramparser.pas');
+    T.Dependencies.AddUnit('msghandler');
+    T.Dependencies.AddUnit('target');
+    T.install:=false;
+
+    T:=P.Targets.AddUnit('sourcehandler.pas');
+    T.Dependencies.AddUnit('msghandler');
+    T.Dependencies.AddUnit('closablefilestream');
+    // T.Dependencies.Add('rcreader');comes from fcl-res package
+    T.install:=false;
+
+    T:=P.Targets.AddUnit('target.pas');
+    T.install:=false;
+
+    T:=P.Targets.AddUnit('jarsourcehandler.pas');
+    T.Dependencies.AddUnit('sourcehandler');
+    T.Dependencies.AddUnit('msghandler');
+    T.Dependencies.AddUnit('closablefilestream');
+    T.install:=false;
+
     end;
 end;
 

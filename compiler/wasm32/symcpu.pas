@@ -26,6 +26,7 @@ unit symcpu;
 interface
 
 uses
+  sysutils,
   globtype,
   cpubase,
   aasmdata,
@@ -208,7 +209,7 @@ type
   tcpusyssymclass = class of tcpusyssym;
 
 
-const
+var
   pbestrealtype : ^tdef = @s64floattype;
 
   {# Returns true if p is a WebAssembly funcref reference type }
@@ -360,7 +361,7 @@ implementation
 
   destructor tcpuprocdef.destroy;
     begin
-      exprasmlist.free;
+      FreeAndNil(exprasmlist);
       inherited destroy;
     end;
 

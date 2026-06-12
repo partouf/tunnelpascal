@@ -44,6 +44,7 @@ type
     procedure TestPropGetValueDynArray;
     procedure TestPropGetValueEnumeration;
     procedure TestPropGetValueChars;
+    procedure TestPropGetValueRecord;
 
     procedure TestPropSetValueString;
     procedure TestPropSetValueInteger;
@@ -55,6 +56,7 @@ type
     procedure TestPropSetValueDynArray;
     procedure TestPropSetValueEnumeration;
     procedure TestPropSetValueChars;
+    procedure TestPropSetValueRecord;
 
     procedure TestGetValueStringCastError;
     procedure TestGetIsReadable;
@@ -109,6 +111,7 @@ type
     Procedure TestProperties;
     Procedure TestDeclaredMethods;
     Procedure TestMethods;
+    Procedure TestMethodByAddress;
     Procedure TestMethodsInherited;
     Procedure TestPrivateFieldAttributes;
     Procedure TestProtectedFieldAttributes;
@@ -117,6 +120,8 @@ type
     Procedure TestProtectedPropertyAttributes;
     Procedure TestPublicPropertyAttributes;
     Procedure TestPublishedPropertyAttributes;
+    procedure TestGetStaticProperty;
+    procedure TestSetStaticProperty;
   end;
 
   { TTestRecordExtendedRTTI }
@@ -135,7 +140,11 @@ type
 implementation
 
 uses
-  Tests.Rtti.Util, {tests.rtti.exttypes, } tests.rtti.attrtypes, tests.rtti.types;
+  Tests.Rtti.Util,
+  {tests.rtti.exttypes, }
+  tests.rtti.attrtypes2,
+  tests.rtti.attrtypes,
+  tests.rtti.types;
 
 
 
@@ -680,6 +689,41 @@ begin
   end;
 end;
 
+procedure TTestRTTI.TestPropGetValueRecord;
+
+var
+  ATestClass : TRecordRttiClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  R : TRTTIRecord;
+  P : PRTTIRecord;
+
+begin
+  R.a:=23;
+  r.B:=54;
+  c := TRttiContext.Create(False);
+  try
+    ATestClass := TRecordRttiClass.Create;
+    ATestClass.RecordProp:=R;
+    try
+      ARttiType := c.GetType(TRecordRttiClass);
+      CheckNotNull(ARttiType,'Type');
+      AProperty := ARttiType.GetProperty('RecordProp');
+      CheckNotNull(aProperty,'Prop');
+      AValue := AProperty.GetValue(ATestClass);
+      P:=PRTTIRecord(AValue.GetReferenceToRawData);
+      AssertEquals('a',23,P^.A);
+      AssertEquals('b',54,P^.B);
+    finally
+      AtestClass.Free;
+    end;
+  finally
+    c.Free;
+  end;
+end;
+
 procedure TTestRTTI.TestPropSetValueString;
 var
   ATestClass : TTestValueClass;
@@ -1064,6 +1108,39 @@ begin
     end;
       CheckEquals('C', AValueC.AsAnsiChar);
       CheckEquals('W', AValueW.AsWideChar);
+  finally
+    c.Free;
+  end;
+end;
+
+procedure TTestRTTI.TestPropSetValueRecord;
+var
+  ATestClass : TRecordRttiClass;
+  c: TRttiContext;
+  ARttiType: TRttiType;
+  AProperty: TRttiProperty;
+  AValue: TValue;
+  R : TRTTIRecord;
+  P : PRTTIRecord;
+
+begin
+  R.a:=23;
+  r.B:=54;
+  c := TRttiContext.Create(False);
+  try
+    ATestClass := TRecordRttiClass.Create;
+    ATestClass.RecordProp:=R;
+    try
+      ARttiType := c.GetType(TRecordRttiClass);
+      CheckNotNull(ARttiType,'Type');
+      AProperty := ARttiType.GetProperty('RecordProp');
+      CheckNotNull(aProperty,'Prop');
+      AProperty.SetValue(ATestClass,TValue.specialize From<TRttiRecord>(R));
+      AssertEquals('a',23,aTestClass.RecordProp.A);
+      AssertEquals('b',54,aTestClass.RecordProp.B);
+    finally
+      AtestClass.Free;
+    end;
   finally
     c.Free;
   end;
@@ -1738,7 +1815,7 @@ begin
   AssertEquals('Correct class type',TRttiInstanceType,Obj2.ClassType);
   A:=RttiData.GetFields;
   AssertEquals('Class field Count',11,Length(A));
-  For I:=0 to 9 do
+  For I:=1 to 10 do
     AssertSame('Field parent'+IntToStr(i)+' is parent class', Obj2,A[I].Parent);
   A:=RttiData.GetDeclaredFields;
   AssertEquals('Class declared field Count',1,Length(A));
@@ -1815,11 +1892,25 @@ begin
   A:=RttiData.GetMethods;
   aCount:=Length(A);
   AssertEquals('Full Count',13,aCount);
-  CheckMethod('Full',12, A[12],'PublicAdditionalMethod',mvPublic);
+  CheckMethod('Full',0, A[0],'PublicAdditionalMethod',mvPublic);
   A:=RttiData.GetDeclaredMethods;
   aCount:=Length(A);
   AssertEquals('Full declared Count',1,aCount);
   CheckMethod('Full declared',1, A[0],'PublicAdditionalMethod',mvPublic);
+end;
+
+procedure TTestClassExtendedRTTI.TestMethodByAddress;
+
+var
+  Obj : TRttiObject;
+  RttiData : TRttiInstanceType absolute obj;
+  M1,M2 : TRttiMethod;
+begin
+  Obj:=FCtx.GetType(TAdditionalMethodClassRTTI.ClassInfo);
+  M1:=RttiData.GetMethod('PublicAdditionalMethod');
+  AssertNotNull('have method',m1);
+  M2:=RttiData.GetMethod(@TAdditionalMethodClassRTTI.PublicAdditionalMethod);
+  AssertSame('Correct method ',M1,M2);
 end;
 
 procedure TTestClassExtendedRTTI.TestMethodsInherited;
@@ -1838,7 +1929,7 @@ begin
   A:=RttiData.GetMethods;
   aCount:=Length(A);
   AssertEquals('Full Count',13,aCount);
-  For I:=0 to 11 do
+  For I:=1 to 12 do
     AssertSame('Parent is RTTI of parent class',Obj2,A[I].Parent);
   A:=RttiData.GetDeclaredMethods;
   aCount:=Length(A);
@@ -2055,6 +2146,31 @@ begin
   AssertNotNull('Attribute class ',O);
   AssertEquals('Attribute class ',O.ClassType,My3Attribute);
   AssertEquals('Attribute value ',5,M3.Int);
+end;
+
+procedure TTestClassExtendedRTTI.TestGetStaticProperty;
+var
+  Obj : TRttiObject;
+  RttiData : TRttiInstanceType absolute obj;
+  Prop : TRttiProperty;
+begin
+  Obj:=FCtx.GetType(TypeInfo(TTestAttr2Class));
+  TTestAttr2Class.StaticProp:=4539;
+  Prop:=rttiData.GetProperty('StaticProp');
+  AssertEquals('Class property is set or got incorrectly via methods', 4539, Prop.GetValue(nil).AsInteger);
+end;
+
+procedure TTestClassExtendedRTTI.TestSetStaticProperty;
+var
+  Obj : TRttiObject;
+  RttiData : TRttiInstanceType absolute obj;
+  Prop : TRttiProperty;
+begin
+  Obj:=FCtx.GetType(TypeInfo(TTestAttr2Class));
+  Prop:=rttiData.GetProperty('StaticProp');
+  // Write
+  Prop.SetValue(nil, 4539);
+  AssertEquals('Property correctly set',4539,TTestAttr2Class.StaticProp);
 end;
 
 

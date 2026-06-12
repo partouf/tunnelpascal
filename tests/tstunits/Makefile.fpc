@@ -163,8 +163,20 @@ ctest:
         @exit 1
 endif
 
+ifneq ($(findstring dosbox_wrapper,$(EMULATOR)),)
+  MSDOS_EXITCODE_SRC=../utils/dosbox/exitcode.pas
+  MSDOS_EXITCODE_PROG=../utils/dosbox/exitcode.exe
+else
+  MSDOS_EXITCODE_SRC=
+  MSDOS_EXITCODE_PROG=
+endif
 
-extra : erroru$(PPUEXT) ptest$(PPUEXT) popuperr$(PPUEXT)
+ifdef MSDOS_EXITCODE_PROG
+$(MSDOS_EXITCODE_PROG): $(MSDOS_EXITCODE_SRC)
+	$(TESTCOMPILER) -Fu$(BASEDIR)/$(COMPILER_TARGETDIR) -o$(MSDOS_EXITCODE_PROG) $(MSDOS_EXITCODE_SRC)
+endif
+
+extra : erroru$(PPUEXT) ptest$(PPUEXT) popuperr$(PPUEXT) $(MSDOS_EXITCODE_PROG)
 
 
 #####################################################################
@@ -174,14 +186,11 @@ extra : erroru$(PPUEXT) ptest$(PPUEXT) popuperr$(PPUEXT)
 PPULIST:=$(wildcard */*.ppu) $(wildcard units/*/*.ppu)
 PPULOGLIST:=$(subst .ppu,.log-ppu,$(PPULIST))
 RMPPULOGLIST:=$(subst .ppu,.rm-log-ppu,$(PPULIST))
+ALLPPUDIRS:=$(wildcard units/*) $(wildcard */units/*)
 
 .PHONY : ppulogs cleanppulogs testppudump $(RMPPULOGLIST)
 
 ppulogs : $(PPULOGLIST)
-
-vpath %.ppu $(ALLPPUDIRS)
-vpath %.log-ppu $(ALLPPUDIRS)
-vpath %.rm-log-ppu $(ALLPPUDIRS)
 
 %.log-ppu : %.ppu ../../compiler/utils/ppudump$(EXEEXT)
 	..$(PATHSEP)..$(PATHSEP)compiler$(PATHSEP)utils$(PATHSEP)ppudump -VA -M $< > $@
@@ -194,6 +203,7 @@ vpath %.rm-log-ppu $(ALLPPUDIRS)
 	$(MAKE) -C $(COMPILERDIR)/utils ppudump$(EXEEXT)
 
 ppuinfo :
+	echo list of PPU directories is "$(ALLPPUDIRS)"
 	echo PPU list is "$(PPULIST)"
 	echo PPULOG list is "$(PPULOGLIST)"
 
@@ -213,7 +223,7 @@ all : rtl fpcunit packages extra
 endif
 
 STAMPFILES=$(wildcard *stamp*)
-TEMPDIRS=$(wildcard $(MAKEFILETARGETS) tmp)
+TEMPDIRS=$(wildcard $(MAKEFILETARGETS) $(LIMIT83fs) tmp)
 
 
 clean : cleanrtl cleanall cleanfpcunit cleanpackages

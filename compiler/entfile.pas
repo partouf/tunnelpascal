@@ -295,6 +295,8 @@ type
     function  openstream(strm:TCStream):boolean;
     procedure reloadbuf;
     procedure readdata(out b;len:integer);
+    procedure readdata(const b : TByteDynArray);
+    procedure readdata(const b : TAnsiCharDynArray);
     procedure skipdata(len:integer);
     function  readentry:byte;
     function  EndOfEntry:boolean; {$ifdef USEINLINE}inline;{$endif}
@@ -302,6 +304,8 @@ type
     function  entryleft:longint; {$ifdef USEINLINE}inline;{$endif}
     procedure getdatabuf(out b;len:integer;out res:integer);
     procedure getdata(out b;len:integer);
+    procedure getdata(b : TByteDynArray);
+    procedure getdata(b : TAnsiCharDynArray);
     function  getbyte:byte;
     function  getword:word;
     function  getdword:dword;
@@ -315,6 +319,7 @@ type
     function getaword:{$ifdef generic_cpu}qword{$else}aword{$ifdef USEINLINE}; inline{$endif}{$endif};
     function  getreal:entryreal;
     function  getrealsize(sizeofreal : longint):entryreal;
+    function  getrealbytesize:byte;
     function  getboolean:boolean; {$ifdef USEINLINE}inline;{$endif}
     function  getstring:string;
     function  getpshortstring:pshortstring;
@@ -605,6 +610,7 @@ begin
 {$endif}
      if fisfile then
        f.Free;
+       f := nil;
      mode:=0;
      closed:=true;
    end;
@@ -736,6 +742,16 @@ begin
   inc(bufidx,len);
 end;
 
+procedure tentryfile.readdata(const b: TByteDynArray);
+begin
+  ReadData(B[0],Length(B));
+end;
+
+procedure tentryfile.readdata(const b: TAnsiCharDynArray);
+begin
+  ReadData(B[0],Length(B));
+end;
+
 
 procedure tentryfile.skipdata(len:integer);
 var
@@ -800,7 +816,7 @@ begin
 end;
 
 
-function tentryfile.endofentry:boolean;
+function tentryfile.endofentry: boolean;
 begin
 {$ifdef generic_cpu}
   endofentry:=(entryidx=entry.size);
@@ -841,6 +857,28 @@ begin
    end;
   readdata(b,len);
   inc(entryidx,len);
+end;
+
+procedure tentryfile.getdata(b: TByteDynArray);
+begin
+  if entryidx+Length(b)>entry.size then
+   begin
+     error:=true;
+     exit;
+   end;
+  readdata(b);
+  inc(entryidx,length(b));
+end;
+
+procedure tentryfile.getdata(b: TAnsiCharDynArray);
+begin
+  if entryidx+Length(b)>entry.size then
+   begin
+     error:=true;
+     exit;
+   end;
+  readdata(b);
+  inc(entryidx,length(b));
 end;
 
 
@@ -1230,8 +1268,8 @@ end;
 
 {$ifndef FPC_HAS_TYPE_EXTENDED}
 {$ifdef FPC_SOFT_FPUX80}
-{ i8086,i386 and x86_64 normally have 80bit float type for 
-  entryreal, but this is not supported 
+{ i8086,i386 and x86_64 normally have 80bit float type for
+  entryreal, but this is not supported
   on CPUs without 80bit floats.
   Special code is required to handle this. }
 const
@@ -1293,7 +1331,7 @@ begin
 	floatx80_ba:=swapendian_floatx80entryreal(floatx80_ba);
 {$ifdef FPC_BIG_ENDIAN}
       floatx80_e.high:=pword(@floatx80_ba[0])^;
-      floatx80_e.low:=pqword(@floatx80_ba[8])^;
+      floatx80_e.low:=unaligned(pqword(@floatx80_ba[2])^);
 {$else}
       floatx80_e.high:=pword(@floatx80_ba[8])^;
       floatx80_e.low:=pqword(@floatx80_ba[0])^;
@@ -1315,7 +1353,7 @@ begin
   if sizeofreal=sizeof(e) then
     begin
 {$ifdef DEBUG_PPU}
-      ppu_log('getrealsize(sizeofreal='+tostr(sizeofreal)+')='));
+      ppu_log('getrealsize(sizeofreal='+tostr(sizeofreal)+')=');
       inc_log_level;
 {$endif}
       if entryidx+sizeof(e)>entry.size then
@@ -1343,7 +1381,7 @@ begin
   if sizeofreal=sizeof(d) then
     begin
 {$ifdef DEBUG_PPU}
-      ppu_log('getrealsize(sizeofreal='+tostr(sizeofreal)+')='));
+      ppu_log('getrealsize(sizeofreal='+tostr(sizeofreal)+')=');
       inc_log_level;
 {$endif}
       if entryidx+sizeof(d)>entry.size then
@@ -1374,7 +1412,7 @@ begin
   if sizeofreal=sizeof(s) then
     begin
 {$ifdef DEBUG_PPU}
-      ppu_log('getrealsize(sizeofreal='+tostr(sizeofreal)+')='));
+      ppu_log('getrealsize(sizeofreal='+tostr(sizeofreal)+')=');
       inc_log_level;
 {$endif}
       if entryidx+sizeof(s)>entry.size then
@@ -1432,6 +1470,23 @@ begin
       d:=getrealsize(sizeof(d));
       getreal:=d;
     end;
+end;
+
+function tentryfile.getrealbytesize:byte;
+begin
+  if target_info.system=system_x86_64_win64 then
+    getrealbytesize:=sizeof(double)
+{$ifndef FPC_HAS_TYPE_EXTENDED}
+{$ifdef FPC_SOFT_FPUX80}
+  else
+    if target_info.cpu in [cpu_i8086, cpu_i386, cpu_x86_64] then
+      getrealbytesize:=sizeof(floatx80_byte_array)
+{$endif def FPC_SOFT_FPUX80}
+{$endif ndef FPC_HAS_TYPE_EXTENDED}
+  else
+    { this relies on the fact that
+      entryreal=bestreal and ppureal=bestreal }
+    getrealbytesize:=sizeof(entryreal);
 end;
 
 

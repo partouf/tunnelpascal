@@ -24,7 +24,7 @@ uses
   WEditor,WCEdit,
   Comphook,Browcol,
   WHTMLScn,
-  FPViews,FPSymbol
+  FPViews,FPSymbol,FPSwitch
   {$ifndef NODEBUG}
   ,fpevalw
   {$endif};
@@ -52,6 +52,7 @@ type
       procedure   UpdateMode;
       procedure   UpdateRunMenu(DebuggeeRunning : boolean);
       procedure   UpdateTarget;
+      procedure   UpdateEditorsCompilerMode(OldMode:TCompilerMode);
       procedure   GetEvent(var Event: TEvent); virtual;
       procedure   HandleEvent(var Event: TEvent); virtual;
       procedure   GetTileRect(var R: TRect); virtual;
@@ -101,6 +102,7 @@ type
       procedure DoShowRegisters;
       procedure DoShowFPU;
       procedure DoShowVector;
+      function  CheckModifiedEditor:boolean;
       function  AskRecompileIfModified:boolean;
       procedure Messages;
       procedure Calculator;
@@ -131,6 +133,8 @@ type
       procedure OpenINI;
       procedure SaveINI;
       procedure SaveAsINI;
+      procedure TileVertical;
+      procedure Stepped(aDirection:boolean);
       procedure CloseAll;
       procedure WindowList;
       procedure HelpContents;
@@ -151,7 +155,10 @@ type
       procedure AddRecentFile(AFileName: string; CurX, CurY: sw_integer);
       function  SearchRecentFile(AFileName: string): integer;
       procedure RemoveRecentFile(Index: integer);
+    public
       procedure CurDirChanged;
+      procedure UpdateClockAndHeap; { update visibility of ClockView and HeapView }
+    private
       procedure UpdatePrimaryFile;
       procedure UpdateINIFile;
       procedure UpdateRecentFileList;
@@ -171,7 +178,7 @@ uses
   fpcatch,
 {$endif HasSignal}
 {$ifdef WinClipSupported}
-  WinClip,
+  FvClip,
 {$endif WinClipSupported}
 {$ifdef Unix}
   fpKeys,
@@ -181,9 +188,12 @@ uses
   Compiler,Version,
   FVConsts,
   Dos{,Memory},Menus,Dialogs,StdDlg,timeddlg,
+{$Ifdef COLORSEL}
+  ColorSel,
+{$endif}
   Systems,
   WUtils,WHlpView,WViews,WHTMLHlp,WHelp,WConsole,
-  FPConst,FPVars,FPUtils,FPSwitch,FPIni,FPIntf,FPCompil,FPHelp,
+  FPConst,FPVars,FPUtils,FPIni,FPIntf,FPCompil,FPHelp,
   FPTemplt,FPCalc,FPUsrScr,FPTools,
 {$ifndef NODEBUG}
   FPDebug,FPRegs,
@@ -251,6 +261,8 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 menu_edit_showclipboard= '~S~how clipboard';
                 menu_edit_selectall    = 'Select ~A~ll';
                 menu_edit_unselect     = 'U~n~select';
+                menu_edit_comment      = 'Com~m~ent';
+                menu_edit_uncomment    = 'Unc~o~mment';
 
                 menu_search            = '~S~earch';
                 menu_search_find       = '~F~ind...';
@@ -258,6 +270,7 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 menu_search_searchagain= '~S~earch again';
                 menu_search_jumpline   = '~G~o to line number...';
                 menu_search_findproc   = 'Find ~p~rocedure...';
+                menu_search_previous   = 'Previous ~b~rowser';
                 menu_search_objects    = '~O~bjects';
                 menu_search_modules    = 'Mod~u~les';
                 menu_search_globals    = 'G~l~obals';
@@ -305,7 +318,7 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 menu_tools_msgprev     = 'Goto ~p~revious';
                 menu_tools_grep        = '~G~rep';
                 menu_tools_calculator  = '~C~alculator';
-                menu_tools_asciitable  = 'Ascii ~t~able';
+                menu_tools_asciitable  = 'ASCII ~T~able';
 
                 menu_options           = '~O~ptions';
                 menu_options_mode      = 'Mode~.~..';
@@ -325,7 +338,7 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 menu_options_env_desktop = '~D~esktop...';
                 menu_options_env_keybmouse = 'Keyboard & ~m~ouse...';
                 menu_options_env_startup = '~S~tartup...';
-                menu_options_env_colors= '~C~olors';
+                menu_options_env_colors= 'C~o~lors';
                 menu_options_learn_keys= 'Learn ~K~eys';
                 menu_options_open      = '~O~pen...';
                 menu_options_save      = '~S~ave';
@@ -333,7 +346,10 @@ resourcestring  menu_local_gotosource = '~G~oto source';
 
                 menu_window            = '~W~indow';
                 menu_window_tile       = '~T~ile';
+                menu_window_tile_vertical = 'Tile ~v~ertical';
                 menu_window_cascade    = 'C~a~scade';
+                menu_window_stepped    = 'Steppe~d~';
+                menu_window_stepped_reverse = 'Stepp~e~d reverse';
                 menu_window_closeall   = 'Cl~o~se all';
                 menu_window_resize     = '~S~ize/Move';
                 menu_window_zoom       = '~Z~oom';
@@ -458,6 +474,7 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 button_Delete      = '~D~elete';
                 button_Show        = '~S~how';
                 button_Hide        = '~H~ide';
+                button_Close       = '~C~lose';
 
                 { dialogs }
                 dialog_fillintemplateparameter = 'Fill in template parameter';
@@ -541,7 +558,8 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 label_compiler_syntaxswitches = 'S~y~ntax Switches';
                 label_compiler_mode = 'Compiler ~m~ode';
                 label_compiler_codegeneration = 'Code generation';
-                label_compiler_optimizations = 'Optimizations';
+                label_compiler_optimization_level = 'Optimization level';
+                label_compiler_optimizations = 'Additional optimizations';
                 label_compiler_opt_targetprocessor = 'Optimization target processor';
                 label_compiler_codegen_targetprocessor = 'Code generation target processor';
                 label_compiler_linkafter = 'Linking stage';
@@ -598,13 +616,16 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 label_editor_usetabcharacters = '~U~se tab characters';
                 label_editor_backspaceunindents = '~B~ackspace unindents';
                 label_editor_persistentblocks = '~P~ersistent blocks';
+                label_editor_overwriteblocks = '~O~verwrite blocks';
                 label_editor_syntaxhighlight = '~S~yntax highlight';
+                label_editor_showlineindents = 'Sho~w~ line indents';
                 label_editor_blockinsertcursor = 'B~l~ock insert cursor';
                 label_editor_verticalblocks = '~V~ertical blocks';
                 label_editor_highlightcolumn = 'Highlight ~c~olumn';
                 label_editor_highlightrow = 'Highlight ~r~ow';
                 label_editor_autoclosingbrackets = 'Aut~o~-closing brackets';
                 label_editor_keeptrailingspaces = '~K~eep trailing spaces';
+                label_editor_enhancedwordrightleft = 'Conte~x~t-aware word left/right';
                 label_editor_codecomplete = 'Co~d~eComplete enabled';
                 label_editor_folds = 'E~n~able folds';
                 label_editor_editoroptions = '~E~ditor options';
@@ -616,6 +637,7 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 {Browser options dialog.}
                 dialog_browseroptions = 'Browser Options';
                 dialog_localbrowseroptions = 'Local Browser Options';
+                label_browser_units = '~U~nits';
                 label_browser_labels = '~L~abels';
                 label_browser_constants = '~C~onstants';
                 label_browser_types = '~T~ypes';
@@ -647,6 +669,9 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 label_preferences_closeongotosource = 'C~l~ose on go to source';
                 label_preferences_changedironopen = 'C~h~ange dir on open';
                 label_preferences_options = 'Options';
+                label_preferences_showclock = 'Show ~c~lock';
+                label_preferences_showheapmonitor = 'Show heap ~m~onitor';
+                label_preferences_clockheap = 'Desktop';
 
                 {Desktop preferences dialog.}
                 dialog_desktoppreferences = 'Desktop Preferences';
@@ -658,6 +683,7 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 label_desktop_symbolinfo = '~S~ymbol information';
                 label_desktop_codecompletewords = 'Co~d~eComplete wordlist';
                 label_desktop_codetemplates = 'Code~T~emplates';
+                label_desktop_returntolastdir = '~R~eturn to last directory';
                 label_desktop_preservedacrosssessions = '~P~reserved across sessions';
 
                 {Mouse options dialog.}
@@ -674,6 +700,41 @@ resourcestring  menu_local_gotosource = '~G~oto source';
                 label_mouse_act_evaluate = 'Evaluate';
                 label_mouse_act_addwatch = 'Add watch';
                 label_mouse_act_browsesymbol = 'Browse symbol';
+
+                {Color select dialog.}
+                label_colors_grp_menus        = 'Menu';
+                label_colors_grp_desktop      = 'Desktop';
+                label_colors_grp_dialogs      = 'Dialogs';
+                label_colors_grp_browser      = 'Browser';
+                label_colors_grp_editor       = 'Editor';
+                label_colors_grp_help         = 'Help';
+                label_colors_grp_syntax       = 'Syntax';
+                label_colors_grp_clock        = 'Clock';
+
+                label_colors_clockview        = 'Clock view';
+                label_colors_highlighcolumn   = 'Highlight column';
+                label_colors_highlightrow     = 'Highlight row';
+                label_colors_errormessages    = 'Error message';
+                label_colors_helptext         = 'Text';
+                label_colors_helplinks        = 'Link';
+                label_colors_selectedlink     = 'Selected link';
+                label_colors_html_heading1    = 'Html heading 1';
+                label_colors_html_heading2    = 'Html heading 2';
+                label_colors_html_heading3    = 'Html heading 3';
+                label_colors_html_heading4    = 'Html heading 4';
+                label_colors_html_heading5    = 'Html heading 5';
+                label_colors_html_heading6    = 'Html heading 6';
+                label_colors_whitespace       = 'Whitesapce';
+                label_colors_comments         = 'Comments';
+                label_colors_reservedwords    = 'Reserved words';
+                label_colors_identifiers      = 'Identifiers';
+                label_colors_strings          = 'Strings';
+                label_colors_numbers          = 'Numbers';
+                label_colors_hexnumbers       = 'Hexadecimal numbers';
+                label_colors_assembler        = 'Assembler block';
+                label_colors_symbols          = 'Symbols';
+                label_colors_directives       = 'Directives';
+                label_colors_tabs             = 'Tabs';
 
                 {Open options dialog.}
                 dialog_openoptions = 'Open Options';
@@ -809,10 +870,11 @@ begin
   InitAdvMsgBox;
   InsideDone:=false;
   IsRunning:=true;
-  MenuBar^.GetBounds(R); R.A.X:=R.B.X-8;
+  MenuBar^.GetBounds(R); R.A.X:=R.B.X-9;
   New(ClockView, Init(R));
   ClockView^.GrowMode:=gfGrowLoX+gfGrowHiX;
-  Application^.Insert(ClockView);
+  {  Insert only if and when we are going to look at it (hide is not sufficient measure)
+  Application^.Insert(ClockView);   }
   New(ClipboardWindow, Init);
   Desktop^.Insert(ClipboardWindow);
   New(CalcWindow, Init); CalcWindow^.Hide;
@@ -821,12 +883,11 @@ begin
   CompilerMessageWindow^.Hide;
   Desktop^.Insert(CompilerMessageWindow);
   Message(@Self,evBroadcast,cmUpdate,nil);
-  CurDirChanged;
   { heap viewer }
-  GetExtent(R); Dec(R.B.X); R.A.X:=R.B.X-9; R.A.Y:=R.B.Y-1;
+  GetExtent(R); Dec(R.B.X); R.A.X:=R.B.X-8; R.A.Y:=R.B.Y-1;
   New(HeapView, InitKb(R));
-  if (StartupOptions and soHeapMonitor)=0 then HeapView^.Hide;
-  Insert(HeapView);
+  if OverrideHeapMonitor and ((StartupOptions and soHeapMonitor)<>0) then
+    Insert(HeapView);
   Drivers.ShowMouse;
 {$ifdef Windows}
   // WindowsShowMouse;
@@ -890,9 +951,11 @@ begin
       NewItem(menu_edit_clear,menu_key_edit_clear, kbCtrlDel, cmClear, hcClear,
       NewItem(menu_edit_selectall,menu_key_edit_all, all_Key, cmSelectAll, hcSelectAll,
       NewItem(menu_edit_unselect,'', kbNoKey, cmUnselect, hcUnselect,
+      NewItem(menu_edit_comment,'', kbNoKey, cmCommentSel, hcCommentSel,
+      NewItem(menu_edit_uncomment,'', kbNoKey, cmUnCommentSel, hcUnCommentSel,
       NewLine(
       NewItem(menu_edit_showclipboard,'', kbNoKey, cmShowClipboard, hcShowClipboard,
-      WinPMI))))))))
+      WinPMI))))))))))
 {$ifdef DebugUndo}))){$endif DebugUndo}
       )))),
     NewSubMenu(menu_search,hcSearchMenu, NewMenu(
@@ -903,12 +966,13 @@ begin
       NewItem(menu_search_jumpline,'', kbNoKey, cmJumpLine, hcGotoLine,
       NewItem(menu_search_findproc,'', kbNoKey, cmFindProcedure, hcFindProcedure,
       NewLine(
+      NewItem(menu_search_previous,'', kbNoKey, cmSymPrevious, hcSymPrevious,
       NewItem(menu_search_objects,'', kbNoKey, cmObjects, hcObjects,
       NewItem(menu_search_modules,'', kbNoKey, cmModules, hcModules,
       NewItem(menu_search_globals,'', kbNoKey, cmGlobals, hcGlobals,
       NewLine(
       NewItem(menu_search_symbol,'', kbNoKey, cmSymbol, hcSymbol,
-      nil))))))))))))),
+      nil)))))))))))))),
     NewSubMenu(menu_run,hcRunMenu, NewMenu(
       NewItem(menu_run_run,menu_key_run_run, kbCtrlF9, cmRun, hcRun,
       NewItem(menu_run_stepover,menu_key_run_stepover, kbF8, cmStepOver, hcRun,
@@ -931,7 +995,9 @@ begin
       NewItem(menu_compile_compilermessages,menu_key_compile_compilermessages, kbF12, cmCompilerMessages, hcCompilerMessages,
       nil)))))))))),
     NewSubMenu(menu_debug, hcDebugMenu, NewMenu(
+{$if not defined(Unix) and not defined(Amiga)} { skip all Unixes, it is not possible to capture user screen there }
       NewItem(menu_debug_output,'', kbNoKey, cmUserScreenWindow, hcUserScreenWindow,
+{$endif not Unix and not Amiga}
       NewItem(menu_debug_userscreen,menu_key_debug_userscreen, kbAltF5, cmUserScreen, hcUserScreen,
       NewLine(
 {$ifdef SUPPORT_REMOTE}
@@ -954,7 +1020,10 @@ begin
 {$ifdef SUPPORT_REMOTE}
       )
 {$endif SUPPORT_REMOTE}
-      ))))))))))))))))),
+{$if not defined(Unix) and not defined(Amiga)}
+      )
+{$endif not Unix and not Amiga}
+      )))))))))))))))),
     NewSubMenu(menu_tools, hcToolsMenu, NewMenu(
       NewItem(menu_tools_messages,menu_key_tools_messages, kbF11, cmToolsMessages, hcToolsMessages,
       NewItem(menu_tools_msgnext,menu_key_tools_msgnext, kbAltF8, cmToolsMsgNext, hcToolsMsgNext,
@@ -984,8 +1053,8 @@ begin
         NewItem(menu_options_env_codetemplates,'', kbNoKey, cmCodeTemplateOptions, hcCodeTemplateOptions,
         NewItem(menu_options_env_desktop,'', kbNoKey, cmDesktopOptions, hcDesktopOptions,
         NewItem(menu_options_env_keybmouse,'', kbNoKey, cmMouse, hcMouse,
-{        NewItem(menu_options_env_startup,'', kbNoKey, cmStartup, hcStartup,
-        NewItem(menu_options_env_colors,'', kbNoKey, cmColors, hcColors,}
+{        NewItem(menu_options_env_startup,'', kbNoKey, cmStartup, hcStartup,}
+        NewItem(menu_options_env_colors,'', kbNoKey, cmColors, hcColors,
 {$ifdef Unix}
         NewItem(menu_options_learn_keys,'', kbNoKey, cmKeys, hcKeys,
 {$endif Unix}
@@ -993,7 +1062,7 @@ begin
 {$ifdef Unix}
         )
 {$endif Unix}
-        {))}))))))),
+        ){)}))))))),
       NewLine(
       NewItem(menu_options_open,'', kbNoKey, cmOpenINI, hcOpenINI,
       NewItem(menu_options_save,'', kbNoKey, cmSaveINI, hcSaveINI,
@@ -1006,6 +1075,7 @@ begin
     NewSubMenu(menu_window, hcWindowMenu, NewMenu(
       NewItem(menu_window_tile,'', kbNoKey, cmTile, hcTile,
       NewItem(menu_window_cascade,'', kbNoKey, cmCascade, hcCascade,
+      NewItem(menu_window_stepped,'', kbNoKey, cmSteppedReverse, hcStepped,
       NewItem(menu_window_closeall,'', kbNoKey, cmCloseAll, hcCloseAll,
       NewLine(
       NewItem(menu_window_resize,menu_key_window_resize, kbCtrlF5, cmResize, hcResize,
@@ -1017,7 +1087,7 @@ begin
       NewLine(
       NewItem(menu_window_list,menu_key_window_list, kbAlt0, cmWindowList, hcWindowList,
       NewItem(menu_window_update,'', kbNoKey, cmUpdate, hcUpdate,
-      nil)))))))))))))),
+      nil))))))))))))))),
     NewSubMenu(menu_help, hcHelpMenu, NewMenu(
       NewItem(menu_help_contents,'', kbNoKey, cmHelpContents, hcHelpContents,
       NewItem(menu_help_index,menu_key_help_helpindex, kbShiftF1, cmHelpIndex, hcHelpIndex,
@@ -1029,14 +1099,16 @@ begin
       NewItem(menu_help_about,'',kbNoKey, cmAbout, hcAbout,
       nil))))))))),
     nil)))))))))))));
-   SetCmdState(ToClipCmds+FromClipCmds+NulClipCmds+UndoCmd+RedoCmd,false);
 end;
 
 procedure TIDEApp.InitMenuBar;
 
 begin
   LoadMenuBar;
+  SetCmdState(ToClipCmds+FromClipCmds+NulClipCmds+UndoCmd+RedoCmd,false);
   DisableCommands(EditorCmds+SourceCmds+CompileCmds);
+  SetCmdState([cmTile,cmCascade],false);
+  SetCmdState([cmSymPrevious],false);
   // Update; Desktop is still nil at that point ...
 end;
 
@@ -1072,7 +1144,14 @@ begin
        end;
    end;
    loadmenubar;
-   insert(menubar);
+   Insert(MenuBar);
+   if (DesktopPreferences and dpClockView)<>0 then
+   begin
+     { In theory InsertBefore should do the trick, but it does not }
+     { Push ClockView in front of MenuBar }
+     Delete(ClockView);
+     Insert(ClockView);
+   end;
 end;
 
 procedure TIDEApp.InitStatusLine;
@@ -1087,7 +1166,7 @@ begin
       StdStatusKeys(
       NewStatusKey('~Cursor~ Move', kbNoKey, 65535,
       NewStatusKey('~Shift+Cursor~ Size', kbNoKey, 65535,
-      NewStatusKey('~'#17'ды~ Done', kbNoKey, 65535, {#17 = left arrow}
+      NewStatusKey('~'#17#$C4#$D9'~ Done', kbNoKey, 65535, {#17 = left arrow}
       NewStatusKey('~Esc~ Cancel', kbNoKey, 65535,
       nil)))))),
     NewStatusDef(hcStackWindow, hcStackWindow,
@@ -1348,6 +1427,9 @@ begin
              cmToolsBase+MaxToolCount
                              : ExecuteTool(Event.Command-cmToolsBase);
            { -- Window menu -- }
+             cmTileVertical  : TileVertical;
+             cmStepped       : Stepped(True);
+             cmSteppedReverse: Stepped(False);
              cmCloseAll      : CloseAll;
              cmWindowList    : WindowList;
              cmUserScreenWindow: DoUserScreenWindow;
@@ -1440,7 +1522,7 @@ begin
 {$endif ndef go32v2}
   DoneKeyboard;
   If UseMouse then
-    DoneMouse
+    { DoneMouse  called by DoneEvents }
   else
     ButtonCount:=0;
 {  DoneDosMem;}
@@ -1451,15 +1533,18 @@ end;
 
 
 procedure TIDEApp.ShowIDEScreen;
+var oldH,oldW : Sw_Word;
 begin
   if Assigned(UserScreen) then
     UserScreen^.SaveConsoleScreen;
 {  InitDosMem;}
   InitKeyboard;
   If UseMouse then
-    InitMouse
+    { InitMouse  called by InitEvents }
   else
     ButtonCount:=0;
+  oldH:=ScreenHeight;
+  oldW:=ScreenWidth;
 {$ifndef go32v2}
   initvideo;
 {$endif ndef go32v2}
@@ -1472,16 +1557,24 @@ begin
 {$endif ndef Windows}
   InitEvents;
   InitSysError;
-  CurDirChanged;
 {$ifndef Windows}
-  Message(Application,evBroadcast,cmUpdate,nil);
+  if (oldH<>ScreenHeight) or (oldW<>ScreenWidth) then
+  begin
+    { acknowledge new screen dimensions }
+    { prevents to draw out of boundaries of new video buffer }
+    ResizeApplication(ScreenWidth,ScreenHeight);
+  end else
+    Message(Application,evBroadcast,cmUpdate,nil);
 {$endif Windows}
 {$ifdef Windows}
   // WindowsShowMouse;
 {$endif Windows}
 
   if Assigned(UserScreen) then
-    UserScreen^.SwitchBackToIDEScreen;
+{$ifdef unix}
+    if (oldH=ScreenHeight) and (oldW=ScreenWidth) then
+{$endif unix}
+      UserScreen^.SwitchBackToIDEScreen;
 {$ifdef Windows}
   { This message was sent when the VideoBuffer was smaller
     than was the IdeApp thought => writes to random memory and random crashes... PM }
@@ -1495,6 +1588,7 @@ begin
   UpdateScreen(true);
 {$endif go32v2}
 {$endif Windows}
+  CurDirChanged; {To avoid memory corruption, place this call after screen resize has been done.}
   displaymode:=dmIDE;
 end;
 
@@ -1512,7 +1606,7 @@ begin
       SOK:=SaveAll;
   if (AutoSaveOptions and asDesktop)<>0 then
     begin
-      { destory all help & browser windows - we don't want to store them }
+      { destroy all help & browser windows - we don't want to store them }
       { UserScreenWindow is also not registered PM }
       DoCloseUserScreenWindow;
       {$IFNDEF NODEBUG}
@@ -1592,9 +1686,11 @@ begin
       begin
         Write(' Press any key to return to IDE');
         InitKeyBoard;
+        write(#27'[?1011s'#27'[?1011h'); { Scroll to cursor on key press }
         Keyboard.GetKeyEvent;
         while (Keyboard.PollKeyEvent<>0) do
          Keyboard.GetKeyEvent;
+        write(#27'[?1011l'#27'[?1011r');
         DoneKeyboard;
       end;
 {$endif}
@@ -1610,7 +1706,7 @@ procedure TIDEApp.Update;
 begin
   SetCmdState([cmSaveAll],IsThereAnyEditor);
   SetCmdState([cmCloseAll,cmWindowList],IsThereAnyWindow);
-  SetCmdState([cmTile,cmCascade],IsThereAnyVisibleWindow);
+  SetCmdState([cmTile,cmCascade,cmTileVertical,cmStepped,cmSteppedReverse],IsThereAnyVisibleEditorWindow);
   SetCmdState([cmFindProcedure,cmObjects,cmModules,cmGlobals,cmSymbol],IsSymbolInfoAvailable);
 {$ifndef NODEBUG}
   SetCmdState([cmResetDebugger,cmUntilReturn],assigned(debugger) and debugger^.debuggee_started);
@@ -1650,7 +1746,7 @@ end;
 
 procedure TIDEApp.UpdateINIFile;
 begin
-  SetMenuItemParam(SearchMenuItem(MenuBar^.Menu,cmSaveINI),SmartPath(IniFileName));
+  SetMenuItemParam(SearchMenuItem(MenuBar^.Menu,cmSaveINI),SmartPath(IniFilePath));
 end;
 
 procedure TIDEApp.UpdateRecentFileList;
@@ -1688,9 +1784,9 @@ begin
 
   GetExtent(R);
   AdjustRecentCount :=0;
-  {calculate how much lines on screen for reacent files can be used }
+  {calculate how much lines on screen for recent files can be used }
   if r.b.y-r.a.y -19 > 0 then AdjustRecentCount:=r.b.y-r.a.y -19;
-  {only if there is enough space then show all reacent files }
+  {only if there is enough space then show all recent files }
   {else cut list shorter }
   if RecentFileCount < AdjustRecentCount then
      AdjustRecentCount:=RecentFileCount;
@@ -1743,6 +1839,24 @@ begin
     P:=NewItem(S1,KillTilde(GetHotKeyName(W)),W,cmToolsBase+I,hcToolsBase+I,nil);
     AppendMenuItem(ToolsMenu^.SubMenu,P);
   end;
+end;
+
+procedure TIDEApp.UpdateClockAndHeap;
+var R : TRect;
+begin
+  if not OverrideHeapMonitor then
+  begin
+    Application^.Delete(HeapView);
+    GetExtent(R); Dec(R.B.X); R.A.X:=R.B.X-8; R.A.Y:=R.B.Y-1;
+    HeapView^.MoveTo(R.A.X,R.A.Y);       {move to correct position}
+    if ((DesktopPreferences and dpHeapMonitor)<>0) then
+      Application^.Insert(HeapView);
+  end;
+  Application^.Delete(ClockView);
+  MenuBar^.GetBounds(R); R.A.X:=R.B.X-9;
+  ClockView^.MoveTo(R.A.X,R.A.Y);        {move to correct position}
+  if (DesktopPreferences and dpClockView)<>0 then
+    Application^.Insert(ClockView);
 end;
 
 procedure TIDEApp.DosShell;
@@ -1875,6 +1989,11 @@ destructor TIDEApp.Done;
 begin
   InsideDone:=true;
   IsRunning:=false;
+  {manually dispose ClockView and HeapView}
+  Delete(ClockView);
+  Dispose(ClockView);
+  Delete(HeapView);
+  Dispose(HeapView);
   inherited Done;
   Desktop:=nil;
   RemoveBrowsersCollection;

@@ -2,7 +2,7 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
 {$ifdef unix}
   cthreads,
 {$endif}
@@ -29,7 +29,7 @@ begin
     P.Description := 'Free Pascal documentation generation utility.';
     P.NeedLibC:= false;
 
-    P.OSes:=AllOSes-[embedded,msdos,win16,go32v2,nativent,macosclassic,palmos,atari,zxspectrum,msxdos,amstradcpc,watcom,sinclairql,wasi,human68k];
+    P.OSes:=AllOSes-[embedded,msdos,win16,go32v2,nativent,macosclassic,palmos,atari,zxspectrum,msxdos,amstradcpc,watcom,sinclairql,wasip1,wasip1threads,wasip2,human68k,ps1];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -37,6 +37,7 @@ begin
     P.Dependencies.Add('fcl-xml');
     P.Dependencies.Add('fcl-passrc');
     P.Dependencies.Add('fcl-process');
+    P.Dependencies.Add('fcl-syntax');
     P.Dependencies.Add('chm');
     P.Dependencies.Add('univint',[darwin,iphonesim,ios]);
 
@@ -44,6 +45,10 @@ begin
     P.Version:='3.3.1';
 
     P.Options.Add('-S2h');
+
+    { powerpc64-aix compiled IDE needs -CTsmalltoc option }
+    if (Defaults.OS=aix) and (Defaults.CPU=powerpc64) then
+      P.Options.Add('-CTsmalltoc');
 
     T:=P.Targets.AddProgram('fpdoc.pp');
     T.Dependencies.AddUnit('fpdocstrs');
@@ -109,6 +114,7 @@ begin
     if Bin2Obj <> '' then
       begin
       P.Commands.AddCommand(Bin2Obj,'-o $(DEST) -c DefaultCSS $(SOURCE)','css.inc','fpdoc.css');
+      P.Commands.AddCommand(Bin2Obj,'-o $(DEST) -c DefaultNewCSS $(SOURCE)','newcss.inc','fpdocs.css');
       P.Commands.AddCommand(Bin2Obj,'-o $(DEST) -c PlusImageData $(SOURCE)','plusimage.inc','images/plus.png');
       P.Commands.AddCommand(Bin2Obj,'-o $(DEST) -c MinusImageData $(SOURCE)','minusimage.inc','images/minus.png');
       end;

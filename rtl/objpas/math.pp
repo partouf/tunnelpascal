@@ -45,7 +45,11 @@
 }
 
 {$MODE objfpc}
-{$inline on }
+{$IFDEF CPUWASM32}
+{$inline off}
+{$ELSE}
+{$inline on}
+{$ENDIF}
 {$GOTO on}
 {$IFNDEF FPC_DOTTEDUNITS}
 unit Math;
@@ -56,10 +60,10 @@ interface
 {$ifndef FPUNONE}
 {$IFDEF FPC_DOTTEDUNITS}
     uses
-       System.SysUtils;
+       System.SysUtils, System.Types;
 {$ELSE FPC_DOTTEDUNITS}
     uses
-       sysutils;
+       sysutils, types;
 {$ENDIF FPC_DOTTEDUNITS}
 
 {$IFDEF FPDOC_MATH}
@@ -90,8 +94,9 @@ Const
 {$endif FPC_HAS_TYPE_DOUBLE}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
     const
-      MinExtended  =  3.4e-4932;
-      MaxExtended  =  1.1e+4932;
+      MinExtended  =  3.36210314311209350626e-4932;
+      MaxExtended  =  1.18973149535723176502e+4932;
+
 {$endif FPC_HAS_TYPE_EXTENDED}
 {$ifdef FPC_HAS_TYPE_COMP}
     const
@@ -144,15 +149,24 @@ Const
 
        EInvalidArgument = class(ematherror);
 
-       TValueRelationship = -1..1;
+{$IFDEF FPC_DOTTEDUNITS}
+       TValueRelationship = System.Types.TValueRelationship;
+{$ELSE FPC_DOTTEDUNITS}
+       TValueRelationship = types.TValueRelationship;
+{$ENDIF FPC_DOTTEDUNITS}
 
     const
-       EqualsValue = 0;
-       LessThanValue = Low(TValueRelationship);
-       GreaterThanValue = High(TValueRelationship);
-       
+{$IFDEF FPC_DOTTEDUNITS}
+       EqualsValue = System.Types.EqualsValue;
+       LessThanValue = System.Types.LessThanValue;
+       GreaterThanValue = System.Types.GreaterThanValue;
+{$ELSE FPC_DOTTEDUNITS}
+       EqualsValue = types.EqualsValue;
+       LessThanValue = types.LessThanValue;
+       GreaterThanValue = types.GreaterThanValue;
+{$ENDIF FPC_DOTTEDUNITS}
 
-       
+
 {$push}
 {$R-}
 {$Q-}
@@ -390,7 +404,7 @@ Function DegNormalize(deg : double) : double; inline;
 Function DegNormalize(deg : extended) : extended; inline;
 {$ENDIF}
 
-{ trigoniometric functions }
+{ trigonometric functions }
 
 function Tan(x : float) : float;
 function Cotan(x : float) : float;
@@ -583,6 +597,13 @@ function LogN(n,x : float) : float;
 
 { returns natural logarithm of x+1, accurate for x values near zero }
 function LnXP1(x : float) : float;
+{ Return exp(x)-1, accurate even for x near 0 }
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+function ExpM1(x : double) : double;
+{$endif}
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function ExpM1(x : extended) : extended;
+{$endif}
 
 { exponential functions }
 
@@ -1190,6 +1211,7 @@ begin
   csc := cosecant(x);
 end;
 
+
 { arcsin and arccos functions from AMath library (C) Copyright 2009-2013 Wolfgang Ehrhardt }
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function arcsin(x : Single) : Single;
@@ -1197,12 +1219,16 @@ begin
   arcsin:=arctan2(x,sqrt((1.0-x)*(1.0+x)));
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function arcsin(x : Double) : Double;
 begin
   arcsin:=arctan2(x,sqrt((1.0-x)*(1.0+x)));
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function arcsin(x : Extended) : Extended;
 begin
@@ -1210,18 +1236,23 @@ begin
 end;
 {$ENDIF}
 
+
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function Arccos(x : Single) : Single;
 begin
   arccos:=arctan2(sqrt((1.0-x)*(1.0+x)),x);
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function Arccos(x : Double) : Double;
 begin
   arccos:=arctan2(sqrt((1.0-x)*(1.0+x)),x);
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function Arccos(x : Extended) : Extended;
 begin
@@ -1254,17 +1285,50 @@ function arctan2(y,x : float) : float;
   end;
 {$endif FPC_MATH_HAS_ARCTAN2}
 
+const
+  huge_single: single = 1e30;
+  huge_double: double = 1e300;
+
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function cosh(x : Single) : Single;
   var
      temp : ValReal;
   begin
-     temp:=exp(x);
+     if (x>8.94159862326326216608E+0001) or (x<-8.94159862326326216608E+0001) then
+{$push}
+{$checkfpuexceptions on}
+       exit(huge_single*huge_single);
+{$pop}
+    temp:=exp(x);
+{$push}
+{$safefpuexceptions on}
      cosh:=0.5*(temp+1.0/temp);
+{$pop}
   end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function cosh(x : Double) : Double;
+  var
+     temp : ValReal;
+  begin
+     if (x>7.10475860073943942030E+0002) or (x<-7.10475860073943942030E+0002) then
+{$push}
+{$checkfpuexceptions on}
+       exit(huge_double*huge_double);
+{$pop}
+     temp:=exp(x);
+{$push}
+{$safefpuexceptions on}
+     cosh:=0.5*(temp+1.0/temp);
+{$pop}
+  end;
+{$ENDIF}
+
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function cosh(x : Extended) : Extended;
   var
      temp : ValReal;
   begin
@@ -1272,30 +1336,63 @@ function cosh(x : Double) : Double;
      cosh:=0.5*(temp+1.0/temp);
   end;
 {$ENDIF}
-{$ifdef FPC_HAS_TYPE_EXTENDED}
-function cosh(x : Extended) : Extended;
-  var
-     temp : Extended;
-  begin
-     temp:=exp(x);
-     cosh:=0.5*(temp+1.0/temp);
-  end;
-{$ENDIF}
+
 
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function sinh(x : Single) : Single;
   var
      temp : ValReal;
   begin
+     if x>8.94159862326326216608E+0001 then
+{$push}
+{$checkfpuexceptions on}
+       exit(huge_single*huge_single);
+{$pop}
+     if x<-8.94159862326326216608E+0001 then
+{$push}
+{$checkfpuexceptions on}
+       exit(-(huge_single*huge_single));
+{$pop}
      temp:=exp(x);
      { gives better behavior around zero, and in particular ensures that sinh(-0.0)=-0.0 }
      if temp=1 then
        exit(x);
+{$push}
+{$safefpuexceptions on}
      sinh:=0.5*(temp-1.0/temp);
+{$pop}
   end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function sinh(x : Double) : Double;
+  var
+     temp : ValReal;
+  begin
+     if x>7.10475860073943942030E+0002 then
+{$push}
+{$checkfpuexceptions on}
+       exit(huge_double*huge_double);
+{$pop}
+     if x<-7.10475860073943942030E+0002 then
+{$push}
+{$checkfpuexceptions on}
+       exit(-(huge_double*huge_double));
+{$pop}
+     temp:=exp(x);
+     if temp=1 then
+       exit(x);
+{$push}
+{$safefpuexceptions on}
+     sinh:=0.5*(temp-1.0/temp);
+{$pop}
+  end;
+{$ENDIF}
+
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function sinh(x : Extended) : Extended;
   var
      temp : ValReal;
   begin
@@ -1305,73 +1402,103 @@ function sinh(x : Double) : Double;
      sinh:=0.5*(temp-1.0/temp);
   end;
 {$ENDIF}
-{$ifdef FPC_HAS_TYPE_EXTENDED}
-function sinh(x : Extended) : Extended;
-  var
-     temp : Extended;
-  begin
-     temp:=exp(x);
-     if temp=1 then
-       exit(x);
-     sinh:=0.5*(temp-1.0/temp);
-  end;
-{$ENDIF}
+
 
 {$ifdef FPC_HAS_TYPE_SINGLE}
 function tanh(x : Single) : Single;
   var
     tmp:ValReal;
   begin
-    if x < 0 then begin
-      tmp:=exp(2*x);
-      if tmp=1 then
-        exit(x);
-      result:=(tmp-1)/(1+tmp)
-    end
-    else begin
-      tmp:=exp(-2*x);
-      if tmp=1 then
-        exit(x);
-      result:=(1-tmp)/(1+tmp)
-    end;
+    if abs(x)>10 then
+      begin
+        result:=sign(x);
+        exit;
+      end;
+
+    if x < 0 then
+      begin
+        tmp:=exp(2*x);
+        if tmp=1 then
+          exit(x);
+{$push}
+{$safefpuexceptions on}
+        result:=(tmp-1)/(1+tmp)
+{$pop}
+      end
+    else
+      begin
+        tmp:=exp(-2*x);
+        if tmp=1 then
+          exit(x);
+{$push}
+{$safefpuexceptions on}
+        result:=(1-tmp)/(1+tmp)
+{$pop}
+      end;
   end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function tanh(x : Double) : Double;
   var
     tmp:ValReal;
   begin
-    if x < 0 then begin
-      tmp:=exp(2*x);
-      if tmp=1 then
-        exit(x);
-      result:=(tmp-1)/(1+tmp)
-    end
-    else begin
-      tmp:=exp(-2*x);
-      if tmp=1 then
-        exit(x);
-      result:=(1-tmp)/(1+tmp)
+    if abs(x)>20 then
+      begin
+        result:=sign(x);
+        exit;
+      end;
+
+    if x < 0 then
+      begin
+        tmp:=exp(2*x);
+        if tmp=1 then
+          exit(x);
+{$push}
+{$safefpuexceptions on}
+        result:=(tmp-1)/(1+tmp)
+{$pop}
+      end
+    else
+      begin
+        tmp:=exp(-2*x);
+        if tmp=1 then
+          exit(x);
+{$push}
+{$safefpuexceptions on}
+        result:=(1-tmp)/(1+tmp)
+{$pop}
     end;
   end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function tanh(x : Extended) : Extended;
   var
     tmp:Extended;
   begin
-    if x < 0 then begin
-      tmp:=exp(2*x);
-      if tmp=1 then
-        exit(x);
-      result:=(tmp-1)/(1+tmp)
-    end
-    else begin
-      tmp:=exp(-2*x);
-      if tmp=1 then
-        exit(x);
-      result:=(1-tmp)/(1+tmp)
-    end;
+    if abs(x)>25 then
+      begin
+        result:=sign(x);
+        exit;
+      end;
+
+    if x < 0 then
+      begin
+        tmp:=exp(2*x);
+        if tmp=1 then
+          exit(x);
+        result:=(tmp-1)/(1+tmp)
+      end
+    else
+      begin
+        tmp:=exp(-2*x);
+        if tmp=1 then
+          exit(x);
+        result:=(1-tmp)/(1+tmp)
+      end;
   end;
 {$ENDIF}
 
@@ -1384,22 +1511,34 @@ begin
   //https://en.wikipedia.org/wiki/Hyperbolic_functions#Definitions
   //SecH = 2 / (e^X + e^-X)
   Ex:=Exp(X);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
   SecH:=2/(Ex+1/Ex);
+{$pop}
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function SecH(const X: Double): Double;
 var
   Ex: ValReal;
 begin
   Ex:=Exp(X);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
   SecH:=2/(Ex+1/Ex);
+{$pop}
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function SecH(const X: Extended): Extended;
 var
-  Ex: Extended;
+  Ex: ValReal;
 begin
   Ex:=Exp(X);
   SecH:=2/(Ex+1/Ex);
@@ -1413,22 +1552,34 @@ var
 begin
   //CscH = 2 / (e^X - e^-X)
   Ex:=Exp(X);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
   CscH:=2/(Ex-1/Ex);
+{$pop}
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function CscH(const X: Double): Double;
 var
   Ex: ValReal;
 begin
   Ex:=Exp(X);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
   CscH:=2/(Ex-1/Ex);
+{$pop}
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function CscH(const X: Extended): Extended;
 var
-  Ex: Extended;
+  Ex: ValReal;
 begin
   Ex:=Exp(X);
   CscH:=2/(Ex-1/Ex);
@@ -1444,16 +1595,26 @@ begin
     e2:=exp(2*x);
     if e2=1 then
       exit(1/x);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
     result:=(1+e2)/(e2-1)
+{$pop}
   end
   else begin
     e2:=exp(-2*x);
     if e2=1 then
       exit(1/x);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
     result:=(1+e2)/(1-e2)
+{$pop}
   end;
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_DOUBLE}
 function CotH(const X: Double): Double;
 var
@@ -1463,20 +1624,30 @@ begin
     e2:=exp(2*x);
     if e2=1 then
       exit(1/x);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
     result:=(1+e2)/(e2-1)
+{$pop}
   end
   else begin
     e2:=exp(-2*x);
     if e2=1 then
       exit(1/x);
+{$push}
+{$checkfpuexceptions on}
+{$safefpuexceptions on}
     result:=(1+e2)/(1-e2)
+{$pop}
   end;
 end;
 {$ENDIF}
+
+
 {$ifdef FPC_HAS_TYPE_EXTENDED}
 function CotH(const X: Extended): Extended;
 var
-  e2: Extended;
+  e2: ValReal;
 begin
   if x < 0 then begin
     e2:=exp(2*x);
@@ -1707,6 +1878,92 @@ function lnxp1(x : float) : float;
       end;
   end;
 
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+{ Ref: Boost, expm1.hpp }
+function PolyEval(x: double; const a: array of double): double;
+var
+  i : sizeint;
+begin
+  result:=a[High(a)];
+  for i:=High(a)-1 downto 0 do result:=result*x+a[i];
+end;
+
+function ExpM1(x : double) : double;
+const
+  P: array[0..5] of double = (
+    -2.8127670288085937500E-2,
+    +5.1278186299064532072E-1,
+    -6.3100290693501981387E-2,
+    +1.1638457975729295593E-2,
+    -5.2143390687520998431E-4,
+    +2.1491399776965686808E-5);
+  Q: array[0..5] of double = (
+    +1.0000000000000000000,
+    -4.5442309511354755935E-1,
+    +9.0850389570911710413E-2,
+    -1.0088963629815501238E-2,
+    +6.3003407478692265934E-4,
+    -1.7976570003654402936E-5);
+var
+  a : double;
+begin
+  a:=abs(x);
+  if a>0.5 then
+    result:=exp(x)-1.0
+  else if a<3e-16 then
+    result:=x
+  else
+    result:=x*double(0.10281276702880859e1)+x*(PolyEval(x,P)/PolyEval(x,Q));
+end;
+{$endif}
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+function PolyEval(x: extended; const a: array of extended): extended;
+var
+  i : sizeint;
+begin
+  result:=a[High(a)];
+  for i:=High(a)-1 downto 0 do result:=result*x+a[i];
+end;
+
+function ExpM1(x : extended) : extended;
+const
+  P: array[0..9] of extended = (
+    -0.28127670288085937499999999999999999854e-1,
+    +0.51278156911210477556524452177540792214e0,
+    -0.63263178520747096729500254678819588223e-1,
+    +0.14703285606874250425508446801230572252e-1,
+    -0.8675686051689527802425310407898459386e-3,
+    +0.88126359618291165384647080266133492399e-4,
+    -0.25963087867706310844432390015463138953e-5,
+    +0.14226691087800461778631773363204081194e-6,
+    -0.15995603306536496772374181066765665596e-8,
+    +0.45261820069007790520447958280473183582e-10);
+  Q: array[0..10] of extended = (
+    +1,
+    -0.45441264709074310514348137469214538853e0,
+    +0.96827131936192217313133611655555298106e-1,
+    -0.12745248725908178612540554584374876219e-1,
+    +0.11473613871583259821612766907781095472e-2,
+    -0.73704168477258911962046591907690764416e-4,
+    +0.34087499397791555759285503797256103259e-5,
+    -0.11114024704296196166272091230695179724e-6,
+    +0.23987051614110848595909588343223896577e-8,
+    -0.29477341859111589208776402638429026517e-10,
+    +0.13222065991022301420255904060628100924e-12);
+var
+  a : extended;
+begin
+  a:=abs(x);
+  if a>0.5 then
+    result:=exp(x)-1
+  else if a<2e-19 then
+    result:=x
+  else
+    result:=x*extended(0.10281276702880859375e1)+x*(PolyEval(x,P)/PolyEval(x,Q));
+end;
+{$endif}
+
 
 function power(base,exponent : float) : float;
   begin
@@ -1756,7 +2013,7 @@ begin
       else
         res:=0;
       exit;
-    end; 
+    end;
   res:=1;
   while exponent<>0 do
     begin
@@ -3424,7 +3681,7 @@ begin
 end;
 
 // Some CPUs probably allow a faster way of doing this in a single operation...
-// There weshould define  FPC_MATH_HAS_CPUDIVMOD in the header mathuh.inc and implement it using asm.
+// There we should define  FPC_MATH_HAS_CPUDIVMOD in the header mathuh.inc and implement it using asm.
 {$ifndef FPC_MATH_HAS_DIVMOD}
 procedure DivMod(Dividend: LongInt; Divisor: Word; var Result, Remainder: Word);
 begin
@@ -3742,14 +3999,14 @@ function InterestRate(NPeriods: Integer; APayment, APresentValue, AFutureValue: 
 const
   DELTA = 0.001;
   EPS = 1E-9;   // required precision of interest rate (after typ. 6 iterations)
-  MAXIT = 20;   // max iteration count to protect agains non-convergence
+  MAXIT = 20;   // max iteration count to protect against non-convergence
 var
   r1, r2, dr: Float;
   fv1, fv2: Float;
   iteration: Integer;
 begin
   iteration := 0;
-  r1 := 0.05;  // inital guess
+  r1 := 0.05;  // initial guess
   repeat
     r2 := r1 + DELTA;
     fv1 := FutureValue(r1, NPeriods, APayment, APresentValue, APaymentTime);

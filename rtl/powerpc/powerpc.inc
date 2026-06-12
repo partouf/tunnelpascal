@@ -464,7 +464,7 @@ asm
         subfic    r10,r10,32
         { if already 32byte aligned, skip align loop }
         beq       .L32ByteAlignLoopDone
-        { substract from the total count }
+        { subtract from the total count }
         sub       r4,r4,r10
 .L32ByteAlignLoop:
         { we were already aligned to 4 byres, so this will count down to }
@@ -577,7 +577,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_INDEXBYTE}
 {$define FPC_SYSTEM_HAS_INDEXBYTE}
-function IndexByte(const buf;len:longint;b:byte):longint; assembler; nostackframe;
+function IndexByte_asm(const buf;len:longint;b:byte):longint; assembler; nostackframe;
 { input: r3 = buf, r4 = len, r5 = b                   }
 { output: r3 = position of b in buf (-1 if not found) }
 asm
@@ -599,12 +599,20 @@ asm
                 sub     r3,r10,r0
 .LIndexByteDone:
 end;
+
+function IndexByte(const buf;len:longint;b:byte):longint;
+begin
+  if len=-1 then
+    IndexByte:=IndexByte_asm(buf,high(longint),b)
+  else
+    IndexByte:=IndexByte_asm(buf,len,b);
+end;
 {$endif FPC_SYSTEM_HAS_INDEXBYTE}
 
 
 {$ifndef FPC_SYSTEM_HAS_INDEXWORD}
 {$define FPC_SYSTEM_HAS_INDEXWORD}
-function IndexWord(const buf;len:longint;b:word):longint; assembler; nostackframe;
+function IndexWord_asm(const buf;len:longint;b:word):longint; assembler; nostackframe;
 { input: r3 = buf, r4 = len, r5 = b                   }
 { output: r3 = position of b in buf (-1 if not found) }
 asm
@@ -627,12 +635,20 @@ asm
                 srawi   r3,r3,1
 .LIndexWordDone:
 end;
+
+function IndexWord(const buf;len:longint;b:word):longint;
+begin
+  if len=-1 then
+    IndexWord:=IndexWord_asm(buf,high(longint),b)
+  else
+    IndexWord:=IndexWord_asm(buf,len,b);
+end;
 {$endif FPC_SYSTEM_HAS_INDEXWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_INDEXDWORD}
 {$define FPC_SYSTEM_HAS_INDEXDWORD}
-function IndexDWord(const buf;len:longint;b:DWord):longint; assembler; nostackframe;
+function IndexDWord_asm(const buf;len:longint;b:DWord):longint; assembler; nostackframe;
 { input: r3 = buf, r4 = len, r5 = b                   }
 { output: r3 = position of b in buf (-1 if not found) }
 asm
@@ -654,6 +670,14 @@ asm
                 sub     r3,r10,r0
                 srawi   r3,r3,2
 .LIndexDWordDone:
+end;
+
+function IndexDWord(const buf;len:longint;b:DWord):longint;
+begin
+  if len=-1 then
+    IndexDWord:=IndexDWord_asm(buf,high(longint),b)
+  else
+    IndexDWord:=IndexDWord_asm(buf,len,b);
 end;
 {$endif FPC_SYSTEM_HAS_INDEXDWORD}
 
@@ -1103,7 +1127,12 @@ asm
 end;
 
 
+{$ifdef VER3_2}
 function InterLockedDecrement (var Target: longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_DEC_32}
+function fpc_atomic_dec_32 (var Target: longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 { input:  address of target in r3 }
 { output: target-1 in r3          }
 { side-effect: target := target-1 }
@@ -1117,7 +1146,12 @@ asm
 end;
 
 
+{$ifdef VER3_2}
 function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_INC_32}
+function fpc_atomic_inc_32 (var Target: longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 { input:  address of target in r3 }
 { output: target+1 in r3          }
 { side-effect: target := target+1 }
@@ -1131,7 +1165,12 @@ asm
 end;
 
 
+{$ifdef VER3_2}
 function InterLockedExchange (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_XCHG_32}
+function fpc_atomic_xchg_32 (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 { input:  address of target in r3, source in r4 }
 { output: target in r3                          }
 { side-effect: target := source                 }
@@ -1144,7 +1183,12 @@ asm
 end;
 
 
+{$ifdef VER3_2}
 function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_ADD_32}
+function fpc_atomic_add_32 (var Target: longint;Value : longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 asm
 .LInterLockedXchgAddLoop:
         lwarx   r10,0,r3
@@ -1155,7 +1199,12 @@ asm
 end;
 
 
+{$ifdef VER3_2}
 function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_CMP_XCHG_32}
+function fpc_atomic_cmp_xchg_32 (var Target: longint; NewValue: longint; Comparand: longint) : longint; [public,alias:'FPC_ATOMIC_CMP_XCHG_32']; assembler; nostackframe;
+{$endif VER3_2}
 { input:  address of target in r3, newvalue in r4, comparand in r5 }
 { output: value stored in target before entry of the function      }
 { side-effect: NewValue stored in target if (target = comparand)   }

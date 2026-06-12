@@ -125,7 +125,7 @@ implementation
            line:=current_filepos.line;
            col:=current_filepos.column;
            if assigned(current_module) then
-            fileindex:=current_module.unit_index*100000+current_filepos.fileindex
+            fileindex:=current_module.moduleid*100000+current_filepos.fileindex
            else
             fileindex:=current_filepos.fileindex;
          end;
@@ -141,7 +141,7 @@ implementation
       end;
 
 
-  const
+  var
      pp_heap_inited : boolean = false;
 
   procedure pp_heap_init;

@@ -2516,11 +2516,18 @@ begin
   AddLine('  {$DEFINE ENDIAN_LITTLE}');
   AddLine('{$ENDIF !FPC}');
   AddLine('');
-  AddLine('unit ' + COLLATION_FILE_PREFIX + LowerCase(ACollation.Parent.LocalID)+ ';'+sLineBreak);
+  AddLine('{$IFNDEF FPC_DOTTEDUNITS}');
+  AddLine('unit ' + COLLATION_FILE_PREFIX + LowerCase(ACollation.Parent.LocalID)+ ';');
+  AddLine('{$ENDIF FPC_DOTTEDUNITS}'+sLineBreak);
   AddLine('interface'+sLineBreak);
   AddLine('implementation');
+  AddLine('{$IFDEF FPC_DOTTEDUNITS}');
   AddLine('uses');
-  AddLine('  unicodedata, unicodeducet;'+sLineBreak);
+  AddLine('  System.CodePages.unicodedata, System.Unicode.Unicodeducet;');
+  AddLine('{$ELSE FPC_DOTTEDUNITS}');
+  AddLine('uses');
+  AddLine('  unicodedata, unicodeducet;');
+  AddLine('{$ENDIF FPC_DOTTEDUNITS}'+sLineBreak);
   AddLine('const');
   AddFields();
   AddLine('  COLLATION_NAME = ' + QuotedStr(ACollation.Parent.LocalID) + ';');
@@ -2598,11 +2605,11 @@ begin
   AddLine('var');
   AddLine('  CLDR_Collation : TUCA_DataBook = (');
   AddLine('    Base               : nil;');
-  AddLine('    Version            : ');
+  AddLine('    Version            :');
   AddLine('      (');
   GenerateStrBuffer(ABook^.Version,128);
   AddLine('      );');
-  AddLine('    CollationName      : ');
+  AddLine('    CollationName      :');
   AddLine('      (');
   GenerateStrBuffer(ACollation.Parent.LocalID,128);
   AddLine('      );');
@@ -2679,17 +2686,17 @@ var
   locType : TCldrCollationItem;
   locRules : TCldrCollationRuleArray;
   locRule : PCldrCollationRule;
-begin 
+begin
   Result := False;
   if not Assigned(AVisitFunc) then
     exit;
   locRules := ACollationType.Rules;
   for i := Low(locRules) to High(locRules) do begin
     locRule := @locRules[i];
-    if (locRule^.Kind = TCldrCollationRuleKind.ReorderSequence) then begin  
+    if (locRule^.Kind = TCldrCollationRuleKind.ReorderSequence) then begin
       if not AVisitFunc(@locRule^.Reorder,ACollationType,ACustomData) then
         exit;
-    end else if (locRule^.Kind = TCldrCollationRuleKind.Import) then begin  
+    end else if (locRule^.Kind = TCldrCollationRuleKind.Import) then begin
       locImport := locRule^.Import;
       locRep := ACollationType.Parent.Repository;
       locCollation := locRep.Load(locImport.Source,TCldrParserMode.FullParsing);

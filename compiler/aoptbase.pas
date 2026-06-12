@@ -60,12 +60,15 @@ unit aoptbase;
 
         { gets the next tai object after current that contains info relevant }
         { to the optimizer in p1. If there is none, it returns false and     }
-        { sets p1 to nil                                                     }
-        class function GetNextInstruction(Current: tai; out Next: tai): Boolean; static;
+        { sets p1 to nil.  If AlsoStopOn is set, it will also stop on these  }
+        { object types that are normally skipped over.                       }
+        class function GetNextInstruction(Current: tai; out Next: tai; AlsoStopOn: taitypes = []): Boolean; static;
+
         { gets the previous tai object after current that contains info   }
         { relevant to the optimizer in last. If there is none, it returns }
-        { false and sets last to nil                                      }
-        class function GetLastInstruction(Current: tai; out Last: tai): Boolean; static;
+        { false and sets last to nil.  If AlsoStopOn is set, it will also }
+        { stop on these object types that are normally skipped over.      }
+        class function GetLastInstruction(Current: tai; out Last: tai; AlsoStopOn: taitypes = []): Boolean; static;
 
         class function SkipEntryExitMarker(current: tai; out next: tai): boolean; static;
 
@@ -74,7 +77,7 @@ unit aoptbase;
         { returns the maximum width component of Reg. Only has to be }
         { overridden for the 80x86 (afaik)                           }
         Function RegMaxSize(Reg: TRegister): TRegister; Virtual;
-        { returns true if Reg1 and Reg2 are of the samae width. Only has to }
+        { returns true if Reg1 and Reg2 are of the same width. Only has to  }
         { overridden for the 80x86 (afaik)                                  }
         Function RegsSameSize(Reg1, Reg2: TRegister): Boolean; Virtual;
         { returns whether P is a load instruction (load contents from a }
@@ -139,7 +142,6 @@ unit aoptbase;
       for Count:=0 to TInstr(p1).ops-1 do
         if RegInOp(Reg, TInstr(p1).oper[Count]^) then
           exit(true);
-      result:=false;
     End;
 
 
@@ -185,12 +187,12 @@ unit aoptbase;
   end;
 
 
-  class function TAOptBase.GetNextInstruction(Current: tai; out Next: tai): Boolean;
+  class function TAOptBase.GetNextInstruction(Current: tai; out Next: tai; AlsoStopOn: taitypes): Boolean;
   Begin
     Repeat
       Current := tai(Current.Next);
       While Assigned(Current) And
-            ((Current.typ In SkipInstr) or
+            ((Current.typ In SkipInstr - AlsoStopOn) or
 {$ifdef cpudelayslot}
              ((Current.typ=ait_instruction) and
               (taicpu(Current).opcode=A_NOP)
@@ -223,7 +225,7 @@ unit aoptbase;
           (Tai_Marker(Current).Kind <> mark_NoPropInfoEnd);
     Next := Current;
     If Assigned(Current) And
-       Not((Current.typ In SkipInstr) or
+       Not((Current.typ In SkipInstr - AlsoStopOn) or
            ((Current.typ = ait_label) And
             labelCanBeSkipped(Tai_Label(Current))))
       Then GetNextInstruction := True
@@ -234,14 +236,15 @@ unit aoptbase;
         End;
   End;
 
-  class function TAOptBase.GetLastInstruction(Current: tai; out Last: tai): Boolean;
+
+  class function TAOptBase.GetLastInstruction(Current: tai; out Last: tai; AlsoStopOn: taitypes): Boolean;
   Begin
     Repeat
       Current := Tai(Current.previous);
       While Assigned(Current) And
             (((Current.typ = ait_Marker) And
               Not(Tai_Marker(Current).Kind in [mark_AsmBlockEnd{,mark_NoPropInfoEnd}])) or
-             (Current.typ In SkipInstr) or
+             (Current.typ In SkipInstr - AlsoStopOn) or
              ((Current.typ = ait_label) And
               labelCanBeSkipped(Tai_Label(Current)))) Do
         Current := Tai(Current.previous);
@@ -258,7 +261,7 @@ unit aoptbase;
           (Current.typ <> ait_Marker) Or
           not(tai_Marker(current).Kind in [mark_NoPropInfoStart,mark_NoPropInfoEnd]);
     If Not(Assigned(Current)) or
-       (Current.typ In SkipInstr) or
+       (Current.typ In SkipInstr - AlsoStopOn) or
        ((Current.typ = ait_label) And
         labelCanBeSkipped(Tai_Label(Current))) or
        ((Current.typ = ait_Marker) And

@@ -346,13 +346,13 @@ implementation
                         ((hp1.fileinfo.line<infile.maxlinebuf) or (InlineLevel>0)) then
                        begin
                          if (hp1.fileinfo.line<>0) and
-                            ((infile.linebuf^[hp1.fileinfo.line]>=0) or (InlineLevel>0)) then
+                            ((infile.linebuf[hp1.fileinfo.line]>=0) or (InlineLevel>0)) then
                            writer.AsmWriteLn(asminfo^.comment+'['+tostr(hp1.fileinfo.line)+'] '+
                              fixline(infile.GetLineStr(hp1.fileinfo.line)));
                          { set it to a negative value !
                          to make that is has been read already !! PM }
-                         if (infile.linebuf^[hp1.fileinfo.line]>=0) then
-                           infile.linebuf^[hp1.fileinfo.line]:=-infile.linebuf^[hp1.fileinfo.line]-1;
+                         if (infile.linebuf[hp1.fileinfo.line]>=0) then
+                           infile.linebuf[hp1.fileinfo.line]:=-infile.linebuf[hp1.fileinfo.line]-1;
                        end;
                    end;
                   lastfileinfo:=hp1.fileinfo;
@@ -770,14 +770,14 @@ implementation
             result:='TODO: add support for constant sets';
           constpointer:
             { can only be null, but that's the default value and should not
-              be written; there's no primitive type that can hold nill }
+              be written; there's no primitive type that can hold nil }
             internalerror(2011021201);
           constnil:
             internalerror(2011021202);
           constresourcestring:
             result:='TODO: add support for constant resource strings';
           constwstring:
-            result:=constwstr(pcompilerwidestring(csym.value.valueptr)^.data,pcompilerwidestring(csym.value.valueptr)^.len);
+            result:=constwstr(pcompilerwidechar(csym.value.valuews.data),csym.value.valuews.len);
           constguid:
             result:='TODO: add support for constant guids';
           else
@@ -829,7 +829,7 @@ implementation
               if sym.owner.symtabletype=globalsymtable then
                 result:='public '
               else
-                { package visbility }
+                { package visibility }
                 result:='';
             end;
           fieldvarsym,
@@ -1153,7 +1153,7 @@ implementation
             end;
           top_wstring:
             begin
-              result:=constwstr(o.pwstrval^.data,getlengthwidestring(o.pwstrval));
+              result:=constwstr(pcompilerwidechar(o.pwstrval.data),getlengthwidestring(o.pwstrval));
             end
           else
             internalerror(2010122802);

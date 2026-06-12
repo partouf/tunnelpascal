@@ -66,20 +66,6 @@ end;
   which on the Java platforms is an alias for java.lang.String
 }
 
-{$define FPC_HAS_NEW_UNICODESTRING}
-Function NewUnicodeString(Len : SizeInt) : JLString;
-{
-  Allocate a new UnicodeString on the heap.
-  initialize it to zero length and reference count 1.
-}
-var
-  data: array of jchar;
-begin
-  setlength(data,len);
-  result:=JLString.create(data);
-end;
-
-
 { lie, not required }
 {$define FPC_HAS_UNICODESTR_DECR_REF}
 {$define FPC_HAS_UNICODESTR_INCR_REF}
@@ -119,7 +105,7 @@ end;
 
 
 {$define FPC_HAS_UNICODESTR_TO_ANSISTR}
-Function fpc_UnicodeStr_To_AnsiStr (const S2 : UnicodeString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): AnsiString; compilerproc;
+Function fpc_UnicodeStr_To_AnsiStr (const S2 : UnicodeString;cp : TSystemCodePage): AnsiString; compilerproc;
 {
   Converts a UnicodeString to an AnsiString
 }
@@ -197,7 +183,7 @@ end;
 {$define FPC_HAS_PUNICODECHAR_TO_SHORTSTR}
 
 {$define FPC_HAS_PWIDECHAR_TO_ANSISTR}
-Function fpc_PWideChar_To_AnsiStr(const p : pwidechar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): ansistring; compilerproc;
+Function fpc_PWideChar_To_AnsiStr(const p : pwidechar;cp : TSystemCodePage): ansistring; compilerproc;
 begin
   result:='';
   if (p=nil) or
@@ -325,7 +311,7 @@ end;
 
 
 {$define FPC_HAS_UCHAR_TO_ANSISTR}
-Function fpc_UChar_To_AnsiStr(const c : UnicodeChar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): AnsiString; compilerproc;
+Function fpc_UChar_To_AnsiStr(const c : UnicodeChar;cp : TSystemCodePage): AnsiString; compilerproc;
 {
   Converts a UnicodeChar to a AnsiString;
 }
@@ -354,22 +340,15 @@ end;
 
 {$ifndef FPC_HAS_UCHAR_TO_ANSISTR}
 {$define FPC_HAS_UCHAR_TO_ANSISTR}
-Function fpc_UChar_To_AnsiStr(const c : UnicodeChar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): AnsiString; compilerproc;
+Function fpc_UChar_To_AnsiStr(const c : UnicodeChar;cp : TSystemCodePage): AnsiString; compilerproc;
 {
   Converts a UnicodeChar to a AnsiString;
 }
 var
   arr: array[0..0] of unicodechar;
-{$ifndef FPC_HAS_CPSTRING}
-  cp : TSystemCodePage;
-{$endif FPC_HAS_CPSTRING}
 begin
-{$ifndef FPC_HAS_CPSTRING}
-  cp:=DefaultSystemCodePage;
-{$endif FPC_HAS_CPSTRING}
-  cp:=TranslatePlaceholderCP(cp);
   arr[0]:=c;
-  widestringmanager.Unicode2AnsiMoveProc(punicodechar(@arr[0]), fpc_UChar_To_AnsiStr, cp, 1);
+  widestringmanager.Unicode2AnsiMoveProc(punicodechar(@arr[0]), fpc_UChar_To_AnsiStr, TranslatePlaceholderCP(cp), 1);
 end;
 {$endif FPC_HAS_UCHAR_TO_ANSISTR}
 
@@ -580,7 +559,8 @@ begin
       if JLObject(S)=nil then
        begin
          { Need a completely new string...}
-         result:=NewUnicodeString(l);
+         SetLength(chars,l);
+         result:=JLString.create(chars);
        end
       { no need to create a new string, since Java strings are immutable }
       else
@@ -732,7 +712,7 @@ end;
 
 
 {$define FPC_HAS_DELETE_UNICODESTR}
-Procedure {$ifdef VER3_0}Delete{$else}fpc_unicodestr_delete{$endif} (Var S : UnicodeString; Index,Size: SizeInt);
+Procedure fpc_unicodestr_delete (Var S : UnicodeString; Index,Size: SizeInt);
 Var
   LS : SizeInt;
   sb: JLStringBuilder;
@@ -757,7 +737,7 @@ end;
 
 
 {$define FPC_HAS_INSERT_UNICODESTR}
-Procedure {$ifdef VER3_0}Insert{$else}fpc_unicodestr_insert{$endif} (Const Source : UnicodeString; Var S : UnicodeString; Index : SizeInt);
+Procedure fpc_unicodestr_insert (Const Source : UnicodeString; Var S : UnicodeString; Index : SizeInt);
 var
   Temp : UnicodeString;
   LS : SizeInt;

@@ -99,8 +99,10 @@ uses
       a_i64_trunc_sat_f32_u,
       a_i64_trunc_sat_f64_s,
       a_i64_trunc_sat_f64_u,
-      // exceptions
-      a_try,a_catch,a_catch_all,a_delegate,a_throw,a_rethrow,a_end_try,
+      // exceptions (legacy)
+      a_legacy_try,a_legacy_catch,a_legacy_catch_all,a_legacy_delegate,a_legacy_throw,a_legacy_rethrow,a_end_legacy_try,
+      // exceptions (with exnref)
+      a_try_table,a_catch,a_catch_ref,a_catch_all,a_catch_all_ref,a_throw,a_throw_ref,a_end_try_table,
       // atomic memory accesses - load/store
       a_i32_atomic_load8_u, a_i32_atomic_load16_u, a_i32_atomic_load,
       a_i64_atomic_load8_u, a_i64_atomic_load16_u, a_i64_atomic_load32_u,
@@ -140,6 +142,20 @@ uses
         wbt_v128
       );
       TWasmResultType = array of TWasmBasicType;
+      TWasmLocalsDynArray = array of TWasmBasicType;
+
+      TWasmMemoryFlag = (
+        wmfHasMaximumBound,
+        wmfShared,
+        wmfMemory64,
+        wmfCustomPageSize
+      );
+      TWasmMemoryFlags = set of TWasmMemoryFlag;
+      TWasmMemoryType = record
+        Flags: TWasmMemoryFlags;
+        MinPages, MaxPages: UInt64;
+        PageSize: UInt32;
+      end;
 
       { TWasmFuncType }
 
@@ -162,6 +178,7 @@ uses
       WasmNumberTypes = [wbt_i32, wbt_i64, wbt_f32, wbt_f64];
       WasmReferenceTypes = [wbt_funcref, wbt_externref];
       WasmVectorTypes = [wbt_v128];
+      wasm_basic_type_str : array [TWasmBasicType] of string = ('unknown','i32','i64','f32','f64','funcref','externref','v128');
 
       {# First value of opcode enumeration }
       firstop = low(tasmop);
@@ -399,6 +416,8 @@ uses
     function encode_wasm_basic_type(wbt: TWasmBasicType): Byte;
     function decode_wasm_basic_type(b: Byte; out wbt: TWasmBasicType): Boolean;
 
+    function is_atomic_op(op: TAsmOp): boolean;
+
 implementation
 
 uses
@@ -630,6 +649,11 @@ uses
         end;
       end;
 
+    function is_atomic_op(op: TAsmOp): boolean;
+      begin
+        result:=(op>=a_i32_atomic_load8_u) and (op<=a_atomic_fence);
+      end;
+
 {*****************************************************************************
                                   TWasmFuncType
 *****************************************************************************}
@@ -649,9 +673,12 @@ uses
       end;
 
     procedure TWasmFuncType.add_param(param: TWasmBasicType);
+    var
+      len : integer;
       begin
-        SetLength(params,Length(params)+1);
-        params[High(params)]:=param;
+        len:=Length(params);
+        SetLength(params,len+1);
+        params[len]:=param;
       end;
 
     procedure TWasmFuncType.add_result(res: TWasmBasicType);
@@ -682,8 +709,6 @@ uses
       end;
 
     function TWasmFuncType.ToString: ansistring;
-      const
-        wasm_basic_type_str : array [TWasmBasicType] of string = ('unknown','i32','i64','f32','f64','funcref','externref','v128');
       var
         i: Integer;
       begin

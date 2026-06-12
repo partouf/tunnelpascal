@@ -156,14 +156,14 @@ function LowerCase(const V: variant): string; overload;{$ifdef SYSUTILSINLINE}in
   begin
   {$IFDEF UNICODERTL}
     result:=LowerCase(widestring(V));
-  {ELSE}  
+  {ELSE}
     result:=LowerCase(ansistring(V));
-  {$ENDIF}  
+  {$ENDIF}
   end;
 
 
 {   CompareStr compares S1 and S2, the result is the based on
-    substraction of the ascii values of the characters in S1 and S2
+    subtraction of the ascii values of the characters in S1 and S2
     case     result
     S1 < S2  < 0
     S1 > S2  > 0
@@ -232,7 +232,7 @@ end;
 
 
 {   CompareText compares S1 and S2, the result is the based on
-    substraction of the ascii values of characters in S1 and S2
+    subtraction of the ascii values of characters in S1 and S2
     comparison is case-insensitive
     case     result
     S1 < S2  < 0
@@ -292,7 +292,7 @@ end;
 function SameText(const s1,s2:String):Boolean; overload;{$ifdef SYSUTILSINLINE}inline;{$endif}
 
 begin
- Result:=CompareText(S1,S2)=0;
+ Result:=(Length(s1)=Length(s2)) and (CompareText(S1,S2)=0);
 end;
 
 function SameText(const s1,s2:String; LocaleOptions: TLocaleOptions):Boolean; overload;{$ifdef SYSUTILSINLINE}inline;{$endif}
@@ -307,7 +307,7 @@ end;
 function SameStr(const s1,s2:String):Boolean; overload;{$ifdef SYSUTILSINLINE}inline;{$endif}
 
 begin
- Result:=CompareStr(S1,S2)=0;
+ Result:=(Length(s1)=Length(s2)) and (CompareStr(S1,S2)=0);
 end;
 
 function SameStr(const s1,s2:String; LocaleOptions: TLocaleOptions):Boolean; overload;{$ifdef SYSUTILSINLINE}inline;{$endif}
@@ -634,41 +634,42 @@ function AnsiStrUpper(Str: PAnsiChar): PAnsiChar;{$ifdef SYSUTILSINLINE}inline;{
 
 {   Trim returns a copy of S with blanks characters on the left and right stripped off   }
 
-Const WhiteSpace = [#0..' '];
+function Trim(const S: ansistring; mode: TTrimMode): ansistring;
+var
+  start, ed, ns: SizeInt;
+begin
+  start := 1;
+  ns := Length(S);
+  ed := ns;
+  if mode <> TTrimMode.Right then
+    while (start <= ed) and (S[start] <= ' ') do
+      inc(start);
+  if mode <> TTrimMode.Left then
+    while (start <= ed) and (S[ed] <= ' ') do
+      dec(ed);
+  if (start = 1) and (ed = ns) then
+    Result := S
+  else
+    Result := Copy(S, start, ed - start + 1);
+end;
 
 function Trim(const S: ansistring): ansistring;
-var Ofs, Len: integer;
 begin
-  len := Length(S);
-  while (Len>0) and (S[Len] in WhiteSpace) do
-   dec(Len);
-  Ofs := 1;
-  while (Ofs<=Len) and (S[Ofs] in WhiteSpace) do
-   Inc(Ofs);
-  result := Copy(S, Ofs, 1 + Len - Ofs);
+  result := Trim(S, TTrimMode.Both);
 end ;
 
 {   TrimLeft returns a copy of S with all blank characters on the left stripped off  }
 
 function TrimLeft(const S: ansistring): ansistring;
-var i,l:integer;
 begin
-  l := length(s);
-  i := 1;
-  while (i<=l) and (s[i] in whitespace) do
-   inc(i);
-  Result := copy(s, i, l);
+  result := Trim(S, TTrimMode.Left);
 end ;
 
 {   TrimRight returns a copy of S with all blank characters on the right stripped off  }
 
 function TrimRight(const S: ansistring): ansistring;
-var l:integer;
 begin
-  l := length(s);
-  while (l>0) and (s[l] in whitespace) do
-   dec(l);
-  result := copy(s,1,l);
+  result := Trim(S, TTrimMode.Right);
 end ;
 
 {   QuotedStr returns S quoted left and right and every single quote in S
@@ -1046,7 +1047,7 @@ begin
 end;
 
 function TryStrToDWord(const s: string; Out D: DWord): boolean;
-var 
+var
   Error : word;
   lq : QWord;
 begin
@@ -1182,13 +1183,13 @@ begin
   Result:=Format(Fmt,Args,DefaultFormatSettings);
 end;
 
-function SafeFormat (const Fmt: AnsiString; Args: array of const): UTF8String;
+function SafeFormat (const Fmt: AnsiString;const Args: array of const): UTF8String;
 
 begin
   Result:=SafeFormat(Fmt,Args,DefaultFormatSettings);
 end;
 
-function SafeFormat (const Fmt: AnsiString; Args: array of const; const FormatSettings: TFormatSettings): UTF8String;
+function SafeFormat (const Fmt: AnsiString;const Args: array of const; const FormatSettings: TFormatSettings): UTF8String;
 
 begin
   try
@@ -1288,7 +1289,7 @@ Var
 
 Begin
   if S = '' then
-    exit(false);  
+    exit(false);
   //ThousandSeparator not allowed as by Delphi specs
   if (FormatSettings.ThousandSeparator <> FormatSettings.DecimalSeparator) and
      (Pos(FormatSettings.ThousandSeparator, S) <> 0) then
@@ -2291,7 +2292,7 @@ end;
 {$define FString:=AnsiString}
 
 
-Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar; FormatSettings : TFormatSettings): Integer;
+Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar; const FormatSettings : TFormatSettings): Integer;
 
 begin
   Result:=IntFloatToTextFmt(Buffer,Value,fvExtended,Format,FormatSettings);
@@ -2619,6 +2620,56 @@ begin
   result:=Str+StrCharLength(Str);
 end;
 
+
+
+function FindCmdLineSwitch(const Switch: string; var Value: string; IgnoreCase: Boolean = True; const SwitchTypes: TCmdLineSwitchTypes = [clstValueNextParam, clstValueAppended]): Boolean;
+
+const
+{$IFDEF WINDOWS}
+  SwitchChars = ['-','/'];
+{$ELSE}
+  SwitchChars = ['-'];
+{$ENDIF}
+
+Var
+  I,L,SL : Integer;
+  S,T,R : String;
+
+begin
+  Result:=False;
+  S:=Switch;
+  If IgnoreCase then
+    S:=UpperCase(S);
+  SL:=Length(S);
+  I:=ParamCount;
+  While (Not Result) and (I>0) do
+    begin
+    L:=Length(Paramstr(I));
+    If (L>0) and (ParamStr(I)[1] in SwitchChars) then
+      begin
+      T:=Copy(ParamStr(I),2,SL);
+      If IgnoreCase then
+        T:=UpperCase(T);
+      R:=Copy(ParamStr(I),2+SL);
+      Result:=(S=T);
+      end;
+    If Result then
+      begin
+      if clstValueAppended in SwitchTypes then
+        begin
+        if (R<>'') and (R[1]=':') then
+          Delete(R,1,1);
+        Value:=R;
+        end;
+      if (R='') and (clstValueNextParam in SwitchTypes) then
+        begin
+        if (I<ParamCount) then
+          Value:=Paramstr(I+1);
+        end;
+      end;
+    Dec(i);
+    end;
+end;
 
 Function FindCmdLineSwitch(const Switch: string; const Chars: TSysCharSet;IgnoreCase: Boolean): Boolean;
 

@@ -11,6 +11,13 @@
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 }
+
+// Normally, if an optimized version is available for OS/CPU, that will be used
+// Define to force to use implementation in pascal
+{$ifdef OLD_ASSEMBLER}
+  {$DEFINE SHA256PASCAL}
+{$endif OLD_ASSEMBLER}
+
 {$IFNDEF FPC_DOTTEDUNITS}
 unit fpsha256;
 {$ENDIF FPC_DOTTEDUNITS}
@@ -39,7 +46,7 @@ Type
     HashBuffer : THashBuffer;
     Index: UInt32;
     TotalLength: Int64;
-    procedure Compress;
+    procedure Compress; inline;
     procedure Final;
     procedure Init(Use224 : Boolean = False);
     procedure Update(PBuf: PByte; Size: UInt32); overload;
@@ -133,10 +140,23 @@ Const
 implementation
 
 {$IFDEF FPC_DOTTEDUNITS}
-uses System.Hash.Utils;
+uses System.Hash.Utils
+{$if defined(x86_64) or defined(CPU386)},System.CPU{$endif};
 {$ELSE FPC_DOTTEDUNITS}
-uses fphashutils;
+uses fphashutils
+{$if defined(x86_64) or defined(CPU386)},cpu{$endif};
 {$ENDIF FPC_DOTTEDUNITS}
+
+procedure sha256PascalCompress(var Context:TContextBuffer; var HashBuffer:THashBuffer; aK: pointer; Mask: pointer); forward;
+
+// Use assembler version if we have a suitable CPU as well
+// Define SHA256PASCAL to force use of original reference code
+{$ifndef SHA256PASCAL}
+  {$if defined(x86_64) or defined(CPU386)}
+     {$define SHA256ASM}
+     {$i sha256x86.inc} //-- assembler implementation for x86 using SHA instruction set
+  {$endif}
+{$endif}
 
 //------------------------------------------------------------------------------
 // SHA256Base
@@ -182,9 +202,6 @@ begin
     Context[i]:=P^[i];
 end;
 
-
-procedure TSHA256Base.Compress;
-// Actual hashing function
 const
   K: array[0..63] of UInt32 = (
    $428a2f98, $71374491, $b5c0fbcf, $e9b5dba5, $3956c25b, $59f111f1,
@@ -198,6 +215,13 @@ const
    $19a4c116, $1e376c08, $2748774c, $34b0bcb5, $391c0cb3, $4ed8aa4a,
    $5b9cca4f, $682e6ff3, $748f82ee, $78a5636f, $84c87814, $8cc70208,
    $90befffa, $a4506ceb, $bef9a3f7, $c67178f2);
+
+{$ifdef SHA256ASM}
+  Mask: record a, b: qword end = (a:$0405060700010203;b:$0c0d0e0f08090a0b);
+{$endif}
+
+procedure sha256PascalCompress(var Context:TContextBuffer;var HashBuffer:THashBuffer; aK:pointer; Mask:pointer);
+// Actual hashing function
 Type
   TBuf64 =  array[0..63] of UInt32;
 var
@@ -211,14 +235,22 @@ begin
   Move(HashBuffer, W, Sizeof(HashBuffer));
   for I := 0 to 15 do
     W[I] := SwapEndian(W[I]);
+
+  A := Context[0]; B := Context[1]; C := Context[2]; D := Context[3]; E := Context[4]; F := Context[5];  G := Context[6];  H := Context[7];
+  for I := 0 to 15 do
+  begin
+    t1 := H+(((E shr 6) or (E shl 26)) xor ((E shr 11) or (E shl 21)) xor ((E shr 25) or (E shl 7)))+((E and F) xor (not E and G))+K[I]+W[I];
+    t2 := (((A shr 2) or (A shl 30)) xor ((A shr 13) or (A shl 19)) xor ((A shr 22) xor (A shl 10)))+((A and B) xor (A and C) xor (B and C));
+    H := G; G := F; F := E; E := D+t1;
+    D := C; C := B; B := A; A := t1+t2;
+  end;
+
   for I := 16 to 63 do
+  begin
     W[I] := (((W[I-2] shr 17) or(W[I-2] shl 15)) xor ((W[I-2] shr 19) or (W[I-2] shl 13))
       xor (W[I-2] shr 10))+W[I-7]+(((W[I-15] shr 7) or (W[I-15] shl 25))
       xor ((W[I-15] shr 18) or (W[I-15] shl 14)) xor (W[I-15] shr 3))+W[I-16];
-  A := Context[0]; B := Context[1]; C := Context[2]; D := Context[3]; E := Context[4]; F := Context[5];  G := Context[6];  H := Context[7];
 
-  for I := 0 to High(W) do
-  begin
     t1 := H+(((E shr 6) or (E shl 26)) xor ((E shr 11) or (E shl 21)) xor ((E shr 25) or (E shl 7)))+((E and F) xor (not E and G))+K[I]+W[I];
     t2 := (((A shr 2) or (A shl 30)) xor ((A shr 13) or (A shl 19)) xor ((A shr 22) xor (A shl 10)))+((A and B) xor (A and C) xor (B and C));
     H := G; G := F; F := E; E := D+t1;
@@ -233,6 +265,15 @@ begin
   Inc(Context[5], F);
   Inc(Context[6], G);
   Inc(Context[7], H);
+end;
+
+procedure TSHA256Base.Compress;
+begin
+{$ifdef SHA256ASM}
+  sha256AsmCompress(Context,HashBuffer,@K,@Mask);
+{$else}
+  sha256PascalCompress(Context,HashBuffer,@K,nil);
+{$endif}
 end;
 
 type
@@ -407,10 +448,6 @@ var
   SHA256, SHA256_: TSHA256;
 begin
   Result:=False;
-  if Key = nil then
-    Exit;
-  if Data = nil then
-    Exit;
   KeyBuffer:=Default(TBuf64);
   SHA256.Init;
   if KeySize > 64 then
@@ -418,7 +455,7 @@ begin
     SHA256.Update(Key, KeySize);
     SHA256.Final;
     System.Move(SHA256.Digest[0], KeyBuffer[0], SizeOf(SHA256.Digest));
-  end else
+  end else if KeySize>0 then
     System.Move(Key^, KeyBuffer[0], KeySize);
   // XOR the key buffer with the iPad value
   for Count := 0 to 63 do
@@ -469,7 +506,7 @@ begin
   repeat
      aLen:=aStream.Read(Buffer, Length(Buffer));
      if aLen>0 then
-       SHA256.Update(PByte(Buffer),aLen); 
+       SHA256.Update(PByte(Buffer),aLen);
   until aLen=0;
   SHA256.Final;
   aDigest:=SHA256.Digest;
@@ -655,10 +692,6 @@ var
   SHA224, SHA224_: TSHA224;
 begin
   Result:=False;
-  if Key = nil then
-    Exit;
-  if Data = nil then
-    Exit;
   KeyBuffer:=Default(TBuf64);
   SHA224.Init;
   if KeySize > 64 then
@@ -666,7 +699,7 @@ begin
     SHA224.Update(Key, KeySize);
     SHA224.Final;
     System.Move(SHA224.Digest[0], KeyBuffer[0], SizeOf(SHA224.Digest));
-  end else
+  end else if KeySize>0 then
     System.Move(Key^, KeyBuffer[0], KeySize);
   // XOR the key buffer with the iPad value
   for Count := 0 to 63 do

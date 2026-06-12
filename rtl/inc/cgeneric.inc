@@ -40,8 +40,8 @@ procedure memset(var x; value: byte; count: size_t); cdecl; external clib;
 Procedure FillChar(var x;count: sizeint;value:byte);{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   { don't exit if count is <= 0, this makes the compiler think x is uninitialized,
-    as FillChar is probably rarely called with count <= 0, the performance hit is 
-    probably neglible }
+    as FillChar is probably rarely called with count <= 0, the performance hit is
+    probably negligible }
   if count < 0 then
     count := 0;
   memset(x,value,size_t(count));
@@ -54,6 +54,10 @@ end;
 
 {$ifdef LINUX}
   {$define BUGGYMEMCHR}
+{$endif}
+
+{$ifdef AIX}
+  {$define MEMCHR_NEEDS_LEN_POSITIVE}
 {$endif}
 
 function memchr(const buf; b: cint; len: size_t): pointer; cdecl; external clib;
@@ -74,6 +78,11 @@ begin
   if len = -1 then
     res := rawmemchr(buf,cint(b))
   else
+{$else not BUGGYMEMCHR}
+{$ifdef MEMCHR_NEEDS_LEN_POSITIVE}
+  if len = -1 then
+    len := high(sizeint);
+{$endif MEMCHR_NEEDS_LEN_POSITIVE}
 {$endif BUGGYMEMCHR}
     res := memchr(buf,cint(b),size_t(sizeuint(len)));
   if (res <> nil) then

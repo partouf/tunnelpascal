@@ -21,7 +21,7 @@
 {$H+}
 
 {$IFNDEF FPC_DOTTEDUNITS}
-unit httproute;
+unit HTTPRoute;
 {$ENDIF FPC_DOTTEDUNITS}
 
 interface
@@ -142,7 +142,7 @@ Type
 
   TRouteObject = Class(TObject,IRouteInterface)
   Public
-    Constructor Create; virtual; 
+    Constructor Create; virtual;
     Procedure HandleRequest(ARequest : TRequest; AResponse : TResponse); virtual; abstract;
   end;
   TRouteObjectClass = Class of TRouteObject;
@@ -571,9 +571,16 @@ begin
 end;
 
 class function THTTPRouter.Service: THTTPRouter;
+var
+  NewService : THTTPRouter;
 begin
   if FService=Nil then
-    FService:=ServiceClass.Create(Nil);
+    begin
+    // Avoid locking.
+    NewService:=ServiceClass.Create(Nil);
+    if InterlockedCompareExchange(Pointer(FService), Pointer(NewService), Nil) <> Nil then
+      NewService.Free;
+    end;
   Result:=FService;
 end;
 
@@ -614,11 +621,11 @@ begin
   Lock;
   try
     Intr:=FIntercepts.AddInterceptor(aName);
+    Intr.Event:=aEvent;
+    Intr.InterceptAt:=aAt;
   finally
     Unlock;
   end;
-  Intr.Event:=aEvent;
-  Intr.InterceptAt:=aAt;
 end;
 
 procedure THTTPRouter.UnRegisterInterceptor(const aName: String);
@@ -744,13 +751,13 @@ begin
   try
     While (Result=Nil) and (I<FRoutes.Count) do
       begin
+      Params.Clear;
       Result:=FRoutes[i];
       If Not Result.MatchPattern(APathInfo,Params,FRouteOptions) then
         Result:=Nil
       else if Not Result.MatchMethod(AMethod) then
         begin
         Result:=Nil;
-        Params.Clear;
         MethodMisMatch:=True;
         end;
       Inc(I);
@@ -927,18 +934,18 @@ end;
 Function THTTPRoute.MatchPattern(Const Path : String; L : TStrings; Options: TRouteOptions) : Boolean;
 
   // This is used only with special chars, so we do not check case sensitivity
-  Function StartsWith(C : Char; const S : String): Boolean; 
-  
+  Function StartsWith(C : Char; const S : String): Boolean;
+
   begin
     Result:=(Length(S)>0) and (S[1]=C);
   end;
-  
+
   // This is used only with special chars, so we do not check case sensitivity
   Function EndsWith(C : Char; const S : String): Boolean;
-  
+
   Var
   L : Integer;
-  
+
   begin
     L:=Length(S);
     Result:=(L>0) and (S[L]=C);
@@ -952,7 +959,7 @@ Function THTTPRoute.MatchPattern(Const Path : String; L : TStrings; Options: TRo
     else
       Result:=SameText(A,B);
   end;
-  
+
 
   procedure ExtractNextPathLevel(var ALeft: string;
     var ALvl: string; var ARight: string; const ADelim: Char = '/');

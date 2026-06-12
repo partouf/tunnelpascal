@@ -70,24 +70,21 @@ implementation
 
   class procedure twasmnodeutils.InsertObjectInfo;
 
-    var
-      modules: TFPList;
-
-    function ModuleExists(m: tmodule): Boolean;
+      procedure resetfunctypechecked;
       var
-        q: tmodule;
+        module : tmodule;
       begin
-        result:=modules.IndexOf(Pointer(m))>=0;
-      end;
-
-    procedure AddModule(m: tmodule);
-      begin
-        modules.Add(Pointer(m));
+         module:=tmodule(loaded_units.first);
+        while assigned(module) do
+          begin
+          module.functypechecked:=false;
+          module:=tmodule(module.next);
+          end;
       end;
 
       procedure WriteImportDll(list: TAsmList; proc: tprocdef);
         begin
-          thlcgwasm(hlcg).g_procdef(list,proc);
+          thlcgwasm(hlcg).g_procdef(list,proc,false);
           list.Concat(tai_import_module.create(proc.mangledname,proc.import_dll^));
           list.Concat(tai_import_name.create(proc.mangledname,proc.import_name^));
         end;
@@ -99,9 +96,9 @@ implementation
           proc : tprocdef;
           cur_unit : tused_unit;
         begin
-          if ModuleExists(u) then
+          if u.functypechecked then
             exit;
-          AddModule(u);
+          u.functypechecked:=true;
 
           cur_unit:=tused_unit(u.used_units.First);
           while assigned(cur_unit) do
@@ -113,9 +110,9 @@ implementation
           if ((u.moduleflags * [mf_init,mf_finalize])<>[]) and assigned(u.globalsymtable) then
             begin
               if mf_init in u.moduleflags then
-                list.Concat(tai_functype.create(make_mangledname('INIT$',u.globalsymtable,''),TWasmFuncType.Create([],[])));
+                list.Concat(tai_functype.create(make_mangledname('INIT$',u.globalsymtable,''),TWasmFuncType.Create([],[]),false));
               if mf_finalize in u.moduleflags then
-                list.Concat(tai_functype.create(make_mangledname('FINALIZE$',u.globalsymtable,''),TWasmFuncType.Create([],[])));
+                list.Concat(tai_functype.create(make_mangledname('FINALIZE$',u.globalsymtable,''),TWasmFuncType.Create([],[]),false));
             end;
           for i:=0 to u.deflist.Count-1 do
             begin
@@ -126,7 +123,9 @@ implementation
                   if (po_external in proc.procoptions) and (po_has_importdll in proc.procoptions) then
                     WriteImportDll(list,proc)
                   else if not proc.owner.iscurrentunit or (po_external in proc.procoptions) then
-                    thlcgwasm(hlcg).g_procdef(list,proc);
+                    thlcgwasm(hlcg).g_procdef(list,proc,false)
+                  else
+                    thlcgwasm(hlcg).g_procdef(list,proc,true);
                 end;
             end;
         end;
@@ -140,7 +139,7 @@ implementation
     begin
       inherited;
 
-      modules:=TFPList.Create;
+      resetfunctypechecked;
 
       list:=current_asmdata.asmlists[al_start];
 
@@ -153,7 +152,7 @@ implementation
           list.Concat(tai_globaltype.create(TLS_BASE_SYM,wbt_i32,false));
         end;
 
-      if ts_wasm_native_exceptions in current_settings.targetswitches then
+      if [ts_wasm_native_legacy_exceptions,ts_wasm_native_exnref_exceptions]*current_settings.targetswitches<>[] then
         begin
           list.Concat(tai_tagtype.create(FPC_EXCEPTION_TAG_SYM, []));
           list.Concat(tai_symbol.Create_Weak(current_asmdata.WeakRefAsmSymbol(FPC_EXCEPTION_TAG_SYM,AT_WASM_EXCEPTION_TAG),0));
@@ -170,7 +169,7 @@ implementation
                 if po_has_importdll in proc.procoptions then
                   WriteImportDll(list,proc)
                 else
-                  thlcgwasm(hlcg).g_procdef(list,proc);
+                  thlcgwasm(hlcg).g_procdef(list,proc,false);
             end;
          end;
       create_hlcodegen;
@@ -183,7 +182,6 @@ implementation
         end;
       destroy_hlcodegen;
 
-      modules.Free;
     end;
 
 begin

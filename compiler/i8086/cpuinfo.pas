@@ -94,6 +94,7 @@ Const
       (controllertypestr:''; controllerunitstr:''; cputype:cpu_none; fputype:fpu_none; flashbase:0; flashsize:0; srambase:0; sramsize:0));
    {$POP}
 
+var
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
@@ -105,6 +106,7 @@ Const
      pocall_pascal
    ];
 
+const
    cputypestr : array[tcputype] of string[10] = ('',
      '8086',
      '80186',
@@ -166,18 +168,19 @@ type
 
    { Instruction optimisation hints }
    TCPUOptimizeFlags =
-      (CPUX86_HINT_FAST_BT_REG_IMM,    { BT instructions with register source and immediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BT_REG_REG,    { BT instructions with register source and register indices are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_BTX_REG_IMM,   { BTC/R/S instructions with register source and immediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BTX_REG_REG,   { BTC/R/S instructions with register source and register indices are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_BT_MEM_IMM,    { BT instructions with memory sources and inmediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BT_MEM_REG,    { BT instructions with memory sources and register indices and a register index are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_BTX_MEM_IMM,   { BTC/R/S instructions with memory sources and immediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BTX_MEM_REG,   { BTC/R/S instructions with memory sources and register indices are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_XCHG,          { XCHG %reg,%reg executes in 2 cycles or less }
-       CPUX86_HINT_FAST_3COMP_ADDR,    { A 3-component address (base, index and offset) has the same latency as the 2-component version (most notable with LEA instructions) }
-       CPUX86_HINT_FAST_3COMP_ADDR_16, { As above, but with 16-bit addresses }
-       CPUX86_HINT_FAST_SHORT_REP_MOVS { short rep movs instruction }
+      (CPUX86_HINT_FAST_BT_REG_IMM,            { BT instructions with register source and immediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BT_REG_REG,            { BT instructions with register source and register indices are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_BTX_REG_IMM,           { BTC/R/S instructions with register source and immediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BTX_REG_REG,           { BTC/R/S instructions with register source and register indices are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_BT_MEM_IMM,            { BT instructions with memory sources and inmediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BT_MEM_REG,            { BT instructions with memory sources and register indices and a register index are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_BTX_MEM_IMM,           { BTC/R/S instructions with memory sources and immediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BTX_MEM_REG,           { BTC/R/S instructions with memory sources and register indices are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_XCHG,                  { XCHG %reg,%reg executes in 2 cycles or less }
+       CPUX86_HINT_FAST_3COMP_ADDR,            { A 3-component address (base, index and offset) has the same latency as the 2-component version (most notable with LEA instructions) }
+       CPUX86_HINT_FAST_3COMP_ADDR_16,         { As above, but with 16-bit addresses }
+       CPUX86_HINT_FAST_SHORT_REP_MOVS,        { short rep movs instruction }
+       CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1  { BSR/F does not change the destination if ZF is set }
       );
 
  const

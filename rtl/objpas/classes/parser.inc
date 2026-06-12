@@ -18,7 +18,7 @@
 
 const
 {$ifdef CPU16}
-  { Avoid too big local stack use for 
+  { Avoid too big local stack use for
     MSDOS tiny memory model that uses less than 4096
     bytes for total stack by default. }
   ParseBufSize     = 512;
@@ -37,7 +37,7 @@ const
     'WideString'
   );
 
-function TParser.GetTokenName(aTok: Char): string;
+function TParser.GetTokenName(aTok: AnsiChar): string;
 begin
   if ord(aTok) <= LastSpecialToken then
     Result:=TokNames[ord(aTok)]
@@ -127,6 +127,8 @@ begin
 end;
 
 procedure TParser.SkipBOM;
+const
+  sbom : string[3] = #$EF#$BB#$BF;
 var
   i : integer;
   bom : string[3];
@@ -142,7 +144,7 @@ begin
     CheckLoadBuffer;
     inc(i);
   end;
-  if (bom<>(#$EF+#$BB+#$BF)) then
+  if (bom<>sBom) then
     fPos:=backup;
 end;
 
@@ -375,7 +377,7 @@ begin
   FreeMem(fBuf);
 end;
 
-procedure TParser.CheckToken(T: Char);
+procedure TParser.CheckToken(T: AnsiChar);
 begin
   if fToken<>T then
     ErrorFmt(SParWrongTokenType,[GetTokenName(T),GetTokenName(fToken)]);
@@ -434,7 +436,7 @@ begin
   NextToken;
 end;
 
-function TParser.NextToken: Char;
+function TParser.NextToken: AnsiChar;
 
 begin
   SkipWhiteSpace;

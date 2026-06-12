@@ -15,8 +15,12 @@ Type
     procedure TestDataSizeEmpty;
     procedure TestReferenceRawData;
     procedure TestReferenceRawDataEmpty;
-
     procedure TestIsManaged;
+    procedure TestCasts;
+    procedure TestAssignPointer;
+    procedure TestAssignDateTime;
+    procedure TestAssignDate;
+    procedure TestAssignTime;
   end;
 
   TTestValueSimple = Class(TTestCase)
@@ -52,6 +56,10 @@ Type
     procedure TestMakeGenericWideChar;
 
     procedure TestFromOrdinal;
+    Procedure TestTryCastUnicodeString;
+
+    procedure TestMakeManagedRecord;
+    procedure TestMakeStaticArrayOfManagedRecord;
   end;
 
   { TTestValueArray }
@@ -122,6 +130,12 @@ Type
     Procedure TestFromVarRecQWord;
     Procedure TestFromVarRecUnicodeString;
     Procedure TestArrayOfConstToTValue;
+    procedure TestCastAnsiString;
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    procedure TestCastUnicodeString;
+{$endif}
+    procedure TestCastWideString;
+    procedure TestCastShortString;
   end;
 
   { TMyUNknown }
@@ -709,6 +723,61 @@ begin
   CheckEquals(1,S[0].AsInteger,'Value 1');
   CheckEquals('something',S[1].AsString,'Value 3');
   CheckEquals(1.23,S[2].AsDouble,0.01,'Value 3');
+end;
+
+procedure TTestValueVariant.TestCastAnsiString;
+var
+  s: AnsiString;
+  v: Variant;
+  vvar, vstr: TValue;
+begin
+  s := 'Test';
+  v := s;
+  vvar := TValue.{$ifdef fpc}specialize{$endif}From<Variant>(v);
+  CheckTrue(vvar.TryCast(TypeInfo(AnsiString), vstr));
+  CheckEquals(s, vstr.AsAnsiString);
+end;
+
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+procedure TTestValueVariant.TestCastUnicodeString;
+var
+  u: UnicodeString;
+  v: Variant;
+  vvar, vstr: TValue;
+begin
+  u := 'Test';
+  TVarData(v).vType := varUString;
+  TVarData(v).vuString := Pointer(u);
+  vvar := TValue.{$ifdef fpc}specialize{$endif}From<Variant>(v);
+  CheckTrue(vvar.TryCast(TypeInfo(UnicodeString), vstr));
+  CheckEquals(u, vstr.AsUnicodeString);
+end;
+{$endif}
+
+procedure TTestValueVariant.TestCastWideString;
+var
+  w: WideString;
+  v: Variant;
+  vvar, vstr: TValue;
+begin
+  w := 'Test';
+  v := w;
+  vvar := TValue.{$ifdef fpc}specialize{$endif}From<Variant>(v);
+  CheckTrue(vvar.TryCast(TypeInfo(WideString), vstr));
+  CheckEquals(w, vstr.AsUnicodeString);
+end;
+
+procedure TTestValueVariant.TestCastShortString;
+var
+  s: ShortString;
+  v: Variant;
+  vvar, vstr: TValue;
+begin
+  s := 'Test';
+  v := s;
+  vvar := TValue.{$ifdef fpc}specialize{$endif}From<Variant>(v);
+  CheckTrue(vvar.TryCast(TypeInfo(ShortString), vstr));
+  CheckEquals(s, vstr.AsAnsiString);
 end;
 
 { TMyUNknown }
@@ -1533,6 +1602,68 @@ begin
   CheckException({$ifdef fpc}@{$endif}MakeFromOrdinalString, EInvalidCast);
 end;
 
+procedure TTestValueSimple.TestTryCastUnicodeString;
+
+var
+  S: string;
+  V, V2: TValue;
+begin
+  S := 'str';
+  V := S;
+  CheckTrue(V.TryCast(TypeInfo(UnicodeString), V2),'Cast OK');
+end;
+
+type
+  TMyManagedRecord = record
+    I: IntPtr;
+    Intf: IUnknown;
+  end;
+  TTestIntfObject = class(TInterfacedObject);
+
+procedure TTestValueSimple.TestMakeManagedRecord;
+  function GetValue: TValue;
+  var
+    R: TMyManagedRecord;
+  begin
+    R.Intf := TTestIntfObject.Create;
+    Result := TValue.{$ifdef fpc}specialize{$endif} From<TMyManagedRecord>(R);
+  end;
+var
+  P: Pointer;
+  R: TMyManagedRecord;
+  V: TValue;
+begin
+  V := GetValue();
+  P := AllocMem(64);
+  R := V.{$ifdef fpc}specialize{$endif} AsType<TMyManagedRecord>;
+  Check((R.Intf as TTestIntfObject).RefCount >= 2, 'RefCount should be >= 2. One ref in in V, and another one is in R');
+  FreeMem(P);
+end;
+
+procedure TTestValueSimple.TestMakeStaticArrayOfManagedRecord;
+type
+  TArrayOfRec = array[0..0] of TMyManagedRecord;
+
+  function GetValue: TValue;
+  var
+    Arr: TArrayOfRec;
+  begin
+    Arr[0].Intf := TTestIntfObject.Create;
+    Result := TValue.{$ifdef fpc}specialize{$endif} From<TArrayOfRec>(Arr);
+  end;
+
+var
+  P: Pointer;
+  Arr: TArrayOfRec;
+  V: TValue;
+begin
+  V := GetValue();
+  P := AllocMem(64);
+  Arr := V.{$ifdef fpc}specialize{$endif} AsType<TArrayOfRec>;
+  Check((Arr[0].Intf as TTestIntfObject).RefCount >= 2, 'RefCount should be >= 2. One ref in in V, and another one is in Arr');
+  FreeMem(P);
+end;
+
 { TTestValueArray }
 
 
@@ -1720,7 +1851,7 @@ begin
   s:=[low(TTestEnum),high(TTestEnum)];
   TValue.Make(@s, TypeInfo(TTestSet), value);
   CheckEquals(SizeOf(TTestSet), value.DataSize, 'Size of TTestSet differs');
-  p := Nil;
+  p := Self;
   TValue.Make(@p, TypeInfo(Pointer), value);
   CheckEquals(SizeOf(Pointer), value.DataSize, 'Size of Pointer differs');
 end;
@@ -1866,6 +1997,75 @@ begin
   CheckEquals(false, IsManaged(nil), 'IsManaged for nil');
 end;
 
+Type
+  TEnum1 = (en1_1, en1_2);
+  TEnum2 = (en2_1);
+  TEnum3 = en1_1..en1_1;
+
+procedure TTestValueGeneral.TestCasts;
+
+var
+  TempV,T1,T2,T3 : TValue;
+
+begin
+  T1:=TValue. specialize From<TEnum1>(en1_1);
+  T2:=T1. specialize Cast<TEnum3>;
+//  T3:=T2. specialize AsType<TEnum3>;
+  CheckTrue((en1_1 = T2. specialize AsType<TEnum3>), 'en1_1 = (TValue.From<TEnum1>(en1_1).Cast<TEnum3>.AsType<TEnum3>)');
+  CheckFalse(TValue. specialize From<Integer>(32).TryCast(TypeInfo(AnsiChar), TempV), 'not (TValue.From<Integer>(32).TryCast(TypeInfo(AnsiChar), V)');
+  CheckFalse(TValue. specialize From<Integer>(32).TryCast(TypeInfo(WideChar), TempV), 'not (TValue.From<Integer>(32).TryCast(TypeInfo(WideChar), V)');
+{$ifdef fpc}
+  CheckFalse(TValue. specialize From<Integer>(32).TryCast(TypeInfo(UnicodeChar), TempV), 'not (TValue.From<Integer>(32).TryCast(TypeInfo(UnicodeChar), V)');
+{$endif}
+  CheckTrue(Byte(397) = (TValue. specialize From<Integer>(397). specialize Cast<Byte>(). specialize AsType<Byte>), 'Byte(397) = (TValue.From<Integer>(397).Cast<Byte>().AsType<Byte>)');
+  CheckTrue(32 = (TValue. specialize From<Byte>(32). specialize Cast<Integer>(). specialize AsType<Integer>), '32 = (TValue.From<Byte>(32).Cast<Integer>().AsType<Integer>)');
+
+  CheckTrue('test_str' = TValue.{$ifdef fpc}specialize{$endif} From<ShortString>('test_str')
+              .{$ifdef fpc}specialize{$endif} Cast<AnsiString>
+              .{$ifdef fpc}specialize{$endif} AsType<AnsiString>, 'TValue.From<shortring>.Cast<AnsiString> failed');
+end;
+
+procedure TTestValueGeneral.TestAssignPointer;
+var
+  V : TValue;
+begin
+  V:=Pointer(Nil);
+  AssertSame('Correct type info', TypeInfo(Pointer),V.TypeInfo);
+end;
+
+procedure TTestValueGeneral.TestAssignDateTime;
+var
+  dt: TDateTime;
+  v: TValue;
+begin
+  dt := Now;
+  v := dt;
+  AssertSame('Incorrect type info', TypeInfo(TDateTime), V.TypeInfo);
+  CheckEquals(dt, V.AsDateTime, 'Incorrect value');
+end;
+
+procedure TTestValueGeneral.TestAssignDate;
+var
+  d: TDate;
+  v: TValue;
+begin
+  d := Date;
+  v := d;
+  AssertSame('Incorrect type info', TypeInfo(TDate), V.TypeInfo);
+  CheckEquals(d, V.AsDateTime, 'Incorrect value');
+end;
+
+procedure TTestValueGeneral.TestAssignTime;
+var
+  t: TTime;
+  v: TValue;
+begin
+  t := Time;
+  v := t;
+  AssertSame('Incorrect type info', TypeInfo(TTime), V.TypeInfo);
+  CheckEquals(t, V.AsDateTime, 'Incorrect value');
+end;
+
 procedure TTestValueGeneral.TestReferenceRawData;
 var
   value: TValue;
@@ -1949,4 +2149,3 @@ initialization
   RegisterTest(TTestValueSimple);
   RegisterTest(TTestValueVariant);
 end.
-

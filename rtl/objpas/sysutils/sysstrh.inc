@@ -104,9 +104,9 @@ function AnsiLastChar(const S: AnsiString): PAnsiChar;
 function AnsiLastChar(const S: UnicodeString): PWideChar;
 function AnsiStrLastChar(Str: PAnsiChar): PAnsiChar;
 
-function Trim(const S: ansistring): ansistring;
-function TrimLeft(const S: ansistring): ansistring;
-function TrimRight(const S: ansistring): ansistring;
+function Trim(const S: ansistring): ansistring; {$ifdef SYSUTILSINLINE}inline;{$endif}
+function TrimLeft(const S: ansistring): ansistring; {$ifdef SYSUTILSINLINE}inline;{$endif}
+function TrimRight(const S: ansistring): ansistring; {$ifdef SYSUTILSINLINE}inline;{$endif}
 function QuotedStr(const S: string): string; {$ifdef SYSUTILSINLINE}inline;{$endif}
 function AnsiQuotedStr(const S: string; Quote: Char): string;
 function AnsiDequotedStr(const S: string; AQuote: Char): string;
@@ -136,7 +136,7 @@ function StrToInt(const s: string): Longint;
 function StrToDWord(const s: string): DWord;
 function StrToUInt(const s: string): Cardinal;
 function StrToInt64(const s: string): int64;
-function StrToQWord(const s: string): QWord; 
+function StrToQWord(const s: string): QWord;
 function StrToUInt64(const s: string): UInt64; inline;
 function TryStrToInt(const s: string; Out i : Longint) : boolean;
 function TryStrToDWord(const s: string; Out D : DWord) : boolean;
@@ -234,7 +234,7 @@ function TryStrToCurr(const S: string;Out Value : Currency; Const FormatSettings
 function StrToCurrDef(const S: string; Default : Currency): Currency;
 function StrToCurrDef(const S: string; Default : Currency; Const FormatSettings: TFormatSettings): Currency;
 
-Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar; FormatSettings : TFormatSettings): Integer;
+Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar; const FormatSettings : TFormatSettings): Integer;
 Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar): Integer;
 Procedure FloatToDecimal(Out Result: TFloatRec; const Value; ValueType: TFloatValue; Precision, Decimals : integer);
 Procedure FloatToDecimal(Out Result: TFloatRec; Value: Extended; Precision, Decimals : integer);
@@ -287,9 +287,13 @@ Type
   TSysCharSet = Set of AnsiChar;
   PSysCharSet = ^TSysCharSet;
 
-Function FindCmdLineSwitch(const Switch: string; const Chars: TSysCharSet;IgnoreCase: Boolean): Boolean;
+  TCmdLineSwitchType = (clstValueNextParam, clstValueAppended);
+  TCmdLineSwitchTypes = Set of TCmdLineSwitchType;
+
+Function FindCmdLineSwitch(const Switch: string; const Chars: TSysCharSet; IgnoreCase: Boolean): Boolean;
 Function FindCmdLineSwitch(const Switch: string; IgnoreCase: Boolean): Boolean;
 Function FindCmdLineSwitch(const Switch: string): Boolean;
+function FindCmdLineSwitch(const Switch: string; var Value: string; IgnoreCase: Boolean = True; const SwitchTypes: TCmdLineSwitchTypes = [clstValueNextParam, clstValueAppended]): Boolean;
 
 function WrapText(const Line, BreakStr: string; const BreakChars: TSysCharSet;  MaxCol: Integer): string;
 function WrapText(const Line: string; MaxCol: Integer): string;
@@ -352,5 +356,5 @@ Type
   TStringBuilder = TUnicodeStringBuilder;
 {$ENDIF}
 
-function SafeFormat (const Fmt: AnsiString; Args: array of const; const FormatSettings: TFormatSettings): UTF8String; overload;
-function SafeFormat (const Fmt: AnsiString; Args: array of const): UTF8String; overload;
+function SafeFormat (const Fmt: AnsiString;const Args: array of const; const FormatSettings: TFormatSettings): UTF8String; overload;
+function SafeFormat (const Fmt: AnsiString;const Args: array of const): UTF8String; overload;

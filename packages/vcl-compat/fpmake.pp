@@ -19,7 +19,7 @@ begin
     P.HomepageURL := 'www.freepascal.org';
     P.Email := '';
     P.Description := 'Various non-visual VCL compatibility units.';
-    P.OSes := [beos,haiku,freebsd,darwin,iphonesim,ios,solaris,netbsd,openbsd,linux,win32,win64,wince,aix,amiga,aros,morphos,dragonfly,android,wasi];
+    P.OSes := [beos,haiku,freebsd,darwin,iphonesim,ios,solaris,netbsd,openbsd,linux,win32,win64,wince,aix,amiga,aros,morphos,dragonfly,android,wasip1,wasip1threads];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -30,13 +30,14 @@ begin
     P.Dependencies.Add('fcl-base');
     P.Dependencies.Add('fcl-xml');
     P.Dependencies.Add('fcl-web');
-    P.Dependencies.Add('rtl-extra'); 
-    P.Dependencies.Add('rtl-objpas'); 
+    P.Dependencies.Add('rtl-extra');
+    P.Dependencies.Add('rtl-objpas');
     P.Dependencies.Add('rtl-generics');
     P.Dependencies.Add('fcl-json');
     P.Dependencies.Add('fcl-hash');
     P.Dependencies.Add('hash');
     P.Dependencies.Add('libpcre',[Win64,Linux,darwin]);
+    P.Dependencies.Add('wasm-utils',[wasip1,wasip1threads]);
     P.SourcePath.Add('src');
     P.IncludePath.Add('src');
 
@@ -56,6 +57,48 @@ begin
     T.Dependencies.AddUnit('system.messaging');
     T:=P.Targets.AddUnit('system.json.pp');
     T.ResourceStrings := True;
+    
+    T:=P.Targets.AddUnit('system.json.types.pp');
+    T.Dependencies.AddUnit('system.json');
+    
+    T:=P.Targets.AddUnit('system.json.builders.pp');
+    T.Dependencies.AddUnit('system.json');
+    T.Dependencies.AddUnit('system.json.writers');
+    T.Dependencies.AddUnit('system.json.readers');
+    T.Dependencies.AddUnit('system.json.types');
+    
+    T:=P.Targets.AddUnit('system.json.readers.pp');
+    T.Dependencies.AddUnit('system.json.types');
+    T.Dependencies.AddUnit('system.json.utils');
+    T.Dependencies.AddUnit('system.json');
+    T.Dependencies.AddUnit('system.jsonconsts');
+
+    T:=P.Targets.AddUnit('system.json.utils.pp');
+    T.Dependencies.AddUnit('system.json.types');
+    T.Dependencies.AddUnit('system.json');
+    
+    T:=P.Targets.AddUnit('system.json.writers.pp');
+    T.Dependencies.AddUnit('system.json.readers');
+    T.Dependencies.AddUnit('system.json.types');
+    T.Dependencies.AddUnit('system.json.utils');
+    T.Dependencies.AddUnit('system.json');
+    T.Dependencies.AddUnit('system.jsonconsts');
+
+    T:=P.Targets.AddUnit('system.jsonconsts.pp');
+    T:=P.Targets.AddUnit('system.json.serializers.pp');
+    T.Dependencies.AddUnit('system.jsonconsts');
+    T.Dependencies.AddUnit('system.json.types');
+    T.Dependencies.AddUnit('system.json.readers');
+    T.Dependencies.AddUnit('system.json.writers');
+    
+    T:=P.Targets.AddUnit('system.json.converters.pp');
+    T.Dependencies.AddUnit('system.json.serializers');
+    T.Dependencies.AddUnit('system.json.readers');
+    T.Dependencies.AddUnit('system.json.writers');
+    T.Dependencies.AddUnit('system.json.types');
+    T.Dependencies.AddUnit('system.json.utils');
+    T.Dependencies.AddUnit('system.jsonconsts');
+
     T:=P.Targets.AddUnit('system.pushnotifications.pp');
     T.ResourceStrings := True;
     T.Dependencies.AddUnit('system.messaging');
@@ -64,12 +107,12 @@ begin
     T.ResourceStrings := True;
     T:=P.Targets.AddUnit('system.credentials.pp');
     T.ResourceStrings := True;
-    T:=P.Targets.AddUnit('system.regularexpressionsconsts.pp',[Win64,Linux,darwin]);
+    T:=P.Targets.AddUnit('system.regularexpressionsconsts.pp',[Win64,Linux,darwin,wasip1,wasip1threads]);
     T.ResourceStrings := True;
-    T:=P.Targets.AddUnit('system.regularexpressionscore.pp',[Win64,Linux,darwin]);
-    T.Dependencies.AddUnit('system.regularexpressionsconsts',[Win64,Linux,darwin]);
-    T:=P.Targets.AddUnit('system.regularexpressions.pp',[Win64,Linux,darwin]);
-    T.Dependencies.AddUnit('system.regularexpressionscore',[Win64,Linux,darwin]);
+    T:=P.Targets.AddUnit('system.regularexpressionscore.pp',[Win64,Linux,darwin,wasip1,wasip1threads]);
+    T.Dependencies.AddUnit('system.regularexpressionsconsts',[Win64,Linux,darwin,wasip1,wasip1threads]);
+    T:=P.Targets.AddUnit('system.regularexpressions.pp',[Win64,Linux,darwin,wasip1,wasip1threads]);
+    T.Dependencies.AddUnit('system.regularexpressionscore',[Win64,Linux,darwin,wasip1,wasip1threads]);
     T:=P.Targets.AddUnit('system.threading.pp',AllOSes-[go32v2,nativent,atari]);
     T.ResourceStrings := True;
 

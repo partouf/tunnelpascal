@@ -16,6 +16,7 @@
 {$IFDEF FPC}
 {$MODE objfpc}
 {$H+}
+{$modeswitch advancedrecords}
 {$ENDIF}
 
 {$IFNDEF FPC_DOTTEDUNITS}
@@ -25,6 +26,9 @@ unit URIParser;
 interface
 
 type
+
+  { TURI }
+
   TURI = record
     Protocol: String;
     Username: String;
@@ -36,6 +40,11 @@ type
     Params: String;
     Bookmark: String;
     HasAuthority: Boolean;
+    constructor create(aURI : String; aDecode: Boolean = True);
+    constructor create(const aURI, aDefaultProtocol: String; aDefaultPort: Word; aDecode : Boolean = True);
+    function ToString : String;
+    function URI : String;
+    procedure Free;
   end;
 
 function EncodeURI(const URI: TURI): String;
@@ -43,7 +52,7 @@ function ParseURI(const URI: String; Decode : Boolean = True):  TURI; overload;
 function ParseURI(const URI, DefaultProtocol: String; DefaultPort: Word; Decode : Boolean = True):  TURI; overload;
 
 function ResolveRelativeURI(const BaseUri, RelUri: UnicodeString;out ResultUri: UnicodeString): Boolean; overload;
-{$ifdef WINDOWS}  
+{$ifdef WINDOWS}
 function ResolveRelativeURI(const BaseUri, RelUri: WideString; out ResultUri: WideString): Boolean; overload;
 {$ENDIF}
 function ResolveRelativeURI(const BaseUri, RelUri: AnsiString;  out ResultUri: AnsiString): Boolean; overload;
@@ -178,7 +187,7 @@ var
   s, Authority: String;
   i,j: Integer;
   PortValid: Boolean;
-  
+
 begin
   Result:=Default(TURI);
   Result.Protocol := LowerCase(DefaultProtocol);
@@ -252,9 +261,7 @@ begin
       else
         Result.Document := '';
       break;
-    end else if s[i] = ':' then
-      break
-    else if i = 1 then
+    end else if i = 1 then
     begin
       Result.Document :=s;
       if Decode then
@@ -384,7 +391,7 @@ begin
       RemoveDotSegments(Path);
     end;
   end; // with
-  
+
   // EncodeUri percent-encodes the result, and that's good
   ResultUri := EncodeUri(Rel);
 end;
@@ -496,6 +503,33 @@ begin
       Break;
   end;
   Result := False;
+end;
+
+{ TURI }
+
+constructor TURI.create(aURI: String; aDecode: Boolean);
+begin
+  Self:=ParseURI(aURI,aDecode);
+end;
+
+constructor TURI.create(const aURI, aDefaultProtocol: String; aDefaultPort: Word; aDecode: Boolean);
+begin
+  Self:=ParseURI(aURI,aDefaultProtocol,aDefaultPort,aDecode);
+end;
+
+function TURI.ToString: String;
+begin
+  Result:=EncodeURI(Self);
+end;
+
+function TURI.URI: String;
+begin
+  Result:=ToString;
+end;
+
+procedure TURI.Free;
+begin
+  Self:=Default(TURI);
 end;
 
 

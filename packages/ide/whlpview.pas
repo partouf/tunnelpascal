@@ -149,13 +149,14 @@ type
         CurLink: sw_integer;
         constructor Init(var Bounds: TRect; AHScrollBar, AVScrollBar: PScrollBar);
         procedure   ChangeBounds(var Bounds: TRect); virtual;
+        procedure   ChangeCommands; virtual;
         procedure   Draw; virtual;
         procedure   HandleEvent(var Event: TEvent); virtual;
         procedure   SetCurPtr(X,Y: sw_integer); virtual;
         function    GetLineCount: sw_integer; virtual;
         function    GetLine(LineNo: sw_integer): PCustomLine; virtual;
-        function    GetLineText(Line: sw_integer): string; virtual;
-        function    GetDisplayText(I: sw_integer): string; virtual;
+        function    GetLineText(Line: sw_integer): sw_astring; virtual;
+        function    GetDisplayText(I: sw_integer): sw_astring; virtual;
         function    GetLinkCount: sw_integer; virtual;
         procedure   GetLinkBounds(Index: sw_integer; var R: TRect); virtual;
         function    GetLinkFileID(Index: sw_integer): word; virtual;
@@ -219,7 +220,7 @@ implementation
 
 uses
   Video,
-  WConsts;
+  WConsts,wviews;
 
 const CommentColor = Blue;
 
@@ -528,6 +529,36 @@ begin
   ColorAreas^.Insert(NewColorArea(AreaColor,Mask,ColorAreaStart,ColorAreaEnd));
   InColorArea:=false; AreaColor:=0;
 end;
+                { recognize only 4 utf8 characters }
+function TranslateUtf8To437(const utf8 : string; var idx : sw_word):string;
+begin
+  translateUtf8To437:='';
+  if idx=2 then
+    begin
+      if utf8=#$c3#$ab then begin translateUtf8To437:=#$89;idx:=0; end else
+      if utf8=#$c3#$a4 then begin translateUtf8To437:=#$84;idx:=0; end else
+      if utf8=#$c2#$a0 then begin translateUtf8To437:=' '; idx:=0; end;
+    end
+  else if idx=3 then
+    begin
+      if utf8=#$e2#$80#$99 then begin translateUtf8To437:=''''; end;
+      idx:=0; { reset anyway }
+    end;
+end;
+
+var Utf8Char,sAnsiChar : string[3];
+    iTr : sw_word;
+
+procedure FlushUtf8Char;
+begin
+  if iTr>0 then
+  begin   { we have incomplete or not recognized utf8 char }
+    CurWord:=CurWord+Utf8Char;  { add to word as is }
+    iTr:=0;
+  end;
+end;
+
+
 begin
   Lines^.FreeAll; LinesPos^.FreeAll;
   Links^.FreeAll; NamedMarks^.FreeAll; ColorAreas^.FreeAll;
@@ -542,6 +573,8 @@ begin
     ZeroLevel:=0;
     LineAlign:=laLeft;
     FirstLink:=0; LastLink:=0; NextByte:=nbNormal;
+    iTr:=0;
+    Utf8Char:='';
     while (TextPos<Topic^.TextSize) or InImage do
     begin
       C:=chr(PByteArray(Topic^.Text)^[TextPos]);
@@ -562,13 +595,16 @@ begin
               hscLineBreak :
                   {if ZeroLevel=0 then ZeroLevel:=1 else
                       begin FlushLine; FlushLine; ZeroLevel:=0; end;}
-                   if InLink then CurWord:=CurWord+' ' else
+                   begin
+                     FlushUtf8Char;
+                     if InLink then CurWord:=CurWord+' ' else
                      begin
                        NextLineStart:=0;
                        FlushLine;
                        LineStart:=0;
                        LineAlign:=laLeft;
                      end;
+                   end;
               #1 : {Break};
               hscLink :
                    begin
@@ -642,13 +678,41 @@ begin
                    end;
               #32: if InLink then CurWord:=CurWord+C else
                       begin CheckZeroLevel; AddWord(CurWord+C); CurWord:=''; end;
-            else begin CheckZeroLevel; CurWord:=CurWord+C; end;
+            else
+               begin
+                 CheckZeroLevel;
+                 { all we need to do is: CurWord:=CurWord+C, but do some
+                   gymnastics to recognize and translate utf8 chars
+                   and then add it to CurWord }
+                 if (byte(C) and $c0)=$c0 then { utf8 char starts }
+                   begin
+                     FlushUtf8Char;
+                     iTr:=1;
+                     Utf8Char:=C;
+                   end
+                 else if (iTr>0) and ((byte(C) and $c0)=$80) then { next byte of utf8 char }
+                   begin
+                     inc(iTr);
+                     Utf8Char:=Utf8Char+C;
+                     sAnsiChar:=TranslateUtf8To437(Utf8Char,iTr);
+                     if length(sAnsiChar)=1 then
+                       CurWord:=CurWord+sAnsiChar[1]
+                     else if (length(sAnsiChar)=0) and (iTr=0) then
+                       CurWord:=CurWord+Utf8Char; { utf8 not recognized }
+                   end
+                 else
+                   begin
+                     FlushUtf8Char;
+                     CurWord:=CurWord+C;
+                   end;
+               end;
             end;
           end;
       end;
       CurPos.X:=Margin+length(Line)+length(CurWord);
       Inc(TextPos);
     end;
+    FlushUtf8Char;
     if (Line<>'') or (CurWord<>'') then FlushLine;
   end;
 end;
@@ -828,13 +892,13 @@ begin
   {Abstract; used in wcedit unit ! }
   GetLine:=nil;
 end;
-function THelpViewer.GetDisplayText(I: sw_integer): string;
+function THelpViewer.GetDisplayText(I: sw_integer): sw_astring;
 begin
   GetDisplayText:=ExtractTabs(GetLineText(I),DefaultTabSize);
 end;
 
-function THelpViewer.GetLineText(Line: sw_integer): string;
-var S: string;
+function THelpViewer.GetLineText(Line: sw_integer): sw_astring;
+var S: sw_astring;
 begin
   if HelpTopic=nil then S:='' else S:=HelpTopic^.GetLineText(Line);
   GetLineText:=S;
@@ -887,7 +951,7 @@ begin
   begin
     if Y=R.A.Y then StartX:=R.A.X else StartX:=Margin;
     if Y=R.B.Y then EndX:=R.B.X else EndX:=High(S);
-    S:=S+copy(GetLineText(Y),StartX+1,EndX-StartX+1);
+    S:=S+copy(GetLineText(Y),StartX+1,EndX-StartX+1);   { Note: AnsiString to ShortString convertion}
     Inc(Y);
   end;
   GetLinkText:=S;
@@ -913,6 +977,21 @@ end;
 function THelpViewer.GetColorAreaMask(Index: sw_integer): word;
 begin
   GetColorAreaMask:=HelpTopic^.GetColorAreaMask(Index);
+end;
+
+procedure THelpViewer.ChangeCommands;
+var Enable: boolean;
+begin
+  { we change the CurCommandSet, but only if we are top view }
+  if ((State and sfFocused)<>0) then
+    begin
+      Enable:=((SelStart.X<>SelEnd.X) or (SelStart.Y<>SelEnd.Y));
+      SetCmdState([cmSelectAll],true);
+      SetCmdState([cmCopy,cmCopyWin,cmUnselect],Enable);
+      SetCmdState([cmPaste,cmPasteWin,cmClear,cmCommentSel,cmUnCommentSel], false);
+      SetCmdState(UndoCmd, false);
+      SetCmdState(RedoCmd, false);
+    end;
 end;
 
 procedure THelpViewer.SelectNextLink(ANext: boolean);
@@ -1149,11 +1228,18 @@ begin
   case Event.What of
     evMouseDown :
       if MouseInView(Event.Where) then
-      if (Event.Buttons=mbLeftButton) and (Event.Double) then
       begin
-        inherited HandleEvent(Event);
-        if CurLink<>-1 then
-           SelectLink(CurLink);
+        if (Event.Buttons=mbLeftButton) and (Event.Double) then
+        begin
+          inherited HandleEvent(Event);
+          if CurLink<>-1 then
+             SelectLink(CurLink);
+        end;
+        if (Event.Buttons=mbXButton1) then
+        begin
+          PrevTopic;
+          ClearEvent(Event);
+        end;
       end;
     evBroadcast :
       case Event.Command of
@@ -1219,7 +1305,7 @@ var NormalColor, LinkColor,
     B: TDrawBuffer;
     DX,DY,X,Y,I,MinX,MaxX,ScreenX: sw_integer;
     LastLinkDrawn,LastColorAreaDrawn: sw_integer;
-    S: string;
+    S: sw_astring;
     R: TRect;
     SelR : TRect;
     C,Mask: word;
@@ -1244,7 +1330,8 @@ begin
     MoveChar(B,' ',NormalColor,Size.X);
     if Y<GetLineCount then
     begin
-      S:=copy(GetLineText(Y),Delta.X+1,High(S));
+      S:=GetLineText(Y);
+      S:=copy(S,Delta.X+1,Length(S));
       S:=copy(S,1,MaxViewWidth);
       MoveStr(B,S,NormalColor);
 

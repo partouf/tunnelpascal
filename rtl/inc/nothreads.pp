@@ -152,7 +152,7 @@ procedure FakeInitCriticalSection(var CS);
 begin
   PLongint(@cs)^:=0;
 end;
- 
+
 procedure FakeEnterCriticalSection(var CS);
 begin
 end;
@@ -297,10 +297,8 @@ end;
 
 
 initialization
-  Writeln('Initializing unit fakethreads');
   SetFakeThreadManager;
-  Writeln('Done Initializing unit fakethreads');
-  
+
 finalization
 
 end.

@@ -18,7 +18,6 @@ unit fpCSSTree;
 {$ENDIF FPC_DOTTEDUNITS}
 
 {$mode ObjFPC}{$H+}
-{$codepage utf8}
 
 interface
 
@@ -29,12 +28,195 @@ uses Contnrs, RtlConsts, SysUtils, Classes, Math;
 {$ENDIF FPC_DOTTEDUNITS}
 
 
+const
+  CSSFormatSettings: TFormatSettings = (
+    CurrencyFormat: 1;
+    NegCurrFormat: 5;
+    ThousandSeparator: ',';
+    DecimalSeparator: '.';
+    CurrencyDecimals: 2;
+    DateSeparator: '-';
+    TimeSeparator: ':';
+    ListSeparator: ',';
+    CurrencyString: '$';
+    ShortDateFormat: 'd/m/y';
+    LongDateFormat: 'dd" "mmmm" "yyyy';
+    TimeAMString: 'AM';
+    TimePMString: 'PM';
+    ShortTimeFormat: 'hh:nn';
+    LongTimeFormat: 'hh:nn:ss';
+    ShortMonthNames: ('Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec');
+    LongMonthNames: ('January','February','March','April','May','June',
+                     'July','August','September','October','November','December');
+    ShortDayNames: ('Sun','Mon','Tue','Wed','Thu','Fri','Sat');
+    LongDayNames:  ('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday');
+    TwoDigitYearCenturyWindow: 50;
+  );
+
 Type
   ECSSException = class(Exception);
 
-  TCSSString = UTF8String;
-  TCSSStringDynArray = array of TCSSString;
-  TCSSUnits = (cuNONE, cuPX,cuPERCENT,cuREM,cuEM,cuPT,cuFR,cuVW,cuVH,cuDEG);
+  {$IF FPC_FULLVERSION>30300}
+  TCSSChar = Char;
+  TCSSString = String; // can be AnsiString or UnicodeString
+  {$ELSE}
+  TCSSChar = Char;
+  TCSSString = String;
+  {$ENDIF}
+  PCSSChar = ^TCSSChar;
+  TCSSStringArray = array of TCSSString;
+
+  TCSSUnit = (
+    cuNone, // no unit
+    // absolute lengths
+    cu_px,   // pixels
+    cu_cm,   // centimeters
+    cu_mm,   // millimeters
+    cu_Q,    // quarter-millimeters
+    cu_in,   // inches
+    cu_pt,   // points (1pt = 1/72 of 1in)
+    cu_pc,   // picas (1pc = 12 pt)
+    // percentage
+    cuPercent, // percentage, context sensitive
+    // relative to element's font
+    cu_em,   // relative to the height of char "M" of element's font
+    cu_ex,   // relative to the height of char "x" of element's font
+    cu_cap,  // cap height, relative to nominal height of capital letters
+    cu_ch,   // relative to the width of the "0" (zero)
+    cu_ic,   // advance measure of the "水" glyph (CJK water ideograph, U+6C34)
+    cu_lh,   // line-height
+    // relative to root's font
+    cu_rem,  // root-em, as EM, except the font of the root element
+    cu_rex,  // root-ex
+    cu_rcap, // root-cap height
+    cu_rchh,  // root-ch
+    cu_ric,  // root-ic
+    cu_rlh,  // root-line-height
+    // relative to default viewport size
+    cu_vw,   // relative to 1% of the width of the viewport
+    cu_vh,   // relative to 1% of the height of the viewport
+    cu_vmax, // relative to 1% of viewport's larger dimension
+    cu_vmin, // relative to 1% of viewport's smaller dimension
+    cu_vb,   // relative to 1% of viewport's block axis
+    cu_vi,   // relative to 1% of viewport's inline axis
+    // relative to small viewport (when e.g. viewport is shrunk to show browser interface)
+    cu_svw,  // small-vw
+    cu_svh,  // small-vh
+    cu_svmax,// small-vmax
+    cu_svmin,// small-vmin
+    cu_svb,  // small-vb
+    cu_svi,  // small-vi
+    // relative to large viewport (when e.g. browser hides interface and viewport is expanded)
+    cu_lvw,  // large-vw
+    cu_lvh,  // large-vh
+    cu_lvmax,// large-vmax
+    cu_lvmin,// large-vmin
+    cu_lvb,  // large-vb
+    cu_lvi,  // large-vi
+    // relative to dynamic viewport size aka current size
+    cu_dvw,  // dynamic-vw
+    cu_dvh,  // dynamic-vh
+    cu_dvmax,// dynamic-vmax
+    cu_dvmin,// dynamic-vmin
+    cu_dvb,  // dynamic-vb
+    cu_dvi,  // dynamic-vi
+    // container queries
+    cu_cqw,  // relative to 1% of container's width
+    cu_cqh,  // relative to 1% of container's height
+    cu_cqb,  // relative to 1% of container's block axis dimension
+    cu_cqi,  // relative to 1% of container's inline axis dimension
+    cu_cqmin,// relative to 1% of container's smaller dimension
+    cu_cqmax,// relative to 1% of container's larger dimension
+    // angles
+    cu_deg,  // degrees, full circle is 360deg
+    cu_grad, // gradians, full circle is 400grad
+    cu_rad,  // radians, full circle is (2*pi)rad
+    cu_turn, // turns, full circle is 1turn
+    // special
+    cu_fr    // fraction of flex space
+    );
+  TCSSUnits = set of TCSSUnit;
+const
+  cuAllAbsoluteLengths = [cu_px,cu_cm,cu_mm,cu_Q,cu_in,cu_pt,cu_pc];
+  cuAllViewportLengths = [cu_vw,cu_vh,cu_vmax,cu_vmin,cu_vb,cu_vi,
+                          cu_svw,cu_svh,cu_svmax,cu_svmin,cu_svb,cu_svi,
+                          cu_lvw,cu_lvh,cu_lvmax,cu_lvmin,cu_lvb,cu_lvi,
+                          cu_dvw,cu_dvh,cu_dvmax,cu_dvmin,cu_dvb,cu_dvi];
+  cuAllRelativeFontSize = [cu_em,cu_ex,cu_cap,cu_ch,cu_ic,cu_lh,
+                           cu_rem,cu_rex,cu_rcap,cu_rchh,cu_ric,cu_rlh];
+  cuAllLengths = cuAllAbsoluteLengths+cuAllViewportLengths+cuAllRelativeFontSize;
+  cuAllLengthsAndPercent = cuAllLengths+[cuPercent];
+  cuAllAngles = [cu_deg,cu_grad,cu_rad,cu_turn];
+
+  CSSUnitNames: array[TCSSUnit] of TCSSString = (
+    '',     // no unit
+    // absolute lengths
+    'px',   // pixels
+    'cm',   // centimeters
+    'mm',   // millimeters
+    'Q',    // quarter-millimeters, Big Q!
+    'in',   // inches
+    'pt',   // points
+    'pc',   // picas
+    // %
+    '%',    // percentage
+    // relative to element's font
+    'em',   // elements font-size
+    'ex',   // elements height of "x"
+    'cap',  // cap-height
+    'ch',   // character "0"
+    'ic',   // CJK water ideograph
+    'lh',   // line-height
+    // relative to root's font
+    'rem',  // root-em
+    'rex',  // root-ex
+    'rcap', // root-cap-height
+    'rch',  // root-character "0"
+    'ric',  // root-ic
+    'rlh',  // root-line-height
+    // relative to viewport
+    'vw',   // viewport-width
+    'vh',   // viewport-height
+    'vmax', // viewport larger dimension
+    'vmin', // viewport smaller dimension
+    'vb',   // viewport block axis size
+    'vi',   // viewport inline axis size
+    'svw',  // small-vw
+    'svh',  // small-vh
+    'svmax',// small-vmax
+    'svmin',// small-vmin
+    'svb',  // small-vb
+    'svi',  // small-vi
+    'lvw',  // large-vw
+    'lvh',  // large-vh
+    'lvmax',// large-vmax
+    'lvmin',// large-vmin
+    'lvb',  // large-vb
+    'lvi',  // large-vi
+    'dvw',  // dynamic-vw
+    'dvh',  // dynamic-vh
+    'dvmax',// dynamic-vmax
+    'dvmin',// dynamic-vmin
+    'dvb',  // dynamic-vb
+    'dvi',  // dynamic-vi
+    // container queries
+    'cqw',  // container's width
+    'cqh',  // container's height
+    'cqb',  // container's block axis dimension
+    'cqi',  // container's inline axis dimension
+    'cqmin',// container's smaller dimension
+    'cqmax',// container's larger dimension
+    // angles
+    'deg',  // degrees
+    'grad', // gradians
+    'rad',  // radians
+    'turn', // turns
+    // special
+    'fr'    // fraction
+    );
+
+type
   TCSSType = (
     csstUnknown,
     csstInteger, csstString, csstFloat,
@@ -60,6 +242,18 @@ Type
     procedure Visit(obj: TCSSElement); virtual; abstract;
   end;
 
+  { TCSSVisitorFreeCustomData }
+
+  TCSSVisitorFreeCustomData = class(TCSSTreeVisitor)
+  public
+    procedure Visit(obj: TCSSElement); override;
+  end;
+
+  { TCSSElementOwnedData - base class for TCSSElement.CustomData which automatically freed }
+
+  TCSSElementOwnedData = class
+  end;
+
   { TCSSElement }
 
   TCSSElement = Class(TObject)
@@ -78,9 +272,11 @@ Type
     procedure IterateChildren(aVisitor : TCSSTreeVisitor); virtual;
   Public
     Constructor Create(const aFileName : TCSSString; aRow,aCol : Integer); virtual;
+    destructor Destroy; override;
     Class function CSSType : TCSSType; virtual;
     function Equals(Obj: TObject): boolean; override;
     Procedure Iterate(aVisitor : TCSSTreeVisitor);
+    Procedure FreeCustomData; virtual; // free recursively CustomData
     Property CustomData : TObject Read FData Write FData;
     Property SourceRow : Integer Read FRow;
     Property SourceCol : Integer Read FCol;
@@ -131,7 +327,7 @@ Type
   TCSSIntegerElement = class(TCSSElement)
   private
     FIsEscaped: Boolean;
-    FUnits: TCSSUnits;
+    FUnits: TCSSUnit;
     FValue: Integer;
   protected
     function GetAsString(aFormat : Boolean; const aIndent : TCSSString): TCSSString; override;
@@ -140,14 +336,15 @@ Type
     function Equals(Obj: TObject): boolean; override;
     Property Value : Integer Read FValue Write FValue;
     Property IsEscaped : Boolean Read FIsEscaped Write FIsEscaped;
-    Property Units : TCSSUnits Read FUnits Write FUnits;
+    Property Units : TCSSUnit Read FUnits Write FUnits;
   end;
+  TCSSIntegerElementClass = class of TCSSIntegerElement;
 
   { TCSSFloatElement }
 
   TCSSFloatElement = class(TCSSElement)
   private
-    FUnits: TCSSUnits;
+    FUnits: TCSSUnit;
     FValue: Double;
   protected
     function GetAsString(aFormat : Boolean; const aIndent : TCSSString): TCSSString;override;
@@ -155,8 +352,9 @@ Type
     Class function CSSType : TCSSType; override;
     function Equals(Obj: TObject): boolean; override;
     Property Value : Double Read FValue Write FValue;
-    Property Units : TCSSUnits Read FUnits Write FUnits;
+    Property Units : TCSSUnit Read FUnits Write FUnits;
   end;
+  TCSSFloatElementClass = class of TCSSFloatElement;
 
   { TCSSBaseUnaryElement }
 
@@ -184,6 +382,7 @@ Type
     function Equals(Obj: TObject): boolean; override;
     Property Operation : TCSSUnaryOperation Read FOperation Write FOperation;
   end;
+  TCSSUnaryElementClass = class of TCSSUnaryElement;
 
   { TCSSBinaryElement }
   TCSSBinaryOperation = (boEquals,boPlus,boMinus,boAnd,boLE,boLT,boGE,boGT,boDIV,
@@ -205,6 +404,7 @@ Type
     Property Left : TCSSElement Read FLeft Write SetLeft;
     Property Operation : TCSSBinaryOperation Read FOperation Write FOperation;
   end;
+  TCSSBinaryElementClass = class of TCSSBinaryElement;
 
   { TCSSBaseStringElement }
 
@@ -224,15 +424,17 @@ Type
   Public
     Class function CSSType : TCSSType; override;
   end;
+  TCSSUnicodeRangeElementClass = class of TCSSUnicodeRangeElement;
 
-  { TCSSURLElement }
+  { TCSSURLElement - a quoted string literal }
 
   TCSSURLElement = Class(TCSSBaseStringElement)
   public
     Class function CSSType : TCSSType; override;
   end;
+  TCSSURLElementClass = class of TCSSURLElement;
 
-  { TCSSStringElement }
+  { TCSSStringElement - a quoted string literal }
 
   TCSSStringElement = Class(TCSSBaseStringElement)
   private
@@ -247,6 +449,20 @@ Type
     function Equals(Obj: TObject): boolean; override;
     Property Children : TCSSElementList Read GetChildren;
   end;
+  TCSSStringElementClass = class of TCSSStringElement;
+
+  { TCSSHashValueElement }
+
+  TCSSHashValueElement = Class(TCSSElement)
+  private
+    FValue: TCSSString;
+  Protected
+    function GetAsString(aFormat : Boolean; const aIndent : TCSSString): TCSSString; override;
+  Public
+    function Equals(Obj: TObject): boolean; override;
+    Property Value : TCSSString Read FValue Write FValue; // without leading #
+  end;
+  TCSSHashValueElementClass = class of TCSSHashValueElement;
 
   { TCSSIdentifierElement }
 
@@ -259,8 +475,9 @@ Type
     Class function CSSType : TCSSType; override;
     Property Name : TCSSString Read GetName;
   end;
+  TCSSIdentifierElementClass = class of TCSSIdentifierElement;
 
-  { TCSSHashIdentifierElement }
+  { TCSSHashIdentifierElement - in selector }
 
   TCSSHashIdentifierElement = Class(TCSSIdentifierElement)
   Protected
@@ -268,8 +485,9 @@ Type
   Public
     Class function CSSType : TCSSType; override;
   end;
+  TCSSHashIdentifierElementClass = class of TCSSHashIdentifierElement;
 
-  { TCSSClassNameElement }
+  { TCSSClassNameElement - in selector }
 
   TCSSClassNameElement = Class(TCSSIdentifierElement)
   Protected
@@ -277,8 +495,9 @@ Type
   Public
     Class function CSSType : TCSSType; override;
   end;
+  TCSSClassNameElementClass = class of TCSSClassNameElement;
 
-  { TCSSPseudoClassElement }
+  { TCSSPseudoClassElement - in selector }
 
   TCSSPseudoClassElement = Class(TCSSIdentifierElement)
   Protected
@@ -286,6 +505,7 @@ Type
   Public
     Class function CSSType : TCSSType; override;
   end;
+  TCSSPseudoClassElementClass = class of TCSSPseudoClassElement;
 
   { TCSSChildrenElement }
 
@@ -318,6 +538,7 @@ Type
     function Equals(Obj: TObject): boolean; override;
     Property Prefix : TCSSElement Read FPrefix Write SetPrefix;
   end;
+  TCSSArrayElementClass = class of TCSSArrayElement;
 
   { TCSSCallElement }
 
@@ -336,6 +557,7 @@ Type
     Property ArgCount : Integer Read GetArgCount;
     Property Name : TCSSString Read FName Write FName;
   end;
+  TCSSCallElementClass = class of TCSSCallElement;
 
   { TCSSDeclarationElement }
 
@@ -359,6 +581,7 @@ Type
     Property IsImportant : Boolean Read FIsImportant Write FIsImportant;
     Property Colon : Boolean Read FColon Write FColon;
   end;
+  TCSSDeclarationElementClass = class of TCSSDeclarationElement;
 
   { TCSSListElement }
 
@@ -368,6 +591,7 @@ Type
   Public
     Function ExtractElement(aIndex : Integer) : TCSSElement;
   end;
+  TCSSListElementClass = class of TCSSListElement;
 
   { TCSSCompoundElement }
 
@@ -377,14 +601,18 @@ Type
   Public
     Class function CSSType : TCSSType; override;
   end;
+  TCSSCompoundElementClass = class of TCSSCompoundElement;
 
   { TCSSRuleElement }
 
   TCSSRuleElement = class(TCSSChildrenElement)
   Private
     FSelectors : TCSSElementList;
+    FNestedRules : TCSSElementList;
     function GetSelector(aIndex : Integer): TCSSElement;
     function GetSelectorCount: Integer;
+    function GetNestedRule(aIndex: Integer): TCSSRuleElement;
+    function GetNestedRuleCount: Integer;
   Protected
     function DoGetAsString(const aPrefix : TCSSString; aFormat : Boolean; const aIndent : TCSSString): TCSSString; virtual;
     function GetAsString(aFormat : Boolean; const aIndent : TCSSString): TCSSString;override;
@@ -393,10 +621,15 @@ Type
     Class function CSSType : TCSSType; override;
     Destructor Destroy; override;
     Procedure AddSelector(aSelector : TCSSElement);
+    Procedure AddNestedRule(aRule: TCSSRuleElement);
     function Equals(Obj: TObject): boolean; override;
     Property Selectors [aIndex : Integer] : TCSSElement Read GetSelector;
     Property SelectorCount : Integer Read GetSelectorCount;
+    Property NestedRules[aIndex: Integer]: TCSSRuleElement Read GetNestedRule;
+    Property NestedRuleCount: Integer Read GetNestedRuleCount;
   end;
+  TCSSRuleElementClass = class of TCSSRuleElement;
+  TCSSRuleElementArray = array of TCSSRuleElement;
 
   { TCSSAtRuleElement }
 
@@ -406,8 +639,9 @@ Type
   Public
     function GetAsString(aFormat : Boolean; const aIndent : TCSSString): TCSSString;override;
     function Equals(Obj: TObject): boolean; override;
-    Property AtKeyWord : TCSSString Read FAtKeyWord Write FAtKeyWord;
+    Property AtKeyWord : TCSSString Read FAtKeyWord Write FAtKeyWord; // e.g. "@media"
   end;
+  TCSSAtRuleElementClass = class of TCSSAtRuleElement;
 
 
 // Convert unicode codepoints to \0000 notation
@@ -415,14 +649,14 @@ Function StringToCSSString(const S : TCSSString) : TCSSString;
 // Escapes non-identifier characters C to \C
 Function StringToIdentifier(const S : TCSSString) : TCSSString;
 
+function FloatToCSSStr(const f: double): string;
+
 Function GetCSSObj(El: TCSSElement): TCSSString;
 Function GetCSSPath(El: TCSSElement): TCSSString;
 
 Function CSSElementListEquals(ListA, ListB: TCSSElementList): boolean;
 
 Const
-  CSSUnitNames : Array[TCSSUnits] of TCSSString =
-        ('','px','%','rem','em','pt','fr','vw','vh','deg');
   UnaryOperators : Array[TCSSUnaryOperation] of TCSSString =
         ('::','-','+','/','>','~');
   BinaryOperators : Array[TCSSBinaryOperation] of TCSSString =
@@ -448,10 +682,8 @@ end;
 function StringToCSSString(const S: TCSSString): TCSSString;
 
 Var
-  iIn,iOut,I,L : Integer;
+  iIn,iOut,L : Integer;
   O : TCSSString;
-  u : TCSSString;
-  W : Unicodestring;
   C : AnsiChar;
 
   Procedure AddO;
@@ -469,42 +701,28 @@ Var
 begin
   Result:='';
   L:=Length(S);
-  SetLength(Result,4*L);
+  SetLength(Result,4*L+2);
+  Result[1]:='"';
+  iOut:=1;
   iIn:=1;
-  iOut:=0;
   While iIn<=L do
     begin
     C:=S[iIn];
-    If C in [#0..' ','"'] then
+    If C in [#0..#31,'"'] then
       begin
       O:='\'+HexStr(Ord(C),2);
       AddO;
       end
-    else if Ord(C)<128 then
+    else
       begin
       inc(iOut);
       Result[iOut]:=C;
-      end
-    else
-      begin
-      I:=U8length(C);
-      if (I>0) then
-        begin
-        U:=Copy(S,iIn,I);
-        W:=Utf8Decode(U);
-        for I:=1 to Length(W) do
-          begin
-          O:='\'+HexStr(Ord(W[I]),4);
-          AddO;
-          end;
-        inc(iIn,I);
-        continue;
-        end;
       end;
     Inc(iIn);
     end;
+  inc(iOut);
+  Result[iOut]:='"';
   SetLength(Result,iOut);
-  Result:='"'+Result+'"';
 end;
 
 function StringToIdentifier(const S: TCSSString): TCSSString;
@@ -532,6 +750,11 @@ begin
     Inc(iIn);
     end;
   SetLength(Result,iOut);
+end;
+
+function FloatToCSSStr(const f: double): string;
+begin
+  Result:=FloatToStr(f,CSSFormatSettings);
 end;
 
 function GetCSSObj(El: TCSSElement): TCSSString;
@@ -863,6 +1086,17 @@ begin
         end;
       Result:=Result+Children[I].GetAsString(aFormat,lIndent)+';';
       end;
+    For I:=0 to NestedRuleCount-1 do
+      begin
+      if (ChildCount>0) or (I>0) then
+        begin
+        if aFormat then
+          Result:=Result+sLineBreak
+        else
+          Result:=Result+' ';
+        end;
+      Result:=Result+NestedRules[I].GetAsString(aFormat,lIndent);
+      end;
     if aFormat then
       Result:=Result+sLineBreak+aIndent
     else
@@ -874,11 +1108,26 @@ begin
     end;
 end;
 
+function TCSSRuleElement.GetNestedRule(aIndex: Integer): TCSSRuleElement;
+begin
+  Result:=FNestedRules[aIndex] as TCSSRuleElement;
+end;
+
+function TCSSRuleElement.GetNestedRuleCount: Integer;
+begin
+  if Assigned(FNestedRules) then
+    Result:=FNestedRules.Count
+  else
+    Result:=0;
+end;
+
 procedure TCSSRuleElement.IterateChildren(aVisitor: TCSSTreeVisitor);
 begin
   if Assigned(FSelectors) then
     FSelectors.Iterate(aVisitor);
   inherited IterateChildren(aVisitor);
+  if Assigned(FNestedRules) then
+    FNestedRules.Iterate(aVisitor);
 end;
 
 class function TCSSRuleElement.CSSType: TCSSType;
@@ -889,6 +1138,7 @@ end;
 destructor TCSSRuleElement.Destroy;
 begin
   FreeAndNil(FSelectors);
+  FreeAndNil(FNestedRules);
   Inherited Destroy;
 end;
 
@@ -901,6 +1151,15 @@ begin
   FSelectors.Add(aSelector);
 end;
 
+procedure TCSSRuleElement.AddNestedRule(aRule: TCSSRuleElement);
+begin
+  if not Assigned(aRule) then
+    exit;
+  if not Assigned(FNestedRules) then
+    FNestedRules:=TCSSElementList.Create(Self);
+  FNestedRules.Add(aRule);
+end;
+
 function TCSSRuleElement.Equals(Obj: TObject): boolean;
 var
   Src: TCSSRuleElement absolute Obj;
@@ -908,6 +1167,7 @@ begin
   if Obj is TCSSRuleElement then
     begin
     if not CSSElementListEquals(FSelectors,Src.FSelectors) then exit(false);
+    if not CSSElementListEquals(FNestedRules,Src.FNestedRules) then exit(false);
     end;
   Result:=inherited Equals(Obj);
 end;
@@ -1043,8 +1303,7 @@ end;
 function TCSSFloatElement.GetAsString(aFormat: Boolean;
   const aIndent: TCSSString): TCSSString;
 begin
-  Str(Value:5:2,Result);
-  Result:=TrimLeft(Result); // Space for positive numbers
+  Result:=FloatToCSSStr(Value)+CSSUnitNames[Units];
   if aFormat then
     Result:=aIndent+Result;
 end;
@@ -1109,6 +1368,22 @@ begin
     begin
     if not CSSElementListEquals(FChildren,Src.FChildren) then exit(false);
     end;
+  Result:=inherited Equals(Obj);
+end;
+
+{ TCSSHashValueElement }
+
+function TCSSHashValueElement.GetAsString(aFormat: Boolean; const aIndent: TCSSString): TCSSString;
+begin
+  if aFormat then ;
+  if aIndent='' then ;
+  Result:='#'+Value;
+end;
+
+function TCSSHashValueElement.Equals(Obj: TObject): boolean;
+begin
+  if Obj is TCSSHashValueElement then
+    if TCSSHashValueElement(Obj).Value<>Value then exit(false);
   Result:=inherited Equals(Obj);
 end;
 
@@ -1518,6 +1793,16 @@ begin
   FCol:=aCol;
 end;
 
+destructor TCSSElement.Destroy;
+begin
+  if FData is TCSSElementOwnedData then
+  begin
+    FData.Free;
+    FData:=nil;
+  end;
+  inherited Destroy;
+end;
+
 class function TCSSElement.CSSType: TCSSType;
 begin
   Result:=csstUnknown;
@@ -1542,6 +1827,30 @@ procedure TCSSElement.Iterate(aVisitor: TCSSTreeVisitor);
 begin
   aVisitor.Visit(Self);
   IterateChildren(aVisitor);
+end;
+
+procedure TCSSElement.FreeCustomData;
+var
+  Visitor: TCSSVisitorFreeCustomData;
+begin
+  Visitor:=TCSSVisitorFreeCustomData.Create;
+  try
+    Iterate(Visitor);
+  finally
+    Visitor.Free;
+  end;
+end;
+
+{ TCSSVisitorFreeCustomData }
+
+procedure TCSSVisitorFreeCustomData.Visit(obj: TCSSElement);
+var
+  d: TObject;
+begin
+  if obj.CustomData=nil then exit;
+  d:=obj.CustomData;
+  obj.CustomData:=nil;
+  d.Free;
 end;
 
 end.

@@ -565,7 +565,7 @@ var
 
 procedure SetCGAPalette(CGAPaletteID: Byte); assembler;
 asm
-  mov ax,CGAPaletteID
+  mov al,CGAPaletteID
   mov bl, al
   mov bh, 1
   mov ah, 0Bh
@@ -578,7 +578,7 @@ end;
 
 procedure SetCGABorder(CGABorder: Byte); assembler;
 asm
-  mov ax,CGABorder
+  mov al,CGABorder
   mov bl, al
   mov bh, 0
   mov ah, 0Bh
@@ -3845,7 +3845,7 @@ begin
   exitproc := @freeSaveStateBuffer;
   { windows screws up the display if the savestate/restore state  }
   { stuff is used (or uses an abnormal amount of cpu time after   }
-  { such a problem has exited), so detect its presense and do not }
+  { such a problem has exited), so detect its presence and do not }
   { use those functions if it's running. I'm really tired of      }
   { working around Windows bugs :( (JM)                           }
   regs.ax:=$160a;

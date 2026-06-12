@@ -145,7 +145,7 @@ uses
 {$endif cpuflags}
 
       { unimplemented or unnecessary routines }
-      procedure a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tdef; src, dst: tregister); override;
+      procedure a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tdef; src, dst: tregister); override;
       procedure g_stackpointer_alloc(list: TAsmList; size: longint); override;
       procedure g_intf_wrapper(list: TAsmList; procdef: tprocdef; const labelname: string; ioffset: longint); override;
       procedure g_adjust_self_value(list: TAsmList; procdef: tprocdef; ioffset: aint); override;
@@ -1176,6 +1176,9 @@ implementation
          not docheck then
         begin
           inherited a_op_reg_reg_reg_checkoverflow(list,op,size,src1,src2,dst,false,ovloc);
+          location_reset(ovloc,LOC_REGISTER,OS_8);
+          ovloc.register:=getintregister(list,llvmbool1type);
+          a_load_const_reg(list,llvmbool1type,0,ovloc.register);
           exit;
         end;
       { extend values to twice their original width (one bit extra is enough,
@@ -1849,7 +1852,7 @@ implementation
       result.def:=llvmgetcgparadef(result,true,callerside);
       if assigned(result.location^.next) then
         begin
-          { unify the result into a sinlge location; unlike for parameters,
+          { unify the result into a single location; unlike for parameters,
             we are not responsible for splitting up results into multiple
             locations }
           { set the first location to the type of the function result }
@@ -1932,7 +1935,7 @@ implementation
          reusepara then
         exit;
       { get the equivalent llvm def used to pass the parameter (e.g. a record
-        with two int64 fields for passing a record consisiting of 8 bytes on
+        with two int64 fields for passing a record consisting of 8 bytes on
         x86-64) }
       llvmparadef:=llvmgetcgparadef(para,true,calleeside);
       userecord:=
@@ -2019,7 +2022,7 @@ implementation
     end;
 
 
-  procedure thlcgllvm.a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tdef; src, dst: tregister);
+  procedure thlcgllvm.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tdef; src, dst: tregister);
     begin
       internalerror(2012090201);
     end;
@@ -2172,7 +2175,7 @@ implementation
               retpara.location^.llvmvalueloc:=false;
               retpara.location^.llvmloc.loc:=LOC_REGISTER;
               retpara.location^.llvmloc.reg:=rettemp.base;
-              { for the rest (normally not used, but cleaner to set it correclty) }
+              { for the rest (normally not used, but cleaner to set it correctly) }
               retpara.location^.loc:=LOC_REFERENCE;
               retpara.location^.reference.index:=rettemp.base;
               retpara.location^.reference.offset:=0;

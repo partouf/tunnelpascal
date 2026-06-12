@@ -34,13 +34,14 @@ uses
   globtype,
   finput;
 
-const
+var
   { RHIDE expect gcc like error output }
   fatalstr      : string[6] = 'Fatal:';
   errorstr      : string[6] = 'Error:';
   warningstr    : string[8] = 'Warning:';
   notestr       : string[5] = 'Note:';
   hintstr       : string[5] = 'Hint:';
+const
   warningerrorstr    : string[29] = 'Warning: (treated as error)';
   noteerrorstr       : string[27] = 'Note: (treated as error)';
   hinterrorstr       : string[27] = 'Hint: (treated as error)';
@@ -56,7 +57,7 @@ type
     currentsource : string;   { filename }
     currentline,
     currentcolumn : longint;  { current line and column }
-    currentmodulestate : string[20];
+    currentmodulestate : string[32];
   { Total Status }
     compiledlines : longint;  { the number of lines which are compiled }
     errorcount,               { this field should never be increased directly,
@@ -110,6 +111,7 @@ var
 Function  def_status:boolean;
 Function  def_comment(Level:Longint;const s:ansistring):boolean;
 function  def_internalerror(i:longint):boolean;
+function  def_internalerrorEx(i:longint;const s:ansistring):boolean;
 function  def_CheckVerbosity(v:longint):boolean;
 procedure def_initsymbolinfo;
 procedure def_donesymbolinfo;
@@ -122,6 +124,7 @@ type
   tstatusfunction        = function:boolean;
   tcommentfunction       = function(Level:Longint;const s:ansistring):boolean;
   tinternalerrorfunction = function(i:longint):boolean;
+  tinternalerrorexfunction = function(i:longint; const s : ansistring):boolean;
   tcheckverbosityfunction = function(i:longint):boolean;
 
   tinitsymbolinfoproc = procedure;
@@ -130,10 +133,11 @@ type
   topeninputfilefunc = function(const filename: TPathStr): tinputfile;
   tgetnamedfiletimefunc = function(const filename: TPathStr): longint;
 
-const
+var
   do_status        : tstatusfunction  = @def_status;
   do_comment       : tcommentfunction = @def_comment;
-  do_internalerror : tinternalerrorfunction = @def_internalerror;
+  do_internalerror : tinternalerrorfunction = @def_internalerror deprecated 'use do_internalerrorex';
+  do_internalerrorex : tinternalerrorexfunction = @def_internalerrorex;
   do_checkverbosity : tcheckverbosityfunction = @def_checkverbosity;
 
   do_initsymbolinfo : tinitsymbolinfoproc = @def_initsymbolinfo;
@@ -250,9 +254,10 @@ begin
         (status.currentline mod 100=0) then
        begin
          if status.currentline>0 then
-           Write(status.currentline,' ');
+           Write(status.currentmodule,':',status.currentline,' ');
          hstatus:=GetFPCHeapStatus;
          WriteLn(DStr(hstatus.CurrHeapUsed shr 10),'/',DStr(hstatus.CurrHeapSize shr 10),' Kb Used');
+         flush(output);
        end;
    end;
 {$ifdef macos}
@@ -396,7 +401,10 @@ begin
      else
        begin
          if status.use_redir then
-           writeln(status.redirfile,MsgTimeStr+MsgLocStr+MsgTypeStr+s)
+           begin
+           writeln(status.redirfile,MsgTimeStr+MsgLocStr+MsgTypeStr+s);
+           flush(status.redirfile);
+           end
          else
            begin
              write(MsgTimeStr+MsgLocStr);
@@ -416,13 +424,24 @@ end;
 
 function def_internalerror(i : longint) : boolean;
 begin
-  do_comment(V_Fatal+V_LineInfo,'Internal error '+tostr(i));
+  result:=def_internalerrorex(i,'');
+end;
+
+function def_internalerrorex(i : longint; const s : ansistring) : boolean;
+var
+  msg : ansistring;
+begin
+  msg:=S;
+  if msg<>'' then
+    msg:=': '+msg;
+  msg:='Internal error '+tostr(i)+msg;
+  do_comment(V_Fatal+V_LineInfo,msg);
 {$ifdef EXTDEBUG}
   { Internalerror() and def_internalerror() do not
     have a stackframe }
   dump_stack(stdout,get_caller_frame(get_frame));
 {$endif EXTDEBUG}
-  def_internalerror:=true;
+  def_internalerrorex:=true;
 end;
 
 function def_CheckVerbosity(v:longint):boolean;

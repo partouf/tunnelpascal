@@ -42,6 +42,7 @@ end;
 
 procedure TIDEApp.FindProcedure;
 var R: TRect;
+    PB: PBrowserWindow;
     S: PSortedSymbolCollection;
     Overflow: boolean;
     ProcS : string;
@@ -102,16 +103,20 @@ begin
   if Overflow then
     WarningBox(msg_toomanysymbolscantdisplayall,nil);
   Desktop^.GetExtent(R); R.A.X:=R.B.X-35;
-  Desktop^.Insert(New(PBrowserWindow, Init(R,
-    label_sym_findprocedure,SearchFreeWindowNo,nil,label_sym_findprocedure2+ProcS,'',S,nil,nil,nil)));
+  PB:=New(PBrowserWindow, Init(R,
+    label_sym_findprocedure,SearchFreeWindowNo,nil,label_sym_findprocedure2+ProcS,'',S,nil,nil,nil));
+  Desktop^.Insert(PB);
+  BrowserRoot^.InsertWindow(PB);
 end;
 
 procedure TIDEApp.Objects;
+var PB : PBrowserWindow;
 begin
   if ObjectTree=nil then
      begin ErrorBox(msg_nodebuginfoavailable,nil); Exit; end;
 
-  OpenSymbolBrowser(0,0,label_sym_objects,label_sym_globalscope,nil,nil,nil,nil,ObjectTree,nil);
+  PB:=OpenSymbolBrowser(0,0,0,0,label_sym_objects,label_sym_globalscope,nil,nil,nil,nil,ObjectTree,nil);
+  BrowserRoot^.InsertWindow(PB);
 end;
 
 procedure TIDEApp.Globals;
@@ -119,6 +124,7 @@ var R: TRect;
     S: PSortedSymbolCollection;
     Overflow: boolean;
     Level : longint;
+    PB : PBrowserWindow;
 
   procedure InsertInS(P: PSymbol);
 
@@ -157,14 +163,17 @@ begin
   if Overflow then
     WarningBox(msg_toomanysymbolscantdisplayall,nil);
   Desktop^.GetExtent(R); R.A.X:=R.B.X-35;
-  Desktop^.Insert(New(PBrowserWindow, Init(R,
-    label_sym_globals,SearchFreeWindowNo,nil,label_sym_globalscope,'',S,nil,nil,nil)));
+  PB:=New(PBrowserWindow, Init(R,
+    label_sym_globals,SearchFreeWindowNo,nil,label_sym_globalscope,'',S,nil,nil,nil));
+  Desktop^.Insert(PB);
+  BrowserRoot^.InsertWindow(PB);
 end;
 
 procedure TIDEApp.Modules;
 var
     R: TRect;
     S: PSortedSymbolCollection;
+    PB : PBrowserWindow;
 procedure InsertInS(P: PSymbol);
 begin
   S^.Insert(P);
@@ -181,28 +190,35 @@ begin
   ModulesCollection:=S;
   BrowCol.Modules^.ForEach(TCallbackProcParam(@InsertInS));
   Desktop^.GetExtent(R); R.A.X:=R.B.X-35;
-  Desktop^.Insert(New(PBrowserWindow, Init(R,
-    dialog_units,SearchFreeWindowNo,nil,label_sym_globalscope,'',S,nil,nil,nil)));
+  PB:=New(PBrowserWindow, Init(R,
+    dialog_units,SearchFreeWindowNo,nil,label_sym_globalscope,'',S,nil,nil,nil));
+  Desktop^.Insert(PB);
+  BrowserRoot^.InsertWindow(PB);
 end;
 
 function SymbolDialog(S : string) : PDialog;
 var D: PDialog;
     R,R1,R2: TRect;
+    Control : PView;
     IL: PEditorInputLine;
 begin
-  R.Assign(0,0,40,8);
+  R.Assign(0,0,44,8);
   New(D, Init(R, dialog_browsesymbol));
   with D^ do
   begin
     Options:=Options or ofCentered;
     GetExtent(R); R.Grow(-3,-2); R.B.Y:=R.A.Y+1;
+    R.B.X:=R.B.X-2;
     R1.Copy(R);
     R2.Copy(R); Inc(R2.A.Y);Inc(R2.B.Y);
     New(IL, Init(R2,255));
     Insert(IL);
     IL^.SetData(S);
     Insert(New(PLabel, Init(R1, label_entersymboltobrowse, IL)));
-    GetExtent(R); R.Grow(-8,-1); R.A.Y:=R.B.Y-2; R.B.X:=R.A.X+10;
+    R1.Assign(R2.B.X, R2.A.Y, R2.B.X+3, R2.B.Y);
+    Control := New(PHistory, Init(R1, IL, hidSearchSymbol));
+    Insert(Control);
+    GetExtent(R); R.Grow(-10,-1); R.A.Y:=R.B.Y-2; R.B.X:=R.A.X+10;
     Insert(New(PButton, Init(R, button_OK, cmOK, bfDefault)));
     R.Move(15,0);
     Insert(New(PButton, Init(R, button_Cancel, cmCancel, bfNormal)));
@@ -218,7 +234,7 @@ var
 begin
   EditorWindow:=FirstEditorWindow;
   If assigned(EditorWindow) then
-    S:=LowerCaseStr(EditorWindow^.Editor^.GetCurrentWord)
+    S:={LowerCaseStr}(EditorWindow^.Editor^.GetCurrentWord)
   else
     S:='';
   if ExecuteDialog(SymbolDialog(S),@S)<>cmCancel then

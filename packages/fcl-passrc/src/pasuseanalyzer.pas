@@ -209,7 +209,7 @@ type
 
   TPasAnalyzerOption = (
     paoOnlyExports, // default: use all class members accessible from outside (protected, but not private)
-    paoImplReferences, // collect references of top lvl proc implementations, initializationa and finalization sections
+    paoImplReferences, // collect references of top lvl proc implementations, initialization and finalization sections
     paoSkipGenericProc // ignore generic procedure body
     );
   TPasAnalyzerOptions = set of TPasAnalyzerOption;
@@ -330,7 +330,7 @@ type
     property OnMessage: TPAMessageEvent read FOnMessage write FOnMessage;
     property Options: TPasAnalyzerOptions read FOptions write SetOptions;
     property Resolver: TPasResolver read FResolver write FResolver;
-    property ScopeModule: TPasModule read FScopeModule write FScopeModule;
+    property ScopeModule: TPasModule read FScopeModule write FScopeModule; // if set analyzing a unit else whole program
   end;
 
 {$ifdef pas2js}
@@ -1181,9 +1181,6 @@ begin
     El:=El.Parent;
     if not (El is TPasType) then break;
     UseType(TPasType(El),paumElement);
-    //MarkElementAsUsed(El);
-    //if El is TPasMembersType then
-    //  UseClassConstructor(TPasMembersType(El));
   until false;
 end;
 
@@ -1223,7 +1220,6 @@ begin
     UseSubEl(TPasArgument(El).ArgType)
   else if C=TPasProperty then
     begin
-    // published property
     Prop:=TPasProperty(El);
     Args:=Resolver.GetPasPropertyArgs(Prop);
     for i:=0 to Args.Count-1 do
@@ -1232,7 +1228,7 @@ begin
     UseElement(Resolver.GetPasPropertyGetter(Prop),rraRead,false);
     UseElement(Resolver.GetPasPropertySetter(Prop),rraRead,false);
     UseElement(Resolver.GetPasPropertyIndex(Prop),rraRead,false);
-    // stored and defaultvalue are only used when published -> mark as used
+    // stored and defaultvalue are only used with typeinfo -> mark as used
     UseElement(Resolver.GetPasPropertyStoredExpr(Prop),rraRead,false);
     UseElement(Resolver.GetPasPropertyDefaultExpr(Prop),rraRead,false);
     end
@@ -1279,7 +1275,7 @@ begin
   else if C=TPasClassOfType then
   else if C=TPasRecordType then
     begin
-    // published record: use all members (except generic)
+    // record: use all members (except generic)
     Rec:=TPasRecordType(El);
     if CanSkipGenericType(Rec) then exit;
     Members:=Rec.Members;
@@ -1309,6 +1305,8 @@ begin
     if (El is TPasFunctionType) and (TPasFunctionType(El).ResultEl<>nil) then
       UseSubEl(TPasFunctionType(El).ResultEl.ResultType);
     end
+  else if C=TPasResultElement then
+    UseSubEl(TPasResultElement(El).ResultType)
   else if C=TPasSpecializeType then
     begin
     SpecType:=TPasSpecializeType(El);
@@ -1753,7 +1751,6 @@ begin
     Access:=Ref.Access;
     MarkImplScopeRef(El,Decl,ResolvedToPSRefAccess[Access]);
     UseElement(Decl,Access,false);
-
     if Ref.Context<>nil then
       begin
       if Ref.Context.ClassType=TResolvedRefCtxAttrProc then
@@ -1931,6 +1928,8 @@ begin
     else
       RaiseNotSupported(20181015193334,Expr,OpcodeStrings[Unary.OpCode]);
     end
+  else if C=TInlineSpecializeExpr then
+    UseExprRef(El,TInlineSpecializeExpr(Expr).NameExpr,Access,UseFull)
   else if (Access=rraRead)
       and ((C=TPrimitiveExpr) // Kind<>pekIdent
         or (C=TNilExpr)
@@ -2264,6 +2263,7 @@ var
   Map: TPasClassIntfMap;
   ImplProc, IntfProc, Proc: TPasProcedure;
   aClass: TPasClassType;
+  C: TClass;
 begin
   FirstTime:=true;
   case Mode of
@@ -2290,6 +2290,10 @@ begin
   else
     RaiseInconsistency(20170414152143,IntToStr(ord(Mode)));
   end;
+
+  if (ScopeModule<>nil) and (ScopeModule<>El.GetModule) then
+    exit; // analyzing an unit and El is not from this unit
+
   {$IFDEF VerbosePasAnalyzer}
   writeln('TPasAnalyzer.UseClassOrRecType ',GetElModName(El),' ',Mode,' First=',FirstTime);
   {$ENDIF}
@@ -2345,10 +2349,13 @@ begin
   for i:=0 to El.Members.Count-1 do
     begin
     Member:=TPasElement(El.Members[i]);
-    if FirstTime and (Member is TPasProcedure) then
+    C:=Member.ClassType;
+    if FirstTime and C.InheritsFrom(TPasProcedure) then
       begin
       Proc:=TPasProcedure(Member);
       ProcScope:=Member.CustomData as TPasProcedureScope;
+      if (ScopeModule=nil) and not Resolver.IsFullySpecialized(Proc) then
+        continue;
       if Proc.IsOverride and (ProcScope.OverriddenProc<>nil) then
         begin
         // this is an override
@@ -2396,13 +2403,19 @@ begin
         continue;
         end;
       end
-    else if Member.ClassType=TPasAttributes then
+    else if C=TPasAttributes then
       continue; // attributes are never used directly
 
-    if AllPublished and (Member.Visibility=visPublished) then
+    if AllPublished
+        and ((Member.Visibility=visPublished) or El.HasExtRTTI(Member)) then
       begin
       // include published
       if not FirstTime then continue;
+      if Member is TPasGenericType then
+      begin
+        if not Resolver.IsFullySpecialized(TPasGenericType(Member)) then
+          continue;
+      end;
       UseTypeInfo(Member);
       end
     else if Mode=paumElement then
@@ -2414,14 +2427,14 @@ begin
         and IsModuleInternal(El) then
       // protected or strict protected and
       continue
-    else if (Mode=paumAllPasUsable) and FirstTime then
+    else if (Mode=paumAllPasUsable) then
       begin
-      if Member.ClassType=TPasProperty then
+      if C=TPasProperty then
         begin
         // non private property can be used by typeinfo by descendants in other units
         UseTypeInfo(Member);
         end
-      else if Member is TPasType then
+      else if C.InheritsFrom(TPasType) then
         begin
         // non private type can be used by descendants in other units
         UseType(TPasType(Member),Mode);
@@ -2623,6 +2636,8 @@ begin
     end
   else
     begin
+    if (ScopeModule<>nil) and (ScopeModule<>El.GetModule) then
+      exit; // analyzing an unit and El is not from this unit
     Usage:=FindElement(El);
     if Usage=nil then
       exit; // element outside of scope
@@ -2717,6 +2732,8 @@ begin
   else
     begin
     // used again
+    if (ScopeModule<>nil) and (ScopeModule<>El.GetModule) then
+      exit; // analyzing an unit and El is not from this unit
     Usage:=FindElement(El);
     if Usage=nil then
       RaiseNotSupported(20170308121928,El);
@@ -2751,6 +2768,8 @@ begin
   else
     begin
     // used again
+    if (ScopeModule<>nil) and (ScopeModule<>El.GetModule) then
+      exit; // analyzing an unit and El is not from this unit
     Usage:=FindElement(El);
     if Usage=nil then
       RaiseNotSupported(20170308122333,El);

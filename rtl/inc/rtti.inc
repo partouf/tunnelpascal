@@ -14,200 +14,161 @@
 
 { Run-Time type information routines }
 
-function RTTIArraySize(typeInfo: Pointer): SizeInt;
-begin
-{$ifdef VER3_0}
-  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
-{$else VER3_0}
-  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-{$endif VER3_0}
-  result:=PArrayInfo(typeInfo)^.Size;
-end;
-
-function RTTIRecordSize(typeInfo: Pointer): SizeInt;
-begin
-{$ifdef VER3_0}
-  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
-{$else VER3_0}
-  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-{$endif VER3_0}
-  { for size field init table is compatible with rtti table }
-  result:=PRecordInfoFull(typeInfo)^.Size;
-end;
-
-{$ifndef VER3_0}
-function RTTIRecordOp(typeInfo: Pointer; var initrtti: Pointer): PRecordInfoInit; inline;
+function RTTIRecordInfoInit(typeInfo: Pointer): PRecordInfoInit; inline;
 begin
   { find init table and management operators }
-  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-  result:=typeInfo;
+  result:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
 
   { check terminator, maybe we are already in init table }
   if Assigned(result^.Terminator) then
   begin
     { point to more optimal initrtti }
-    initrtti:=PRecordInfoFull(result)^.InitTable;
+    result:=PRecordInfoFull(result)^.InitTable;
     { and point to management operators in our init table }
-    result:=aligntoqword(initrtti+2+PByte(initrtti)[1]);
+    result:=aligntoqword(pointer(result)+2+PByte(result)[1]);
   end
 end;
-{$else VER3_0}
-function RTTIRecordRttiInfoToInitInfo(typeInfo: Pointer): Pointer; inline;
-begin
-  result:=typeInfo;
-{$ifndef VER3_0}
-  { find init table }
-  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
 
-  { check terminator, maybe we are already in init table }
-  if Assigned(PRecordInfoInit(typeInfo)^.Terminator) then
-    { point to more optimal initrtti }
-    result:=PRecordInfoFull(typeInfo)^.InitTable;
-{$endif VER3_0}
-end;
-{$endif VER3_0}
+const
+  RTTISpecialSize = 49;
+  RTTIManagedSizes: array[TTypeKind] of uint8 = { 0 — unmanaged, RTTISpecialSize — special (array/record/object), otherwise manBuiltin of that size. }
+  (
+    {tkUnknown} 0, {tkInteger} 0, {tkChar} 0, {tkEnumeration} 0, {tkFloat} 0,
+    {tkSet} 0, {tkMethod} 0, {tkSString} 0, {tkLString} 0, {tkAString} sizeof(pointer),
+    {tkWString} sizeof(pointer), {tkVariant} {$ifdef FPC_HAS_FEATURE_VARIANTS} sizeof(TVarData) {$else} 0 {$endif}, {tkArray} RTTISpecialSize, {tkRecord} RTTISpecialSize, {tkInterface} sizeof(pointer),
+    {tkClass} 0, {tkObject} RTTISpecialSize, {tkWChar} 0, {tkBool} 0, {tkInt64} 0, {tkQWord} 0,
+    {tkDynArray} sizeof(pointer), {tkInterfaceRaw} 0, {tkProcVar} 0, {tkUString} sizeof(pointer), {tkUChar} 0,
+    {tkHelper} 0, {tkFile} 0, {tkClassRef} 0, {tkPointer} 0
+  );
 
-{$ifndef VER3_0}
-function RTTISizeAndOp(typeInfo: Pointer;
-  const expectedManagementOp: TRTTIRecOpType; out hasManagementOp: boolean): SizeInt;
-begin
-  hasManagementOp:=false;
-{$else VER3_0}
-function RTTISize(typeInfo: Pointer): SizeInt;
-begin
-{$endif VER3_0}
-  case PTypeKind(typeinfo)^ of
-    tkAString,tkWString,tkUString,
-    tkInterface,tkDynarray:
-      result:=sizeof(Pointer);
-{$ifdef FPC_HAS_FEATURE_VARIANTS}
-    tkVariant:
-      result:=sizeof(TVarData);
-{$endif FPC_HAS_FEATURE_VARIANTS}
-    tkArray:
-      result:=RTTIArraySize(typeinfo);
-{$ifndef VER3_0}
-    tkObject:
-      result:=RTTIRecordSize(typeinfo);
-    tkRecord:
-      with RTTIRecordOp(typeInfo,typeInfo)^ do
-        begin
-          result:=Size;
-          hasManagementOp := Assigned(RecordOp);
-          if hasManagementOp then
-            case expectedManagementOp of
-              rotInitialize: hasManagementOp:=Assigned(RecordOp^.Initialize);
-              rotFinalize: hasManagementOp:=Assigned(RecordOp^.Finalize);
-              rotAddRef: hasManagementOp:=Assigned(RecordOp^.AddRef);
-              rotCopy: hasManagementOp:=Assigned(RecordOp^.Copy);
-            end;
-        end;
-{$else VER3_0}
-    tkObject,tkRecord:
-      result:=RTTIRecordSize(typeinfo);
-{$endif VER3_0}
-  else
-    result:=-1;
-  end;
-end;
-
-{ if you modify this procedure, fpc_copy must be probably modified as well }
-procedure RecordRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
+{ onlyCustomOps = false: returns true if the type requires any management regarding op.
+  onlyCustomOps = true: returns true if the type has custom op, used in dynarr.inc to avoid initialization of zeroed memory. }
+function RTTIManagementAndSize(typeInfo: Pointer; op: TRTTIRecOpType; out size: SizeInt; onlyCustomOps: boolean): boolean;
 var
-  count,
-  i : longint;
+  ri: PRecordInfoInit;
+  elem: PRecordElement;
+  elemCount,sample,_size: SizeInt;
 begin
-{$ifdef VER3_0}
-  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
-{$else VER3_0}
-  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-{$endif VER3_0}
-  Count:=PRecordInfoInit(typeInfo)^.Count;
-  { Get element info, hacky, but what else can we do? }
-  typeInfo:=AlignTypeData(Pointer(@PRecordInfoInit(typeInfo)^.Count)+SizeOf(PRecordInfoInit(typeInfo)^.Count));
-  { Process elements }
-  for i:=1 to count Do
+  sample:=RTTIManagedSizes[PTypeKind(typeinfo)^];
+  size:=sample;
+  if sample<>RTTISpecialSize then
+    result:=not onlyCustomOps and (sample<>0)
+  else if PTypeKind(typeinfo)^=tkArray then
     begin
-      rttiproc(Data+PRecordElement(typeInfo)^.Offset,PRecordElement(typeInfo)^.TypeInfo{$ifndef VER3_0}^{$endif});
-      Inc(PRecordElement(typeInfo));
+      typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+      size:=PArrayInfo(typeInfo)^.Size;
+      result:=RTTIManagementAndSize(PArrayInfo(typeInfo)^.ElInfo^, op, _size, onlyCustomOps);
+    end
+  else {tkObject, tkRecord}
+    begin
+      ri:=RTTIRecordInfoInit(typeInfo);
+      size:=ri^.Size;
+      result:=Assigned(ri^.RecordOp) and Assigned(ri^.RecordOp^.Ops[op]);
+      if result then
+        exit;
+      elem:=AlignTypeData(Pointer(@ri^.Count)+SizeOf(ri^.Count));
+      for elemCount:=ri^.Count downto 1 do
+        begin
+          sample:=RTTIManagedSizes[PTypeKind(elem^.TypeInfo^)^]; { Avoid recursive call for simple fields. }
+          result:=not onlyCustomOps and (sample<>0); { And generally speculate simple field. }
+          if sample=RTTISpecialSize then
+            result:=RTTIManagementAndSize(elem^.TypeInfo^, op, _size, onlyCustomOps);
+          if result then
+            exit;
+          inc(elem);
+        end;
     end;
 end;
 
+procedure FinalizeRecordFields(Data:Pointer;Ri:PRecordInfoInit);
+var
+  i : longint;
+  Re : PRecordElement;
+begin
+  Re:=AlignTypeData(Pointer(@Ri^.Count)+SizeOf(Ri^.Count));
+  for i:=Ri^.Count downto 1 Do
+    begin
+      int_finalize(Data+Re^.Offset,Re^.TypeInfo^);
+      Inc(Re);
+    end;
+end;
 
-{$ifndef VER3_0}
+procedure AddRefRecordFields(Data:Pointer;Ri:PRecordInfoInit);
+var
+  i : longint;
+  Re : PRecordElement;
+begin
+  Re:=AlignTypeData(Pointer(@Ri^.Count)+SizeOf(Ri^.Count));
+  for i:=Ri^.Count downto 1 Do
+    begin
+      int_addref(Data+Re^.Offset,Re^.TypeInfo^);
+      Inc(Re);
+    end;
+end;
+
 function RTTIRecordMopInitTable(ti: Pointer): PRTTIRecordOpOffsetTable;
 begin
   ti:=aligntoqword(ti+2+PByte(ti)[1]);
   Result:=PRecordInfoInit(ti)^.InitRecordOpTable;
 end;
-{$endif VER3_0}
 
+procedure InitializeRecord(Data : pointer;Ri : PRecordInfoInit); forward;
 
-{ if you modify this procedure, fpc_copy must be probably modified as well }
-procedure ArrayRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
+const
+  RTTIFlattenInitializePointer = 0;
+  RTTIFlattenInitialize: array[TTypeKind] of uint8 =
+  ( { 0: pointer, 1: record, 2: array, 3: variant, 255: unmanaged. }
+    {tkUnknown} 255, {tkInteger} 255, {tkChar} 255, {tkEnumeration} 255, {tkFloat} 255,
+    {tkSet} 255, {tkMethod} 255, {tkSString} 255, {tkLString} 255, {tkAString} 0,
+    {tkWString} 0, {tkVariant} 3, {tkArray} 2, {tkRecord} 1, {tkInterface} 0,
+    {tkClass} 255, {tkObject} 1, {tkWChar} 255, {tkBool} 255, {tkInt64} 255, {tkQWord} 255,
+    {tkDynArray} 0, {tkInterfaceRaw} 255, {tkProcVar} 255, {tkUString} 0, {tkUChar} 255,
+    {tkHelper} 255, {tkFile} 255, {tkClassRef} 255, {tkPointer} 255
+  );
+
+procedure InlinedInitialize(Data,TypeInfo : pointer); inline; { Should come before InitializeRecord for inlining. }
 var
-  i,Count,ElSize: SizeInt;
-  Info: Pointer;
+  ri: PRecordInfoInit;
 begin
-{$ifdef VER3_0}
-  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
-{$else VER3_0}
-  typeInfo:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-{$endif VER3_0}
-  Count:=PArrayInfo(typeInfo)^.ElCount;
-  { no elements to process => exit }
-  if Count = 0 then
-    Exit;
-  ElSize:=PArrayInfo(typeInfo)^.Size div Count;
-  Info:=PArrayInfo(typeInfo)^.ElInfo{$ifndef VER3_0}^{$endif};
-  { Process elements }
-  for I:=0 to Count-1 do
-    rttiproc(Data+(I*ElSize),Info);
-end;
-
-Procedure fpc_Initialize (Data,TypeInfo : pointer);[Public,Alias : 'FPC_INITIALIZE'];  compilerproc;
-begin
-  case PTypeKind(TypeInfo)^ of
-{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
-    tkDynArray,
-{$endif FPC_HAS_FEATURE_DYNARRAYS}
-{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-    tkAstring,
-{$endif FPC_HAS_FEATURE_ANSISTRINGS}
-{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
-    tkWstring,tkUString,
-{$endif FPC_HAS_FEATURE_WIDESTRINGS}
-    tkInterface:
-      PPAnsiChar(Data)^:=Nil;
-    tkArray:
-      arrayrtti(data,typeinfo,@int_initialize);
-{$ifdef FPC_HAS_FEATURE_OBJECTS}
-    tkObject,
-{$endif FPC_HAS_FEATURE_OBJECTS}
-    tkRecord:
-{$ifndef VER3_0}
-      { if possible try to use more optimal initrtti }
-      with RTTIRecordOp(typeinfo, typeinfo)^ do
-      begin
-        recordrtti(data,typeinfo,@int_initialize);
-        if Assigned(recordop) and Assigned(recordop^.Initialize) then
-          recordop^.Initialize(data);
-      end;
-{$else VER3_0}
-      begin
-        typeinfo:=RTTIRecordRttiInfoToInitInfo(typeinfo);
-        recordrtti(data,typeinfo,@int_initialize);
-      end;
-{$endif VER3_0}
+  case cardinal(RTTIFlattenInitialize[PTypeKind(TypeInfo)^]) of
+    RTTIFlattenInitializePointer: { pointer }
+      PPointer(Data)^:=Nil;
+    1: { record }
+      InitializeRecord(Data,RTTIRecordInfoInit(TypeInfo));
+    2: { array }
+      with PArrayInfo(aligntoqword(typeInfo+2+PByte(typeInfo)[1]))^ do
+        int_InitializeArray(data,ElInfo^,ElCount);
 {$ifdef FPC_HAS_FEATURE_VARIANTS}
-    tkVariant:
+    3: { variant }
       variant_init(PVarData(Data)^);
 {$endif FPC_HAS_FEATURE_VARIANTS}
   end;
 end;
 
+procedure InitializeRecord(Data : pointer;Ri : PRecordInfoInit);
+var
+  i : longint;
+  Re : PRecordElement;
+begin
+  Re:=AlignTypeData(Pointer(@Ri^.Count)+SizeOf(Ri^.Count));
+  for i:=Ri^.Count downto 1 Do
+    begin
+      InlinedInitialize(Data+Re^.Offset,Re^.TypeInfo^);
+      Inc(Re);
+    end;
+  if Assigned(Ri^.RecordOp) and Assigned(Ri^.RecordOp^.Initialize) then
+    Ri^.RecordOp^.Initialize(Data);
+end;
+
+Procedure fpc_Initialize (Data,TypeInfo : pointer);[Public,Alias : 'FPC_INITIALIZE'];  compilerproc;
+begin
+  InlinedInitialize(Data,TypeInfo);
+end;
+
 
 Procedure fpc_finalize (Data,TypeInfo: Pointer);[Public,Alias : 'FPC_FINALIZE'];  compilerproc;
+var
+  ri: PRecordInfoInit;
 begin
   case PTypeKind(TypeInfo)^ of
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
@@ -223,25 +184,18 @@ begin
   {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
-      arrayrtti(data,typeinfo,@int_finalize);
+      with PArrayInfo(aligntoqword(typeInfo+2+PByte(typeInfo)[1]))^ do
+        int_FinalizeArray(data,ElInfo^,ElCount);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
     tkRecord:
-{$ifndef VER3_0}
-      { if possible try to use more optimal initrtti }
-      with RTTIRecordOp(typeinfo, typeinfo)^ do
       begin
-        if Assigned(recordop) and Assigned(recordop^.Finalize) then
-          recordop^.Finalize(data);
-        recordrtti(data,typeinfo,@int_finalize);
+        ri:=RTTIRecordInfoInit(typeinfo);
+        if Assigned(ri^.recordop) and Assigned(ri^.recordop^.Finalize) then
+          ri^.recordop^.Finalize(data);
+        FinalizeRecordFields(data,ri);
       end;
-{$else VER3_0}
-      begin
-        typeinfo:=RTTIRecordRttiInfoToInitInfo(typeinfo);
-        recordrtti(data,typeinfo,@int_finalize);
-      end;
-{$endif VER3_0}
 {$ifdef FPC_HAS_FEATURE_CLASSES}
     tkInterface:
       Intf_Decr_Ref(PPointer(Data)^);
@@ -259,6 +213,8 @@ end;
 
 
 Procedure fpc_Addref (Data,TypeInfo : Pointer); [Public,alias : 'FPC_ADDREF'];  compilerproc;
+var
+  ri: PRecordInfoInit;
 begin
   case PTypeKind(TypeInfo)^ of
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
@@ -274,25 +230,18 @@ begin
       fpc_UnicodeStr_Incr_Ref(PPointer(Data)^);
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
-      arrayrtti(data,typeinfo,@int_addref);
+      with PArrayInfo(aligntoqword(typeInfo+2+PByte(typeInfo)[1]))^ do
+        int_AddRefArray(data,ElInfo^,ElCount);
 {$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkobject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
     tkrecord :
-{$ifndef VER3_0}
-      { find init table }
-      with RTTIRecordOp(typeinfo, typeinfo)^ do
       begin
-        recordrtti(data,typeinfo,@int_addref);
-        if Assigned(recordop) and Assigned(recordop^.AddRef) then
-          recordop^.AddRef(Data);
+        ri:=RTTIRecordInfoInit(typeinfo);
+        AddRefRecordFields(data,ri);
+        if Assigned(ri^.recordop) and Assigned(ri^.recordop^.AddRef) then
+          ri^.recordop^.AddRef(Data);
       end;
-{$else VER3_0}
-      begin
-        typeinfo:=RTTIRecordRttiInfoToInitInfo(typeinfo);
-        recordrtti(data,typeinfo,@int_addref);
-      end;
-{$endif VER3_0}
 {$ifdef FPC_HAS_FEATURE_DYNARRAYS}
     tkDynArray:
       fpc_dynarray_incr_ref(PPointer(Data)^);
@@ -309,17 +258,14 @@ begin
 end;
 
 
-{ define alias for internal use in the system unit }
-Function fpc_Copy_internal (Src, Dest, TypeInfo : Pointer) : SizeInt;[external name 'FPC_COPY'];
-
 Function fpc_Copy (Src, Dest, TypeInfo : Pointer) : SizeInt;[Public,alias : 'FPC_COPY']; compilerproc;
 var
-  Temp: pbyte;
   copiedsize,
   expectedoffset,
   EleCount,
   offset,
   i: SizeInt;
+  Temp,
   info: pointer;
 begin
   result:=sizeof(pointer);
@@ -338,23 +284,19 @@ begin
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray:
       begin
-{$ifdef VER3_0}
-        Temp:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
-{$else VER3_0}
         Temp:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-{$endif VER3_0}
         Result:=PArrayInfo(Temp)^.Size;
         EleCount:=PArrayInfo(Temp)^.ElCount;
         { no elements to process => exit }
         if EleCount = 0 then
           Exit;
-        Info:=PArrayInfo(Temp)^.ElInfo{$ifndef VER3_0}^{$endif};
+        Info:=PArrayInfo(Temp)^.ElInfo^;
         copiedsize:=Result div EleCount;
         Offset:=0;
         { Process elements }
         for I:=1 to EleCount do
           begin
-            fpc_Copy_internal(Src+Offset,Dest+Offset,Info);
+            int_Copy(Src+Offset,Dest+Offset,Info);
             inc(Offset,copiedsize);
           end;
       end;
@@ -362,53 +304,30 @@ begin
     tkobject,
 {$endif FPC_HAS_FEATURE_OBJECTS}
     tkrecord:
-{$ifndef VER3_0}
-      { find init table }
-      with RTTIRecordOp(typeinfo, typeinfo)^ do
-{$endif VER3_0}
       begin
-{$ifdef VER3_0}
-        typeInfo:=RTTIRecordRttiInfoToInitInfo(typeInfo);
-        Temp:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
-{$else VER3_0}
-        Temp:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
-{$endif VER3_0}
-{$ifndef VER3_0}
-        if Assigned(recordop) and Assigned(recordop^.Copy) then
-          begin
-            recordop^.Copy(Src,Dest);
-            Result:=PRecordInfoFull(Temp)^.Size;
-          end
+        Temp:=RTTIRecordInfoInit(typeinfo);
+        Result:=PRecordInfoInit(Temp)^.Size;
+        if Assigned(PRecordInfoInit(Temp)^.recordop) and Assigned(PRecordInfoInit(Temp)^.recordop^.Copy) then
+          PRecordInfoInit(Temp)^.recordop^.Copy(Src,Dest)
         else
           begin
-            Result:=PRecordInfoInit(Temp)^.Size;
             EleCount:=PRecordInfoInit(Temp)^.Count;
             { Get element info, hacky, but what else can we do? }
             Temp:=AlignTypeData(Pointer(@PRecordInfoInit(Temp)^.Count)+SizeOf(PRecordInfoInit(Temp)^.Count));
-{$else VER3_0}
-            Result:=PRecordInfoFull(Temp)^.Size;
-            EleCount:=PRecordInfoFull(Temp)^.Count;
-            { Get element info, hacky, but what else can we do? }
-            Temp:=Pointer(@PRecordInfoFull(Temp)^.Count)+SizeOf(PRecordInfoFull(Temp)^.Count);
-{$endif VER3_0}
             expectedoffset:=0;
             { Process elements with rtti }
             for i:=1 to EleCount Do
               begin
-                Info:=PRecordElement(Temp)^.TypeInfo{$ifndef VER3_0}^{$endif};
                 Offset:=PRecordElement(Temp)^.Offset;
-                Inc(PRecordElement(Temp));
                 if Offset>expectedoffset then
                   move((Src+expectedoffset)^,(Dest+expectedoffset)^,Offset-expectedoffset);
-                copiedsize:=fpc_Copy_internal(Src+Offset,Dest+Offset,Info);
-                expectedoffset:=Offset+copiedsize;
+                expectedoffset:=Offset+int_Copy(Src+Offset,Dest+Offset,PRecordElement(Temp)^.TypeInfo^);
+                Inc(PRecordElement(Temp));
               end;
             { elements remaining? }
             if result>expectedoffset then
               move((Src+expectedoffset)^,(Dest+expectedoffset)^,Result-expectedoffset);
-{$ifndef VER3_0}
           end;
-{$endif VER3_0}
       end;
 {$ifdef FPC_HAS_FEATURE_DYNARRAYS}
     tkDynArray:
@@ -434,41 +353,73 @@ end;
 { have unintended side-effects                                               }
 procedure fpc_Copy_proc (Src, Dest, TypeInfo : Pointer);compilerproc; inline;
 begin
-  fpc_copy_internal(src,dest,typeinfo);
+  int_copy(src,dest,typeinfo);
 end;
+
+
+{$ifdef FPC_MANAGED_MOVE}
+function fpc_Copy_with_move_semantics (Src, Dest, TypeInfo : Pointer) : SizeInt;[Public,alias : 'FPC_COPY_WITH_MOVE_SEMANTICS']; compilerproc;
+var
+  tki : pointer;
+begin
+  tki:=aligntoqword(typeInfo+2+PByte(typeInfo)[1]);
+  if PTypeKind(TypeInfo)^=tkArray then { Only tkArray, tkObject, tkRecord are possible, search for 'fpc_copy_proc' in compiler/nld.pas. }
+    result:=PArrayInfo(tki)^.Size
+  else
+    result:=PRecordInfoInit(tki)^.Size;
+  int_finalize(Dest,TypeInfo);
+  move(src^,dest^,result);
+  int_initialize(Src,TypeInfo);
+end;
+
+procedure fpc_Copy_with_move_semantics_proc (Src, Dest, TypeInfo : Pointer);compilerproc; inline;
+begin
+  int_Copy_with_move_semantics(src,dest,typeinfo);
+end;
+{$endif FPC_MANAGED_MOVE}
 
 
 procedure fpc_initialize_array(data,typeinfo : pointer;count : SizeInt); [public,alias:'FPC_INITIALIZE_ARRAY']; compilerproc;
   var
-    i, size : SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    sample,size,i : SizeInt;
+    ri : PRecordInfoInit;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotInitialize, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
+    sample:=RTTIManagedSizes[PTypeKind(typeinfo)^];
+    if sample<>RTTISpecialSize then
+      FillChar(data^,sample*count,0)
+    else if PTypeKind(typeinfo)^=tkArray then
+      with PArrayInfo(aligntoqword(typeInfo+2+PByte(typeInfo)[1]))^ do
+        int_InitializeArray(data,ElInfo^,count*ElCount)
+    else
+      begin { tkRecord/tkObject. }
+        ri:=RTTIRecordInfoInit(typeinfo);
+        size:=ri^.size;
+        if (ri^.Count>0) or Assigned(Ri^.RecordOp) then { Heuristically replaces the more expensive RTTIManagementAndSize. Can have false positives but they are harmless and won’t occur in practice. }
+          for i:=0 to count-1 do
+            InitializeRecord(data+size*i,ri);
+      end;
+  end;
+
+
+function SkipTrailingNils(data : PPointer;count : SizeInt) : SizeInt;
+  var
+    pd: PPointer;
   begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
-      for i:=0 to count-1 do
-        int_initialize(data+size*i,typeinfo);
+    pd:=data+count;
+    while (pd<>data) and not Assigned(pd[-1]) do
+      dec(pd);
+    result:=SizeUint(pointer(pd)-pointer(data)) div sizeof(pointer);
   end;
 
 
 procedure fpc_finalize_array(data,typeinfo : pointer;count : SizeInt); [Public,Alias:'FPC_FINALIZE_ARRAY'];  compilerproc;
   var
-     i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    size,i : SizeInt;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotFinalize, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
+    if RTTIFlattenInitialize[PTypeKind(typeinfo)^]=RTTIFlattenInitializePointer then
+      for i:=0 to SkipTrailingNils(data,count)-1 do
+        int_finalize(PPointer(data)+i,typeinfo)
+    else if RTTIManagementAndSize(typeinfo, rotFinalize, size, false) then
       for i:=0 to count-1 do
         int_finalize(data+size*i,typeinfo);
   end;
@@ -476,17 +427,12 @@ procedure fpc_finalize_array(data,typeinfo : pointer;count : SizeInt); [Public,A
 
 procedure fpc_addref_array(data,typeinfo: pointer; count: SizeInt); [public,alias:'FPC_ADDREF_ARRAY']; compilerproc;
   var
-    i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
+    size,i : SizeInt;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotAddRef, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
+    if RTTIFlattenInitialize[PTypeKind(typeinfo)^]=RTTIFlattenInitializePointer then
+      for i:=0 to SkipTrailingNils(data,count)-1 do
+        int_addref(PPointer(data)+i,typeinfo)
+    else if RTTIManagementAndSize(typeinfo, rotAddRef, size, false) then
       for i:=0 to count-1 do
         int_addref(data+size*i,typeinfo);
   end;
@@ -508,20 +454,15 @@ procedure InitializeArray(p, typeInfo: Pointer; count: SizeInt);
 procedure FinalizeArray(p, typeInfo: Pointer; count: SizeInt);
   external name 'FPC_FINALIZE_ARRAY';
 
+procedure AddRefArray(p, typeInfo: Pointer; count: SizeInt);
+  external name 'FPC_ADDREF_ARRAY';
+
 procedure CopyArray(dest, source, typeInfo: Pointer; count: SizeInt);
   var
     i, size: SizeInt;
-{$ifndef VER3_0}
-    hasManagementOp: boolean;
   begin
-    size:=RTTISizeAndOp(typeinfo, rotCopy, hasManagementOp);
-    if (size>0) or hasManagementOp then
-{$else VER3_0}
-  begin
-    size:=RTTISize(typeInfo);
-    if size>0 then
-{$endif VER3_0}
+    if RTTIManagementAndSize(typeinfo, rotCopy, size, false) then
       for i:=0 to count-1 do
-        fpc_Copy_internal(source+size*i, dest+size*i, typeInfo);
+        int_Copy(source+size*i, dest+size*i, typeInfo);
   end;
 

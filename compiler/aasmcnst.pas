@@ -27,7 +27,7 @@ unit aasmcnst;
 interface
 
 uses
-  cclasses,globtype,constexp,
+  cclasses,globtype,constexp,widestr,
   aasmbase,aasmdata,aasmtai,
   symconst,symbase,symtype,symdef,symsym;
 
@@ -305,7 +305,7 @@ type
      destructor destroy; override;
 
     public
-     { returns a builder for generating data that is only referrenced by the
+     { returns a builder for generating data that is only referenced by the
        typed constant date we are currently generating (e.g. string data for a
        pchar constant). Also returns the label that will be placed at the start
        of that data. list is the tasmlist to which the data will be added.
@@ -349,9 +349,10 @@ type
      class function get_dynstring_rec_name(typ: tstringtype; winlike: boolean; len: asizeint): TSymStr;
      class function get_dynstring_rec(typ: tstringtype; winlike: boolean; len: asizeint): trecorddef;
      { the datalist parameter specifies where the data for the string constant
-       will be emitted (via an internal data builder) }
+       will be emitted (via an internal data builder)
+       Note: data does not have to be #0-terminated (len specifies the length of the valid data) }
      function emit_ansistring_const(datalist: TAsmList; data: pchar; len: asizeint; encoding: tstringencoding): tasmlabofs;
-     function emit_unicodestring_const(datalist: TAsmList; data: pointer; encoding: tstringencoding; winlike: boolean):tasmlabofs;
+     function emit_unicodestring_const(datalist: TAsmList; data: tcompilerwidestring; encoding: tstringencoding; winlike: boolean):tasmlabofs;
      { emits a tasmlabofs as returned by emit_*string_const }
      procedure emit_string_offset(const ll: tasmlabofs; const strlength: longint; const st: tstringtype; const winlikewidestring: boolean; const charptrdef: tdef);virtual;
 
@@ -360,12 +361,13 @@ type
      { starts a dynamic array constant so that its data can be emitted directly afterwards }
      function begin_dynarray_const(arrdef:tdef;var startlab:tasmlabel;out arrlengthloc:ttypedconstplaceholder):tasmlabofs;virtual;
      { ends a dynamic array constant by updating the count field; the arrlengthloc will be freed }
-     function end_dynarray_const(arrdef:tdef;arrlength:asizeint;arrlengthloc:ttypedconstplaceholder):tdef;virtual;
+     function end_dynarray_const(arrdef:tdef;arrlength:asizeint;arrlengthloc:ttypedconstplaceholder;llofs:tasmlabofs):tdef;virtual;
 
      { emit a shortstring constant, and return its def }
      function emit_shortstring_const(const str: shortstring): tdef;
-     { emit a pchar string constant (the characters, not a pointer to them), and return its def }
-     function emit_pchar_const(str: pchar; len: pint; copypchar: boolean): tdef;
+     { emit a pchar string constant (the characters, not a pointer to them), and return its def;
+       len does not include the terminating #0 (will be added) }
+     function emit_pchar_const(str: pchar; len: pint): tdef;
      { emit a guid constant }
      procedure emit_guid_const(const guid: tguid);
      { emit a procdef constant }
@@ -470,7 +472,7 @@ type
        supported this is equal to the header size }
      class function get_string_symofs(typ: tstringtype; winlikewidestring: boolean): pint; virtual;
 
-     { returns the offset of the array data relatve to dynamic array constant
+     { returns the offset of the array data relative to dynamic array constant
        labels. On most platforms, this is 0 (with the header at a negative
        offset), but on some platforms such negative offsets are not supported
        and thus this is equal to the header size }
@@ -524,7 +526,7 @@ implementation
 
    uses
      cutils,
-     verbose,globals,systems,widestr,
+     verbose,globals,systems,
      fmodule,
      symtable,symutil,defutil;
 
@@ -663,6 +665,7 @@ implementation
    destructor tai_simpletypedconst.destroy;
      begin
        fval.free;
+       fval := nil;
        inherited destroy;
      end;
 
@@ -717,7 +720,7 @@ implementation
             if ai.adetyp<>tck_simple then
               internalerror(2014070103);
             add_to_string(newstr,tai_simpletypedconst(ai).val);
-            ai.free;
+            ai.free; // no nil needed
           end;
        fvalues.count:=0;
        { the "nil" def will be replaced with an array def of the appropriate
@@ -727,25 +730,26 @@ implementation
      end;
 
    procedure tai_aggregatetypedconst.add_to_string(strtai: tai_string; othertai: tai);
+     var
+       len1,len2,lent : Integer;
+       lother_string : tai_string absolute othertai;
      begin
        case othertai.typ of
          ait_string:
            begin
-             strtai.str:=reallocmem(strtai.str,strtai.len+tai_string(othertai).len+1);
-             { also copy null terminator }
-             move(tai_string(othertai).str[0],strtai.str[strtai.len],tai_string(othertai).len+1);
-             { the null terminator is not part of the string data }
-             strtai.len:=strtai.len+tai_string(othertai).len;
+             len1:=strtai.len;
+             len2:=lother_string.len;
+             lent:=len1+len2;
+             SetLength(strtai.str,lent);
+             move(lother_string.str[0],strtai.str[len1],len2);
            end;
          ait_const:
            begin
              if tai_const(othertai).size<>1 then
                internalerror(2014070101);
-             { it was already len+1 to hold the #0 -> realloc to len+2 }
-             strtai.str:=reallocmem(strtai.str,strtai.len+2);
-             strtai.str[strtai.len]:=ansichar(tai_const(othertai).value);
-             strtai.str[strtai.len+1]:=#0;
-             inc(strtai.len);
+             len1:=length(strtai.str);
+             SetLength(strtai.str,len1+1);
+             strtai.str[len1]:=ansichar(tai_const(othertai).value);
            end;
          else
            internalerror(2014070102);
@@ -784,7 +788,8 @@ implementation
              1:
                begin
                  add_to_string(tai_string(tai_simpletypedconst(fvalues[0]).val),tai_simpletypedconst(val).val);
-                 val.free
+                 val.free;
+                 val := nil;
                end
              else
                internalerror(2014070104);
@@ -826,6 +831,9 @@ implementation
 
 
    procedure tai_aggregatetypedconst.finish;
+     var
+       lString : tai_string;
+       len : integer;
      begin
        if fisstring then
          begin
@@ -833,9 +841,9 @@ implementation
              data }
            if fvalues.count<>1 then
              internalerror(2014070105);
-           tai_simpletypedconst(fvalues[0]).fdef:=
-             carraydef.getreusable(cansichartype,
-               tai_string(tai_simpletypedconst(fvalues[0]).val).len);
+           lString:=tai_string(tai_simpletypedconst(fvalues[0]).val);
+           len:=lString.len;
+           tai_simpletypedconst(fvalues[0]).fdef:=carraydef.getreusable(cansichartype,len);
          end;
      end;
 
@@ -843,6 +851,7 @@ implementation
    destructor tai_aggregatetypedconst.destroy;
      begin
        fvalues.free;
+       fvalues := nil;
        inherited destroy;
      end;
 
@@ -1015,7 +1024,7 @@ implementation
               if not(section in [low(TObjCAsmSectionType)..high(TObjCAsmSectionType)]) then
                 prelist.concat(tai_directive.Create(asd_reference,asmsym.name))
              end
-           else if section<>sec_fpc then
+           else if not(section in [sec_fpc,sec_note]) then
              internalerror(2015101402);
          end;
 
@@ -1038,6 +1047,7 @@ implementation
        fasmlist.concat(tai_symbol_end.Createname(asmsym.name));
        { free the temporary list }
        prelist.free;
+       prelist := nil;
      end;
 
 
@@ -1071,6 +1081,7 @@ implementation
            symind.increfs;
 
            indtcb.free;
+           indtcb := nil;
            if not (target_info.system in systems_indirect_var_imports) then
              current_module.add_public_asmsym(symind.name,AB_INDIRECT,AT_DATA);
          end;
@@ -1268,7 +1279,9 @@ implementation
           (ErrorCount=0) then
          internalerror(2014062901);
        faggregateinformation.free;
+       faggregateinformation := nil;
        fasmlist.free;
+       fasmlist := nil;
        inherited destroy;
      end;
 
@@ -1553,6 +1566,7 @@ implementation
        info:=curagginfo;
        faggregateinformation.count:=faggregateinformation.count-1;
        info.free;
+       info := nil;
      end;
 
 
@@ -1696,29 +1710,27 @@ implementation
 
    function ttai_typedconstbuilder.emit_ansistring_const(datalist: TAsmList; data: pchar; len: asizeint; encoding: tstringencoding): tasmlabofs;
      var
-       s: PChar;
        startlab: tasmlabel;
        ansistrrecdef: trecorddef;
        datadef: tdef;
        datatcb: ttai_typedconstbuilder;
+       ts : Tai_string;
      begin
        start_internal_data_builder(datalist,sec_rodata_norel,'',datatcb,startlab);
        result:=datatcb.emit_string_const_common(st_ansistring,len,encoding,startlab);
 
-       getmem(s,len+1);
-       move(data^,s^,len);
-       s[len]:=#0;
-       { terminating zero included }
+       { add room for the #0-terminator }
        datadef:=carraydef.getreusable(cansichartype,len+1);
        datatcb.maybe_begin_aggregate(datadef);
-       datatcb.emit_tai(tai_string.create_pchar(s,len+1),datadef);
+       ts:=tai_string.Create_Data(data,len,true);
+       datatcb.emit_tai(ts,datadef);
        datatcb.maybe_end_aggregate(datadef);
        ansistrrecdef:=datatcb.end_anonymous_record;
        finish_internal_data_builder(datatcb,startlab,ansistrrecdef,const_align(voidpointertype.alignment));
      end;
 
 
-   function ttai_typedconstbuilder.emit_unicodestring_const(datalist: TAsmList; data: pointer; encoding: tstringencoding; winlike: boolean):tasmlabofs;
+   function ttai_typedconstbuilder.emit_unicodestring_const(datalist: TAsmList; data: tcompilerwidestring; encoding: tstringencoding; winlike: boolean):tasmlabofs;
      var
        i, strlength: longint;
        string_symofs: asizeint;
@@ -1728,7 +1740,7 @@ implementation
        unicodestrrecdef: trecorddef;
      begin
        start_internal_data_builder(datalist,sec_rodata_norel,'',datatcb,startlab);
-       strlength:=getlengthwidestring(pcompilerwidestring(data));
+       strlength:=getlengthwidestring(data);
        if winlike then
          begin
            result.lab:=startlab;
@@ -1760,7 +1772,7 @@ implementation
            datadef:=carraydef.getreusable(cwidechartype,strlength+1);
            datatcb.maybe_begin_aggregate(datadef);
            for i:=0 to strlength-1 do
-             datatcb.emit_tai(Tai_const.Create_16bit(pcompilerwidestring(data)^.data[i]),cwidechartype);
+             datatcb.emit_tai(Tai_const.Create_16bit(data.data[i]),cwidechartype);
            { ending #0 }
            datatcb.emit_tai(Tai_const.Create_16bit(0),cwidechartype);
            datatcb.maybe_end_aggregate(datadef);
@@ -1817,11 +1829,14 @@ implementation
      end;
 
 
-   function ttai_typedconstbuilder.end_dynarray_const(arrdef:tdef;arrlength:asizeint;arrlengthloc:ttypedconstplaceholder):tdef;
+   function ttai_typedconstbuilder.end_dynarray_const(arrdef:tdef;arrlength:asizeint;arrlengthloc:ttypedconstplaceholder;llofs:tasmlabofs):tdef;
      begin
        { we emit the high value, not the count }
        arrlengthloc.replace(tai_const.Create_sizeint(arrlength-1),sizesinttype);
        arrlengthloc.free;
+       arrlengthloc := nil;
+       if get_dynarray_symofs=0 then
+         emit_tai(tai_symbol_end.create(llofs.lab),arrdef);
        result:=end_anonymous_record;
      end;
 
@@ -1841,26 +1856,14 @@ implementation
      end;
 
 
-   function ttai_typedconstbuilder.emit_pchar_const(str: pchar; len: pint; copypchar: boolean): tdef;
-     var
-       newstr: pchar;
+   function ttai_typedconstbuilder.emit_pchar_const(str: pchar; len: pint): tdef;
      begin
        result:=carraydef.getreusable(cansichartype,len+1);
        maybe_begin_aggregate(result);
-       if (len=0) and
-          (not assigned(str) or
-           copypchar) then
+       if len=0 then
          emit_tai(Tai_const.Create_8bit(0),cansichartype)
        else
-         begin
-           if copypchar then
-             begin
-               getmem(newstr,len+1);
-               move(str^,newstr^,len+1);
-               str:=newstr;
-             end;
-           emit_tai(Tai_string.Create_pchar(str,len+1),result);
-         end;
+         emit_tai(Tai_string.Create_Data(str,len,true),result);
        maybe_end_aggregate(result);
      end;
 
@@ -1917,7 +1920,6 @@ implementation
        entry : phashsetitem;
        strlab : tasmlabel;
        l : longint;
-       pc : pansichar;
        datadef : tdef;
        strtcb : ttai_typedconstbuilder;
      begin
@@ -1932,11 +1934,6 @@ implementation
 
            { include length and terminating zero for quick conversion to pchar }
            l:=length(str);
-           getmem(pc,l+2);
-           move(str[1],pc[1],l);
-           pc[0]:=chr(l);
-           pc[l+1]:=#0;
-
            datadef:=carraydef.getreusable(cansichartype,l+2);
 
            { we start a new constbuilder as we don't know whether we're called
@@ -1944,13 +1941,15 @@ implementation
            strtcb:=ctai_typedconstbuilder.create([tcalo_is_lab,tcalo_make_dead_strippable,tcalo_apply_constalign]);
 
            strtcb.maybe_begin_aggregate(datadef);
-           strtcb.emit_tai(Tai_string.Create_pchar(pc,l+2),datadef);
+           { l+1: include length byte; true: add terminating #0 }
+           strtcb.emit_tai(Tai_string.Create_Data(@str[0],l+1,true),datadef);
            strtcb.maybe_end_aggregate(datadef);
 
            current_asmdata.asmlists[al_typedconsts].concatList(
              strtcb.get_final_asmlist(strlab,datadef,sec_rodata_norel,strlab.name,const_align(sizeof(pint)))
            );
            strtcb.free;
+           strtcb := nil;
 
            entry^.Data:=strlab;
            { Make sure strlab has a reference }
@@ -2169,7 +2168,9 @@ implementation
        for i:=high(fields) downto low(fields) do
          queue_subscriptn(tabstractrecorddef(parentdefs[i]),tfieldvarsym(syms[i]));
        syms.free;
+       syms := nil;
        parentdefs.free;
+       parentdefs := nil;
      end;
 
 
@@ -2277,6 +2278,7 @@ implementation
        list.insertafter(ai,insertpos);
        list.remove(insertpos);
        insertpos.free;
+       insertpos := nil;
      end;
 
 

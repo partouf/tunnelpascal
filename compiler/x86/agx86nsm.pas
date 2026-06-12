@@ -127,7 +127,8 @@ interface
         'ia64',        // cpu_icelake_client
         'ia64',        // cpu_icelake_server
         'ia64',        // cpu_zen3
-        'ia64'         // cpu_zen4
+        'ia64',        // cpu_zen4
+        'ia64'         // cpu_zen5
 {$elseif defined(i386)}
         'ia64',     // cpu_none
         '386',      // cpu_386
@@ -150,7 +151,9 @@ interface
         'ia64',     // cpu_icelake
         'ia64',     // cpu_icelake_client
         'ia64',     // cpu_icelake_server
-        'ia64'      // cpu_zen3
+        'ia64',     // cpu_zen3
+        'ia64',     // cpu_zen4
+        'ia64'      // cpu_zen5
 {$elseif defined(i8086)}
         'ia64',    // cpu_none
         '8086',    // cpu_8086
@@ -589,7 +592,8 @@ interface
           '.stack',
           '.heap',
           ',gcc_except_table',
-          ',ARM_attributes'
+          ',ARM_attributes',
+          ',note'
         );
       var
         secname,secgroup: string;
@@ -1455,6 +1459,8 @@ interface
           system_i386_linux,
           system_i386_beos:
             FormatName:='elf';
+          system_i386_os2:
+            FormatName:='obj2';
           system_i386_darwin:
             FormatName:='macho32';
         else

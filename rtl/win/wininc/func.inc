@@ -117,6 +117,7 @@ function OpenProcess(dwDesiredAccess:DWORD; bInheritHandle:WINBOOL; dwProcessId:
 function GetCurrentProcess:HANDLE; external 'kernel32' name 'GetCurrentProcess';
 function GetCurrentProcessId:DWORD; external 'kernel32' name 'GetCurrentProcessId';
 procedure ExitProcess(uExitCode:UINT);external 'kernel32' name 'ExitProcess';
+function SwitchToThread():WinBool; external 'kernel32' name 'SwitchToThread';
 function TerminateProcess(hProcess:HANDLE; uExitCode:UINT):WINBOOL; external 'kernel32' name 'TerminateProcess';
 function SetProcessAffinityMask(hProcess: THandle; dwProcessAffinityMask: DWORD_PTR): BOOL; external 'kernel32' name 'SetProcessAffinityMask';
 function GetExitCodeProcess(hProcess:HANDLE; lpExitCode:LPDWORD):WINBOOL; external 'kernel32' name 'GetExitCodeProcess';
@@ -248,6 +249,7 @@ function SetLocalTime(lpSystemTime:LPSYSTEMTIME):WINBOOL; external 'kernel32' na
 procedure GetSystemInfo(lpSystemInfo:LPSYSTEM_INFO); external 'kernel32' name 'GetSystemInfo';
 procedure GetNativeSystemInfo(lpSystemInfo:LPSYSTEM_INFO); external 'kernel32' name 'GetNativeSystemInfo';
 function SystemTimeToTzSpecificLocalTime(lpTimeZoneInformation:LPTIME_ZONE_INFORMATION; lpUniversalTime:LPSYSTEMTIME; lpLocalTime:LPSYSTEMTIME):WINBOOL; external 'kernel32' name 'SystemTimeToTzSpecificLocalTime';
+function TzSpecificLocalTimeToSystemTime(lpTimeZoneInformation:LPTIME_ZONE_INFORMATION; lpLocalTime:LPSYSTEMTIME; lpUniversalTime:LPSYSTEMTIME):WINBOOL; external 'kernel32' name 'TzSpecificLocalTimeToSystemTime';
 function GetTimeZoneInformation(lpTimeZoneInformation:LPTIME_ZONE_INFORMATION):DWORD; external 'kernel32' name 'GetTimeZoneInformation';
 function SetTimeZoneInformation(lpTimeZoneInformation:LPTIME_ZONE_INFORMATION):WINBOOL; external 'kernel32' name 'SetTimeZoneInformation';
 function SystemTimeToFileTime(lpSystemTime:LPSYSTEMTIME; lpFileTime:LPFILETIME):WINBOOL; external 'kernel32' name 'SystemTimeToFileTime';
@@ -1299,8 +1301,8 @@ function GET_DEVICE_CHANGE_WPARAM(wParam: WPARAM): WORD; inline;
 function GET_DEVICE_CHANGE_LPARAM(lParam: LPARAM): WORD; inline;
 //#endif /* (_WIN32_WINNT >= 0x0601) */
 
-function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE; 
-  function CONSOLE_REAL_INPUT_HANDLE : HANDLE; 
+function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE;
+  function CONSOLE_REAL_INPUT_HANDLE : HANDLE;
   function GetConsoleScreenBufferInfoEx(hConsoleOutput:HANDLE; lpConsoleScreenBufferInfoEx:PCONSOLE_SCREEN_BUFFER_INFOEX):BOOL;stdcall;external 'kernel32' name 'GetConsoleScreenBufferInfoEx';
   function SetConsoleScreenBufferInfoEx(hConsoleOutput:HANDLE; lpConsoleScreenBufferInfoEx:PCONSOLE_SCREEN_BUFFER_INFOEX):BOOL;stdcall;external 'kernel32' name 'SetConsoleScreenBufferInfoEx';
  // function GetLargestConsoleWindowSize(hConsoleOutput:HANDLE):COORD;stdcall;external 'kernel32' name 'GetLargestConsoleWindowSize';
@@ -1312,13 +1314,13 @@ function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE;
   function GetConsoleFontSize(hConsoleOutput:HANDLE; nFont:DWORD):COORD;stdcall;external 'kernel32' name 'GetConsoleFontSize';
   function GetConsoleSelectionInfo(lpConsoleSelectionInfo:PCONSOLE_SELECTION_INFO):BOOL;stdcall;external 'kernel32' name 'GetConsoleSelectionInfo';
   function AttachConsole(dwProcessId:DWORD):BOOL;stdcall;external 'kernel32' name 'AttachConsole';
-  function ATTACH_PARENT_PROCESS : DWORD;    
+  function ATTACH_PARENT_PROCESS : DWORD;
 
   function GetConsoleDisplayMode(lpModeFlags:LPDWORD):BOOL;stdcall;external 'kernel32' name 'GetConsoleDisplayMode';
   function SetConsoleDisplayMode(hConsoleOutput:HANDLE; dwFlags:DWORD; lpNewScreenBufferDimensions:PCOORD):BOOL;stdcall;external 'kernel32' name 'SetConsoleDisplayMode';
   function GetConsoleWindow:HWND;stdcall;external 'kernel32' name 'GetConsoleWindow';
   function GetConsoleProcessList(lpdwProcessList:LPDWORD; dwProcessCount:DWORD):DWORD;stdcall;external 'kernel32' name 'GetConsoleProcessList';
-  function ReadDirectoryChangesW(hDirectory: HANDLE; lpBuffer: LPVOID;nBufferLength: DWORD; bWatchSubtree: BOOL; dwNotifyFilter: DWORD;lpBytesReturned: LPDWORD;lpOverlapped: LPOVERLAPPED;lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL; stdcall; external 'kernel32' name 'ReadDirectoryChangesW';  
+  function ReadDirectoryChangesW(hDirectory: HANDLE; lpBuffer: LPVOID;nBufferLength: DWORD; bWatchSubtree: BOOL; dwNotifyFilter: DWORD;lpBytesReturned: LPDWORD;lpOverlapped: LPOVERLAPPED;lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE): BOOL; stdcall; external 'kernel32' name 'ReadDirectoryChangesW';
   function IsDebuggerPresent : BOOL; stdcall; external 'kernel32.dll' name 'IsDebuggerPresent';
   function Wow64DisableWow64FsRedirection(RedirectionState : ppointer) : BOOL; stdcall;   external 'kernel32.dll' name 'Wow64DisableWow64FsRedirection';
   function Wow64EnableWow64FsRedirection(Wow64FsEnableRedirection:BYTE) : BOOL; stdcall;   external 'kernel32.dll' name 'Wow64EnableWow64FsRedirection';
@@ -1344,8 +1346,36 @@ function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE;
   function GetDateFormatEx(LocaleName : pwidechar;Flags : DWORD;Date : PSYSTEMTIME; Format : pwidechar; DateBuffer : pwidechar; BufferLen  : longint; Calendar : pwidechar) : BOOL; stdcall; external 'kernel32' name 'GetDateFormatEx';
   function SetThreadExecutionState( esflags:EXECUTION_STATE ) : Cardinal; stdcall; external 'kernel32.dll' name 'SetThreadExecutionState';
 
+  function GetGUIThreadInfo(InThreadId : DWORD;InoutGuiThreadInfo : PGUITHREADINFO): BOOL; stdcall; external 'user32.dll' name 'GetGUIThreadInfo';
+  function GetNumaProcessorNode(Processor:UCHAR; NodeNumber:PUCHAR):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaProcessorNode';
+  function GetNumaNodeNumberFromHandle(hFile:HANDLE; NodeNumber:PUSHORT):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaNodeNumberFromHandle';
+  function GetNumaProcessorNodeEx(Processor:PPROCESSOR_NUMBER; NodeNumber:PUSHORT):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaProcessorNodeEx';
+  function GetNumaNodeProcessorMask(Node:UCHAR; ProcessorMask:PULONGLONG):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaNodeProcessorMask';
+  function GetNumaAvailableMemoryNode(Node:UCHAR; AvailableBytes:PULONGLONG):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaAvailableMemoryNode';
+  function GetNumaAvailableMemoryNodeEx(Node:USHORT; AvailableBytes:PULONGLONG):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaAvailableMemoryNodeEx';
+  function GetNumaProximityNode(ProximityId:ULONG; NodeNumber:PUCHAR):BOOL;stdcall;external 'kernel32.dll' name 'GetNumaProximityNode';
 
-  function GetGUIThreadInfo(InThreadId : DWORD;InoutGuiThreadInfo : PGUITHREADINFO): BOOL; stdcall; external 'user32.dll' name 'GetGUIThreadInfo';{$endif read_interface}
+  // tlhelp32.h
+  function CreateToolhelp32Snapshot(dwFlags: DWORD; th32ProcessID: DWORD): HANDLE; stdcall; external KernelDLL;
+  function Heap32First(var lphe: HEAPENTRY32; th32ProcessID: DWORD; th32HeapID: ULONG_PTR): BOOL; stdcall; external KernelDLL;
+  function Heap32Next(var lphe: HEAPENTRY32): BOOL; stdcall; external KernelDLL;
+  function Heap32ListFirst(hSnapshot: HANDLE; var lphl: HEAPLIST32): BOOL; stdcall; external KernelDLL;
+  function Heap32ListNext(hSnapshot: HANDLE; var lphl: HEAPLIST32): BOOL; stdcall; external KernelDLL;
+  function Module32First(hSnapshot: HANDLE; var lpme: MODULEENTRY32): BOOL; stdcall; external KernelDLL;
+  function Module32Next(hSnapshot: HANDLE; var lpme: MODULEENTRY32): BOOL; stdcall; external KernelDLL;
+  function Module32FirstW(hSnapshot: HANDLE; var lpme: MODULEENTRY32W): BOOL; stdcall; external KernelDLL;
+  function Module32NextW(hSnapshot: HANDLE; var lpme: MODULEENTRY32W): BOOL; stdcall; external KernelDLL;
+  function Process32First(hSnapshot: HANDLE; var lppe: PROCESSENTRY32): BOOL; stdcall; external KernelDLL;
+  function Process32Next(hSnapshot: HANDLE; var lppe: PROCESSENTRY32): BOOL; stdcall; external KernelDLL;
+  function Process32FirstW(hSnapshot: HANDLE; var lppe: PROCESSENTRY32W): BOOL; stdcall; external KernelDLL;
+  function Process32NextW(hSnapshot: HANDLE; var lppe: PROCESSENTRY32W): BOOL; stdcall; external KernelDLL;
+  function Thread32First(hSnapshot: HANDLE; var lpte: THREADENTRY32): BOOL; stdcall; external KernelDLL;
+  function Thread32Next(hSnapshot: HANDLE; var lpte: THREADENTRY32): BOOL; stdcall; external KernelDLL;
+  function Toolhelp32ReadProcessMemory(th32ProcessID: DWORD; lpBaseAddress: pointer; lpBuffer: pointer; cbRead: SIZE_T; lpNumberOfBytesRead: PSIZE_T): BOOL; stdcall; external KernelDLL;
+  function GetFileSizeEx(InFileHandle : THANDLE;OutFileSize  : PLARGE_INTEGER): BOOL; stdcall; external kernelDLL;
+  function SetFilePointerEx(InFile : THANDLE; InDistanceToMove : LARGE_INTEGER;OutoptNewFilePointer : PLARGE_INTEGER;InMoveMethod : DWORD): BOOL; stdcall; external KernelDLL;
+
+{$endif read_interface}
 
 {$ifdef read_implementation}
 
@@ -2447,7 +2477,7 @@ end;
     ((ULONG_PTR)(ntheader) + \
      FIELD_OFFSET( IMAGE_NT_HEADERS, OptionalHeader ) + \
      ((ntheader))->FileHeader.SizeOfOptionalHeader \
-    )) 
+    ))
 
 }
 
@@ -2487,7 +2517,7 @@ begin
   GET_DEVICE_CHANGE_LPARAM:=LOWORD(lParam);
 end;
 
-function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE; 
+function CONSOLE_REAL_OUTPUT_HANDLE : HANDLE;
 begin
   CONSOLE_REAL_OUTPUT_HANDLE:=HANDLE(-(2));
 end;

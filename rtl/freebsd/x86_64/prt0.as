@@ -11,7 +11,7 @@ abitag:
 	.long	4
 	.long	1
 	.string	"FreeBSD"
-	.long	1400097
+	.long	1500068
         .long   8
         .long   4
         .long   1
@@ -166,4 +166,5 @@ operatingsystem_parameters:
 	.p2align 3
 .LEFDE1:
 	.ident	"GCC: (GNU) 3.3.3 [FreeBSD] 20031106"
+.section .note.GNU-stack,"",@progbits
 

@@ -10,7 +10,7 @@
 {                                                          }
 {****************[ THIS CODE IS FREEWARE ]*****************}
 {                                                          }
-{     This sourcecode is released for the purpose to       }
+{     This source code is released for the purpose to      }
 {   promote the pascal language on all platforms. You may  }
 {   redistribute it and/or modify with the following       }
 {   DISCLAIMER.                                            }
@@ -63,7 +63,7 @@ USES
      OS2Api.os2def, OS2Api.doscalls, OS2Api.pmwin,
    {$ENDIF}
 
-   System.Objects, 
+   System.Objects,
    {$ifdef FV_UNICODE}
    FreeVision.Ufvcommon,FreeVision.Udrivers,
    System.Unicode.Graphemebreakproperty,
@@ -71,7 +71,7 @@ USES
    FreeVision.Fvcommon,
    FreeVision.Drivers,
    {$endif}
-   FreeVision.Fvconsts, 
+   FreeVision.Fvconsts,
    { GFV standard units }
    System.Console.Video;
 {$ELSE FPC_DOTTEDUNITS}
@@ -170,7 +170,7 @@ CONST
 {                        >> NEW << VIEW DRAW MASKS                          }
 {---------------------------------------------------------------------------}
 CONST
-   vdBackGnd = $01;                                   { Draw backgound }
+   vdBackGnd = $01;                                   { Draw background }
    vdInner   = $02;                                   { Draw inner detail }
    vdCursor  = $04;                                   { Draw cursor }
    vdBorder  = $08;                                   { Draw view border }
@@ -281,8 +281,19 @@ CONST
 {---------------------------------------------------------------------------}
 CONST
    wnNoNumber = 0;                                    { Window has no num }
-   MaxViewWidth = 255;                                { Max view width }
-
+{$ifdef unix}
+   MaxViewWidth = 1024;                                  { Max view width }
+{$else}
+{$ifdef windows}
+{$ifndef win16}
+   MaxViewWidth = 1024;                                  { Max view width }
+{$else}
+   MaxViewWidth = 255;                                   { Max view width }
+{$endif}
+{$else}
+   MaxViewWidth = 255;                                   { Max view width }
+{$endif}
+{$endif}
 
 {***************************************************************************}
 {                          PUBLIC TYPE DEFINITIONS                          }
@@ -640,6 +651,7 @@ TYPE
       FUNCTION GetPalette: PPalette; Virtual;
       FUNCTION IsSelected (Item: Sw_Integer): Boolean; Virtual;
       FUNCTION GetText (Item: Sw_Integer; MaxLen: Sw_Integer): Sw_String; Virtual;
+      FUNCTION GetItemColor(Item: Sw_Integer; IsFocused, IsSelectedInner: Boolean): Word; virtual;
       PROCEDURE Draw; Virtual;
       PROCEDURE FocusItem (Item: Sw_Integer); Virtual;
       PROCEDURE SetTopItem (Item: Sw_Integer);
@@ -650,6 +662,8 @@ TYPE
       PROCEDURE HandleEvent (Var Event: TEvent); Virtual;
       PROCEDURE ChangeBounds (Var Bounds: TRect); Virtual;
       PROCEDURE FocusItemNum (Item: Sw_Integer); Virtual;
+      private
+        LastY : Sw_integer;                           { to track last Size.Y }
    END;
    PListViewer = ^TListViewer;
 
@@ -681,6 +695,7 @@ TYPE
       PROCEDURE Store (Var S: TStream);
       PROCEDURE HandleEvent (Var Event: TEvent); Virtual;
       PROCEDURE SizeLimits (Var Min, Max: TPoint); Virtual;
+      PROCEDURE CalcBounds (Var Bounds: TRect; Delta: TPoint); Virtual;
    END;
    PWindow = ^TWindow;
 
@@ -1827,6 +1842,8 @@ begin
   Origin := Bounds.A;                                { Get first corner }
   Size := Bounds.B;                                 { Get second corner }
   Dec(Size.X,Origin.X);
+                         { in case MaxViewWidth is smaller than ScreenWidth }
+  Size.X:=Min(Size.X,MaxViewWidth); { adjust to be in bounds of TDrawBuffer }
   Dec(Size.Y,Origin.Y);
 end;
 
@@ -2378,7 +2395,7 @@ END;
 PROCEDURE TGroup.EndModal (Command: Word);
 BEGIN
    If (State AND sfModal <> 0) Then                   { This view is modal }
-     EndState := Command Else                         { Set endstate }
+     EndState := Command Else                         { Set end state }
      Inherited EndModal(Command);                     { Call ancestor }
 END;
 
@@ -2577,9 +2594,12 @@ BEGIN
    End Else Begin
      SetBounds(Bounds);                               { Set new bounds }
      GetExtent(Clip);                                 { Get new clip extents }
+     LockScreenUpdate;                                { Don't update the screen yet }
      Lock;                                            { Lock drawing }
      ForEach(TCallbackProcParam(@DoCalcChange));      { Change each view }
      UnLock;                                          { Unlock drawing }
+     UnLockScreenUpdate;
+     DrawScreenBuf(false);
    End;
 END;
 
@@ -2615,18 +2635,18 @@ END;
 {***************************************************************************}
 
 {--TGroup-------------------------------------------------------------------}
-{  IndexOf -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 12Sep97 LdB           }
+{  IndexOf -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 14Feb2025 M           }
 {---------------------------------------------------------------------------}
 FUNCTION TGroup.IndexOf (P: PView): Sw_Integer;
 VAR I: Sw_Integer; Q: PView;
 BEGIN
    Q := Last;                                         { Start on last view }
    If (Q <> Nil) Then Begin                           { Subviews exist }
-     I := 1;                                          { Preset value }
-     While (Q <> P) AND (Q^.Next <> Last) Do Begin
+     I := 0;                                          { Preset value }
+     Repeat
        Q := Q^.Next;                                  { Load next view }
        Inc(I);                                        { Increment count }
-     End;
+     Until (Q = P) or (Q = Last);
      If (Q <> P) Then IndexOf := 0 Else IndexOf := I; { Return index }
    End Else IndexOf := 0;                             { Return zero }
 END;
@@ -2945,8 +2965,10 @@ begin
         MoveCStr(B[2], '[~'+ClickC[LowAscii]+'~]', CFrame);
     if PWindow(Owner)^.Flags and wfZoom <> 0 then
     begin
-      MoveCStr(B[Width - 5], '[~'+LargeC[LowAscii]+'~]', CFrame);
+      if Width - 5 >= 0 then { safety check, write array B in bounds }
+        MoveCStr(B[Width - 5], '[~'+LargeC[LowAscii]+'~]', CFrame);
       Owner^.SizeLimits(Min, Max);
+      if Width - 4 >= 0 then { safety check, write array B in bounds }
       if FrameMode and fmZoomClicked <> 0 then
 {$ifdef FV_UNICODE}
         B[Width - 4].ExtendedGraphemeCluster := ClickC[LowAscii]
@@ -3100,6 +3122,7 @@ const
 {$endif FV_UNICODE}
 BEGIN
    Inherited Init(Bounds);                            { Call ancestor }
+   EventMask:=EventMask or evMouseWheel;              { Respond to mouse scroll}
    PgStep := 1;                                       { Page step size = 1 }
    ArStep := 1;                                       { Arrow step sizes = 1 }
    If (Size.X = 1) Then Begin                         { Vertical scrollbar }
@@ -3217,7 +3240,7 @@ END;
 {--TScrollBar---------------------------------------------------------------}
 {  Store -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 22May98 LdB             }
 {---------------------------------------------------------------------------}
-{  You can save data to the stream compatable with the old original TV by   }
+{  You can save data to the stream compatible with the old original TV by   }
 {  temporarily turning off the ofGrafVersion making the call to this store  }
 {  routine and resetting the ofGrafVersion flag after the call.             }
 {---------------------------------------------------------------------------}
@@ -3310,6 +3333,25 @@ BEGIN
          SetValue(I);                                 { Set new item }
          ClearEvent(Event);                           { Event now handled }
      End;
+     evMouseWheel: Begin
+        Clicked;
+        if Event.Wheel=mwDown then                    { Mouse scroll down}
+        begin
+          if (arStep<>1) or not Event.double then
+            SetValue(Value+arStep)
+          else
+            SetValue(Value+6); {fixed step is bad, use it for now. Yet to be implemented ScrollSetp}
+          ClearEvent(Event);                           { Event now handled }
+        end else
+        if Event.Wheel=mwUp then                       { Mouse scroll up}
+        begin
+          if (arStep<>1) or not Event.double then
+            SetValue(Value-arStep)
+          else
+            SetValue(Value-6); {fixed step is bad, use it for now. Yet to be implemented ScrollSetp}
+          ClearEvent(Event);                           { Event now handled }
+        end;
+      end;
      evMouseDown: Begin                               { Mouse press event }
          Clicked;                                     { Scrollbar clicked }
          MakeLocal(Event.Where, Mouse);                 { Localize mouse }
@@ -3425,7 +3467,7 @@ CONSTRUCTOR TScroller.Init (Var Bounds: TRect; AHScrollBar, AVScrollBar: PScroll
 BEGIN
    Inherited Init(Bounds);                            { Call ancestor }
    Options := Options OR ofSelectable;                { View is selectable }
-   EventMask := EventMask OR evBroadcast;             { See broadcasts }
+   EventMask := EventMask OR evBroadcast OR evMouseWheel; { See broadcasts and mouse wheel }
    HScrollBar := AHScrollBar;                         { Hold horz scrollbar }
    VScrollBar := AVScrollBar;                         { Hold vert scrollbar }
 END;
@@ -3493,7 +3535,7 @@ END;
 {--TScroller----------------------------------------------------------------}
 {  Store -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 26Jul99 LdB             }
 {---------------------------------------------------------------------------}
-{  The scroller is saved to the stream compatable with the old TV object.   }
+{  The scroller is saved to the stream compatible with the old TV object.   }
 {---------------------------------------------------------------------------}
 PROCEDURE TScroller.Store (Var S: TStream);
 VAR i: SmallInt;
@@ -3511,8 +3553,28 @@ END;
 {  HandleEvent -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 30Jul99 LdB       }
 {---------------------------------------------------------------------------}
 PROCEDURE TScroller.HandleEvent (Var Event: TEvent);
+var LinesScroll  : Sw_Integer;
 BEGIN
    Inherited HandleEvent(Event);                      { Call ancestor }
+   case Event.What of
+    evMouseWheel:
+      begin
+        if (Event.Wheel=mwDown) then                  { Mouse scroll down}
+          begin
+            LinesScroll:=1;
+            if Event.Double then LinesScroll:=LinesScroll+4;
+            ScrollTo(Delta.X, Delta.Y + LinesScroll);
+            ClearEvent(Event);                        { Event was handled }
+          end else
+        if (Event.Wheel=mwUp) then                    { Mouse scroll up }
+          begin
+            LinesScroll:=-1;
+            if Event.Double then LinesScroll:=LinesScroll-4;
+            ScrollTo(Delta.X, Delta.Y + LinesScroll);
+            ClearEvent(Event);                        { Event was handled }
+          end;
+      end;
+   end;
    If (Event.What = evBroadcast) AND
      (Event.Command = cmScrollBarChanged) AND         { Scroll bar change }
      ((Event.InfoPtr = HScrollBar) OR                 { Our scrollbar? }
@@ -3543,22 +3605,12 @@ CONST TvListViewerName = 'LISTBOX';                   { Native name }
 {---------------------------------------------------------------------------}
 CONSTRUCTOR TListViewer.Init (Var Bounds: TRect; ANumCols: Sw_Word; AHScrollBar,
   AVScrollBar: PScrollBar);
-VAR ArStep, PgStep: Sw_Integer;
 BEGIN
    Inherited Init(Bounds);                            { Call ancestor }
    Options := Options OR (ofFirstClick+ofSelectable); { Set options }
-   EventMask := EventMask OR evBroadcast;             { Set event mask }
+   EventMask := EventMask OR evBroadcast OR evMouseWheel; { Set event mask }
    NumCols := ANumCols;                               { Hold column number }
-   If (AVScrollBar <> Nil) Then Begin                 { Chk vert scrollbar }
-     If (NumCols = 1) Then Begin                      { Only one column }
-       PgStep := Size.Y -1;                           { Set page size }
-       ArStep := 1;                                   { Set step size }
-     End Else Begin                                   { Multiple columns }
-       PgStep := Size.Y * NumCols;                    { Set page size }
-       ArStep := Size.Y;                              { Set step size }
-     End;
-     AVScrollBar^.SetStep(PgStep, ArStep);            { Set scroll values }
-   End;
+   LastY:=0;
    If (AHScrollBar <> Nil) Then
      AHScrollBar^.SetStep(Size.X DIV NumCols, 1);     { Set step size }
    HScrollBar := AHScrollBar;                         { Horz scrollbar held }
@@ -3579,6 +3631,16 @@ BEGIN
    S.Read(w, SizeOf(w)); Focused:=w;                  { Read focused item }
    S.Read(w, SizeOf(w)); Range:=w;                    { Read listview range }
 END;
+
+FUNCTION TListViewer.GetItemColor(Item: Sw_Integer; IsFocused, IsSelectedInner: Boolean): Word;
+begin
+  if (State AND (sfSelected + sfActive) = (sfSelected + sfActive)) AND IsFocused AND (Range > 0) then
+    Result := GetColor(3)
+  else if (Item < Range) AND IsSelectedInner then
+    Result := GetColor(4)
+  else
+    Result := GetColor(2); // Normal
+end;
 
 {--TListViewer--------------------------------------------------------------}
 {  GetPalette -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 28May98 LdB        }
@@ -3622,20 +3684,18 @@ BEGIN
      For J := 0 To NumCols-1 Do Begin                 { For each column }
        Item := J*Size.Y + I + TopItem;                { Process this item }
        CurCol := J*ColWidth;                          { Current column }
-       If (State AND (sfSelected + sfActive) =
-       (sfSelected + sfActive)) AND (Focused = Item)  { Focused item }
-       AND (Range > 0) Then Begin
-         Color := GetColor(3);                        { Focused colour }
-         SetCursor(CurCol+1,I);                       { Set the cursor }
-         SCOff := 0;                                  { Zero colour offset }
-       End Else If (Item < Range) AND IsSelected(Item){ Selected item }
-       Then Begin
-         Color := GetColor(4);                        { Selected color }
-         SCOff := 2;                                  { Colour offset=2 }
-       End Else Begin
-         Color := GetColor(2);                        { Normal Color }
-         SCOff := 4;                                  { Colour offset=4 }
-       End;
+
+       Color := GetItemColor(Item, (Focused = Item), IsSelected(Item));
+       If (State AND (sfSelected + sfActive) = (sfSelected + sfActive)) AND (Focused = Item) AND (Range > 0) Then
+       begin
+         SetCursor(CurCol+1,I);
+         SCOff := 0;
+       end
+       else if (Item < Range) AND IsSelected(Item) then
+         SCOff := 2
+       else
+         SCOff := 4;
+
       MoveChar(B[CurCol], ' ', Color, ColWidth);      { Clear buffer }
        If (Item < Range) Then Begin                   { Within text range }
          Text := GetText(Item, ColWidth + Indent);    { Fetch text }
@@ -3669,41 +3729,79 @@ END;
 
 
 {--TListViewer--------------------------------------------------------------}
-{  FocusItem -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 26Jul99 LdB         }
+{  FocusItem -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 03Jan2025 M         }
 {---------------------------------------------------------------------------}
 PROCEDURE TListViewer.FocusItem (Item: Sw_Integer);
+VAR NewTopItem : Sw_Integer;
 BEGIN
    Focused := Item;                                   { Set focus to item }
-   If (VScrollBar <> Nil) Then
-     VScrollBar^.SetValue(Item);                      { Scrollbar to value }
+   NewTopItem:=TopItem;
    If (Item < TopItem) Then                           { Item above top item }
-     If (NumCols = 1) Then TopItem := Item            { Set top item }
-       Else TopItem := Item - Item MOD Size.Y         { Set top item }
+     If (NumCols = 1) Then NewTopItem := Item         { New top item }
+       Else NewTopItem := Item - Item MOD Size.Y      { New top item }
    Else If (Item >= TopItem + (Size.Y*NumCols)) Then  { Item below bottom }
-     If (NumCols = 1) Then TopItem := Item-Size.Y+1   { Set new top item }
-     Else TopItem := Item - Item MOD Size.Y -
-       (Size.Y*(NumCols-1));                          { Set new top item }
+     If (NumCols = 1) Then NewTopItem := Item-Size.Y+1 { New top item }
+     Else NewTopItem := Item - Item MOD Size.Y -
+       (Size.Y*(NumCols-1));
+   if TopItem <> NewTopItem then SetTopItem(NewTopItem); { Set new top item }
+   DrawView;                                           { Redraw focus box }
 END;
 
 {--TListViewer--------------------------------------------------------------}
-{  SetTopItem -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 06Aug99 LdB        }
+{  SetTopItem -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 07Jan2025 M        }
 {---------------------------------------------------------------------------}
 PROCEDURE TListViewer.SetTopItem (Item: Sw_Integer);
 BEGIN
+   if Size.Y<> LastY then SetRange(Range);{ Reset range to adjust to Size.Y}
+   If (VScrollBar <> Nil) and (Item> VScrollBar^.Max) Then
+       Item:=VScrollBar^.Max;           { Don't let overrun scrollbar limit }
+   if Item>=Range then Item:=Range-1;             { Item has to be in range }
+   if Item<0 then Item:=0;                      { Don't allow negative item }
    TopItem := Item;                                   { Set the top item }
+   If (VScrollBar <> Nil) and (VScrollBar^.Value<>TopItem) Then
+       VScrollBar^.SetValue(TopItem);               { Scrollbar to value }
 END;
 
 {--TListViewer--------------------------------------------------------------}
-{  SetRange -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 26Jul99 LdB          }
+{  SetRange -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 07Jan2025 M          }
 {---------------------------------------------------------------------------}
 PROCEDURE TListViewer.SetRange (ARange: Sw_Integer);
+
+procedure NewScrollbarStep;
+var ArStep, PgStep: Sw_Integer;
+begin
+   If (VScrollBar <> Nil) Then Begin                 { Chk vert scrollbar }
+     If (NumCols = 1) Then Begin                      { Only one column }
+       PgStep := Size.Y -1;                           { Set page size }
+       ArStep := 1;                                   { Set step size }
+     End Else Begin                                   { Multiple columns }
+       PgStep := Size.Y * NumCols;                    { Set page size }
+       ArStep := Size.Y;                              { Set step size }
+     End;
+     VScrollBar^.SetStep(PgStep, ArStep);            { Set scroll values }
+   End;
+end;
+
+var MaxRange : sw_integer;
 BEGIN
    Range := ARange;                                   { Set new range }
+   if LastY <> Size.Y then NewScrollbarStep;
+   LastY := Size.Y;                                   { Save last seen Size.Y }
+   If (Focused >= ARange) Then Focused := 0;          { Clear focused }
    If (VScrollBar <> Nil) Then Begin                  { Vertical scrollbar }
-     If (Focused > ARange) Then Focused := 0;         { Clear focused }
-     VScrollBar^.SetParams(Focused, 0, ARange - 1,
+     MaxRange:=Min(ARange-Size.Y,ARange - 1);         { Glue last item at bottom }
+     if (Size.Y > 0) and (NumCols>1) then             { More than one column ? }
+     begin
+       MaxRange:=(ARange div Size.Y) * Size.Y;   { Last column stay in view }
+       if MaxRange=ARange then MaxRange:=MaxRange-Size.Y;
+       MaxRange:=MaxRange-((NumCols-1)*Size.Y);  { Last NumCols stay in view }
+     end;
+     if MaxRange < 0 then MaxRange:=0;           { Negative isn't acceptable }
+     If (TopItem > MaxRange) Then TopItem:=MaxRange;  { Adjust top item }
+     VScrollBar^.SetParams(TopItem, 0, MaxRange,
        VScrollBar^.PgStep, VScrollBar^.ArStep);       { Set parameters }
-   End;
+   End else
+   If (TopItem >= ARange) Then TopItem := ARange-1;   { Adjust top item }
 END;
 
 {--TListViewer--------------------------------------------------------------}
@@ -3762,7 +3860,12 @@ VAR Oi, Ni: Sw_Integer; Ct, Cw: Word; Mouse: TPoint;
    PROCEDURE MoveFocus (Req: Sw_Integer);
    BEGIN
      FocusItemNum(Req);                               { Focus req item }
-     DrawView;                                      { Redraw focus box }
+   END;
+
+   PROCEDURE ScrollTo (Req: Sw_Integer);
+   BEGIN
+     SetTopItem(Req);
+     DrawView;                                        { Redraw focus box }
    END;
 
 BEGIN
@@ -3783,10 +3886,10 @@ BEGIN
            Ni := Focused - Size.Y Else Exit;          { One column left }
          kbPgDn: Ni := Focused + Size.Y * NumCols;    { One page down }
          kbPgUp: Ni := Focused - Size.Y * NumCols;    { One page up }
-         kbHome: Ni := TopItem;                       { Move to top }
-         kbEnd: Ni := TopItem + (Size.Y*NumCols)-1;   { Move to bottom }
-         kbCtrlPgDn: Ni := Range - 1;                 { Move to last item }
-         kbCtrlPgUp: Ni := 0;                         { Move to first item }
+         kbHome: Ni := 0;                             { Move to first item }
+         kbEnd: Ni := Range - 1;                      { Move to last item }
+         kbCtrlPgDn: Ni := TopItem + (Size.Y*NumCols)-1;{ Move to bottom }
+         kbCtrlPgUp: Ni := TopItem;                   { Move to top }
          Else Exit;
        End;
        MoveFocus(Ni);                                 { Move the focus }
@@ -3800,11 +3903,24 @@ BEGIN
          Else If (Event.Command = cmScrollBarChanged) { Scrollbar changed }
          Then Begin
            If (VScrollBar = Event.InfoPtr) Then Begin
-             MoveFocus(VScrollBar^.Value);            { Focus us to item }
+             ScrollTo(VScrollBar^.Value);            { Focus us to item }
            End Else If (HScrollBar = Event.InfoPtr)
              Then DrawView;                           { Redraw the view }
          End;
      End;
+     evMouseWheel:                                    { Mouse wheel event }
+       if (Event.Wheel=mwDown) then                   { Mouse scroll down }
+         begin
+           if NumCols>1 then ScrollTo(TopItem+Size.Y)
+           else if Event.Double then ScrollTo(TopItem+4) else ScrollTo(TopItem+1);
+           ClearEvent(Event);                         { Event was handled }
+         end else
+       if (Event.Wheel=mwUp) then                     { Mouse scroll up }
+         begin
+           if NumCols>1 then ScrollTo(TopItem-Size.Y)
+           else if Event.Double then ScrollTo(TopItem-4) else ScrollTo(TopItem-1);
+           ClearEvent(Event);                         { Event was handled }
+         end;
      evMouseDown: Begin                               { Mouse down event }
        Cw := Size.X DIV NumCols + 1;                  { Column width }
        Oi := Focused;                                 { Hold focused item }
@@ -3892,7 +4008,7 @@ BEGIN
    Inherited Init(Bounds);                            { Call ancestor }
    State := State OR sfShadow;                        { View is shadowed }
    Options := Options OR (ofSelectable+ofTopSelect);  { Select options set }
-   GrowMode := gfGrowAll + gfGrowRel;                 { Set growmodes }
+   GrowMode := gfGrowAll + gfGrowRel;                 { Set growmode }
    Flags := wfMove + wfGrow + wfClose + wfZoom;       { Set flags }
 {$ifdef FV_UNICODE}
    Title := ATitle;                                   { Hold title }
@@ -3910,7 +4026,7 @@ END;
 {  Load -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 15Sep97 LdB              }
 {---------------------------------------------------------------------------}
 {   This load method will read old original TV data from a stream however   }
-{   although a frame view is read for compatability it is disposed of.      }
+{   although a frame view is read for compatibility it is disposed of.      }
 {---------------------------------------------------------------------------}
 CONSTRUCTOR TWindow.Load (Var S: TStream);
 VAR I: SmallInt;
@@ -3995,7 +4111,14 @@ PROCEDURE TWindow.Zoom;
 VAR R: TRect; Max, Min: TPoint;
 BEGIN
    SizeLimits(Min, Max);                              { Return size limits }
+   GetBounds(R);
    If ((Size.X <> Max.X) OR (Size.Y <> Max.Y))        { Larger size possible }
+     OR ( { Sometimes maximized window can be stuck off screen after
+            terminal resize. Detect the case and move to (0,0) position. }
+          (Size.X = Max.X) AND (Size.Y = Max.Y) AND
+          (R.A.X = ZoomRect.A.X ) AND (R.B.X = ZoomRect.B.X ) AND
+          (R.A.Y = ZoomRect.A.Y ) AND (R.B.Y = ZoomRect.B.Y )
+        )
    Then Begin
      GetBounds(ZoomRect);                             { Get zoom bounds }
      R.A.X := 0;                                      { Zero x origin }
@@ -4050,7 +4173,7 @@ END;
 {--TWindow------------------------------------------------------------------}
 {  Store -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 30Mar98 LdB             }
 {---------------------------------------------------------------------------}
-{  You can save data to the stream compatable with the old original TV by   }
+{  You can save data to the stream compatible with the old original TV by   }
 {  temporarily turning off the ofGrafVersion making the call to this store  }
 {  routine and resetting the ofGrafVersion flag after the call.             }
 {---------------------------------------------------------------------------}
@@ -4135,11 +4258,13 @@ BEGIN
        End;
      evKeyDown: Begin                                 { KEYDOWN EVENT }
        Case Event.KeyCode Of
-         kbTab: Begin                                 { TAB KEY }
+         kbDown, kbRight, kbTab:
+         Begin
            FocusNext(False);                          { Select next view }
            ClearEvent(Event);                         { Clear the event }
          End;
-         kbShiftTab: Begin                            { SHIFT TAB KEY }
+         kbUp, kbLeft, kbShiftTab:
+         Begin
            FocusNext(True);                           { Select prior view }
            ClearEvent(Event);                         { Clear the event }
          End;
@@ -4158,6 +4283,20 @@ BEGIN
    Min.Y := MinWinSize.Y;                             { Set min y size }
 END;
 
+{--TWindow------------------------------------------------------------------}
+{  CalcBounds -> Platforms DOS/DPMI/WIN/NT/OS2 - Updated 27jan2026 M        }
+{---------------------------------------------------------------------------}
+PROCEDURE TWindow.CalcBounds (Var Bounds: TRect; Delta: TPoint);
+VAR WinBounds : TRect;
+BEGIN
+  { Need to change ZoomRect as well. It is not great to assign new bounds
+    to ZoomRect directly in CalcBounds, but there is not much options. }
+  GetBounds(WinBounds);                   { Save current bounds }
+  SetBounds(ZoomRect);                    { Set ZoomRect as bounds }
+  inherited CalcBounds (ZoomRect,Delta);  { New bounds for ZoomRect }
+  SetBounds(WinBounds);                   { Restore bounds }
+  inherited CalcBounds (Bounds,Delta);    { Calc new bounds }
+END;
 
 
 {--TView--------------------------------------------------------------------}
@@ -4332,7 +4471,9 @@ begin
        G:=p^.Owner;
        if (G^.buffer<>Nil) then
         begin
-          BufPos:=G^.size.x * staticVar2.y + x1;
+          { find view position on global screen, }
+          { use ScreenWidth for that             }
+          BufPos:={G^.size.x} ScreenWidth * staticVar2.y + x1;
           SrcPos:=x1 - staticVar2.offset;
           l:=x2-x1;
           if (shadowCounter=0) then
@@ -4595,7 +4736,12 @@ var
     if Mode and dmLimitHiX <> 0 then P.X := Min(P.X, Limits.B.X - S.X);
     if Mode and dmLimitHiY <> 0 then P.Y := Min(P.Y, Limits.B.Y - S.Y);
     R.Assign(P.X, P.Y, P.X + S.X, P.Y + S.Y);
+    LockScreenUpdate; { don't update the screen yet }
+    if Owner<>nil then Owner^.Lock;
     Locate(R);
+    if Owner<>nil then Owner^.UnLock;
+    UnLockScreenUpdate;
+    DrawScreenBuf(false);
   end;
 
   procedure Change(DX, DY: Sw_Integer);

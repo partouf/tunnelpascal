@@ -21,7 +21,7 @@ begin
     P.Directory:=ADirectory;
 {$endif ALLPACKAGES}
     P.Version:='3.3.1';
-    P.OSes:=  [atari,emx,gba,go32v2,msdos,nativent,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,win32,win64,wince,freertos,wasi]+AllUnixOSes -[QNX]+AllAmigaLikeOSes;
+    P.OSes:=  [atari,emx,gba,go32v2,msdos,nativent,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,win32,win64,wince,freertos,wasip1,wasip1threads]+AllUnixOSes -[QNX]+AllAmigaLikeOSes;
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [android];
     P.SourcePath.Add('src');
@@ -30,6 +30,8 @@ begin
     T.Dependencies.AddUnit('job.shared');
     T:=P.Targets.AddUnit('job.js.pas',[wasm32],AllOSes);
     T.Dependencies.AddUnit('job.shared');
+    T:=P.Targets.AddUnit('job.threading.pas',[wasm32],AllOSes);
+    T.Dependencies.AddUnit('job.js');
     P.NamespaceMap:='namespaces.lst';
 {$ifndef ALLPACKAGES}
     Run;

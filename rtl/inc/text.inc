@@ -33,7 +33,7 @@ Procedure FileWriteFunc(var t:TextRec);
 var
   i : longint;
 Begin
-  { prevent unecessary system call }
+  { prevent unnecessary system call }
   if t.BufPos=0 then
     exit;
   i:=Do_Write(t.Handle,t.Bufptr,t.BufPos);
@@ -229,14 +229,12 @@ Begin
   TextRec(t).bufpos:=0;
   TextRec(t).bufend:=0;
 
-{$ifdef FPC_HAS_CPSTRING}
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
   { if no codepage is yet assigned then assign default ansi codepage }
   TextRec(t).CodePage:=TranslatePlaceholderCP(TextRec(t).CodePage);
 {$else FPC_HAS_FEATURE_ANSISTRINGS}
   TextRec(t).CodePage:=0;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
-{$endif FPC_HAS_CPSTRING}
   FileFunc(TextRec(t).OpenFunc)(TextRec(t));
   { reset the mode to closed when an error has occurred }
   if InOutRes<>0 then
@@ -598,7 +596,7 @@ End;
 
 function GetTextCodePage(var T: Text): TSystemCodePage;
 begin
-{$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+{$if defined(FPC_HAS_FEATURE_ANSISTRINGS)}
   GetTextCodePage:=TextRec(T).CodePage;
 {$else}
   GetTextCodePage:=0;
@@ -608,7 +606,7 @@ end;
 
 procedure SetTextCodePage(var T: Text; CodePage: TSystemCodePage);
 begin
-{$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+{$if defined(FPC_HAS_FEATURE_ANSISTRINGS)}
   TextRec(T).CodePage:=TranslatePlaceholderCP(CodePage);
 {$endif}
 end;
@@ -668,7 +666,7 @@ begin
   assign(t,paramstr(nr));
 {$else FPC_HAS_FEATURE_COMMANDARGS}
   { primitive workaround for targets supporting no command line arguments,
-    invent some file name, try to avoid complex procedures like concating strings which might
+    invent some file name, try to avoid complex procedures like concatenating strings which might
     pull-in bigger parts of the rtl }
   assign(t,chr((nr mod 16)+65));
 {$endif FPC_HAS_FEATURE_COMMANDARGS}
@@ -684,7 +682,7 @@ begin
     assign(t,paramstr(nr));
 {$else FPC_HAS_FEATURE_COMMANDARGS}
   { primitive workaround for targets supporting no command line arguments,
-    invent some file name, try to avoid complex procedures like concating strings which might
+    invent some file name, try to avoid complex procedures like concatenating strings which might
     pull-in bigger parts of the rtl }
   assign(t,chr((nr mod 16)+65));
 {$endif FPC_HAS_FEATURE_COMMANDARGS}
@@ -819,7 +817,7 @@ procedure Write_Str(Len : Longint;var f : Text;const s : shortString); iocheck; 
 
 { provide local access to write_str_iso }
 procedure Write_Str_Iso(Len : Longint;var f : Text;const s : shortString); iocheck; [external name 'FPC_WRITE_TEXT_SHORTSTR_ISO'];
- 
+
 Procedure fpc_Write_Text_Pchar_as_Array(Len : Longint;var f : Text;const s : array of ansichar; zerobased: boolean = true); iocheck; compilerproc;
 var
   ArrayLen : longint;
@@ -931,7 +929,7 @@ begin
           fpc_WriteBlanks(f,Len-SLen);
         if SLen > 0 then
           begin
-            {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+            {$if defined(FPC_HAS_FEATURE_ANSISTRINGS)}
             if TextRec(f).CodePage<>TranslatePlaceholderCP(StringCodePage(S)) then
               begin
                 a:=fpc_AnsiStr_To_AnsiStr(S,TextRec(f).CodePage);
@@ -965,11 +963,7 @@ begin
         SLen:=Length(s);
         If Len>SLen Then
           fpc_WriteBlanks(f,Len-SLen);
-        {$ifdef FPC_HAS_CPSTRING}
         WideStringManager.Unicode2AnsiMoveProc(PUnicodeChar(S),a,TextRec(f).CodePage,SLen);
-        {$else}
-        a:=s;
-        {$endif FPC_HAS_CPSTRING}
         { length(a) can be > slen, e.g. after utf-16 -> utf-8 }
         fpc_WriteBuffer(f,PAnsiChar(a)^,Length(a));
       end;
@@ -997,11 +991,7 @@ begin
         SLen:=Length(s);
         If Len>SLen Then
           fpc_WriteBlanks(f,Len-SLen);
-        {$ifdef FPC_HAS_CPSTRING}
         widestringmanager.Wide2AnsiMoveProc(PWideChar(s), a, TextRec(f).CodePage, SLen);
-        {$else}
-        a:=s;
-        {$endif}
         { length(a) can be > slen, e.g. after utf-16 -> utf-8 }
         fpc_WriteBuffer(f,PAnsiChar(a)^,Length(a));
       end;
@@ -1386,11 +1376,7 @@ Begin
   If TextRec(t).BufPos>=TextRec(t).BufSize Then
     FileFunc(TextRec(t).InOutFunc)(TextRec(t));
   { a widechar can be translated into more than a single ansichar }
-  {$ifdef FPC_HAS_CPSTRING}
   widestringmanager.Wide2AnsiMoveProc(@c,a,TextRec(t).CodePage,1);
-  {$else}
-  a:=c;
-  {$endif}
   fpc_WriteBuffer(t,PAnsiChar(a)^,Length(a));
 End;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
@@ -1810,7 +1796,7 @@ End;
 
 
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-Procedure fpc_Read_Text_AnsiStr(var f : Text;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); [public, alias: 'FPC_READ_TEXT_ANSISTR']; iocheck; compilerproc;
+Procedure fpc_Read_Text_AnsiStr(var f : Text;out s : RawByteString;cp : TSystemCodePage); [public, alias: 'FPC_READ_TEXT_ANSISTR']; iocheck; compilerproc;
 var
   slen,len : SizeInt;
 Begin
@@ -1823,15 +1809,13 @@ Begin
   Until len<255;
   // Set actual length
   SetLength(s,Slen);
-  {$ifdef FPC_HAS_CPSTRING}
   SetCodePage(s,TextRec(f).CodePage,false);
   cp:=TranslatePlaceholderCP(cp);
   if cp<>TextRec(f).CodePage then
     s:=fpc_AnsiStr_To_AnsiStr(s,cp);
-  {$endif FPC_HAS_CPSTRING}
 End;
 
-Procedure fpc_Read_Text_AnsiStr_Intern(var f : Text;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); [external name 'FPC_READ_TEXT_ANSISTR'];
+Procedure fpc_Read_Text_AnsiStr_Intern(var f : Text;out s : RawByteString;cp : TSystemCodePage); [external name 'FPC_READ_TEXT_ANSISTR'];
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
 
@@ -1841,13 +1825,9 @@ var
   s: RawByteString;
 Begin
   // all standard input is assumed to be ansi-encoded
-  fpc_Read_Text_AnsiStr_Intern(f,s{$ifdef FPC_HAS_CPSTRING},DefaultSystemCodePage{$endif FPC_HAS_CPSTRING});
+  fpc_Read_Text_AnsiStr_Intern(f,s,DefaultSystemCodePage);
   // Convert to unicodestring
-  {$ifdef FPC_HAS_CPSTRING}
   widestringmanager.Ansi2UnicodeMoveProc(PAnsiChar(s),StringCodePage(s),us,Length(s));
-  {$else}
-  us:=s;
-  {$endif}
 End;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
@@ -1857,13 +1837,9 @@ var
   s: RawByteString;
 Begin
   // all standard input is assumed to be ansi-encoded
-  fpc_Read_Text_AnsiStr_Intern(f,s{$ifdef FPC_HAS_CPSTRING},DefaultSystemCodePage{$endif FPC_HAS_CPSTRING});
+  fpc_Read_Text_AnsiStr_Intern(f,s,DefaultSystemCodePage);
   // Convert to widestring
-  {$ifdef FPC_HAS_CPSTRING}
   widestringmanager.Ansi2WideMoveProc(PAnsiChar(s),StringCodePage(s),ws,Length(s));
-  {$else}
-  ws:=s;
-  {$endif}
 End;
 {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
 
@@ -1886,9 +1862,12 @@ procedure fpc_Read_Text_Char_intern(var f : Text; out c: AnsiChar); iocheck; [ex
 
 function fpc_GetBuf_Text(var f : Text) : pansichar; iocheck; compilerproc;
 Begin
-  Result:=@TextRec(f).Bufptr^[TextRec(f).BufEnd];
   if TextRec(f).mode=fmOutput then
-    exit;
+    begin
+      Result:=@TextRec(f).Bufptr^[TextRec(f).BufPos];
+      exit;
+    end;
+  Result:=@TextRec(f).Bufptr^[TextRec(f).BufEnd];
   If not CheckRead(f) then
     exit;
   If TextRec(f).BufPos>=TextRec(f).BufEnd Then
@@ -1920,11 +1899,7 @@ Begin
         else
           begin
             { valid code point -> convert to widestring}
-            {$ifdef FPC_HAS_CPSTRING}
             widestringmanager.Ansi2WideMoveProc(@str[0],TextRec(f).CodePage,ws,i+1);
-            {$else}
-            widestringmanager.Ansi2WideMoveProc(@str[0],DefaultSystemCodePage,ws,i+1);
-            {$endif}
             { has to be exactly one widechar }
             if length(ws)=1 then
               begin
@@ -2553,7 +2528,7 @@ begin
   t.mode:=fmOutput;
   t.OpenFunc:=nil;
   t.CloseFunc:=nil;
-{$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+{$if defined(FPC_HAS_FEATURE_ANSISTRINGS)}
   t.CodePage:=TranslatePlaceholderCP(cp);
 {$endif}
 end;
@@ -2664,7 +2639,7 @@ begin
   t.mode:=fmInput;
   t.OpenFunc:=nil;
   t.CloseFunc:=nil;
-{$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+{$if defined(FPC_HAS_FEATURE_ANSISTRINGS)}
   t.CodePage:=TranslatePlaceholderCP(cp);
   {$endif}
   PSizeInt(@t.userdata[BytesReadIndex])^:=0;
@@ -2763,14 +2738,14 @@ begin
     fmInput :
       begin
         TextRec(f).InOutFunc:=@FileReadFunc;
-      {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_WIDESTRINGS)}
+      {$if defined(FPC_HAS_FEATURE_WIDESTRINGS)}
         TextRec(f).CodePage:=WideStringManager.GetStandardCodePageProc(scpConsoleInput);
       {$endif}
       end;
     fmOutput :
       begin
         TextRec(f).InOutFunc:=@FileWriteFunc;
-        {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_WIDESTRINGS)}
+        {$if defined(FPC_HAS_FEATURE_WIDESTRINGS)}
         TextRec(f).CodePage:=WideStringManager.GetStandardCodePageProc(scpConsoleOutput);
       {$endif}
         if Do_Isdevice(hdl) then

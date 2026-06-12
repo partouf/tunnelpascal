@@ -57,7 +57,7 @@ Reads type information from 'FileName' and converts it in a freepascal binding u
 contents of the unit is returned as the function result.
 Returns in 'sUnitName' the unit name with '.pas' extension.
 Appends to 'slDependencies' the filenames of the additional typelibs needed.
-If bActiveX is true an ActiveXContainer descendant is created with the evenual OnEvent hooks
+If bActiveX is true an ActiveXContainer descendant is created with the eventual OnEvent hooks
 If bActiveX is false and an event source is found an TEventSink descendant is created with the OnEvent hooks
 
 By default, the type library is extracted from the first resource of type ITypeLib.
@@ -400,7 +400,7 @@ begin
         FUses.Add('stdole2');
         end;
       end
-    else if (LowerCase(sl)<>LowerCase(UnitName)) and (FUses.IndexOf(sl)=-1) then
+    else if (not SameText(sl,UnitName)) and (FUses.IndexOf(sl)=-1) then
       begin  // add dependency
       // find source in registry key HKEY_CLASSES_ROOT\TypeLib\GUID\version\0\win32
       bIsExternalDecl:=true;
@@ -481,7 +481,7 @@ var
   BL : array[0..99] of TBstr;
   cnt:LongWord;
   TD: TYPEDESC;
-  bPropHasParam,bIsFunction,bParamByRef:boolean;
+  bPropHasParam,bIsFunction,bParamByRef,bFoldHResult:boolean;
   VD: lpVARDESC;
   aPropertyDefs:array of TPropertyDef;
   Propertycnt,iType:integer;
@@ -756,6 +756,22 @@ begin
           AddToHeader('//  Warning: renamed property ''%s'' in %s to ''%s''',[BstrName,iname,sMethodName]);
         bPropHasParam:=(((FD^.invkind=INVOKE_PROPERTYGET) and (FD^.cParams>0)) or (FD^.cParams>1))
             and ((FD^.lprgelemdescParam[0].paramdesc.wParamFlags and PARAMFLAG_FIN) = PARAMFLAG_FIN) ;
+
+        sType:=TypeToString(TI,FD^.elemdescFunc.tdesc);
+
+        // do we have HRESULT as result, and one VAR parameter with RETVAL flag ?
+        bFoldHResult:=(uppercase(stype)='HRESULT') and (
+                           (FD^.cParams=1) and
+                           ((FD^.lprgelemdescParam[0].paramdesc.wParamFlags and (PARAMFLAG_FOUT+PARAMFLAG_FRETVAL)) = (PARAMFLAG_FOUT+PARAMFLAG_FRETVAL))
+                           );
+
+
+        if bFoldHResult then  // then fold property with safecall getter to have correct type and convention
+           begin
+             sType:=TypeToString(TI,FD^.lprgelemdescParam[0].tdesc.lptdesc^);
+             sConv:='Safecall';
+           end;
+
         if (FD^.memid=0) and  bPropHasParam then sl:=' default;' else sl:='';
         sPropParam:='';
         sPropParam2:='';
@@ -846,7 +862,7 @@ begin
                 end;
               end;
             tmp:='   procedure Set_%s(%s %s:%s); %s;'#13#10;
-            if not bParamByRef then 
+            if not bParamByRef then
               Modifier:='const'
             else
               Modifier:='var';

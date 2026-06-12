@@ -220,8 +220,8 @@ implementation
 
     destructor TBinaryenAssembler.Destroy;
       begin
-        InstrWriter.free;
-        asmfiles.free;
+        FreeAndNil(InstrWriter);
+        FreeAndNil(asmfiles);
         inherited destroy;
       end;
 
@@ -283,13 +283,13 @@ implementation
                         ((hp1.fileinfo.line<infile.maxlinebuf) or (InlineLevel>0)) then
                        begin
                          if (hp1.fileinfo.line<>0) and
-                            ((infile.linebuf^[hp1.fileinfo.line]>=0) or (InlineLevel>0)) then
+                            ((infile.linebuf[hp1.fileinfo.line]>=0) or (InlineLevel>0)) then
                            writer.AsmWriteLn(asminfo^.comment+'['+tostr(hp1.fileinfo.line)+'] '+
                              fixline(infile.GetLineStr(hp1.fileinfo.line)));
                          { set it to a negative value !
                          to make that is has been read already !! PM }
-                         if (infile.linebuf^[hp1.fileinfo.line]>=0) then
-                           infile.linebuf^[hp1.fileinfo.line]:=-infile.linebuf^[hp1.fileinfo.line]-1;
+                         if (infile.linebuf[hp1.fileinfo.line]>=0) then
+                           infile.linebuf[hp1.fileinfo.line]:=-infile.linebuf[hp1.fileinfo.line]-1;
                        end;
                    end;
                   lastfileinfo:=hp1.fileinfo;
@@ -590,7 +590,7 @@ implementation
          idtxt  : 'BINARYEN';
          asmbin : 'wasm-as';
          asmcmd : '$ASM $EXTRAOPT';
-         supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
          flags : [];
          labelprefix : 'L';
          labelmaxlen : -1;

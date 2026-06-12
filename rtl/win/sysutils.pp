@@ -50,7 +50,7 @@ uses
 {$DEFINE HAS_FILEGETDATETIMEINFO}
 
 {$DEFINE HAS_INVALIDHANDLE}
-const 
+const
   INVALID_HANDLE_VALUE = {$IFDEF FPC_DOTTEDUNITS}WinApi.{$ENDIF}Windows.INVALID_HANDLE_VALUE;
 
 // this target has an fileflush implementation, don't include dummy
@@ -115,7 +115,7 @@ implementation
 {$ENDIF FPC_DOTTEDUNITS}
 
 
-var 
+var
   FindExInfoDefaults : TFINDEX_INFO_LEVELS = FindExInfoStandard;
   FindFirstAdditionalFlags : DWord = 0;
 
@@ -157,33 +157,20 @@ function GetFileVersion(const AFileName:Ansistring):Cardinal;
     { useful only as long as we don't need to touch different stack pages }
     buf : array[0..3071] of byte;
     bufp : pointer;
-    fn : string;
     valsize,
     size : DWORD;
-    h : DWORD;
     valrec : PVSFixedFileInfo;
   begin
     result:=$fffffff;
-    fn:=AFileName;
-    UniqueString(fn);
-    size:=GetFileVersionInfoSizeA(PAnsiChar(fn),@h);
+    size:=GetFileVersionInfoSizeA(PAnsiChar(AFileName),nil);
+    bufp:=@buf;
     if size>sizeof(buf) then
-      begin
-        getmem(bufp,size);
-        try
-          if GetFileVersionInfoA(PAnsiChar(fn),h,size,bufp) then
-            if VerQueryValue(bufp,'\',valrec,valsize) then
-              result:=valrec^.dwFileVersionMS;
-        finally
-          freemem(bufp);
-        end;
-      end
-    else
-      begin
-        if GetFileVersionInfoA(PAnsiChar(fn),h,size,@buf) then
-          if VerQueryValue(@buf,'\',valrec,valsize) then
-            result:=valrec^.dwFileVersionMS;
-      end;
+      bufp:=getmem(size);
+    if GetFileVersionInfoA(PAnsiChar(AFileName),0,size,bufp) then
+      if VerQueryValue(bufp,'\',valrec,valsize) then
+        result:=valrec^.dwFileVersionMS;
+    if bufp<>@buf then
+      freemem(bufp);
   end;
 
 function GetFileVersion(const AFileName:UnicodeString):Cardinal;
@@ -191,33 +178,20 @@ function GetFileVersion(const AFileName:UnicodeString):Cardinal;
     { useful only as long as we don't need to touch different stack pages }
     buf : array[0..3071] of byte;
     bufp : pointer;
-    fn : unicodestring;
     valsize,
     size : DWORD;
-    h : DWORD;
     valrec : PVSFixedFileInfo;
   begin
     result:=$fffffff;
-    fn:=AFileName;
-    UniqueString(fn);
-    size:=GetFileVersionInfoSizeW(pwidechar(fn),@h);
+    size:=GetFileVersionInfoSizeW(PUnicodeChar(AFileName),nil);
+    bufp:=@buf;
     if size>sizeof(buf) then
-      begin
-        getmem(bufp,size);
-        try
-          if GetFileVersionInfoW(pwidechar(fn),h,size,bufp) then
-            if VerQueryValue(bufp,'\',valrec,valsize) then
-              result:=valrec^.dwFileVersionMS;
-        finally
-          freemem(bufp);
-        end;
-      end
-    else
-      begin
-        if GetFileVersionInfoW(pwidechar(fn),h,size,@buf) then
-          if VerQueryValueW(@buf,'\',valrec,valsize) then
-            result:=valrec^.dwFileVersionMS;
-      end;
+      bufp:=getmem(size);
+    if GetFileVersionInfoW(PUnicodeChar(AFileName),0,size,bufp) then
+      if VerQueryValue(bufp,'\',valrec,valsize) then
+        result:=valrec^.dwFileVersionMS;
+    if bufp<>@buf then
+      freemem(bufp);
   end;
 
 {$define HASCREATEGUID}
@@ -511,7 +485,7 @@ begin
                 @PBuffer^.PathBufferSym[PBuffer^.PrintNameOffset div SizeOf(WCHAR)],
                 PBuffer^.PrintNameLength div SizeOf(WCHAR));
               if (PBuffer^.Flags and SYMLINK_FLAG_RELATIVE) <> 0 then
-                SymLinkRec.TargetName := ExpandFileName(ExtractFilePath(FileName) + SymLinkRec.TargetName);
+                SymLinkRec.TargetName := ExpandFileName(ExtractFilePath(ExcludeTrailingPathDelimiter(FileName)) + SymLinkRec.TargetName);
             end;
           end;
 
@@ -544,7 +518,7 @@ end;
 
 function FileGetSymLinkTarget(const FileName: UnicodeString; out SymLinkRec: TUnicodeSymLinkRec): Boolean;
 begin
-  Result := FileGetSymLinkTargetInt(FileName, SymLinkRec, True) = slrOk;
+  Result := FileGetSymLinkTargetInt(FileName, SymLinkRec, False) = slrOk;
 end;
 
 
@@ -665,9 +639,9 @@ Var
 begin
   Result:='';
   FillChar(Buf,MAX_PATH+1,0);
-  if Not FileExists(aLink,False) then 
+  if Not FileExists(aLink,False) then
     exit;
-  if not CheckWin32Version(6, 0) or not(assigned(GetFinalPathNameByHandle)) then 
+  if not CheckWin32Version(6, 0) or not(assigned(GetFinalPathNameByHandle)) then
     exit;
   Attrs:=GetFileAttributes(PAnsiChar(aLink));
   if (Attrs=INVALID_FILE_ATTRIBUTES) or ((Attrs and faSymLink)=0) then
@@ -681,8 +655,8 @@ begin
     exit;
   try
     Len:=GetFinalPathNameByHandle(aHandle,@Buf,MAX_PATH,VOLUME_NAME_NT);
-    If Len<=0 then 
-      exit; 
+    If Len<=0 then
+      exit;
     Result:=StrPas(PAnsiChar(@Buf));
   finally
     CloseHandle(aHandle);
@@ -727,19 +701,19 @@ begin
   Result := False;
   SetLastError(ERROR_SUCCESS);
   FN:=FileName;
-  if Not GetFileAttributesExW(PWideChar(FileName), GetFileExInfoStandard, @Data) then
+  if Not GetFileAttributesExW(PWideChar(FN), GetFileExInfoStandard, @Data) then
     exit;
   if ((Data.dwFileAttributes and faSymlink)=faSymlink) then
     begin
     if FollowLink then
       begin
       FN:=FollowSymlink(FileName);
-      if FN='' then 
-        exit; 
+      if FN='' then
+        exit;
       if not GetFileAttributesExW(PWideChar(FN), GetFileExInfoStandard, @Data) then
         exit;
       end;
-    end;     
+    end;
   DateTime.Data:=Data;
   Result:=True;
 end;
@@ -1018,7 +992,7 @@ type
 var
   GetTimeZoneInformationForYear:TGetTimeZoneInformationForYear=nil;
 
-function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean; out Offset: Integer): Boolean;
+function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean; out Offset: Integer; Out IsDST : boolean): Boolean;
 var
   Year: Integer;
 const
@@ -1079,12 +1053,16 @@ begin
       DSTStart := DSTStart + (TZInfo.Bias+TZInfo.StandardBias)/MinsPerDay;
       DSTEnd := DSTEnd + (TZInfo.Bias+TZInfo.DaylightBias)/MinsPerDay;
     end;
-    if (DSTStart<=DateTime) and (DateTime<DSTEnd) then
+    IsDST:=(DSTStart<=DateTime) and (DateTime<DSTEnd);
+    if isDst then
       Offset := TZInfo.Bias+TZInfo.DaylightBias
     else
       Offset := TZInfo.Bias+TZInfo.StandardBias;
   end else // no DST
+    begin
     Offset := TZInfo.Bias;
+    IsDST := False;
+    end;
   Result := True;
 end;
 
@@ -1383,7 +1361,7 @@ begin
         E:=LeadByte[i+1];
         end;
       end;
-    end;   
+    end;
 end;
 
 
@@ -1716,7 +1694,7 @@ begin
     GetDiskFreeSpaceEx:=TGetDiskFreeSpaceEx(GetProcAddress(kernel32dll,'GetDiskFreeSpaceExA'));
   if Win32MajorVersion<6 then
      FindExInfoDefaults := FindExInfoStandard; // also searches SFNs. XP only.
-  if (Win32MajorVersion>=6) and (Win32MinorVersion>=1) then 
+  if (Win32MajorVersion>=6) and (Win32MinorVersion>=1) then
     FindFirstAdditionalFlags := FIND_FIRST_EX_LARGE_FETCH; // win7 and 2008R2+
   // GetTimeZoneInformationForYear is supported only on Vista and newer
   if (kernel32dll<>0) and (Win32MajorVersion>=6) then
@@ -1916,7 +1894,7 @@ function Win32CompareTextUnicodeString(const s1, s2 : UnicodeString) : PtrInt;
   end;
 
 
-{ there is a similiar procedure in the system unit which inits the fields which
+{ there is a similar procedure in the system unit which inits the fields which
   are relevant already for the system unit }
 procedure InitWin32Widestrings;
   begin

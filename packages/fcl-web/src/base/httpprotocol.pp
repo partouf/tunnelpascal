@@ -13,7 +13,7 @@
 
  **********************************************************************}
 {$IFNDEF FPC_DOTTEDUNITS}
-unit httpprotocol;
+unit HTTPProtocol;
 {$ENDIF FPC_DOTTEDUNITS}
 
 {$mode objfpc}{$H+}
@@ -22,10 +22,10 @@ interface
 
 {$IFDEF FPC_DOTTEDUNITS}
 uses
-  System.Classes, System.SysUtils;
+  System.Classes, System.SysUtils, System.DateUtils;
 {$ELSE FPC_DOTTEDUNITS}
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, DateUtils;
 {$ENDIF FPC_DOTTEDUNITS}
 
 Type
@@ -148,13 +148,20 @@ Const
                     HeaderTransferEncoding, HeaderUpgrade , HeaderUserAgent, HeaderVary,
                     HeaderVia, HeaderWarning, HeaderWWWAuthenticate);
 
+Type
+   THTTPUnsafeChar = Byte;
+   THTTPUnsafeChars = set of THTTPUnsafeChar;
+
 Function HeaderName(AHeader : THeader) : String;
 Function HeaderType(AHeader : String) : THeader;
 Function HTTPDecode(const AStr: String): String;
+Function HTTPDecode(const AStr: String; aPlusAsSpaces : Boolean): String;
+Function HTTPEncode(const AStr: String; aUnsafeChars : THTTPUnsafeChars; aSpacesAsPlus : Boolean): String;
 Function HTTPEncode(const AStr: String): String;
 Function IncludeHTTPPathDelimiter(const AStr: String): String;
 Function ExcludeHTTPPathDelimiter(const AStr: String): String;
 Function GetHTTPStatusText (ACode: Cardinal; aUppercase : Boolean = False) : String;
+Function ParseHTTPDateTime (const aTimestamp: String) : TDateTime;
 
 implementation
 
@@ -174,6 +181,12 @@ end;
 
 function HTTPDecode(const AStr: String): String;
 
+begin
+  Result:=HTTPDecode(aStr,True);
+end;
+
+Function HTTPDecode(const AStr: String; aPlusAsSpaces : Boolean): String;
+
 var
   S,SS, R : PChar;
   H : String[3];
@@ -191,7 +204,10 @@ begin
   while (S-SS)<L do
     begin
     case S^ of
-      '+': R^ := ' ';
+      '+': if aPlusAsSpaces then
+             R^:=' '
+           else
+             R^:='+';
       '%': begin
            Inc(S);
            if ((S-SS)<L) then
@@ -209,7 +225,9 @@ begin
                  Val(H,PByte(R)^,C);
                  If (C<>0) then
                    R^:=' ';
-                 end;
+                 end
+               else
+                 R^:=' '
                end;
              end;
            end;
@@ -222,13 +240,7 @@ begin
   SetLength(Result,R-PChar(Result));
 end;
 
-function HTTPEncode(const AStr: String): String;
-
-const
-  HTTPAllowed = ['A'..'Z','a'..'z',
-                 '*','@','.','_','-',
-                 '0'..'9',
-                 '$','!','''','(',')'];
+function DoHTTPEncode(const AStr: String; HTTPAllowed : THTTPUnsafeChars; aSpacesAsPlus : Boolean): String;
 
 var
   SS,S,R: PChar;
@@ -246,10 +258,15 @@ begin
   SS:=S; // Avoid #0 limit !!
   while ((S-SS)<L) do
     begin
-    if S^ in HTTPAllowed then
+    if Ord(S^) in HTTPAllowed then
       R^:=S^
     else if (S^=' ') then
-      R^:='+'
+      begin
+      if aSpacesAsPlus then
+        R^:='+'
+      else
+        R^:=' '
+      end
     else
       begin
       R^:='%';
@@ -264,6 +281,27 @@ begin
     end;
   SetLength(Result,R-PChar(Result));
 end;
+
+const
+  OrdHTTPAllowed = [Ord('A')..Ord('Z'),Ord('a')..Ord('z'),
+                    Ord('*'),Ord('@'),Ord('.'),Ord('_'),Ord('-'),
+                    Ord('0')..Ord('9'),
+                    Ord('$'),Ord('!'),Ord(''''),Ord('('),Ord(')')];
+  OrdDelphiHTTPAllowed = OrdHTTPAllowed + [Ord('%')];
+
+function HTTPEncode(const AStr: String): String;
+
+begin
+  // Backwards compatible: % is not allowed.
+  Result:=DoHTTPEncode(aStr,OrdHTTPAllowed,True);
+end;
+
+Function HTTPEncode(const AStr: String; aUnsafeChars : THTTPUnsafeChars; aSpacesAsPlus : Boolean): String;
+
+begin
+  Result:=DoHTTPEncode(aStr,OrdDelphiHTTPAllowed-aUnsafeChars,aSpacesAsPlus);
+end;
+
 
 function IncludeHTTPPathDelimiter(const AStr: String): String;
 
@@ -351,6 +389,82 @@ begin
   end;
   If aUpperCase then
     Result:=Uppercase(Result);
+end;
+
+function ParseHTTPDateTime(const aTimestamp: String): TDateTime;
+
+var
+  S : String;
+  Y,Mon,D,H,Min,Sec : Word;
+  P : integer;
+
+  Procedure Skip(var aPos: integer);
+  var
+    Len : integer;
+  begin
+    Len:=Length(S);
+    While (aPos<=Len) and (S[aPos] in [' ',',','-',':']) do
+      Inc(aPos);
+  end;
+
+  Function GetNum(var aPos: integer) : integer;
+  var
+    Len : Integer;
+  begin
+    Result:=0;
+    Len:=Length(S);
+    While (aPos<=Len) and (S[aPos] in ['0'..'9']) do
+      begin
+      Result:=(Result*10)+ Ord(S[aPos])-Ord('0');
+      Inc(aPos);
+      end;
+    Skip(aPos);
+  end;
+
+  Function GetMonth(var aPos: integer) : integer;
+  var
+    len,i : integer;
+    month : String[3];
+  begin
+    Result:=0;
+    Month:='';
+    SetLength(Month,3);
+    Len:=Length(s);
+    For I:=1 to 3 do
+      begin
+      if aPos<=Len then
+        Month[i]:=S[aPos];
+      Inc(aPos);
+      end;
+    Skip(aPos);
+    Result:=0;
+    I:=1;
+    While (Result=0) and (I<=12) do
+      begin
+      if SameText(Month,HTTPMonths[i]) then
+        Result:=I;
+      inc(I);
+      end;
+  end;
+
+begin
+  S:=aTimeStamp;
+  P:=Pos(',',S);
+  if P>0 then
+    Delete(S,1,P);
+  P:=Pos('GMT',S);
+  if P>0 then
+    SetLength(S,P-1);
+  S:=Trim(S);
+  P:=1;
+  D:=GetNum(P);
+  Mon:=GetMonth(P);
+  Y:=GetNum(P);
+  H:=GetNum(P);
+  Min:=GetNum(P);
+  Sec:=GetNum(P);
+  if not TryEncodeDateTime(Y,Mon,D,H,Min,Sec,0,Result) then
+    Result:=0;
 end;
 
 end.

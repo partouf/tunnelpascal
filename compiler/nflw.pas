@@ -88,6 +88,9 @@ interface
 {$ifdef state_tracking}
           function track_state_pass(exec_known:boolean):boolean;override;
 {$endif}
+          function simplify(forinline: boolean): tnode;override;
+
+          function internalsimplify(forinline: boolean): tnode;
        end;
        twhilerepeatnodeclass = class of twhilerepeatnode;
 
@@ -103,7 +106,7 @@ interface
        tifnodeclass = class of tifnode;
 
        tfornode = class(tloopnode)
-          { if count isn divisable by unrolls then
+          { if count isn't divisible by unrolls then
             the for loop must jump to this label to get the correct
             number of executions }
           entrylabel,
@@ -199,7 +202,7 @@ interface
        end;
        tgotonodeclass = class of tgotonode;
 
-       tlabelnode = class(tunarynode)
+       tlabelnode = class(tnode)
           exceptionblock : integer;
           { when copying trees, this points to the newly created copy of a label }
           copiedto : tlabelnode;
@@ -304,9 +307,9 @@ implementation
     {$ifdef i8086}
       cpuinfo,
     {$endif i8086}
-    {$if defined(xtensa) or defined(i386)}
+    {$if defined(xtensa) or defined(i386) or defined(riscv)}
       cpuinfo,
-    {$endif defined(xtensa) or defined(i386)}
+    {$endif defined(xtensa) or defined(i386) or defined(riscv)}
       cgbase,procinfo
       ;
 
@@ -553,7 +556,7 @@ implementation
       var
         loopstatement, loopbodystatement: tstatementnode;
         loopvar, stringvar: ttempcreatenode;
-        stringindex, loopbody, forloopnode: tnode;
+        stringindex, loopbody, forloopnode, fromn, ton: tnode;
       begin
         { result is a block of statements }
         result:=internalstatements(loopstatement);
@@ -585,9 +588,20 @@ implementation
         { add the actual statement to the loop }
         addstatement(loopbodystatement,hloopbody);
 
+        if tstringdef(expr.resultdef).stringtype=st_shortstring then
+          begin
+            fromn:=genintconstnode(1);
+            ton:=cinlinenode.create(in_length_x,false,ctemprefnode.create(stringvar));
+          end
+        else
+          begin
+             fromn:=cinlinenode.createintern(in_low_x,false,ctemprefnode.create(stringvar));
+             ton:= cinlinenode.create(in_high_x,false,ctemprefnode.create(stringvar));
+           end;
+
         forloopnode:=cfornode.create(ctemprefnode.create(loopvar),
-          cinlinenode.createintern(in_low_x,false,ctemprefnode.create(stringvar)),
-          cinlinenode.create(in_high_x,false,ctemprefnode.create(stringvar)),
+          fromn,
+          ton,
           loopbody,
           false);
 
@@ -655,8 +669,18 @@ implementation
               end
             else
               begin
-                lowbound:=cinlinenode.create(in_low_x,false,ctemprefnode.create(arrayvar));
-                highbound:=cinlinenode.create(in_high_x,false,ctemprefnode.create(arrayvar));
+                { Iterating through slice }
+                if (expression.nodetype=vecn) and (tvecnode(expression).right.nodetype=rangen) then
+                  begin
+                    lowbound:=trangenode(tvecnode(expression).right).left.getcopy;
+                    highbound:=trangenode(tvecnode(expression).right).right.getcopy;
+                    expression:=tvecnode(expression).left.getcopy;
+                  end
+                else
+                  begin
+                    lowbound:=cinlinenode.create(in_low_x,false,ctemprefnode.create(arrayvar));
+                    highbound:=cinlinenode.create(in_high_x,false,ctemprefnode.create(arrayvar));
+                  end;
               end;
 
             addstatement(loopstatement,arrayvar);
@@ -672,8 +696,18 @@ implementation
               end
             else
               begin
-                lowbound:=cinlinenode.create(in_low_x,false,expression.getcopy);
-                highbound:=cinlinenode.create(in_high_x,false,expression.getcopy);
+                { Iterating through slice }
+                if (expression.nodetype=vecn) and (tvecnode(expression).right.nodetype=rangen) then
+                  begin
+                    lowbound:=trangenode(tvecnode(expression).right).left.getcopy;
+                    highbound:=trangenode(tvecnode(expression).right).right.getcopy;
+                    expression:=tvecnode(expression).left.getcopy;
+                  end
+                else
+                  begin
+                    lowbound:=cinlinenode.create(in_low_x,false,expression.getcopy);
+                    highbound:=cinlinenode.create(in_high_x,false,expression.getcopy);
+                  end;
               end;
           end;
 
@@ -726,7 +760,9 @@ implementation
             result:=cnothingnode.create;
             // free unused nodes
             hloopvar.free;
+            hloopvar := nil;
             hloopbody.free;
+            hloopbody := nil;
             exit;
           end;
         { result is a block of statements }
@@ -907,7 +943,9 @@ implementation
               begin
                 result:=cerrornode.create;
                 hloopvar.free;
+                hloopvar := nil;
                 hloopbody.free;
+                hloopbody := nil;
                 MessagePos1(expr.fileinfo,parser_e_for_in_loop_cannot_be_used_for_the_type,expr.resultdef.typename);
               end
             else
@@ -924,7 +962,9 @@ implementation
                 if result.nodetype=errorn then
                   begin
                     hloopvar.free;
+                    hloopvar := nil;
                     hloopbody.free;
+                    hloopbody := nil;
                   end;
               end
             { "for x in [] do ..." always results in a never executed loop body }
@@ -963,7 +1003,9 @@ implementation
                       begin
                         result:=cerrornode.create;
                         hloopvar.free;
+                        hloopvar := nil;
                         hloopbody.free;
+                        hloopbody := nil;
                         MessagePos1(expr.fileinfo,sym_e_no_enumerator_move,pd.returndef.typename);
                       end
                     else
@@ -973,7 +1015,9 @@ implementation
                           begin
                             result:=cerrornode.create;
                             hloopvar.free;
+                            hloopvar := nil;
                             hloopbody.free;
+                            hloopbody := nil;
                             MessagePos1(expr.fileinfo,sym_e_no_enumerator_current,pd.returndef.typename);
                           end
                         else
@@ -1004,7 +1048,9 @@ implementation
                       begin
                         result:=cerrornode.create;
                         hloopvar.free;
+                        hloopvar := nil;
                         hloopbody.free;
+                        hloopbody := nil;
                         MessagePos1(expr.fileinfo,sym_e_no_enumerator,expr.resultdef.typename);
                       end;
                     end;
@@ -1027,6 +1073,7 @@ implementation
             n:=tfornode(n).makewhileloop;
             do_firstpass(n);
             hp.Free;
+            hp := nil;
           end;
       end;
 
@@ -1053,7 +1100,9 @@ implementation
 
       begin
          t1.free;
+         t1 := nil;
          t2.free;
+         t2 := nil;
          inherited destroy;
       end;
 
@@ -1264,12 +1313,13 @@ implementation
 
     constructor Twhilerepeatnode.create(l,r:Tnode;tab,cn:boolean);
       begin
-          inherited create(whilerepeatn,l,r,nil,nil);
-          if tab then
-              include(loopflags, lnf_testatbegin);
-          if cn then
-              include(loopflags,lnf_checknegate);
+        inherited create(whilerepeatn,l,r,nil,nil);
+        if tab then
+          include(loopflags, lnf_testatbegin);
+        if cn then
+          include(loopflags,lnf_checknegate);
       end;
+
 
     function twhilerepeatnode.pass_typecheck:tnode;
       var
@@ -1289,7 +1339,8 @@ implementation
              t:=Tunarynode(left);
              left:=Tunarynode(left).left;
              t.left:=nil;
-             t.destroy;
+             t.free;
+             t := nil;
              {Symdif operator, in case you are wondering:}
              loopflags:=loopflags >< [lnf_checknegate];
            end;
@@ -1312,6 +1363,47 @@ implementation
             not(nf_internal in left.flags) and
             assigned(right) then
            CGMessagePos(right.fileinfo,cg_w_unreachable_code);
+      end;
+
+
+    function twhilerepeatnode.internalsimplify(forinline : boolean) : tnode;
+      var
+        p: tnode;
+      begin
+        result:=nil;
+        { convert while i>0 do ... dec(i); to if i>0 then repeat ... dec(i) until i=0; ? }
+        if (cs_opt_level2 in current_settings.optimizerswitches) and
+          { while loop? }
+          (lnf_testatbegin in loopflags) and not(lnf_checknegate in loopflags) then
+          begin
+            if ((left.nodetype=gtn) and (taddnode(left).left.nodetype=loadn) and is_constintnode(taddnode(left).right) and
+              (tordconstnode(taddnode(left).right).value=0)) then
+              begin
+                p:=GetLastStatement(right);
+                if assigned(p) and (p.nodetype=inlinen) and (tinlinenode(p).inlinenumber=in_dec_x) and
+                  taddnode(left).left.isequal(tcallparanode(tinlinenode(p).left).left) and
+                  not(assigned(tcallparanode(tinlinenode(p).left).right)) then
+                  begin
+                    result:=cifnode.create_internal(left.getcopy,cwhilerepeatnode.create(left,right,false,true),nil);
+                    left:=nil;
+                    right:=nil;
+                    twhilerepeatnode(tifnode(result).right).left.nodetype:=equaln;
+                  end;
+              end
+            else if not(cs_opt_size in current_settings.optimizerswitches) and
+              (node_complexity(left)<=3) then
+              begin
+                result:=cifnode.create_internal(left.getcopy,cwhilerepeatnode.create(left,right,false,false),nil);
+                left:=nil;
+                right:=nil;
+              end;
+          end;
+      end;
+
+
+    function twhilerepeatnode.simplify(forinline : boolean) : tnode;
+      begin
+        result:=internalsimplify(false);
       end;
 
 
@@ -1475,7 +1567,8 @@ implementation
                 code:=right.getcopy;
                 if code.track_state_pass(exec_known) then
                     track_state_pass:=true;
-                code.destroy;
+                code.free;
+                code := nil;
             end;
         repeat
             condition:=left.getcopy;
@@ -1484,7 +1577,7 @@ implementation
             factval:=aktstate.find_fact(left);
             if factval<>nil then
                 begin
-                    condition.destroy;
+                    condition.free;
                     condition:=factval.getcopy;
                     change:=true;
                 end;
@@ -1515,8 +1608,10 @@ implementation
                     code.track_state_pass(false);
                     done:=true;
                 end;
-            code.destroy;
-            condition.destroy;
+            code.free;
+            code := nil;
+            condition.free;
+            condition := nil;
             firsttest:=false;
         until done;
         {The loop condition is also known, for example:
@@ -1539,7 +1634,7 @@ implementation
             aktstate.store_fact(condition,
              cordconstnode.create(byte(checknegate),pasbool1type,true))
         else
-            condition.destroy;
+            condition.free; // no nil needed
     end;
 {$endif}
 
@@ -1559,14 +1654,19 @@ implementation
         include(flags,nf_internal);
       end;
 
+{$ifndef llvm}
+  {$if defined(i386) or defined(x86_64) or defined(xtensa) or defined(aarch64) or defined(riscv)}
+    {$define HAS_MINMAX_INTRINSICS}
+  {$endif defined(i386) or defined(x86_64) or defined(xtensa) or defined(aarch64) or defined(riscv)}
+{$endif llvm}
 
     function tifnode.internalsimplify(warn: boolean) : tnode;
-{$if defined(i386) or defined(x86_64) or defined(xtensa) or defined(aarch64)}
+{$if defined(HAS_MINMAX_INTRINSICS)}
       var
         thenstmnt, elsestmnt: tnode;
         in_nr: tinlinenumber;
         paratype: tdef;
-{$endif defined(i386) or defined(x86_64) or defined(xtensa) or defined(aarch64)}
+{$endif defined(HAS_MINMAX_INTRINSICS)}
       begin
         result:=nil;
         { optimize constant expressions }
@@ -1593,8 +1693,7 @@ implementation
                     CGMessagePos(right.fileinfo,cg_w_unreachable_code);
                end;
           end;
-{$ifndef llvm}
-{$if defined(i386) or defined(x86_64) or defined(xtensa) or defined(aarch64)}
+{$if defined(HAS_MINMAX_INTRINSICS)}
         { use min/max intrinsic?
           convert (with <op> being <, >, >=, <=
           if a <op> b then
@@ -1639,6 +1738,15 @@ implementation
           (is_single(tassignmentnode(thenstmnt).left.resultdef) or is_double(tassignmentnode(thenstmnt).left.resultdef) or
            is_32bitint(tassignmentnode(thenstmnt).left.resultdef) or is_64bitint(tassignmentnode(thenstmnt).left.resultdef)) and
 {$endif defined(aarch64)}
+{$if defined(riscv)}
+          { RiscV fmin/fmax/fminm/fmaxm uses the IEEE semantics (2008 or 201x) of min/max regarding NaN (using either
+            always the NaN or non-NaN operand instead of the second one in case on is NaN), so
+            we can use them only when fast math is on }
+          ((cs_opt_fastmath in current_settings.optimizerswitches) and
+           ((is_single(tassignmentnode(thenstmnt).left.resultdef) and (CPURV_HAS_F in cpu_capabilities[current_settings.cputype])) or
+            (is_double(tassignmentnode(thenstmnt).left.resultdef) and (CPURV_HAS_D in cpu_capabilities[current_settings.cputype])) or
+            (is_quad(tassignmentnode(thenstmnt).left.resultdef) and (CPURV_HAS_Q in cpu_capabilities[current_settings.cputype])))) and
+{$endif defined(riscv)}
           (
           { the right size of the assignment in the then clause must either }
 
@@ -1722,8 +1830,7 @@ implementation
                 );
             node_reset_pass1_write(Result);
           end;
-{$endif defined(i386) or defined(x86_64) or defined(xtensa) or defined(aarch64)}
-{$endif llvm}
+{$endif defined(HAS_MINMAX_INTRINSICS)}
       end;
 
 
@@ -1797,15 +1904,15 @@ implementation
 
     destructor tfornode.destroy;
       begin
-         if assigned(loopiteration) then
-           loopiteration.destroy;
+         loopiteration.free;
+         loopiteration := nil;
          inherited destroy;
       end;
 
     function tfornode.simplify(forinline : boolean) : tnode;
       begin
         result:=nil;
-        { Can we spare the first comparision? }
+        { Can we spare the first comparison? }
         if (t1.nodetype=ordconstn) and
            (right.nodetype=ordconstn) and
            (
@@ -1905,15 +2012,6 @@ implementation
       end;
 
 
-    function checkcontinue(var n:tnode; arg: pointer): foreachnoderesult;
-      begin
-        if n.nodetype=continuen then
-          result:=fen_norecurse_true
-        else
-          result:=fen_false;
-      end;
-
-
     function tfornode.makewhileloop : tnode;
       var
         ifblock,loopblock : tblocknode;
@@ -1980,7 +2078,7 @@ implementation
 
         { check if we can pred/succ the loop var at the end }
         do_loopvar_at_end:=(lnf_dont_mind_loopvar_on_exit in loopflags) and
-          is_constnode(right) and is_constnode(t1) and
+          is_constnode(t1) and
           { we cannot test at the end after the pred/succ if the to value is equal to the max./min. value of the counter variable
             because we either get an overflow/underflow or the compiler removes the check as it never can be true }
 
@@ -1996,7 +2094,7 @@ implementation
           not((lnf_backward in loopflags) and (get_ordinal_value(t1)=countermin)) and
           { neither might the for loop contain a continue statement as continue in a while loop would skip the increment at the end
             of the loop, this could be overcome by replacing the continue statement with an pred/succ; continue sequence }
-          not(foreachnodestatic(t2,@checkcontinue,nil)) and
+          not(has_node_of_type(t2,[continuen])) and
           { if the loop is unrolled and there is a jump into the loop,
             then we can't do the trick with incrementing the loop var only at the
             end
@@ -2101,7 +2199,16 @@ implementation
             else
               toexpr:=t1.getcopy;
 
-            addstatement(ifstatements,cwhilerepeatnode.create(caddnode.create_internal(cond,leftcopy,toexpr),loopblock,false,true));
+            { checking against zero might improve the generated assembler,
+              doing this transformation for other values is normally not beneficial }
+            if do_loopvar_at_end and (lnf_backward in loopflags) and is_constintnode(toexpr) and (tordconstnode(toexpr).value=1) and
+              (countermin<tordconstnode(toexpr).value) then
+              begin
+                tordconstnode(toexpr).value:=tordconstnode(toexpr).value-1;
+                addstatement(ifstatements,cwhilerepeatnode.create(caddnode.create_internal(equaln,leftcopy,toexpr),loopblock,false,true))
+              end
+            else
+              addstatement(ifstatements,cwhilerepeatnode.create(caddnode.create_internal(cond,leftcopy,toexpr),loopblock,false,true));
 
             if usefromtemp then
               fromexpr:=ctemprefnode.create(fromtemp)
@@ -2127,7 +2234,7 @@ implementation
           end
         else
           begin
-            { is a simple comparision for equality sufficient? }
+            { is a simple comparison for equality sufficient? }
             if do_loopvar_at_end and (lnf_backward in loopflags) and (lnf_counter_not_used in loopflags) then
               addstatement(ifstatements,cwhilerepeatnode.create(caddnode.create_internal(equaln,leftcopy,
                 caddnode.create_internal(subn,t1.getcopy,cordconstnode.create(1,t1.resultdef,false))),loopblock,false,true))
@@ -2437,7 +2544,7 @@ implementation
 
     constructor tlabelnode.create(l:tnode;alabsym:tlabelsym);
       begin
-        inherited create(labeln,l);
+        inherited create(labeln);
         exceptionblock:=current_exceptblock;
         labsym:=alabsym;
         { Register labelnode in labelsym }
@@ -2492,9 +2599,6 @@ implementation
     function tlabelnode.pass_typecheck:tnode;
       begin
         result:=nil;
-        { left could still be unassigned }
-        if assigned(left) then
-         typecheckpass(left);
         resultdef:=voidtype;
       end;
 
@@ -2507,8 +2611,6 @@ implementation
         if not (nf_internal in flags) then
           include(current_procinfo.flags,pi_has_label);
 
-        if assigned(left) then
-          firstpass(left);
         if (m_non_local_goto in current_settings.modeswitches) and
             { the owner can be Nil for internal labels }
             assigned(labsym.owner) and
@@ -2805,6 +2907,7 @@ implementation
         { copied nodes don't need to release the symtable }
         if assigned(excepTSymtable) then
          excepTSymtable.free;
+         excepTSymtable := nil;
         inherited destroy;
       end;
 

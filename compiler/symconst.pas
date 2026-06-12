@@ -34,7 +34,7 @@ const
   bit_alignment     = -2;
   mac68k_alignment  = -3;
 
-  { if you change one of the following contants, }
+  { if you change one of the following constants, }
   { you have also to change the typinfo unit}
   { and the rtl/i386,template/rttip.inc files    }
   tkUnknown  = 0;
@@ -428,7 +428,7 @@ type
     po_far,
     { near/far call model is specified explicitly (x86 only) }
     po_hasnearfarcallmodel,
-    { the procedure never returns, this information is usefull for dfa }
+    { the procedure never returns, this information is useful for dfa }
     po_noreturn,
     { procvar is a function reference }
     po_is_function_ref,
@@ -585,7 +585,8 @@ type
     oo_has_new_destructor,{ the object/class declares a destructor (apart from potentially inherting one from the parent) }
     oo_is_funcref,        { interface has a single Invoke method that can be directly called }
     oo_is_invokable,      { interface that is invokable like a function }
-    oo_is_capturer        { the class is the capturer for anonymous functions (or converted proc(var)s) }
+    oo_is_capturer,        { the class is the capturer for anonymous functions (or converted proc(var)s) }
+    oo_inherits_not_specialized { the class inherits from a not yet specialized type }
   );
   tobjectoptions=set of tobjectoption;
 
@@ -613,7 +614,8 @@ type
     ppo_implements,
     ppo_enumerator_current,       { implements current property for enumerator }
     ppo_overrides,                { overrides ancestor property }
-    ppo_dispid_write              { no longer used }
+    ppo_default_is_single,        { default is a single (required for correct PPU put/load) }
+    ppo_default_is_set            { default is a set (required for correct PPU put/load) }
   );
   tpropertyoptions=set of tpropertyoption;
 
@@ -713,7 +715,7 @@ type
     sto_has_operator,     { contains at least one operator overload }
     sto_needs_init_final, { the symtable needs initialization and/or
                             finalization of variables/constants }
-    sto_has_non_trivial_init { contains at least on managed type that is not
+    sto_has_non_trivial_init { contains at least one managed type that is not
                                initialized to zero (e.g. a record with management
                                operators }
   );
@@ -895,7 +897,7 @@ const
 {$ifndef jvm}
    inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has_protected,
                 oo_has_strictprotected,oo_has_strictprivate,oo_has_constructor,oo_has_destructor,
-                oo_can_have_published];
+                oo_can_have_published,oo_inherits_not_specialized];
 {$else not jvm}
 { constructors are not inherited in Java }
 inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has_protected,
@@ -938,7 +940,7 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
        '$1byte$',
        '$emptyrec',
        '$llvmstruct$',
-       '$vmt_TStringMesssageTable$',
+       '$vmt_TStringMessageTable$',
        '$vmt_msgint_table_entries$',
        '$vmt_tmethod_name_table$',
        '$vmt_intern_msgint_table$',
@@ -1047,7 +1049,7 @@ inherited_objectoptions : tobjectoptions = [oo_has_virtual,oo_has_private,oo_has
       { suffix for indirect symbols (AB_INDIRECT) }
       suffix_indirect = '$indirect';
 
-    { TProcTypeOption string identifiers for error messsages }
+    { TProcTypeOption string identifiers for error messages }
     ProcTypeOptionKeywords: array[tproctypeoption] of ShortString = (
       'potype_none',        {potype_none}
       'program initialization',{potype_proginit}

@@ -58,19 +58,17 @@ function fpc_pwidechar_length(p:pwidechar):sizeint; compilerproc;
 procedure fpc_chararray_to_shortstr(out res : shortstring;const arr: array of AnsiChar; zerobased: boolean = true); compilerproc;
 procedure fpc_shortstr_to_chararray(out res: array of AnsiChar; const src: ShortString); compilerproc;
 
-Function  fpc_shortstr_Copy(const s:shortstring;index:SizeInt;count:SizeInt):shortstring;compilerproc{$ifndef VER3_0}:fpc_in_copy_x{$endif VER3_0};
-function  fpc_char_copy(c:AnsiChar;index : SizeInt;count : SizeInt): shortstring;compilerproc{$ifndef VER3_0}:fpc_in_copy_x{$endif VER3_0};
-{$ifndef VER3_0}
+Function  fpc_shortstr_Copy(const s:shortstring;index:SizeInt;count:SizeInt):shortstring;compilerproc:fpc_in_copy_x;
+function  fpc_char_copy(c:AnsiChar;index : SizeInt;count : SizeInt): shortstring;compilerproc:fpc_in_copy_x;
 Procedure fpc_shortstr_delete(var s:shortstring;index:SizeInt;count:SizeInt); compilerproc:fpc_in_delete_x_y_z;
 Procedure fpc_shortstr_insert(const source:shortstring;var s:shortstring;index:SizeInt); compilerproc:fpc_in_insert_x_y_z;
 Procedure fpc_shortstr_insert_char(source:AnsiChar;var s:shortstring;index:SizeInt); compilerproc:fpc_in_insert_x_y_z;
-{$endif VER3_0}
 
 {$ifdef FPC_HAS_FEATURE_DYNARRAYS}
-{$if defined(VER3_0) or defined(VER3_2)}
+{$if defined(VER3_2)}
 function fpc_dynarray_copy(psrc : pointer;ti : pointer;
     lowidx,count:tdynarrayindex) : fpc_stub_dynarray;compilerproc;
-{$endif VER3_0 or VER3_2}
+{$endif VER3_2}
 function fpc_array_to_dynarray_copy(psrc : pointer;ti : pointer;
     lowidx,count,maxcount:tdynarrayindex;
     elesize : sizeint;
@@ -83,13 +81,11 @@ procedure fpc_dynarray_decr_ref(var p : pointer;ti : pointer); compilerproc;
 procedure fpc_dynarray_incr_ref(p : pointer); compilerproc;
 procedure fpc_dynarray_setlength(var p : pointer;pti : pointer; dimcount : sizeint;dims : pdynarrayindex); compilerproc;
 procedure fpc_dynarray_assign(var dest : pointer; src : pointer; ti: pointer); compilerproc;
-{$ifndef VER3_0}
 { no reference to the Delete()/Insert() intrinsic, due to typeinfo parameter }
 procedure fpc_dynarray_delete(var p : pointer;source,count : SizeInt;pti : pointer);compilerproc;
 procedure fpc_dynarray_insert(var p : pointer;source : SizeInt;data : pointer;count : SizeInt;pti : pointer);compilerproc;
 procedure fpc_dynarray_concat_multi(var dest : pointer; pti: pointer; const sarr:array of pointer); compilerproc;
 procedure fpc_dynarray_concat(var dest : pointer; pti: pointer; const src1,src2 : pointer); compilerproc;
-{$endif VER3_0}
 {$endif FPC_HAS_FEATURE_DYNARRAYS}
 
 { Str() support }
@@ -105,14 +101,14 @@ procedure fpc_ShortStr_Currency(c : currency; len,f : SizeInt; out s : shortstri
 procedure fpc_chararray_sint(v : valsint;len : SizeInt;out a : array of AnsiChar); compilerproc;
 procedure fpc_chararray_uint(v : valuint;len : SizeInt;out a : array of AnsiChar); compilerproc;
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-procedure fpc_AnsiStr_sint(v : valsint; Len : SizeInt; out S : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
-procedure fpc_AnsiStr_uint(v : valuint;Len : SizeInt; out S : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
+procedure fpc_AnsiStr_sint(v : valsint; Len : SizeInt; out S : RawByteString;cp : TSystemCodePage); compilerproc; inline;
+procedure fpc_AnsiStr_uint(v : valuint;Len : SizeInt; out S : RawByteString;cp : TSystemCodePage); compilerproc; inline;
 {$ifndef FPUNONE}
-procedure fpc_AnsiStr_Float(d : ValReal;len,fr,rt : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
+procedure fpc_AnsiStr_Float(d : ValReal;len,fr,rt : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc; inline;
 {$endif}
-procedure fpc_ansistr_enum(ordinal,len:sizeint;typinfo,ord2strindex:pointer;out s:RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
-procedure fpc_ansistr_bool(b : boolean;len:sizeint;out s:RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
-procedure fpc_AnsiStr_Currency(c : currency;len,fr : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
+procedure fpc_ansistr_enum(ordinal,len:sizeint;typinfo,ord2strindex:pointer;out s:RawByteString;cp : TSystemCodePage); compilerproc; inline;
+procedure fpc_ansistr_bool(b : boolean;len:sizeint;out s:RawByteString;cp : TSystemCodePage); compilerproc; inline;
+procedure fpc_AnsiStr_Currency(c : currency;len,fr : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc; inline;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
 {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
@@ -130,8 +126,8 @@ procedure fpc_AnsiStr_Currency(c : currency;len,fr : SizeInt;out s : RawByteStri
   procedure fpc_chararray_qword(v : qword;len : SizeInt;out a : array of AnsiChar); compilerproc;
   procedure fpc_chararray_int64(v : int64;len : SizeInt;out a : array of AnsiChar); compilerproc;
   {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-  procedure fpc_ansistr_qword(v : qword;len : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
-  procedure fpc_ansistr_int64(v : int64;len : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc; inline;
+  procedure fpc_ansistr_qword(v : qword;len : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc; inline;
+  procedure fpc_ansistr_int64(v : int64;len : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc; inline;
   {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
   {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
@@ -149,8 +145,8 @@ procedure fpc_AnsiStr_Currency(c : currency;len,fr : SizeInt;out s : RawByteStri
   procedure fpc_chararray_longword(v : longword;len : SizeInt;out a : array of AnsiChar); compilerproc;
   procedure fpc_chararray_longint(v : longint;len : SizeInt;out a : array of AnsiChar); compilerproc;
   {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-  procedure fpc_ansistr_longword(v : longword;len : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
-  procedure fpc_ansistr_longint(v : longint;len : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
+  procedure fpc_ansistr_longword(v : longword;len : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc;
+  procedure fpc_ansistr_longint(v : longint;len : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc;
   {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
   {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
@@ -167,8 +163,8 @@ procedure fpc_AnsiStr_Currency(c : currency;len,fr : SizeInt;out s : RawByteStri
   procedure fpc_chararray_word(v : word;len : SizeInt;out a : array of AnsiChar); compilerproc;
   procedure fpc_chararray_smallint(v : smallint;len : SizeInt;out a : array of AnsiChar); compilerproc;
   {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-  procedure fpc_ansistr_word(v : word;len : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
-  procedure fpc_ansistr_smallint(v : smallint;len : SizeInt;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
+  procedure fpc_ansistr_word(v : word;len : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc;
+  procedure fpc_ansistr_smallint(v : smallint;len : SizeInt;out s : RawByteString;cp : TSystemCodePage); compilerproc;
   {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
   {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
@@ -302,35 +298,33 @@ Function fpc_Val_smallint_UnicodeStr (Const S : UnicodeString; out Code : ValSIn
 {$endif CPU16 or CPU8}
 
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-Procedure fpc_ansistr_decr_ref (Var S : Pointer); compilerproc; inline;
-Procedure fpc_ansistr_incr_ref (S : Pointer); compilerproc; inline;
+{ A glitch in FPC 3.2.2 prevents inline from working properly here on
+  ARM (causes a dangling pointer and hence heap corruption). }
+Procedure fpc_ansistr_decr_ref (Var S : Pointer); compilerproc; {$if FPC_FULLVERSION>30202}inline;{$ifend}
+Procedure fpc_ansistr_incr_ref (S : Pointer); compilerproc; {$if FPC_FULLVERSION>30202}inline;{$ifend}
 Procedure fpc_AnsiStr_Assign (Var DestS : Pointer;S2 : Pointer); compilerproc;
-Procedure fpc_AnsiStr_Concat (Var DestS : RawByteString;const S1,S2 : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
-Procedure fpc_AnsiStr_Concat_multi (Var DestS : RawByteString;const sarr:array of RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
+Procedure fpc_AnsiStr_Concat (Var DestS : RawByteString;const S1,S2 : RawByteString;cp : TSystemCodePage); compilerproc;
+Procedure fpc_AnsiStr_Concat_multi (Var DestS : RawByteString;const sarr:array of RawByteString;cp : TSystemCodePage); compilerproc;
 {$ifdef EXTRAANSISHORT}
 Procedure fpc_AnsiStr_ShortStr_Concat (Var S1: AnsiString; Var S2 : ShortString); compilerproc;
 {$endif EXTRAANSISHORT}
 procedure fpc_AnsiStr_To_ShortStr (out res : shortstring;const S2 : RawByteString); compilerproc;
-{$ifdef FPC_HAS_CPSTRING}
 Function fpc_AnsiStr_To_AnsiStr (const S : RawByteString;cp : TSystemCodePage): RawByteString; compilerproc;
-{$endif FPC_HAS_CPSTRING}
-Function fpc_ShortStr_To_AnsiStr (Const S2 : ShortString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): RawByteString; compilerproc;
-Function fpc_Char_To_AnsiStr(const c : AnsiChar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): RawByteString; compilerproc;
+Function fpc_ShortStr_To_AnsiStr (Const S2 : ShortString;cp : TSystemCodePage): RawByteString; compilerproc;
+Function fpc_Char_To_AnsiStr(const c : AnsiChar;cp : TSystemCodePage): RawByteString; compilerproc;
 
-Function fpc_PChar_To_AnsiStr(const p : PAnsiChar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): RawByteString; compilerproc;
-Function fpc_CharArray_To_AnsiStr(const arr: array of AnsiChar; {$ifdef FPC_HAS_CPSTRING}cp : TSystemCodePage;{$endif FPC_HAS_CPSTRING}zerobased: boolean = true): RawByteString; compilerproc;
+Function fpc_PChar_To_AnsiStr(const p : PAnsiChar;cp : TSystemCodePage): RawByteString; compilerproc;
+Function fpc_CharArray_To_AnsiStr(const arr: array of AnsiChar; cp : TSystemCodePage;zerobased: boolean = true): RawByteString; compilerproc;
 procedure fpc_ansistr_to_chararray(out res: array of AnsiChar; const src: RawByteString)compilerproc;
 Function fpc_AnsiStr_Compare(const S1,S2 : RawByteString): SizeInt; compilerproc;
 Function fpc_AnsiStr_Compare_equal(const S1,S2 : RawByteString): SizeInt; compilerproc;
 Procedure fpc_AnsiStr_RangeCheck(p : Pointer; index : SizeInt); compilerproc;
 Procedure fpc_AnsiStr_ZeroBased_RangeCheck(p : Pointer; index : SizeInt); compilerproc;
 
-Procedure fpc_AnsiStr_SetLength (Var S : RawByteString; l : SizeInt{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
-Function  fpc_ansistr_Copy (Const S : RawByteString; Index,Size : SizeInt): RawByteString;compilerproc{$ifndef VER3_0}:fpc_in_copy_x{$endif VER3_0};
-{$ifndef VER3_0}
+Procedure fpc_AnsiStr_SetLength (Var S : RawByteString; l : SizeInt;cp : TSystemCodePage); compilerproc;
+Function  fpc_ansistr_Copy (Const S : RawByteString; Index,Size : SizeInt): RawByteString;compilerproc:fpc_in_copy_x;
 Procedure fpc_ansistr_insert (const Source : RawByteString; var S : RawByteString; Index : SizeInt); compilerproc:fpc_in_insert_x_y_z; rtlproc;
 Procedure fpc_ansistr_delete (var S : RawByteString; Index,Size: SizeInt); compilerproc:fpc_in_delete_x_y_z; rtlproc;
-{$endif VER3_0}
 {$ifdef EXTRAANSISHORT}
 Function fpc_AnsiStr_ShortStr_Compare (Var S1 : Pointer; Var S2 : ShortString): SizeInt; compilerproc;
 {$endif EXTRAANSISHORT}
@@ -350,7 +344,7 @@ Procedure fpc_WideStr_Decr_Ref (Var S : Pointer); compilerproc;
 Procedure fpc_WideStr_Incr_Ref (Var S : Pointer); compilerproc;
 procedure fpc_WideStr_To_ShortStr (out res: ShortString;const S2 : WideString); compilerproc;
 Function fpc_ShortStr_To_WideStr (Const S2 : ShortString): WideString; compilerproc;
-Function fpc_WideStr_To_AnsiStr (const S2 : WideString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): AnsiString; compilerproc;
+Function fpc_WideStr_To_AnsiStr (const S2 : WideString;cp : TSystemCodePage): AnsiString; compilerproc;
 Function fpc_AnsiStr_To_WideStr (Const S2 : RawByteString): WideString; compilerproc;
 Procedure fpc_WideStr_Assign (Var S1 : Pointer;S2 : Pointer); compilerproc;
 Procedure fpc_WideStr_Concat (Var DestS : Widestring;const S1,S2 : WideString); compilerproc;
@@ -366,11 +360,9 @@ Procedure fpc_WideStr_RangeCheck(p: Pointer; index : SizeInt); compilerproc;
 Procedure fpc_WideStr_ZeroBased_RangeCheck(p: Pointer; index : SizeInt); compilerproc;
 
 Procedure fpc_WideStr_SetLength (Var S : WideString; l : SizeInt); compilerproc;
-Function  fpc_widestr_Copy (Const S : WideString; Index,Size : SizeInt) : WideString;compilerproc{$ifndef VER3_0}:fpc_in_copy_x{$endif VER3_0};
-{$ifndef VER3_0}
+Function  fpc_widestr_Copy (Const S : WideString; Index,Size : SizeInt) : WideString;compilerproc:fpc_in_copy_x;
 Procedure fpc_widestr_insert (Const Source : WideString; Var S : WideString; Index : SizeInt); compilerproc:fpc_in_insert_x_y_z;
 Procedure fpc_widestr_delete (Var S : WideString; Index,Size: SizeInt); compilerproc:fpc_in_delete_x_y_z;
-{$endif VER3_0}
 {$ifndef FPC_WINLIKEWIDESTRING}
 function fpc_widestr_Unique(Var S : Pointer): Pointer; compilerproc;
 {$endif FPC_WINLIKEWIDESTRING}
@@ -389,7 +381,7 @@ Procedure fpc_UnicodeStr_Decr_Ref (Var S : Pointer); compilerproc;
 Procedure fpc_UnicodeStr_Incr_Ref (S : Pointer); compilerproc;
 procedure fpc_UnicodeStr_To_ShortStr (out res: ShortString;const S2 : UnicodeString); compilerproc;
 Function fpc_ShortStr_To_UnicodeStr (Const S2 : ShortString): UnicodeString; compilerproc;
-Function fpc_UnicodeStr_To_AnsiStr (const S2 : UnicodeString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): AnsiString; compilerproc;
+Function fpc_UnicodeStr_To_AnsiStr (const S2 : UnicodeString;cp : TSystemCodePage): AnsiString; compilerproc;
 Function fpc_AnsiStr_To_UnicodeStr (Const S2 : RawByteString): UnicodeString; compilerproc;
 Function fpc_UnicodeStr_To_WideStr (const S2 : UnicodeString): WideString; compilerproc;
 Function fpc_WideStr_To_UnicodeStr (Const S2 : WideString): UnicodeString; compilerproc;
@@ -401,7 +393,7 @@ Function fpc_PChar_To_UnicodeStr(const p : PAnsiChar): UnicodeString; compilerpr
 Function fpc_CharArray_To_UnicodeStr(const arr: array of AnsiChar; zerobased: boolean = true): UnicodeString; compilerproc;
 procedure fpc_unicodestr_to_chararray(out res: array of AnsiChar; const src: UnicodeString); compilerproc;
 procedure fpc_WideCharArray_To_ShortStr(out res : shortstring;const arr: array of widechar; zerobased: boolean = true); compilerproc;
-Function fpc_WideCharArray_To_AnsiStr(const arr: array of widechar; {$ifdef FPC_HAS_CPSTRING}cp : TSystemCodePage;{$endif FPC_HAS_CPSTRING} zerobased: boolean = true): AnsiString; compilerproc;
+Function fpc_WideCharArray_To_AnsiStr(const arr: array of widechar; cp : TSystemCodePage; zerobased: boolean = true): AnsiString; compilerproc;
 {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
 Function fpc_WideCharArray_To_WideStr(const arr: array of widechar; zerobased: boolean = true): WideString; compilerproc;
 {$endif}
@@ -415,21 +407,19 @@ Procedure fpc_UnicodeStr_RangeCheck(p: Pointer; index : SizeInt); compilerproc;
 Procedure fpc_UnicodeStr_ZeroBased_RangeCheck(p: Pointer; index : SizeInt); compilerproc;
 
 Procedure fpc_UnicodeStr_SetLength (Var S : UnicodeString; l : SizeInt); compilerproc;
-Function  fpc_unicodestr_Copy (Const S : UnicodeString; Index,Size : SizeInt) : UnicodeString;compilerproc{$ifndef VER3_0}:fpc_in_copy_x{$endif VER3_0};
-{$ifndef VER3_0}
+Function  fpc_unicodestr_Copy (Const S : UnicodeString; Index,Size : SizeInt) : UnicodeString;compilerproc:fpc_in_copy_x;
 Procedure fpc_unicodestr_insert (Const Source : UnicodeString; Var S : UnicodeString; Index : SizeInt); compilerproc:fpc_in_insert_x_y_z;
 Procedure fpc_unicodestr_delete (Var S : UnicodeString; Index,Size: SizeInt); compilerproc:fpc_in_delete_x_y_z;
-{$endif VER3_0}
 function fpc_unicodestr_Unique(Var S : Pointer): Pointer; compilerproc;
 Function fpc_Char_To_UChar(const c : AnsiChar): UnicodeChar; compilerproc;
 Function fpc_UChar_To_Char(const c : UnicodeChar): AnsiChar; compilerproc;
 Function fpc_UChar_To_UnicodeStr(const c : UnicodeChar): UnicodeString; compilerproc;
-Function fpc_UChar_To_AnsiStr(const c : UnicodeChar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): AnsiString; compilerproc;
+Function fpc_UChar_To_AnsiStr(const c : UnicodeChar;cp : TSystemCodePage): AnsiString; compilerproc;
 function fpc_UChar_To_ShortStr(const c : WideChar): shortstring; compilerproc;
 
 Function fpc_PWideChar_To_UnicodeStr(const p : pwidechar): unicodestring; compilerproc;
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-Function fpc_PWideChar_To_AnsiStr(const p : pwidechar{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}): ansistring; compilerproc;
+Function fpc_PWideChar_To_AnsiStr(const p : pwidechar;cp : TSystemCodePage): ansistring; compilerproc;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 procedure fpc_PWideChar_To_ShortStr(out res : shortstring;const p : pwidechar); compilerproc;
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
@@ -546,7 +536,7 @@ Procedure fpc_Read_Text_ShortStr(var f : Text;out s : shortString); compilerproc
 Procedure fpc_Read_Text_PChar_As_Pointer(var f : Text; const s : PAnsiChar); compilerproc;
 Procedure fpc_Read_Text_PChar_As_Array(var f : Text;out s : array of ansichar; zerobased: boolean = false); compilerproc;
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-Procedure fpc_Read_Text_AnsiStr(var f : Text;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); compilerproc;
+Procedure fpc_Read_Text_AnsiStr(var f : Text;out s : RawByteString;cp : TSystemCodePage); compilerproc;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
 Procedure fpc_Read_Text_UnicodeStr(var f : Text;out us : UnicodeString); compilerproc;
@@ -606,13 +596,6 @@ function fpc_mod_shortint(n,z : shortint) : shortint; compilerproc;
 {$endif FPC_INCLUDE_SOFTWARE_MOD_DIV}
 
 {$ifdef FPC_INCLUDE_SOFTWARE_MUL}
-{$ifdef VER3_0}
-function fpc_mul_integer(f1,f2 : integer;checkoverflow : boolean) : integer; compilerproc;
-function fpc_mul_word(f1,f2 : word;checkoverflow : boolean) : word; compilerproc;
-function fpc_mul_longint(f1,f2 : longint;checkoverflow : boolean) : longint; compilerproc;
-function fpc_mul_dword(f1,f2 : dword;checkoverflow : boolean) : dword; compilerproc;
-{$else VER3_0}
-
 function fpc_mul_shortint(f1,f2 : shortint) : shortint; compilerproc;
 function fpc_mul_shortint_checkoverflow(f1,f2 : shortint) : shortint; compilerproc;
 function fpc_mul_byte(f1,f2 : byte) : byte; compilerproc;
@@ -625,7 +608,6 @@ function fpc_mul_longint(f1,f2 : longint) : longint; compilerproc;
 function fpc_mul_longint_checkoverflow(f1,f2 : longint) : longint; compilerproc;
 function fpc_mul_dword(f1,f2 : dword) : dword; compilerproc;
 function fpc_mul_dword_checkoverflow(f1,f2 : dword) : dword; compilerproc;
-{$endif VER3_0}
 {$endif FPC_INCLUDE_SOFTWARE_MUL}
 
 { from int64.inc }
@@ -633,15 +615,10 @@ function fpc_div_qword(n,z : qword) : qword; compilerproc;
 function fpc_mod_qword(n,z : qword) : qword; compilerproc;
 function fpc_div_int64(n,z : int64) : int64; compilerproc;
 function fpc_mod_int64(n,z : int64) : int64; compilerproc;
-{$ifdef VER3_0}
-function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword; compilerproc;
-function fpc_mul_int64(f1,f2 : int64;checkoverflow : longbool) : int64; compilerproc;
-{$else VER3_0}
 function fpc_mul_qword(f1,f2 : qword) : qword; compilerproc;
 function fpc_mul_qword_checkoverflow(f1,f2 : qword) : qword; compilerproc;
 function fpc_mul_int64(f1,f2 : int64) : int64; compilerproc;
 function fpc_mul_int64_checkoverflow(f1,f2 : int64) : int64; compilerproc;
-{$endif VER3_0}
 function fpc_mul_dword_to_qword(f1,f2 : dword) : qword; compilerproc;
 function fpc_mul_longint_to_int64(f1,f2 : longint) : int64; compilerproc;
 
@@ -669,12 +646,42 @@ procedure fpc_rol_assign_int64(var AValue : int64;const Dist : Byte);compilerpro
 procedure fpc_rol_assign_qword(var AValue : QWord;const Dist : Byte);compilerproc;
 {$endif FPC_HAS_INTERNAL_ROX_ASSIGN_QWORD}
 
-
 function fpc_popcnt_byte(AValue : Byte): Byte;compilerproc;
 function fpc_popcnt_word(AValue : Word): Word;compilerproc;
 function fpc_popcnt_dword(AValue : DWord): DWord;compilerproc;
 function fpc_popcnt_qword(AValue : QWord): QWord;compilerproc;
 
+{$if not defined(VER3_2) and not defined(CPUJVM)}
+function fpc_atomic_inc_8(var Target: shortint): shortint;compilerproc;
+function fpc_atomic_inc_16(var Target: smallint): smallint;compilerproc;
+function fpc_atomic_inc_32(var Target: longint): longint;compilerproc;
+function fpc_atomic_inc_64(var Target: int64): int64;compilerproc;
+
+function fpc_atomic_dec_8(var Target: shortint): shortint;compilerproc;
+function fpc_atomic_dec_16(var Target: smallint): smallint;compilerproc;
+function fpc_atomic_dec_32(var Target: longint): longint;compilerproc;
+function fpc_atomic_dec_64(var Target: int64): int64;compilerproc;
+
+function fpc_atomic_add_8(var Target: shortint; Value: shortint): shortint;compilerproc;
+function fpc_atomic_add_16(var Target: smallint; Value: smallint): smallint;compilerproc;
+function fpc_atomic_add_32(var Target: longint; Value: longint): longint;compilerproc;
+function fpc_atomic_add_64(var Target: int64; Value: int64): int64;compilerproc;
+
+function fpc_atomic_sub_8(var Target: shortint; Value: shortint): shortint;compilerproc;
+function fpc_atomic_sub_16(var Target: smallint; Value: smallint): smallint;compilerproc;
+function fpc_atomic_sub_32(var Target: longint; Value: longint): longint;compilerproc;
+function fpc_atomic_sub_64(var Target: int64; Value: int64): int64;compilerproc;
+
+function fpc_atomic_xchg_8(var Target: shortint; Source: shortint): shortint;compilerproc;
+function fpc_atomic_xchg_16(var Target: smallint; Source: smallint): smallint;compilerproc;
+function fpc_atomic_xchg_32(var Target: longint; Source: longint): longint;compilerproc;
+function fpc_atomic_xchg_64(var Target: int64; Source: int64): int64;compilerproc;
+
+function fpc_atomic_cmp_xchg_8(var Target: shortint; NewValue: shortint; Comparand: shortint): shortint;compilerproc;
+function fpc_atomic_cmp_xchg_16(var Target: smallint; NewValue: smallint; Comparand: smallint): smallint;compilerproc;
+function fpc_atomic_cmp_xchg_32(var Target: longint; NewValue: longint; Comparand: longint): longint;compilerproc;
+function fpc_atomic_cmp_xchg_64(var Target: int64; NewValue: int64; Comparand: int64): int64;compilerproc;
+{$endif VER3_2}
 
 {$ifndef FPUNONE}
 function fpc_abs_real(d : ValReal) : ValReal;compilerproc;
@@ -717,7 +724,7 @@ procedure fpc_dispatch_by_id(Result: Pointer; const Dispatch: pointer;DispDesc: 
 
 
 {$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
-{$if not defined(FPC_WASM_NATIVE_EXCEPTIONS) and not defined(FPC_WASM_BRANCHFUL_EXCEPTIONS)}
+{$if not defined(FPC_WASM_EXNREF_EXCEPTIONS) and not defined(FPC_WASM_LEGACY_EXCEPTIONS) and not defined(FPC_WASM_BRANCHFUL_EXCEPTIONS)}
 Function fpc_PushExceptAddr (Ft: {$ifdef CPU16}SmallInt{$else}Longint{$endif};_buf,_newaddr : pointer): PJmp_buf ; compilerproc;
 Procedure fpc_PopAddrStack; compilerproc;
 {$endif}
@@ -729,7 +736,7 @@ procedure fpc_Raiseexception (Obj : TObject; AnAddr : CodePointer; AFrame : Poin
 function fpc_PopObjectStack : TObject; compilerproc;
 function fpc_PopSecondObjectStack : TObject; compilerproc;
 Procedure fpc_ReRaise; compilerproc;
-{$if defined(FPC_WASM_NATIVE_EXCEPTIONS) or defined(FPC_WASM_BRANCHFUL_EXCEPTIONS)}
+{$if defined(FPC_WASM_EXNREF_EXCEPTIONS) or defined(FPC_WASM_LEGACY_EXCEPTIONS) or defined(FPC_WASM_BRANCHFUL_EXCEPTIONS)}
 Procedure fpc_ReRaise2; compilerproc;
 {$endif}
 Function fpc_Catches(Objtype : TClass) : TObject; compilerproc;
@@ -761,13 +768,17 @@ procedure fpc_addref_array(data,typeinfo: pointer; count: SizeInt); compilerproc
 procedure fpc_decref_array(data,typeinfo: pointer; count: sizeint); compilerproc;
 Function fpc_Copy (Src, Dest, TypeInfo : Pointer) : SizeInt; compilerproc;
 Procedure fpc_Copy_proc (Src, Dest, TypeInfo : Pointer); compilerproc; inline;
+{$ifdef FPC_MANAGED_MOVE}
+Function fpc_Copy_with_move_semantics (Src, Dest, TypeInfo : Pointer) : SizeInt; compilerproc;
+Procedure fpc_Copy_with_move_semantics_proc (Src, Dest, TypeInfo : Pointer); compilerproc; inline;
+{$endif FPC_MANAGED_MOVE}
 {$endif FPC_HAS_FEATURE_RTTI}
 
 
 {$ifdef FPC_SETBASE_USED}
-procedure fpc_varset_load(const l;sourcesize : longint;var dest;size,srcminusdstbase : ptrint); compilerproc;
+procedure fpc_varset_load(const l;sourcesize : ptrint;var dest;size,srcminusdstbase : ptrint); compilerproc;
 {$else}
-procedure fpc_varset_load(const l;sourcesize : longint;var dest;size : ptrint); compilerproc;
+procedure fpc_varset_load(const l;sourcesize : ptrint;var dest;size : ptrint); compilerproc;
 {$endif}
 procedure fpc_varset_create_element(b,size : ptrint; var data); compilerproc;
 procedure fpc_varset_set(const source;var dest; b,size : ptrint); compilerproc;
@@ -796,6 +807,7 @@ procedure fpc_rangeerror; compilerproc;
 procedure fpc_divbyzero; compilerproc;
 procedure fpc_overflow; compilerproc;
 procedure fpc_iocheck; compilerproc;
+procedure fpc_invalidpointer; compilerproc;
 {$ifndef FPC_NO_GENERIC_STACK_CHECK}
 procedure fpc_stackcheck(stack_size:SizeUInt); compilerproc;
 {$endif}
@@ -871,3 +883,7 @@ function fpc_hugeptr_cmp_normalized_ae(p1, p2: HugePointer): Boolean; compilerpr
 {$ifdef cpullvm}
 {$i llvmintr.inc}
 {$endif cpullvm}
+
+{$ifdef cpuwasm32}
+procedure fpc_wasm_invoke_helper(CodeAddress: CodePointer; Args: Pointer; Result: Pointer); compilerproc;
+{$endif cpuwasm32}

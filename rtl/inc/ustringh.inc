@@ -28,12 +28,8 @@ Function  UpCase(c:UnicodeChar):UnicodeChar;
 Function LowerCase(const s : UnicodeString) : UnicodeString;
 Function  LowerCase(c:UnicodeChar):UnicodeChar;
 
-{$ifdef VER3_0}
-Procedure Insert (Const Source : UnicodeString; Var S : UnicodeString; Index : SizeInt);
-Procedure Delete (Var S : UnicodeString; Index,Size: SizeInt);
-{$endif VER3_0}
-Procedure {$ifdef FPC_HAS_CPSTRING}fpc_setstring_unicodestr_pwidechar{$else}SetString{$endif}(Out S : UnicodeString; Buf : PUnicodeChar; Len : SizeInt); {$ifdef FPC_HAS_CPSTRING} compilerproc; {$endif FPC_HAS_CPSTRING}
-Procedure {$ifdef FPC_HAS_CPSTRING}fpc_setstring_unicodestr_pansichar{$else}SetString{$endif}(Out S : UnicodeString; Buf : PAnsiChar; Len : SizeInt); {$ifdef FPC_HAS_CPSTRING} compilerproc; {$endif FPC_HAS_CPSTRING}
+Procedure fpc_setstring_unicodestr_pwidechar(Out S : UnicodeString; Buf : PUnicodeChar; Len : SizeInt); compilerproc;
+Procedure fpc_setstring_unicodestr_pansichar(Out S : UnicodeString; Buf : PAnsiChar; Len : SizeInt); compilerproc;
 
 function WideCharToString(S : PWideChar) : UnicodeString;
 function StringToWideChar(const Src : RawByteString;Dest : PWideChar;DestSize : SizeInt) : PWideChar;
@@ -188,9 +184,9 @@ Function ToSingleByteFileSystemEncodedFileName(const Str: RawByteString): RawByt
 
 Type
   TLocaleNameToCodePageCallBack = Procedure (const localename : shortstring; out codepage : TSystemCodePage; aHandled : Boolean);
-  
+
 
 Var
   LocaleNameToCodePageCallBack : TLocaleNameToCodePageCallBack;
-  
+
 Function LocaleNameToCodePage(const localename : shortstring; out codepage : TSystemCodePage) : Boolean;

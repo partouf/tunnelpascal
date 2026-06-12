@@ -30,7 +30,7 @@
        Therefore adding new CPU targets should not change the
        values of the pre-existing targets. (CEC)
        FURTHERMORE : Make sure that this branch values, are
-       consistant with the main branch version always.
+       consistent with the main branch version always.
      *)
        tsystemcpu=
        (
@@ -85,9 +85,9 @@
      (* IMPORTANT NOTE:
        the integer value of this enum is stored in PPU
        files to recognize the target, so if you add new targets
-       allways add them at end PM
+       always add them at end PM
        FURTHERMORE : Make sure that this branch values are
-       consistant with the main branch version always. (CEC)
+       consistent with the main branch version always. (CEC)
        *)
      type
        tsystem =
@@ -206,7 +206,7 @@
              system_aarch64_darwin,     { 111 }
              system_z80_amstradcpc,     { 112 }
              system_m68k_sinclairql,    { 113 }
-             system_wasm32_wasi,        { 114 }
+             system_wasm32_wasip1,      { 114 }
              system_aarch64_freebsd,    { 115 }
              system_aarch64_embedded,   { 116 }
              system_mips64_linux,       { 117 }
@@ -214,7 +214,11 @@
              system_riscv32_freertos,   { 119 }
              system_loongarch64_linux,  { 120 }
              system_aarch64_iphonesim,  { 121 }
-             system_m68k_human68k       { 122 }
+             system_m68k_human68k,      { 122 }
+             system_mipsel_ps1,         { 123 }
+             system_wasm32_wasip1threads,{ 124 }
+             system_wasm32_wasip2,      { 125 }
+             system_powerpc64_freebsd   { 126 }
        );
 
      type
@@ -261,6 +265,7 @@
              ,as_i8086_nasm
              ,as_i8086_nasmobj
              ,as_gas_powerpc_xcoff
+             ,as_powerpc_gas_macosclassic
              ,as_arm_elf32
              ,as_i8086_omf
              ,as_clang_asdarwin        { machine code assembler in Darwin as style assembled by clang }
@@ -276,11 +281,16 @@
              ,as_z80_vasm
              ,as_z80_rel
              ,as_wasm32_wabt
+             ,as_wasm32_wasa
              ,as_wasm32_llvm_mc_v10    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 10 }
              ,as_wasm32_llvm_mc_v11    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 11 }
              ,as_wasm32_llvm_mc_v12    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 12 }
              ,as_wasm32_llvm_mc_v13    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 13 }
-             ,as_wasm32_llvm_mc        { WebAssembly code assembled by llvm-mc (llvm machine code playground) from the latest stable LLVM version (14 or later) }
+             ,as_wasm32_llvm_mc_v14    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 14 }
+             ,as_wasm32_llvm_mc_v15    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 15 }
+             ,as_wasm32_llvm_mc_v16    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 16 }
+             ,as_wasm32_llvm_mc_v17    { WebAssembly code assembled by llvm-mc (llvm machine code playground) from LLVM 17 }
+             ,as_wasm32_llvm_mc        { WebAssembly code assembled by llvm-mc (llvm machine code playground) from the latest stable LLVM version (18 or later) }
              ,as_arm_vasm
              ,as_wasm32_wasm
              ,as_clang_llvm_darwin
@@ -334,7 +344,8 @@
              ld_amstradcpc,
              ld_sinclairql,
              ld_wasi,
-             ld_human68k
+             ld_human68k,
+             ld_ps1
        );
 
        tar = (ar_none
@@ -353,14 +364,14 @@
             ,res_m68k_palmos,res_m68k_mpw
             ,res_powerpc_mpw,res_elf,res_xcoff
             ,res_win64_gorc, res_macho, res_ext
-            ,res_jvm_raw
+            ,res_jvm_raw,res_wasm
        );
 
        tresinfoflags = (res_external_file,res_arch_in_file_name
             ,res_single_file,res_no_compile);
 
        tdbg = (dbg_none
-            ,dbg_stabs,dbg_stabx,dbg_dwarf2,dbg_dwarf3,dbg_dwarf4,dbg_jasmin
+            ,dbg_stabs,dbg_stabx,dbg_dwarf2,dbg_dwarf3,dbg_dwarf4,dbg_dwarf5,dbg_jasmin
             ,dbg_codeview,dbg_llvm
        );
 
@@ -375,13 +386,14 @@
             ,abi_eabi,abi_armeb,abi_eabihf
             ,abi_old_win32_gnu
             ,abi_aarch64_darwin
-            ,abi_riscv_hf
             ,abi_riscv_ilp32
             ,abi_riscv_ilp32f
             ,abi_riscv_ilp32d
+            ,abi_riscv_ilp32e
             ,abi_riscv_lp64
             ,abi_riscv_lp64f
             ,abi_riscv_lp64d
+            ,abi_riscv_lp64q
             { stack is aligned and all room for parameters is reserved on
               entry, but depending on the calling convention, the parameters
               may still be removed by the callee (and then the stack needs to
@@ -389,6 +401,16 @@
             ,abi_i386_dynalignedstack
             ,abi_xtensa_windowed
             ,abi_xtensa_call0
+            ,abi_mips_o32
+            ,abi_mips_n32
+            ,abi_mips_o64
+            ,abi_mips_n64
+            ,abi_loongarch_lp64s
+            ,abi_loongarch_lp64f
+            ,abi_loongarch_lp64d
+            ,abi_loongarch_lp32s
+            ,abi_loongarch_lp32f
+            ,abi_loongarch_lp32d
        );
 
        tcgbackend = (

@@ -50,12 +50,12 @@ unit optconstprop;
 
       will not result in any constant propagation.
     }
-    function do_optconstpropagate(var rootnode : tnode;var changed: boolean) : tnode;
+    function do_optconstpropagate(var rootnode : tnode;out changed: boolean) : tnode;
 
   implementation
 
     uses
-      globtype, globals,
+      globtype,cdynset,globals,
       pass_1,procinfo,compinnr,
       symsym, symconst,
       nutils, nbas, ncnv, nld, nflw, ncal, ninl,
@@ -93,8 +93,8 @@ unit optconstprop;
         tree_modified4:=false;
         tree_modified5:=false;
 
-        { while it might be usefull, to use foreach to iterate all nodes, it is safer to
-          iterate manually here so we have full controll how all nodes are processed }
+        { while it might be useful, to use foreach to iterate all nodes, it is safer to
+          iterate manually here so we have full control how all nodes are processed }
 
         { We cannot analyze beyond those nodes, so we terminate to be on the safe side }
         if (n.nodetype in [addrn,derefn,asmn,casen,whilerepeatn,labeln,continuen,breakn,
@@ -106,7 +106,7 @@ unit optconstprop;
           begin
             tree_modified:=false;
 
-            { we can propage the constant in both branches because the evaluation order is not defined }
+            { we can propagate the constant in both branches because the evaluation order is not defined }
             result:=replaceBasicAssign(tassignmentnode(n).right, arg, tree_modified);
             { do not use the intuitive way result:=result and replace... because this would prevent
               replaceBasicAssign being called if the result is already false }
@@ -141,12 +141,12 @@ unit optconstprop;
                   assigned(tfornode(n).t2.optinfo) and assigned(tassignmentnode(arg).left.optinfo) then
                   begin
                     CalcDefSum(tfornode(n).t2);
-                    { the constant can propagete if is is not the counter variable ... }
+                    { the constant can propagate if is is not the counter variable ... }
                     if not(tassignmentnode(arg).left.isequal(actualtargetnode(@tfornode(n).left)^)) and
                     { if it is a temprefn or its address is not taken in case of loadn }
                       ((tassignmentnode(arg).left.nodetype=temprefn) or not(tabstractvarsym(tloadnode(tassignmentnode(arg).left).symtableentry).addr_taken)) and
                       { and no definition in the loop? }
-                      not(DFASetIn(tfornode(n).t2.optinfo^.defsum,tassignmentnode(arg).left.optinfo^.index)) then
+                      not(DynSetIn(tfornode(n).t2.optinfo^.defsum,tassignmentnode(arg).left.optinfo^.index)) then
                       begin
                         result:=replaceBasicAssign(tfornode(n).t2, arg, tree_modified3);
                         tree_modified:=tree_modified or tree_modified3;
@@ -240,6 +240,7 @@ unit optconstprop;
                     n:=tinlinenode(n).getaddsub_for_incdec;
                     Include(n.flags, nf_internal);
                     oldnode.free;
+                    oldnode := nil;
                     tree_modified:=true;
                     { do not continue, value changed, if further const. propagations are possible, this is done
                       by the next pass }
@@ -268,10 +269,17 @@ unit optconstprop;
                 result:=result and replaceBasicAssign(tcallnode(n).right, arg, tree_modified4);
                 result:=result and replaceBasicAssign(tnode(tcallnode(n).callcleanupblock), arg, tree_modified5);
                 tree_modified:=tree_modified or tree_modified2 or tree_modified3 or tree_modified4 or tree_modified5;
+
+                { If the parameters were simplified, we may be able to simplify
+                  the call node otherwise just exit to save time }
+                if not tree_modified2 then
+                  Exit;
               end
             else
-              result:=false;
-            exit;
+              begin
+                result:=false;
+                exit;
+              end;
           end
         else if n.InheritsFrom(tbinarynode) then
           begin
@@ -285,11 +293,9 @@ unit optconstprop;
             result:=replaceBasicAssign(tunarynode(n).left, arg, tree_modified);
           end;
 
-        if n.nodetype<>callparan then
+        if tree_modified and (n.nodetype<>callparan) then
           begin
-            if tree_modified then
-              exclude(n.transientflags,tnf_pass1_done);
-
+            exclude(n.transientflags,tnf_pass1_done);
             do_firstpass(n);
           end;
       end;
@@ -354,7 +360,7 @@ unit optconstprop;
                       begin
 {$ifdef DEBUG_CONSTPROP}
                         writeln('******************************* propagating ***********************************');
-                        printnode(a);
+                        printnode(output,a);
                         writeln('*******************************************************************************');
 {$endif DEBUG_CONSTPROP}
                         st2:=tstatementnode(tstatementnode(st).right);
@@ -395,23 +401,27 @@ unit optconstprop;
       end;
 
 
-    function do_optconstpropagate(var rootnode: tnode;var changed: boolean): tnode;
+    function do_optconstpropagate(var rootnode: tnode;out changed: boolean): tnode;
+      var
+        iteration_changed: Boolean;
       begin
+        changed:=false;
         repeat
+          iteration_changed:=false;
 {$ifdef DEBUG_CONSTPROP}
           writeln('************************ before constant propagation ***************************');
-          printnode(rootnode);
+          printnode(output,rootnode);
 {$endif DEBUG_CONSTPROP}
-          changed:=false;
-          foreachnodestatic(pm_postandagain, rootnode, @propagate, @changed);
-          if changed then
+          foreachnodestatic(pm_postandagain, rootnode, @propagate, @iteration_changed);
+          changed:=changed or iteration_changed;
+          if iteration_changed then
             doinlinesimplify(rootnode);
 {$ifdef DEBUG_CONSTPROP}
           writeln('************************ after constant propagation ***************************');
-          printnode(rootnode);
+          printnode(output,rootnode);
           writeln('*******************************************************************************');
 {$endif DEBUG_CONSTPROP}
-        until not(cs_opt_level3 in current_settings.optimizerswitches) or not(changed);
+        until not(cs_opt_level3 in current_settings.optimizerswitches) or not(iteration_changed);
         result:=rootnode;
       end;
 

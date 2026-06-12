@@ -102,7 +102,7 @@ interface
       begin
         newsize:=def_cgsize(resultdef);
 
-        { insert range check if not explicit or interally generated conversion }
+        { insert range check if not explicit or internally generated conversion }
         if (flags*[nf_explicit,nf_internal])=[] then
           hlcg.g_rangecheck(current_asmdata.CurrAsmList,left.location,left.resultdef,resultdef);
 
@@ -149,7 +149,7 @@ interface
           begin
             { no special loading is required, reuse current location }
 
-            { that's not true, if you go from signed to unsiged or   }
+            { that's not true, if you go from signed to unsigned or  }
             { vice versa, you need sign extension/removal if the     }
             { value is already in a register (at least for archs     }
             { which don't have 8bit register components etc) (JM)    }
@@ -826,7 +826,25 @@ interface
               end
             else
 {$endif cpufloatintregmov}
+{$ifdef cpumm}
+            if (resultdef.typ<>floatdef) and (location.loc in [LOC_CMMREGISTER,LOC_MMREGISTER]) and (resultdef.size<=sizeof(AInt)) then
+              begin
+                location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+                location.register:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
+                cg.a_loadmm_reg_intreg(current_asmdata.CurrAsmList,left.location.size,location.size,left.location.register,location.register, nil);
+              end
+            else
+{$endif cpumm}
               hlcg.location_force_mem(current_asmdata.CurrAsmList,location,left.resultdef);
+{$ifdef cpumm}
+          end
+        else if (resultdef.typ=floatdef) and (location.loc in [LOC_REGISTER,LOC_CREGISTER]) then
+          begin
+            { Take advantage of direct moves from int to MM if supported }
+            location_reset(location,LOC_MMREGISTER,def_cgsize(resultdef));
+            location.register:=cg.getmmregister(current_asmdata.CurrAsmList,location.size);
+            cg.a_loadmm_intreg_reg(current_asmdata.CurrAsmList,left.location.size,location.size,left.location.register,location.register, nil);
+{$endif cpumm}
           end;
         { but use the new size, but we don't know the size of all arrays }
         newsize:=def_cgsize(resultdef);

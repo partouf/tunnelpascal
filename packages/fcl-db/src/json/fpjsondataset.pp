@@ -229,7 +229,6 @@ type
     FEditRow : TJSONData;
     FRowType: TJSONRowType;
     FDeletedRows: TFPList;
-    procedure AddToRows(AValue: TJSONArray);
     procedure AppendToIndexes;
     procedure CreateIndexes;
     procedure SetMetaData(AValue: TJSONObject);
@@ -263,6 +262,7 @@ type
     procedure SetBookmarkFlag(Buffer: TRecordBuffer; Value: TBookmarkFlag); override;
     procedure SetBookmarkData(Buffer: TRecordBuffer; Data: Pointer); override;
     function GetRecordCount: Integer; override;
+    procedure AddToRows(AValue: TJSONArray);
     procedure SetRecNo(Value: Integer); override;
     function GetRecNo: Integer; override;
   Protected
@@ -354,7 +354,7 @@ type
   end;
 
   EJSONDataset = Class(EDatabaseError);
-  
+
 implementation
 
 {$IFDEF FPC_DOTTEDUNITS}
@@ -897,7 +897,7 @@ end;
 
 procedure TBaseJSONDataSet.InternalClose;
 begin
-  // disconnet and destroy field objects
+  // disconnect and destroy field objects
   BindFields (False);
   if DefaultFields then
     DestroyFields;
@@ -1300,6 +1300,8 @@ begin
     FFieldMapper.SetJSONDataForField(Field,FRows[FCurrentIndex[FCurrent]],F)
   else
     FFieldMapper.SetJSONDataForField(Field,FEditRow,F);
+  if not (State in [dsCalcFields, dsFilter, dsNewValue]) then
+    DataEvent(deFieldChange, PtrInt(Field));
 end;
 
 procedure TBaseJSONDataSet.SetBookmarkFlag(Buffer: TRecordBuffer;
@@ -1313,7 +1315,7 @@ begin
   if (Value < 0) or (Value > FCurrentIndex.Count) then
     raise EJSONDataset.CreateFmt('SetRecNo: index %d out of range',[Value]);
   FCurrent := Value - 1;
-  Resync([]); 
+  Resync([]);
   DoAfterScroll;
 end;
 

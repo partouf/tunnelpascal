@@ -25,7 +25,9 @@ unit aoptcpu;
 
 {$i fpcdefs.inc}
 
+{$ifdef EXTDEBUG}
 {$define DEBUG_AOPTCPU}
+{$endif EXTDEBUG}
 
   Interface
 
@@ -162,6 +164,8 @@ unit aoptcpu;
                 A_OR,
                 A_TEST:
                   Result:=PostPeepholeOptTestOr(p);
+                A_RET:
+                  Result:=PostPeepholeOptRET(p);
                 else
                   ;
               end;

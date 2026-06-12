@@ -2,7 +2,7 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
   {$ifdef unix}
   cthreads,
   {$endif}
@@ -13,7 +13,7 @@ procedure add_pas2js(const ADirectory: string);
 
 Const
   DefaultOSes = AllUnixOSes+AllBSDOSes+AllWindowsOSes-[WinCE];
-  AllPas2JSOses = DefaultOSes+[wasi];
+  AllPas2JSOses = DefaultOSes+[wasip1,wasip1threads];
 
 Var
   P : TPackage;
@@ -45,9 +45,9 @@ begin
     P.Dependencies.Add('webidl');
     PT:=P.Targets.AddProgram('pas2js.pp');
     PT:=P.Targets.AddLibrary('pas2jslib.pp');
-    PT:=P.Targets.AddUnit('dirwatch.pp',DefaultOSes);
+    PT:=P.Targets.AddUnit('dirw.pp',DefaultOSes);
     PT:=P.Targets.AddUnit('httpcompiler.pp',DefaultOSes);
-    PT.Dependencies.AddUnit('dirwatch');
+    PT.Dependencies.AddUnit('dirw');
     PT:=P.Targets.AddProgram('compileserver.pp',DefaultOSes);
     PT.Dependencies.AddUnit('httpcompiler');
     PT:=P.Targets.AddProgram('webidl2pas.pp');

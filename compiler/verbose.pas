@@ -47,7 +47,7 @@ interface
     type
       tmsgqueueevent = procedure(const s:TMsgStr;v,w:longint) of object;
 
-    const
+    var
       msgfilename : string = '';
 
     procedure SetRedirectFile(const fn:string);
@@ -65,6 +65,7 @@ interface
     procedure SetErrorFlags(const s:string);
     procedure GenerateError;
     procedure Internalerror(i:longint);noreturn;
+    procedure Internalerror(i:longint; const s : ansistring);noreturn;
     procedure Comment(l:longint;s:ansistring);
     function  MessageStr(w:longint):TMsgStr;
     procedure Message(w:longint;onqueue:tmsgqueueevent=nil);
@@ -114,7 +115,7 @@ interface
 implementation
 
     uses
-      comphook,fmodule,constexp,globals,cfileutl,switches;
+      comphook,fmodule,constexp,globals,cfileutl,switches,cclasses;
 
 {****************************************************************************
                        Extra Handlers for default compiler
@@ -173,13 +174,28 @@ implementation
       end;
 
     procedure RestoreLocalVerbosity(pstate : pmessagestaterecord);
+      { apply the whole stack of message/verbosity changes }
+      var
+        msgset : thashset;
+        msgfound : boolean;
       begin
         msg^.ResetStates;
+        msgset:=thashset.create(10,false,false);
         while assigned(pstate) do
           begin
-            SetMessageVerbosity(pstate^.value,pstate^.state);
+            {$IFDEF DEBUG_MESSAGESTATE}
+            if assigned(pstate^.owner) and (pstate^.owner<>current_module) then
+              Internalerror(2026030702);
+            {$ENDIF}
+            msgfound:=false;
+            { only apply the newest message state }
+            if not assigned(msgset.findoradd(@pstate^.value,sizeof(pstate^.value),msgfound)) or
+                not msgfound then
+              SetMessageVerbosity(pstate^.value,pstate^.state);
             pstate:=pstate^.next;
           end;
+        msgset.free;
+        msgset := nil;
       end;
 
     procedure FreeLocalVerbosity(var fstate : pmessagestaterecord);
@@ -189,7 +205,11 @@ implementation
         while assigned(pstate) do
           begin
             unaligned(fstate):=pstate^.next;
-            freemem(pstate);
+            {$IFDEF DEBUG_MESSAGESTATE}
+            if assigned(pstate^.owner) and (pstate^.owner<>current_module) then
+              Internalerror(2026030703);
+            {$ENDIF}
+            dispose(pstate);
             pstate:=unaligned(fstate);
           end;
       end;
@@ -211,7 +231,7 @@ implementation
           val(tok, msgnr, code);
           if (code<>0) then
             exit;
-          if not msg^.setverbosity(msgnr,state) then
+          if not msg^.valid(msgnr) then
             exit
           else
             recordpendingmessagestate(msgnr, state);
@@ -461,7 +481,7 @@ implementation
               else
                 lastfileidx:=0;
 
-              lastmoduleidx:=module.unit_index;
+              lastmoduleidx:=module.moduleid;
             end;
         end;
       end;
@@ -563,13 +583,18 @@ implementation
 
 
     procedure internalerror(i : longint);noreturn;
+    begin
+      InternalError(i,'');
+    end;
+
+    procedure InternalError(i:longint; const s : ansistring);noreturn;
       procedure doraise;
         begin
           raise ECompilerAbort.Create;
         end;
       begin
         UpdateStatus;
-        do_internalerror(i);
+        do_internalerrorex(i,s);
         GenerateError;
         doraise;
       end;
@@ -620,7 +645,7 @@ implementation
       begin
         i:=m div 1000;
         { get the default state }
-        Result:=msg^.msgstates[i]^[m mod 1000];
+        Result:=msg^.msgstates[i][m mod 1000];
 
         { and search at the current unit settings }
         { todo }
@@ -1081,7 +1106,7 @@ implementation
 
     function SanitiseXMLString(const S: ansistring): ansistring;
       var
-        X, UTF8Len, UTF8Char, CurrentChar: Integer;
+        X, UTF8Len, CurrentChar: Integer;
         needs_quoting, in_quotes, add_end_quote: Boolean;
         DoASCII: Boolean;
 
@@ -1225,96 +1250,17 @@ implementation
                         end;
                     end;
 
-                  UTF8Char := CurrentChar and $3F; { The data bits of the continuation byte }
-                  UTF8Len := 1; { This variable actually holds 1 less than the length }
+                  UTF8Len := 1;
+                  repeat
+                    inc(UTF8Len);
+                    dec(X);
+                  until (X = 0) or (UTF8Len >= 4) or (ord(Result[X]) shr 6 <> 2);
 
-                  { By setting DoASCII to true, it marks the string as 'invalid UTF-8'
-                    automatically if it reaches the beginning of the string unexpectedly }
-                  DoASCII := True;
-
-                  Dec(X);
-                  while X > 0 do
+                  if (X = 0) or (Utf8CodepointLen(@Result[X], UTF8Len, False) <> UTF8Len) then
                     begin
-                      CurrentChar := Ord(Result[X]);
-
-                      case CurrentChar of
-                        { A standard character here is invalid UTF-8 }
-                        $00..$7F:
-                          Break;
-
-                        { Another continuation byte }
-                        $80..$BF:
-                          begin
-                            UTF8Char := UTF8Char or ((CurrentChar and $3F) shl (6 * UTF8Len));
-
-                            dec(X);
-                            Inc(UTF8Len);
-                            if UTF8Len >= 4 then
-                              { Sequence too long }
-                              Break;
-                          end;
-
-                        { Lead byte for 2-byte sequences }
-                        $C2..$DF:
-                          begin
-                            if UTF8Len <> 1 then Break;
-
-                            UTF8Char := UTF8Char or ((CurrentChar and $1F) shl 6);
-
-                            { Check to see if the code is in range and not part of an 'overlong' sequence }
-                            case UTF8Char of
-                              $0080..$07FF:
-                                DoASCII := False;
-                              else
-                                { Do nothing - DoASCII is already true }
-                            end;
-                            Break;
-                          end;
-
-                        { Lead byte for 3-byte sequences }
-                        $E0..$EF:
-                          begin
-                            if UTF8Len <> 2 then Break;
-
-                            UTF8Char := UTF8Char or ((CurrentChar and $0F) shl 12);
-
-                            { Check to see if the code is in range and not part of an 'overlong' sequence }
-                            case UTF8Char of
-                              $0800..$D7FF, $E000..$FFFF: { $D800..$DFFF is reserved and hence invalid }
-                                DoASCII := False;
-                              else
-                                { Do nothing - DoASCII is already true }
-                            end;
-                            Break;
-                          end;
-
-                        { Lead byte for 4-byte sequences }
-                        $F0..$F4:
-                          begin
-                            if UTF8Len <> 3 then Break;
-
-                            UTF8Char := UTF8Char or ((CurrentChar and $07) shl 18);
-
-                            { Check to see if the code is in range and not part of an 'overlong' sequence }
-                            case UTF8Char of
-                              $010000..$10FFFF:
-                                DoASCII := False;
-                              else
-                                { Do nothing - DoASCII is already true }
-                            end;
-                            Break;
-                          end;
-
-                        { Invalid character }
-                        else
-                          Break;
-                      end;
+                      DoASCII := True;
+                      break;
                     end;
-
-                  if DoASCII then
-                    Break;
-
-                  { If all is fine, we don't need to encode any more characters }
                 end;
 
               { Invalid UTF-8 bytes and lead bytes without continuation bytes }
@@ -1369,8 +1315,6 @@ implementation
 {$endif DEBUG_NODE_XML}
 
 
-initialization
-  constexp.internalerrorproc:=@internalerror;
 finalization
   { Be sure to close the redirect files to flush all data }
   DoneRedirectFile;

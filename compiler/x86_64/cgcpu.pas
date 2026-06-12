@@ -301,7 +301,7 @@ unit cgcpu;
         inc(list.section_count);
         templist:=TAsmList.Create;
 
-        { We need to record postive offsets from RSP; if registers are saved
+        { We need to record positive offsets from RSP; if registers are saved
           at negative offsets from RBP we need to account for it. }
         if (not use_push) then
           frame_offset:=current_procinfo.final_localsize
@@ -495,9 +495,15 @@ unit cgcpu;
           internalerror(2009112505);
         case fromsize of
           OS_32,OS_S32:
-            opc:=A_MOVD;
+            if UseAVX then
+              opc:=A_VMOVD
+            else
+              opc:=A_MOVD;
           OS_64,OS_S64:
-            opc:=A_MOVQ;
+            if UseAVX then
+              opc:=A_VMOVQ
+            else
+              opc:=A_MOVQ;
           else
             internalerror(2009112506);
         end;
@@ -519,9 +525,15 @@ unit cgcpu;
           internalerror(2009112507);
         case tosize of
           OS_32,OS_S32:
-            opc:=A_MOVD;
+            if UseAVX then
+              opc:=A_VMOVD
+            else
+              opc:=A_MOVD;
           OS_64,OS_S64:
-            opc:=A_MOVQ;
+            if UseAVX then
+              opc:=A_VMOVQ
+            else
+              opc:=A_MOVQ;
           else
             internalerror(2009112408);
         end;

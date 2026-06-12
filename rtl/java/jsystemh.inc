@@ -494,25 +494,14 @@ var
 
 
 { Shortstring functions }
-{$ifdef VER3_0}
-Procedure Delete(var s:shortstring;index:SizeInt;count:SizeInt);
-Procedure Insert(const source:shortstring;var s:shortstring;index:SizeInt);
-Procedure Insert(source:AnsiChar;var s:shortstring;index:SizeInt);
-{$endif VER3_0}
 Function  Pos(const substr:shortstring;const s:shortstring; Offset: Sizeint = 1):SizeInt;
 Function  Pos(C:AnsiChar;const s:shortstring; Offset: Sizeint = 1):SizeInt;
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
 Function  Pos(const Substr : ShortString; const Source : RawByteString; Offset: Sizeint = 1) : SizeInt;
-
-{$ifdef FPC_HAS_CPSTRING}
 Procedure fpc_setstring_ansistr_pansichar(out S : RawByteString; Buf : PAnsiChar; Len : SizeInt; cp: TSystemCodePage); rtlproc; compilerproc;
 Procedure fpc_setstring_ansistr_pwidechar(out S : RawByteString; Buf : PWideChar; Len : SizeInt; cp: TSystemCodePage); rtlproc; compilerproc;
-{$else}
-Procedure SetString(out S : AnsiString; Buf : PAnsiChar; Len : SizeInt);
-Procedure SetString(out S : AnsiString; Buf : PWideChar; Len : SizeInt);
-{$endif}
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
-Procedure {$ifdef FPC_HAS_CPSTRING}fpc_setstring_shortstr{$else}SetString{$endif}(out S : Shortstring; Buf : PAnsiChar; Len : SizeInt); {$ifdef FPC_HAS_CPSTRING} compilerproc; {$endif FPC_HAS_CPSTRING}
+Procedure fpc_setstring_shortstr(out S : Shortstring; Buf : PAnsiChar; Len : SizeInt); compilerproc;
 function  ShortCompareText(const S1, S2: shortstring): SizeInt;
 Function  upCase(const s:shortstring):shortstring;
 Function  lowerCase(const s:shortstring):shortstring; overload;
@@ -535,9 +524,9 @@ Function  hexStr(Val:Pointer):shortstring;
 {$endif CPUI8086}
 
 { AnsiChar functions }
-{$if defined(VER3_2) or defined(VER3_0)}
+{$if defined(VER3_2)}
 Function Chr(b : byte) : AnsiChar;      [INTERNPROC: fpc_in_chr_byte];
-{$endif defined(VER3_2) or defined(VER3_0)}
+{$endif defined(VER3_2)}
 Function  upCase(c:AnsiChar):AnsiChar;
 Function  lowerCase(c:AnsiChar):AnsiChar; overload;
 function  pos(const substr : shortstring;c:AnsiChar; Offset : Sizeint=1): SizeInt;
@@ -548,13 +537,9 @@ function  pos(const substr : shortstring;c:AnsiChar; Offset : Sizeint=1): SizeIn
 ****************************************************************************}
 
 {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
-Procedure UniqueString(var S : RawByteString);{$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif FPC_HAS_CPSTRING}{$ifdef SYSTEMINLINE}inline;{$endif}
+Procedure UniqueString(var S : RawByteString);rtlproc;{$ifdef SYSTEMINLINE}inline;{$endif}
 Function  Pos (const Substr : RawByteString; const Source : RawByteString; Offset: Sizeint = 1) : SizeInt;
 Function  Pos (c : AnsiChar; const s : RawByteString; Offset: Sizeint = 1) : SizeInt;
-{$ifdef VER3_0}
-Procedure Insert (const Source : RawByteString; var S : RawByteString; Index : SizeInt);{$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif FPC_HAS_CPSTRING}
-Procedure Delete (var S : RawByteString; Index,Size: SizeInt);{$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif FPC_HAS_CPSTRING}
-{$endif VER3_0}
 Function  StringOfChar(c : Ansichar;l : SizeInt) : AnsiString;
 function  upcase(const s : ansistring) : ansistring;
 function  lowercase(const s : ansistring) : ansistring;
@@ -698,7 +683,7 @@ Procedure chdir(const s:rawbytestring); overload;
 Procedure mkdir(const s:rawbytestring); overload;
 Procedure rmdir(const s:rawbytestring); overload;
 // defaultrtlfilesystemcodepage is returned here
-Procedure getdir(drivenr:byte;var dir: rawbytestring);overload;{$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif FPC_HAS_CPSTRING}
+Procedure getdir(drivenr:byte;var dir: rawbytestring);overload;rtlproc;
 {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
 Procedure chdir(const s:unicodestring); overload;

@@ -308,6 +308,9 @@ interface
         , R_SUBMMS1          { = 34; for arrangement of v regs on aarch64; for use with ldN/stN }
         , R_SUBMMD1          { = 35; for arrangement of v regs on aarch64; for use with ldN/stN }
 {$endif aarch64}
+{$ifdef x86}
+        , R_SUBMMT           { = 24; For Intel X86 AMX-Register }
+{$endif x86}
       );
       TSubRegisterSet = set of TSubRegister;
 
@@ -368,14 +371,13 @@ interface
         shuffles : array[1..1] of word;
       end;
 
-      Tsuperregisterarray=array[0..$ffff] of Tsuperregister;
-      Psuperregisterarray=^Tsuperregisterarray;
+      Tsuperregisterarray=array of Tsuperregister;
 
       Tsuperregisterworklist=object
         buflength,
         buflengthinc,
         length:word;
-        buf:Psuperregisterarray;
+        buf:tsuperregisterarray;
         constructor init;
         constructor copyfrom(const x:Tsuperregisterworklist);
         destructor  done;
@@ -439,7 +441,7 @@ interface
        OS_SPAIR = OS_S16;
 {$endif}
 
-       { Table to convert tcgsize variables to the correspondending
+       { Table to convert tcgsize variables to the corresponding
          unsigned types }
        tcgsize2unsigned : array[tcgsize] of tcgsize = (OS_NO,
          OS_8,    OS_16,   OS_32,   OS_64,   OS_128,
@@ -529,7 +531,7 @@ interface
     { returns true, if the shuffle describes only a move of the scalar at index 0 }
     function shufflescalar(shuffle : pmmshuffle) : boolean;
 
-    { removes shuffling from shuffle, this means that the destenation index of each shuffle is copied to
+    { removes shuffling from shuffle, this means that the destination index of each shuffle is copied to
       the source }
     procedure removeshuffles(var shuffle : tmmshuffle);
 
@@ -557,19 +559,21 @@ implementation
     constructor Tsuperregisterworklist.copyfrom(const x:Tsuperregisterworklist);
 
     begin
-      self:=x;
+      // self.x cannot be used, we'd copy over the dyn array
+      buflength:=x.buflength;
+      buflengthinc:=x.buflengthinc;
+      length:=x.length;
       if x.buf<>nil then
         begin
-          getmem(buf,buflength*sizeof(Tsuperregister));
-          move(x.buf^,buf^,length*sizeof(Tsuperregister));
+          setlength(buf,buflength);
+          move(x.buf[0],buf[0],length*sizeof(Tsuperregister));
         end;
     end;
 
     destructor tsuperregisterworklist.done;
 
     begin
-      if assigned(buf) then
-        freemem(buf);
+      buf:=nil;
     end;
 
 
@@ -584,9 +588,9 @@ implementation
           buflengthinc:=buflengthinc*2;
           if buflengthinc>256 then
              buflengthinc:=256;
-          reallocmem(buf,buflength*sizeof(Tsuperregister));
+          setlength(buf,buflength);
         end;
-      buf^[length-1]:=s;
+      buf[length-1]:=s;
     end;
 
 
@@ -594,7 +598,7 @@ implementation
 
     begin
       addnodup := false;
-      if indexword(buf^,length,s) = -1 then
+      if (length=0) or (indexword(buf[0],length,s) = -1) then
         begin
           add(s);
           addnodup := true;
@@ -614,7 +618,7 @@ implementation
     begin
       if i>=length then
         internalerror(200310144);
-      buf^[i]:=buf^[length-1];
+      buf[i]:=buf[length-1];
       dec(length);
     end;
 
@@ -623,7 +627,7 @@ implementation
       begin
         if (i >= length) then
           internalerror(2005010601);
-        result := buf^[i];
+        result := buf[i];
       end;
 
 
@@ -633,7 +637,7 @@ implementation
       if length=0 then
         internalerror(200310142);
       dec(length);
-      get:=buf^[length];
+      get:=buf[length];
     end;
 
 
@@ -644,8 +648,10 @@ implementation
 
     begin
       delete:=false;
+      if (system.length(buf)=0) then
+        exit;
       { indexword in 1.0.x and 1.9.4 is broken }
-      i:=indexword(buf^,length,s);
+      i:=indexword(buf[0],length,s);
       if i<>-1 then
         begin
           deleteidx(i);

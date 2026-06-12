@@ -34,9 +34,9 @@ unit SAX_HTML;
 interface
 
 {$IFDEF FPC_DOTTEDUNITS}
-uses System.SysUtils, System.Classes, Xml.Sax, Xml.Dom, Html.Dom, Html.Defs,Xml.Utils;
+uses System.SysUtils, System.Classes, Xml.Sax, Xml.Dom, Html.Dom, Html.Defs,Xml.Utils, Xml.Reader;
 {$ELSE FPC_DOTTEDUNITS}
-uses SysUtils, Classes, SAX, DOM, DOM_HTML,htmldefs,xmlutils;
+uses SysUtils, Classes, SAX, DOM, DOM_HTML,htmldefs,xmlutils, XmlReader;
 {$ENDIF FPC_DOTTEDUNITS}
 
 type
@@ -75,7 +75,7 @@ type
     constructor Create;
     destructor Destroy; override;
 
-    procedure Parse(AInput: TSAXInputSource); override; overload;
+    procedure Parse(AInput: TXmlInputSource); override; overload;
 
     property EndOfStream: Boolean read FEndOfStream;
     property ScannerContext: THTMLScannerContext read FScannerContext;
@@ -161,7 +161,7 @@ begin
   end;
 end;
 
-procedure THTMLReader.Parse(AInput: TSAXInputSource);
+procedure THTMLReader.Parse(AInput: TXmlInputSource);
 const
   MaxBufferSize = 1024;
 var
@@ -290,6 +290,13 @@ begin
                   EnterNewScannerContext(scUnknown);
               end;
             '<':    // either an unclosed tag or unescaped '<' in text; attempt recovery
+              if FCurStringValueDelimiter <> #0 then
+              begin
+                // Inside quoted attribute value - treat '<' as literal character
+                FRawTokenText := FRawTokenText + Buffer[BufferPos];
+                Inc(BufferPos);
+              end
+              else
               begin
                 // TODO: this check is hardly complete, probably must also check if
                 // tag name is followed by legal attributes.

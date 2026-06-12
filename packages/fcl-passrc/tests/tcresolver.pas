@@ -38,6 +38,7 @@ type
     Row: cardinal;
     StartCol, EndCol: integer; // token start, end column
     Identifier: string;
+    Param: string;
     Next: PSrcMarker;
   end;
 
@@ -154,6 +155,9 @@ type
     procedure CheckAccessMarkers; virtual;
     procedure CheckParamsExpr_pkSet_Markers; virtual;
     procedure CheckAttributeMarkers; virtual;
+    procedure CheckRTTIVisibility(aMarker: PSrcMarker; El: TPasMembersType; Explicit: boolean;
+        const ExpectedFields, ExpectedMethods, ExpectedProperties: TPasMembersType.TRTTIVisibilitySections); virtual;
+    procedure CheckRTTIVisibilityMarkers; virtual;
     procedure GetSrc(Index: integer; out SrcLines: TStringList; out aFilename: string);
     function FindElementsAt(aFilename: string; aLine, aStartCol, aEndCol: integer): TFPList;// list of TPasElement
     function FindElementsAt(aMarker: PSrcMarker; ErrorOnNoElements: boolean = true): TFPList;// list of TPasElement
@@ -163,6 +167,7 @@ type
     procedure RaiseErrorAtSrc(Msg: string; const aFilename: string; aRow, aCol: integer);
     procedure RaiseErrorAtSrcMarker(Msg: string; aMarker: PSrcMarker);
     procedure HandleError(CurEngine: TTestEnginePasResolver; E: Exception);
+    property Resolvers : TObjectList Read FResolvers;
   Public
     constructor Create; override;
     destructor Destroy; override;
@@ -401,6 +406,10 @@ type
     Procedure TestProc_ArgVarTypeAliasObjFPC;
     Procedure TestProc_ArgVarTypeAliasDelphi;
     Procedure TestProc_ArgVarTypeAliasDelphiMismatchFail;
+    Procedure TestProc_ArgAnonymouseRangeTypeFail;
+    Procedure TestProc_ArgAnonymouseEnumTypeFail;
+    Procedure TestProc_ArgAnonymouseSetTypeFail;
+    Procedure TestProc_ArgAnonymousePointerTypeFail;
     Procedure TestProc_ArgMissingSemicolonFail;
     Procedure TestProcOverload;
     Procedure TestProcOverloadImplDuplicateFail;
@@ -661,6 +670,7 @@ type
     Procedure TestClass_TypeAlias;
     Procedure TestClass_Message;
     Procedure TestClass_Message_MissingParamFail;
+    Procedure TestClass_ExtRTTI_Explicit;
 
     // published
     Procedure TestClass_PublishedClassVarFail;
@@ -893,6 +903,8 @@ type
     Procedure TestProcType_TNotifyEvent_NoAtFPC_Fail1;
     Procedure TestProcType_TNotifyEvent_NoAtFPC_Fail2;
     Procedure TestProcType_TNotifyEvent_NoAtFPC_Fail3;
+    Procedure TestProcType_PassAsArg_NoAtFPC_Fail;
+    Procedure TestProcType_PassAsArg_NoAtDelphi;
     Procedure TestProcType_WhileListCompare;
     Procedure TestProcType_IsNested;
     Procedure TestProcType_IsNested_AssignProcFail;
@@ -1005,6 +1017,8 @@ type
     Procedure TestAttributes_NonConstParam_Fail;
     Procedure TestAttributes_UnknownAttrWarning;
     Procedure TestAttributes_Members;
+    Procedure TestAttributes_MethodParams;
+    Procedure TestAttributes_MethodParamsGroup;
 
     // library
     Procedure TestLibrary_Empty;
@@ -1016,6 +1030,19 @@ type
     Procedure TestLibrary_Initialization_Finalization;
     Procedure TestLibrary_ExportFuncOverloadFail;
     Procedure TestLibrary_UnitExports;
+
+    // operator overloading
+    Procedure TestOperatorOverload_Declare;
+    Procedure TestOperatorOverload_DeclareMultiple;
+    Procedure TestOperatorOverload_DeclareUnary;
+    Procedure TestOperatorOverload_DeclareCrossType;
+    Procedure TestOperatorOverload_RecordBinaryAddFail;
+    Procedure TestOperatorOverload_RecordBinarySubFail;
+    Procedure TestOperatorOverload_RecordBinaryMulFail;
+    Procedure TestOperatorOverload_RecordLessThanFail;
+    Procedure TestOperatorOverload_RecordUnaryMinusFail;
+    Procedure TestOperatorOverload_RecordUnaryNotFail;
+    Procedure TestOperatorOverload_IntegerRecordAddFail;
   end;
 
 function LinesToStr(Args: array of const): string;
@@ -1311,7 +1338,7 @@ var
   end;
 
   function AddMarker(Kind: TSrcMarkerKind; const aFilename: string;
-    aLine, aStartCol, aEndCol: integer; const Identifier: string): PSrcMarker;
+    aLine, aStartCol, aEndCol: integer; const Identifier, Param: string): PSrcMarker;
   begin
     New(Result);
     Result^.Kind:=Kind;
@@ -1320,20 +1347,21 @@ var
     Result^.StartCol:=aStartCol;
     Result^.EndCol:=aEndCol;
     Result^.Identifier:=Identifier;
+    Result^.Param:=Param;
     Result^.Next:=nil;
     //writeln('AddMarker Line="',SrcLine,'" Identifier=',Identifier,' Col=',aStartCol,'-',aEndCol,' "',copy(SrcLine,aStartCol,aEndCol-aStartCol),'"');
     AddMarker(Result);
   end;
 
   function AddMarkerForTokenBehindComment(Kind: TSrcMarkerKind;
-    const Identifier: string): PSrcMarker;
+    const Identifier, Param: string): PSrcMarker;
   var
     TokenStart, p: PChar;
   begin
     p:=CommentEndP;
     ReadNextPascalToken(p,TokenStart,false,false);
     Result:=AddMarker(Kind,Filename,LineNumber,
-      CommentEndP-PChar(SrcLine)+1,p-PChar(SrcLine)+1,Identifier);
+      CommentEndP-PChar(SrcLine)+1,p-PChar(SrcLine)+1,Identifier,Param);
   end;
 
   function ReadIdentifier(var p: PChar): string;
@@ -1350,6 +1378,14 @@ var
     Move(StartP^,Result[1],length(Result)*SizeOf(Char));
   end;
 
+  function ReadParam(p: PChar): string;
+  begin
+    while p^ in [' ',#9,#10,#13] do inc(p);
+    SetLength(Result{%H-},CommentEndP-p-1);
+    if Result>'' then
+      Move(p^,Result[1],length(Result)*SizeOf(Char));
+  end;
+
   procedure AddLabel;
   var
     Identifier: String;
@@ -1360,7 +1396,7 @@ var
     //writeln('TTestResolver.CheckReferenceDirectives.AddLabel ',Identifier);
     if FindSrcLabel(Identifier)<>nil then
       RaiseError('duplicate label "'+Identifier+'"',p);
-    AddMarkerForTokenBehindComment(mkLabel,Identifier);
+    AddMarkerForTokenBehindComment(mkLabel,Identifier,ReadParam(p));
   end;
 
   procedure AddResolverReference;
@@ -1371,7 +1407,7 @@ var
     p:=CommentStartP+2;
     Identifier:=ReadIdentifier(p);
     //writeln('TTestResolver.CheckReferenceDirectives.AddReference ',Identifier);
-    AddMarkerForTokenBehindComment(mkResolverReference,Identifier);
+    AddMarkerForTokenBehindComment(mkResolverReference,Identifier,ReadParam(p));
   end;
 
   procedure AddDirectReference;
@@ -1382,12 +1418,12 @@ var
     p:=CommentStartP+2;
     Identifier:=ReadIdentifier(p);
     //writeln('TTestResolver.CheckReferenceDirectives.AddDirectReference ',Identifier);
-    AddMarkerForTokenBehindComment(mkDirectReference,Identifier);
+    AddMarkerForTokenBehindComment(mkDirectReference,Identifier,ReadParam(p));
   end;
 
   procedure ParseCode(SrcLines: TStringList; aFilename: string);
   var
-    p,pstart,pend: PChar;
+    p,StartP,EndP: PChar;
     IsDirective: Boolean;
   begin
     //writeln('TTestResolver.CheckReferenceDirectives.ParseCode File=',aFilename);
@@ -1401,13 +1437,13 @@ var
       if SrcLine='' then continue;
       //writeln('TTestResolver.CheckReferenceDirectives Line=',SrcLine);
 
-      pstart:=PChar(SrcLine);
-      pend:=pstart;
-      inc(PEnd,length(SrcLine));
-      p:=pstart;
+      StartP:=PChar(SrcLine);
+      EndP:=StartP;
+      inc(EndP,length(SrcLine));
+      p:=StartP;
       repeat
         case p^ of
-          #0: if (p>=pend) then break;
+          #0: if (p>=EndP) then break;
           '{':
             begin
             CommentStartP:=p;
@@ -1418,7 +1454,7 @@ var
             repeat
               case p^ of
               #0:
-                if (p>=pend) then
+                if (p>=EndP) then
                   begin
                   // multi line comment
                   if IsDirective then
@@ -1429,10 +1465,10 @@ var
                     SrcLine:=SrcLines[LineNumber-1];
                     //writeln('TTestResolver.CheckReferenceDirectives Comment Line=',SrcLine);
                   until SrcLine<>'';
-                  pstart:=PChar(SrcLine);
-                  pend:=pstart;
-                  inc(PEnd,length(SrcLine));
-                  p:=pstart;
+                  StartP:=PChar(SrcLine);
+                  EndP:=StartP;
+                  inc(EndP,length(SrcLine));
+                  p:=StartP;
                   continue;
                   end;
               '}':
@@ -2022,6 +2058,60 @@ begin
             RaiseErrorAtSrcMarker('Ref.Context.Proc at "#'+aMarker^.Identifier+'", expected "'+ExpectedConstrucor.FullName+'" but found "'+ActualConstructor.FullName+'", El='+GetObjName(El),aMarker);
           break;
           end;
+      finally
+        Elements.Free;
+      end;
+      end;
+    aMarker:=aMarker^.Next;
+    end;
+end;
+
+procedure TCustomTestResolver.CheckRTTIVisibility(aMarker: PSrcMarker; El: TPasMembersType;
+  Explicit: boolean; const ExpectedFields, ExpectedMethods, ExpectedProperties: TPasMembersType.
+  TRTTIVisibilitySections);
+
+  procedure Check(const Types: string; const Expected, Actual: TPasMembersType.TRTTIVisibilitySections);
+  begin
+    if Expected=Actual then exit;
+    RaiseErrorAtSrcMarker(Types+' visibility expected '+dbgs(Expected)+', but found '+dbgs(Actual),aMarker);
+  end;
+
+begin
+  if Explicit<>El.RTTIVisibility.Explicit then
+    if Explicit then
+      RaiseErrorAtSrcMarker('rtti visibility explicit expected',aMarker)
+    else
+      RaiseErrorAtSrcMarker('rtti visibility inherit expected',aMarker);
+  Check('Fields',El.RTTIVisibility.Fields,ExpectedFields);
+  Check('Methods',El.RTTIVisibility.Methods,ExpectedMethods);
+  Check('Properties',El.RTTIVisibility.Properties,ExpectedProperties);
+end;
+
+procedure TCustomTestResolver.CheckRTTIVisibilityMarkers;
+var
+  aMarker: PSrcMarker;
+  Elements: TFPList;
+  i: Integer;
+  Visibility: TPasMembersType.TRTTIVisibility;
+  MemberEl: TPasMembersType;
+begin
+  aMarker:=FirstSrcMarker;
+  while aMarker<>nil do
+    begin
+    if lowercase(LeftStr(aMarker^.Identifier,5))='rtti_' then
+      begin
+      //writeln('TTestResolver.CheckRTTIVisibilityMarkers ',aMarker^.Identifier,' "',aMarker^.Param,'" ',aMarker^.StartCol,' ',aMarker^.EndCol);
+      if not Parser.ParseRTTIDirective(aMarker^.Param,Visibility) then
+        RaiseErrorAtSrcMarker('invalid rtti marker',aMarker);
+      Elements:=FindElementsAt(aMarker);
+      try
+        i:=Elements.Count-1;
+        while (i>=0) and not (TPasElement(Elements[i]) is TPasMembersType) do dec(i);
+        if i<0 then
+          RaiseErrorAtSrcMarker('rtti marker not at membertype',aMarker);
+        MemberEl:=TPasMembersType(Elements[i]);
+        CheckRTTIVisibility(aMarker,MemberEl,Visibility.Explicit,
+          Visibility.Fields,Visibility.Methods,Visibility.Properties);
       finally
         Elements.Free;
       end;
@@ -4360,7 +4450,7 @@ begin
   '  end;',
   '']);
   ParseProgram;
-  CheckResolverUnexpectedHints;
+  CheckResolverHint(mtWarning,nCaseStatementNotCovered,'Case statement does not handle all possible cases');
 end;
 
 procedure TTestResolver.TestEnum_ForIn;
@@ -6481,6 +6571,46 @@ begin
     nIncompatibleTypeArgNoVarParamMustMatchExactly);
 end;
 
+procedure TTestResolver.TestProc_ArgAnonymouseRangeTypeFail;
+begin
+  StartProgram(false);
+  Add([
+  'procedure Fly(Speed: 1..2);',
+  'begin end;',
+  'begin']);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
+end;
+
+procedure TTestResolver.TestProc_ArgAnonymouseEnumTypeFail;
+begin
+  StartProgram(false);
+  Add([
+  'procedure Fly(Speed: (red, blue));',
+  'begin end;',
+  'begin']);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
+end;
+
+procedure TTestResolver.TestProc_ArgAnonymouseSetTypeFail;
+begin
+  StartProgram(false);
+  Add([
+  'procedure Fly(Speed: set of (red, blue));',
+  'begin end;',
+  'begin']);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
+end;
+
+procedure TTestResolver.TestProc_ArgAnonymousePointerTypeFail;
+begin
+  StartProgram(false);
+  Add([
+  'procedure Fly(Speed: ^word);',
+  'begin end;',
+  'begin']);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
+end;
+
 procedure TTestResolver.TestProc_ArgMissingSemicolonFail;
 begin
   StartProgram(false);
@@ -7932,8 +8062,8 @@ begin
   '  p:=procedure(w: word) begin end;',
   'end;',
   'begin']);
-  CheckResolverException('procedural type modifier "reference to" mismatch',
-    nXModifierMismatchY);
+  CheckResolverException('Incompatible types, got 0 parameters, expected 1',
+    nIncompatibleTypesGotParametersExpected);
 end;
 
 procedure TTestResolver.TestAnonymousProc_Assign_WrongParamListFail;
@@ -9230,7 +9360,7 @@ begin
   'end;',
   'begin',
   '']);
-  CheckResolverException('Cannot nest anonymous record',nCannotNestAnonymousX);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
 end;
 
 procedure TTestResolver.TestRecordAnonym_ArgumentFail;
@@ -9244,7 +9374,7 @@ begin
   'end;',
   'begin',
   '']);
-  CheckResolverException('Cannot nest anonymous record',nCannotNestAnonymousX);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
 end;
 
 procedure TTestResolver.TestRecordAnonym_Advanced_ConstFail;
@@ -11967,6 +12097,27 @@ begin
   'begin',
   '']);
   CheckResolverException(sMessageHandlersInvalidParams,nMessageHandlersInvalidParams);
+end;
+
+procedure TTestResolver.TestClass_ExtRTTI_Explicit;
+begin
+  Parser.Options:=Parser.Options+[po_CheckDirectiveRTTI];
+  StartProgram(false);
+  Add([
+  'type',
+  '  {$RTTI explicit Fields([vcProtected,vcPublic])}',
+  '  {#rtti_TObject explicit Fields([vcProtected,vcPublic])}TObject = class',
+  '  end;',
+  '  {$RTTI explicit Fields([vcPrivate,vcProtected])}',
+  '  {#rtti_TAnimal explicit Fields([vcPrivate,vcProtected])}TAnimal = class',
+  '  end;',
+  '  {$RTTI inherit Fields([vcPublic])}',
+  '  {#rtti_TBird inherit Fields([vcPrivate,vcProtected,vcPublic])}TBird = class(TAnimal)',
+  '  end;',
+  'begin',
+  '']);
+  ParseProgram;
+  CheckRTTIVisibilityMarkers;
 end;
 
 procedure TTestResolver.TestClass_PublishedClassVarFail;
@@ -16500,6 +16651,38 @@ begin
     nWrongNumberOfParametersForCallTo);
 end;
 
+procedure TTestResolver.TestProcType_PassAsArg_NoAtFPC_Fail;
+begin
+  StartProgram(false);
+  Add('{$mode objfpc}');
+  Add('type');
+  Add('  TProc = procedure;');
+  Add('procedure Run;');
+  Add('begin end;');
+  Add('procedure Fly(p: TProc);');
+  Add('begin end;');
+  Add('begin');
+  Add('  Fly(Run);');
+  CheckResolverException(
+    'Incompatible type for arg no. 1: Got "procedural type", expected "TProc"',
+    nIncompatibleTypeArgNo);
+end;
+
+procedure TTestResolver.TestProcType_PassAsArg_NoAtDelphi;
+begin
+  StartProgram(false);
+  Add('{$mode delphi}');
+  Add('type');
+  Add('  TFunc = function: word;');
+  Add('function Run: word;');
+  Add('begin end;');
+  Add('procedure Fly(p: TFunc);');
+  Add('begin end;');
+  Add('begin');
+  Add('  Fly(Run);');
+  ParseProgram;
+end;
+
 procedure TTestResolver.TestProcType_WhileListCompare;
 begin
   StartProgram(false);
@@ -16884,8 +17067,7 @@ begin
   'var',
   '  f: function:function:longint;',
   'begin']);
-  CheckResolverException('Cannot nest anonymous functional type',
-    nCannotNestAnonymousX);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
 end;
 
 procedure TTestResolver.TestProcTypeAnonymous_ResultTypeFail;
@@ -16896,8 +17078,7 @@ begin
   'begin',
   'end;',
   'begin']);
-  CheckResolverException('Cannot nest anonymous procedural type',
-    nCannotNestAnonymousX);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
 end;
 
 procedure TTestResolver.TestProcTypeAnonymous_ArgumentFail;
@@ -16908,8 +17089,7 @@ begin
   'begin',
   'end;',
   'begin']);
-  CheckResolverException('Cannot nest anonymous procedural type',
-    nCannotNestAnonymousX);
+  CheckParserException('Parameters or result types cannot contain local type definitions. Use a separate type definition in a type block.',nParserParamsOrResultTypesNoLocalTypeDefs);
 end;
 
 procedure TTestResolver.TestProcTypeAnonymous_PropertyFail;
@@ -17475,7 +17655,7 @@ begin
   'begin',
   'end.']);
   ParseProgram;
-  CheckResolverHint(mtHint,nTextAfterFinalIgnored,sTextAfterFinalIgnored);
+  CheckResolverHint(mtHint,nTextAfterFinalIgnored,sTextAfterFinalIgnored+' afile.pp(4,4)');
   CheckResolverUnexpectedHints(true);
 end;
 
@@ -18496,6 +18676,8 @@ begin
 end;
 
 procedure TTestResolver.TestRecordHelper_ForByteFail;
+var
+  i : integer;
 begin
   StartProgram(false);
   Add([
@@ -18506,7 +18688,9 @@ begin
   '  end;',
   'begin',
   '']);
-  CheckResolverException('Type "Byte" cannot be extended by a record helper',nTypeXCannotBeExtendedByARecordHelper);
+  for I:=0 to FResolvers.Count-1 do
+    TTestEnginePasResolver(FResolvers[i]).MaximizeFPCCompatibility:=True;
+  CheckResolverException('record helper without modeswitch advancedrecords is not supported',nXIsNotSupported);
 end;
 
 procedure TTestResolver.TestRecordHelper_ClassNonStaticFail;
@@ -19271,6 +19455,64 @@ begin
   CheckAttributeMarkers;
 end;
 
+procedure TTestResolver.TestAttributes_MethodParams;
+begin
+  StartProgram(false);
+  Add([
+  '{$modeswitch prefixedattributes}',
+  'type',
+  '  TObject = class',
+  '    constructor {#create}Create;',
+  '  end;',
+  '  {#custom}TCustomAttribute = class',
+  '  end;',
+  '  TMyClass = class',
+  '    procedure Fly([{#attr__custom__create__size}TCustom]Size: word);',
+  '    procedure Eat(const [ref] Portion: word);',
+  '  end;',
+  'constructor TObject.Create;',
+  'begin',
+  'end;',
+  'procedure TMyClass.Fly(Size: word);',
+  'begin',
+  'end;',
+  'procedure TMyClass.Eat(const [ref] Portion: word);',
+  'begin',
+  'end;',
+  'begin',
+  '']);
+  ParseProgram;
+  CheckAttributeMarkers;
+  CheckResolverUnexpectedHints;
+end;
+
+procedure TTestResolver.TestAttributes_MethodParamsGroup;
+begin
+  StartProgram(false);
+  Add([
+  '{$modeswitch prefixedattributes}',
+  'type',
+  '  TObject = class',
+  '    constructor {#create}Create;',
+  '  end;',
+  '  {#custom}TCustomAttribute = class',
+  '  end;',
+  '  TMyClass = class',
+  '    procedure Fly([{#attr__custom__create__size}TCustom]Speed, Dist: word);',
+  '  end;',
+  'constructor TObject.Create;',
+  'begin',
+  'end;',
+  'procedure TMyClass.Fly(Speed, Dist: word);',
+  'begin',
+  'end;',
+  'begin',
+  '']);
+  ParseProgram;
+  CheckAttributeMarkers;
+  CheckResolverUnexpectedHints;
+end;
+
 procedure TTestResolver.TestLibrary_Empty;
 begin
   StartLibrary(false);
@@ -19407,6 +19649,216 @@ begin
   '  Run;',
   '']);
   ParseUnit;
+end;
+
+{ --- Operator overloading tests --- }
+
+procedure TTestResolver.TestOperatorOverload_Declare;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator +(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X + B.X;',
+  'end;',
+  'operator -(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X - B.X;',
+  'end;',
+  'operator =(A, B: TRec): Boolean;',
+  'begin',
+  '  Result := A.X = B.X;',
+  'end;',
+  'begin']);
+  ParseProgram;
+end;
+
+procedure TTestResolver.TestOperatorOverload_DeclareMultiple;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator +(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X + B.X;',
+  'end;',
+  'operator *(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X * B.X;',
+  'end;',
+  'operator <(A, B: TRec): Boolean;',
+  'begin',
+  '  Result := A.X < B.X;',
+  'end;',
+  'operator >(A, B: TRec): Boolean;',
+  'begin',
+  '  Result := A.X > B.X;',
+  'end;',
+  'operator <=(A, B: TRec): Boolean;',
+  'begin',
+  '  Result := A.X <= B.X;',
+  'end;',
+  'operator >=(A, B: TRec): Boolean;',
+  'begin',
+  '  Result := A.X >= B.X;',
+  'end;',
+  'begin']);
+  ParseProgram;
+end;
+
+procedure TTestResolver.TestOperatorOverload_DeclareUnary;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator -(A: TRec): TRec;',
+  'begin',
+  '  Result.X := -A.X;',
+  'end;',
+  'operator +(A: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X;',
+  'end;',
+  'begin']);
+  ParseProgram;
+end;
+
+procedure TTestResolver.TestOperatorOverload_DeclareCrossType;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec1 = record X: LongInt; end;',
+  '  TRec2 = record Y: LongInt; end;',
+  'operator +(A: TRec1; B: TRec2): TRec1;',
+  'begin',
+  '  Result.X := A.X + B.Y;',
+  'end;',
+  'operator -(A: TRec2; B: TRec1): TRec2;',
+  'begin',
+  '  Result.Y := A.Y - B.X;',
+  'end;',
+  'begin']);
+  ParseProgram;
+end;
+
+procedure TTestResolver.TestOperatorOverload_RecordBinaryAddFail;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator +(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X + B.X;',
+  'end;',
+  'var A, B, C: TRec;',
+  'begin',
+  '  C := A + B;']);
+  CheckResolverException(sOperatorIsNotOverloadedAOpB,
+    nOperatorIsNotOverloadedAOpB);
+end;
+
+procedure TTestResolver.TestOperatorOverload_RecordBinarySubFail;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator -(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X - B.X;',
+  'end;',
+  'var A, B, C: TRec;',
+  'begin',
+  '  C := A - B;']);
+  CheckResolverException(sOperatorIsNotOverloadedAOpB,
+    nOperatorIsNotOverloadedAOpB);
+end;
+
+procedure TTestResolver.TestOperatorOverload_RecordBinaryMulFail;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator *(A, B: TRec): TRec;',
+  'begin',
+  '  Result.X := A.X * B.X;',
+  'end;',
+  'var A, B, C: TRec;',
+  'begin',
+  '  C := A * B;']);
+  CheckResolverException(sOperatorIsNotOverloadedAOpB,
+    nOperatorIsNotOverloadedAOpB);
+end;
+
+procedure TTestResolver.TestOperatorOverload_RecordLessThanFail;
+begin
+  // Record equality uses CheckEqualElCompatibility, not ComputeBinaryExprRes,
+  // so it succeeds in the base resolver. Test that < on records fails instead.
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator <(A, B: TRec): Boolean;',
+  'begin',
+  '  Result := A.X < B.X;',
+  'end;',
+  'var A, B: TRec;',
+  'begin',
+  '  if A < B then;']);
+  CheckResolverException(sOperatorIsNotOverloadedAOpB,
+    nOperatorIsNotOverloadedAOpB);
+end;
+
+procedure TTestResolver.TestOperatorOverload_RecordUnaryMinusFail;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'operator -(A: TRec): TRec;',
+  'begin',
+  '  Result.X := -A.X;',
+  'end;',
+  'var A, C: TRec;',
+  'begin',
+  '  C := -A;']);
+  CheckResolverException(sIllegalQualifierInFrontOf,
+    nIllegalQualifierInFrontOf);
+end;
+
+procedure TTestResolver.TestOperatorOverload_RecordUnaryNotFail;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'var A: TRec;',
+  '    B: Boolean;',
+  'begin',
+  '  B := not A;']);
+  CheckResolverException(sIllegalQualifierInFrontOf,
+    nIllegalQualifierInFrontOf);
+end;
+
+procedure TTestResolver.TestOperatorOverload_IntegerRecordAddFail;
+begin
+  StartProgram(false);
+  Add([
+  'type',
+  '  TRec = record X: LongInt; end;',
+  'var A: TRec;',
+  '    I: LongInt;',
+  'begin',
+  '  I := I + A;']);
+  CheckResolverException(sOperatorIsNotOverloadedAOpB,
+    nOperatorIsNotOverloadedAOpB);
 end;
 
 initialization

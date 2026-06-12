@@ -22,7 +22,7 @@ interface
 
 uses
 {$IFDEF FPC_DOTTEDUNITS}
-  System.Classes, System.SysUtils, FpWeb.Http.Defs, FpWeb.Http.Base, FpJson.Data; 
+  System.Classes, System.SysUtils, FpWeb.Http.Defs, FpWeb.Http.Base, FpJson.Data;
 {$ELSE}
   Classes, SysUtils, httpdefs, fphttp, fpjson;
 {$ENDIF}
@@ -258,9 +258,9 @@ begin
   if FLogToConsole=AValue then Exit;
   FLogToConsole:=AValue;
   if FLogToConsole then
-    RegisterHandler(cCaptureToFile,@DoLogToConsole)
+    RegisterHandler(cCaptureToConsole,@DoLogToConsole)
   else
-    UnRegisterHandler(cCaptureToFile);
+    UnRegisterHandler(cCaptureToConsole);
 end;
 
 procedure TDebugCaptureService.DoLog(aType: TEventType; const aMsg: String);

@@ -26,14 +26,10 @@ type
     namelen : byte;
     { here the chars follow, we've to skip them }
     elesize : sizeint;
-    {$ifdef VER3_0}
-    eletype : pdynarraytypeinfo;
-    {$else}
     eletype : ppdynarraytypeinfo;
-    {$endif}
     vartype : longint;
   end;
-  
+
 procedure DynArraySetLength(var a: Pointer; typeInfo: Pointer; dimCnt: SizeInt; lengthVec: PSizeInt);
 function DynArraySize(a : pointer): tdynarrayindex;
 procedure DynArrayClear(var a: Pointer; typeInfo: Pointer);

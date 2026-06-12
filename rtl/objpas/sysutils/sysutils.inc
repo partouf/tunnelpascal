@@ -47,7 +47,7 @@
 {$IFDEF FPC_HAS_FEATURE_UNICODESTRINGS}
   { strange Delphi thing }
   {$i sysmarshal.inc}
-{$ENDIF}  
+{$ENDIF}
 
   {$ifndef OS_FILEISREADONLY}
   Function FileIsReadOnly(const FileName: RawByteString): Boolean;
@@ -157,6 +157,10 @@ end;
   { OS utility code }
   {$i osutil.inc}
 
+    {$IFDEF CPULLVM}
+    // LLVM does not like the constref construction.
+    // So when LLVM is used, we keep the untyped version.
+    // This allows users of other platforms to enjoy the type safety of FreeAndNil.
     procedure FreeAndNil(var obj);
       var
         temp: tobject;
@@ -165,6 +169,18 @@ end;
         pointer(obj):=nil;
         temp.free;
       end;
+    {$ELSE}
+    procedure FreeAndNil(constref obj: TObject);
+      type
+        PObject = ^TObject;
+      var
+        temp: tobject;
+      begin
+        temp:=obj;
+        PObject(@obj)^:=nil;
+        temp.free;
+      end;
+    {$ENDIF}
 
     procedure FreeMemAndNil(var p);
 
@@ -253,10 +269,13 @@ end;
       Result:=ClassName+': '+Message;
     end;
 
+Var OutOfMemory : EOutOfMemory;
+    InValidPointer : EInvalidPointer;
+
     procedure EHeapMemoryError.FreeInstance;
     begin
-       if AllowFree then
-        inherited FreeInstance;
+       if (pointer(self)<>pointer(OutOfMemory)) and (pointer(self)<>pointer(InvalidPointer)) then
+         inherited FreeInstance;
     end;
 
 
@@ -305,7 +324,7 @@ end;
        ErrCode:=Code;
     end;
 
-  
+
 constructor EInOutArgumentException.Create(const aMsg, aPath: string); overload;
 
 begin
@@ -429,15 +448,12 @@ begin
   result:=nil;
 end;
 
-Var OutOfMemory : EOutOfMemory;
-    InValidPointer : EInvalidPointer;
-
-
 Procedure RunErrorToExcept (ErrNo : Longint; Address : CodePointer; Frame : Pointer);
 var
   E: Exception;
   HS: PResStringRec;
   Entry: PExceptMapEntry;
+  CastFrom,CastTo : ShortString;
 begin
   Case Errno of
    1,203 : E:=OutOfMemory;
@@ -445,7 +461,14 @@ begin
   else
     Entry:=FindExceptMapEntry(ErrNo);
     if Assigned(Entry) then
-      E:=Entry^.cls.CreateRes(Entry^.msg)
+    begin
+      E:=Entry^.cls.CreateRes(Entry^.msg);
+      if (ErrNo=219) then
+        begin
+        TObject.GetLastCastErrorInfo(CastFrom,CastTo);
+        E.Message:=E.Message+Format(SInstanceIsNotA,[CastFrom,CastTo]);
+        end;
+    end
     else
     begin
      HS:=nil;
@@ -531,6 +554,12 @@ end;
 
 {$pop} //{$S-} for Error handling functions
 
+procedure RangeIndexError(aIndex, aMaxIndex: SizeInt; aListObj: TObject);
+
+begin
+  raise ERangeError.Create(ListIndexErrorMsg(aIndex,aMaxIndex,aListObj));
+end;
+
 Procedure InitExceptions;
 {
   Must install uncaught exception handler (ExceptProc)
@@ -542,9 +571,7 @@ begin
   ExceptProc:=@CatchUnhandledException;
   // Create objects that may have problems when there is no memory.
   OutOfMemory:=EOutOfMemory.Create(SOutOfMemory);
-  OutOfMemory.AllowFree:=false;
   InvalidPointer:=EInvalidPointer.Create(SInvalidPointer);
-  InvalidPointer.AllowFree:=false;
   AssertErrorProc:=@AssertErrorHandler;
   ErrorProc:=@RunErrorToExcept;
   OnShowException:=Nil;
@@ -553,10 +580,8 @@ end;
 
 Procedure DoneExceptions;
 begin
-  OutOfMemory.AllowFree:=true;
-  OutOfMemory.Free;
-  InValidPointer.AllowFree:=true;
-  InValidPointer.Free;
+  FreeAndNil(OutOfMemory); { These will automatically work as they first set pointer to nil, then free the object. See EHeapMemoryError.FreeInstance. }
+  FreeAndNil(InValidPointer);
 end;
 
 
@@ -650,6 +675,29 @@ begin
   Raise OutOfMemory;
 end;
 
+function ListIndexErrorMsg(aIndex, aMaxIndex: SizeInt; const aListObjName: string): string; overload;
+
+begin
+  if aMaxIndex<0 then
+    Result:=Format(SListIndexErrorEmptyReason,[aListObjName])
+  else
+    Result:=Format(SListIndexErrorRangeReason,[aListObjName]);
+  Result:=Format(SListIndexError, [aIndex])+Result;
+end;
+
+function ListIndexErrorMsg(AIndex, AMaxIndex: SizeInt; AListObj: TObject): string; overload;
+
+Var
+  aName : string;
+
+begin
+  if Assigned(aListObj) then
+   Result:=aListObj.ClassName
+ else
+   Result:='<Nil>';
+  Result:=ListIndexErrorMsg(aIndex, aMaxIndex, aName);
+end;
+
 procedure ListIndexError(aIndex,aMax: Integer; aObj: TObject);
 
 var
@@ -659,7 +707,7 @@ begin
   if Assigned(aObj) then
     aClassName:=aObj.ClassName
   else
-    aClassName:='<nil>';  
+    aClassName:='<nil>';
   Raise EListError.CreateFmt(SErrListIndexExt,[aIndex,aClassName,aMax])
 end;
 
@@ -870,7 +918,6 @@ end;
 
 
 // generic ifthen..
-{$IFNDEF VER3_0}
 generic function IfThen<T>(val:boolean;const iftrue:T; const iffalse:T) :T; inline; overload;
 begin
   if val then
@@ -884,9 +931,28 @@ begin
   Result := target;
   target := newvalue;
 end;
-{$ENDIF}
 
-Function ArrayOfConstToStrArray(Args: array of const) : TUTF8StringDynArray;
+generic function Extract<T>(var from: T) :T;
+type
+  RawT = array[0 .. sizeof(T) - 1] of byte;
+begin
+  Finalize(Result);
+  RawT(Result):=RawT(from);
+  Initialize(from);
+end;
+
+generic procedure Swap<T>(var lhs,rhs: T);
+type
+  RawT = array[0 .. sizeof(T) - 1] of byte;
+var
+  tmp:RawT;
+begin
+  tmp:=RawT(lhs);
+  RawT(lhs):=RawT(rhs);
+  RawT(rhs):=tmp;
+end;
+
+Function ArrayOfConstToStrArray(const Args: array of const) : TUTF8StringDynArray;
 
 var
   i: Integer;
@@ -950,7 +1016,7 @@ begin
     end;
 end;
 
-Function ArrayOfConstToStr(Args: array of const ; aSeparator : Char = ','; aQuoteBegin : Char = '"'; aQuoteEnd : Char = '"') : UTF8String;
+Function ArrayOfConstToStr(const Args: array of const ; aSeparator : Char = ','; aQuoteBegin : Char = '"'; aQuoteEnd : Char = '"') : UTF8String;
 
   Procedure Add(s: UTF8String);
 

@@ -2,7 +2,7 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
 {$ifdef unix}
   cthreads,
 {$endif}
@@ -20,13 +20,13 @@ begin
     begin
     P:=AddPackage('utils-fprcp');
     P.ShortName:='fprc';
-    { java and jvm-android do not support 
+    { java and jvm-android do not support
       getmem/freemem and new/dispose used in
       these sources }
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
     { palmos does not have classes }
-    P.OSes := P.OSes - [palmos];
+    P.OSes := P.OSes - [palmos,wasip2];
     { Program does not fit in 16-bit memory constraints }
     P.OSes := P.OSes - [msdos,win16,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
     { avr-embedded and i8086-embedded have not floating point support by default }

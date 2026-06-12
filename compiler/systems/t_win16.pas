@@ -249,7 +249,7 @@ begin
 
   LinkRes.Add('option description '+maybequoted_for_script(description,script_unix));
 
-  if target_dbg.id in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4] then
+  if target_dbg.id in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4,dbg_dwarf5] then
     LinkRes.Add('debug dwarf')
   else if target_dbg.id=dbg_codeview then
     LinkRes.Add('debug codeview');
@@ -332,7 +332,7 @@ begin
   Replace(cmdstr,'$OPT',Info.ExtraOptions);
   success:=DoExec(FindUtil(utilsprefix+BinStr),cmdstr,true,false);
 
-  { Remove ReponseFile }
+  { Remove ResponseFile }
   if (success) and not(cs_link_nolink in current_settings.globalswitches) then
     DeleteFile(outputexedir+Info.ResName);
 
@@ -357,7 +357,7 @@ begin
   Replace(cmdstr,'$OPT',Info.ExtraOptions);
   success:=DoExec(FindUtil(utilsprefix+BinStr),cmdstr,true,false);
 
-  { Remove ReponseFile }
+  { Remove ResponseFile }
   if (success) and not(cs_link_nolink in current_settings.globalswitches) then
     DeleteFile(outputexedir+Info.ResName);
 
@@ -436,7 +436,7 @@ begin
   LinkScript.Concat('ENDEXESECTION');
 
   if (cs_debuginfo in current_settings.moduleswitches) and
-     (target_dbg.id in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4]) then
+     (target_dbg.id in [dbg_dwarf2,dbg_dwarf3,dbg_dwarf4,dbg_dwarf5]) then
     begin
       LinkScript.Concat('EXESECTION .debug_info');
       LinkScript.Concat('  OBJSECTION .DEBUG_INFO||DWARF');

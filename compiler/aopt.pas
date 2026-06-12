@@ -40,7 +40,7 @@ Unit aopt;
           future register usage without upsetting the current state. }
         TmpUsedRegs: TAllUsedRegs;
 
-        { _AsmL is the PAasmOutpout list that has to be optimized }
+        { _AsmL is the PAasmOutput list that has to be optimized }
         Constructor create(_AsmL: TAsmList); virtual; reintroduce;
 
         { call the necessary optimizer procedures }
@@ -60,7 +60,7 @@ Unit aopt;
       TAsmOptimizerClass = class of TAsmOptimizer;
 
       TAsmScheduler = class(TAoptObj)
-        { _AsmL is the PAasmOutpout list that has to be re-scheduled }
+        { _AsmL is the PAasmOutput list that has to be re-scheduled }
         Constructor Create(_AsmL: TAsmList); virtual; reintroduce;
         Procedure Optimize;
         function SchedulerPass1Cpu(var p: tai): boolean; virtual; abstract;
@@ -141,10 +141,7 @@ Unit aopt;
       With LabelInfo^ Do
         begin
           If (LabelDif <> 0) Then
-            Begin
-              GetMem(LabelTable, LabelDif*SizeOf(TLabelTableItem));
-              FillChar(LabelTable^, LabelDif*SizeOf(TLabelTableItem), 0);
-            end;
+            SetLength(LabelTable, LabelDif);
           p := BlockStart;
           While (P <> BlockEnd) Do
             Begin
@@ -158,7 +155,7 @@ Unit aopt;
                         LabelIdx:=tai_label(p).labsym.labelnr-LowLabel;
                         if LabelIdx>int64(LabelDif) then
                           internalerror(200604202);
-                        LabelTable^[LabelIdx].PaiObj := p;
+                        LabelTable[LabelIdx].PaiObj := p;
                       end;
                   end;
                 ait_regAlloc:
@@ -208,7 +205,7 @@ Unit aopt;
                             AsmL.Remove(p);
                             InsertLLItem(hp2, tai(hp2.Next), p);
                             { don't remove this deallocation later on when merging dealloc/alloc pairs because
-                              it marks indenpendent use of a register
+                              it marks independent use of a register
 
                               This could be also achieved by a separate passes for merging first and then later
                               moving but I did not choose this solution because it takes more time and code (FK) }
@@ -253,11 +250,7 @@ Unit aopt;
 
     procedure tasmoptimizer.clear;
       begin
-        if assigned(LabelInfo^.labeltable) then
-          begin
-            freemem(LabelInfo^.labeltable);
-            LabelInfo^.labeltable := nil;
-          end;
+        LabelInfo^.labeltable:=Nil;
         LabelInfo^.labeldif:=0;
         LabelInfo^.lowlabel:=high(longint);
         LabelInfo^.highlabel:=0;
@@ -317,8 +310,7 @@ Unit aopt;
     Destructor TAsmOptimizer.Destroy;
       Begin
         ReleaseUsedRegs(TmpUsedRegs);
-        if assigned(LabelInfo^.LabelTable) then
-          Freemem(LabelInfo^.LabelTable);
+        LabelInfo^.LabelTable:=nil;
         Dispose(LabelInfo);
         inherited Destroy;
       End;
@@ -387,6 +379,7 @@ Unit aopt;
         p.Debug_InsertInstrRegisterDependencyInfo;
 {$endif DEBUG_INSTRUCTIONREGISTERDEPENDENCIES}
         p.free;
+        p := nil;
         StopTimer;
       end;
 
@@ -397,7 +390,8 @@ Unit aopt;
       begin
         p:=cpreregallocscheduler.Create(AsmL);
         p.Optimize;
-        p.free
+        p.free;
+        p := nil;
       end;
 
 

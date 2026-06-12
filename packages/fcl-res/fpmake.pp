@@ -27,7 +27,7 @@ begin
     P.Email := '';
     P.Description := 'Resource handling of Free Component Libraries (FCL), FPC''s OOP library.';
     P.NeedLibC:= false;
-    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,wasi,human68k];
+    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k,ps1,wasip2];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -47,6 +47,14 @@ begin
           AddUnit('resfactory');
           AddUnit('resdatastream');
         end;
+    T:=P.Targets.AddUnit('dialogresource.pp');
+      with T.Dependencies do
+        begin
+          AddUnit('resource');
+          AddUnit('resfactory');
+          AddUnit('resdatastream');
+        end;
+    
     T:=P.Targets.AddUnit('coffconsts.pp');
     T:=P.Targets.AddUnit('cofftypes.pp');
     T:=P.Targets.AddUnit('coffreader.pp');
@@ -115,6 +123,22 @@ begin
           AddUnit('fpcrestypes');
           AddInclude('elfsubwriter.inc');
           AddInclude('elfdefaulttarget.inc');
+        end;
+    T:=P.Targets.AddUnit('wasmtypes.pp');
+    T:=P.Targets.AddUnit('wasmconsts.pp');
+      with T.Dependencies do
+        begin
+          AddUnit('wasmtypes');
+        end;
+    T:=P.Targets.AddUnit('wasmwriter.pp');
+      with T.Dependencies do
+        begin
+          AddUnit('resource');
+          AddUnit('resourcetree');
+          AddUnit('strtable');
+          AddUnit('fpcrestypes');
+          AddUnit('wasmconsts');
+          AddUnit('wasmtypes');
         end;
     T:=P.Targets.AddUnit('externaltypes.pp');
     T:=P.Targets.AddUnit('externalreader.pp');

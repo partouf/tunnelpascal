@@ -747,7 +747,10 @@ begin
       end;
     DefaultReplacements(s);
     if (pos('*',s)=0) and ExistsDir(s) then
-      Command(AddSourceDirCommand+' '+GDBFileName(GetShortName(s)))
+      begin
+        if s<>'' then
+          Command(AddSourceDirCommand+' '+GDBFileName(GetShortName(s)));
+      end
     { we should also handle the /* cases of -Fu option }
     else if pos('*',s)>0 then
       begin
@@ -931,7 +934,7 @@ begin
     begin
 {$endif SUPPORT_REMOTE}
 {$ifdef Windows}
-  { Run the debugge in another console }
+  { Run the debuggee in another console }
   if DebuggeeTTY<>'' then
     SetCommand('new-console on')
   else
@@ -1373,7 +1376,13 @@ begin
 
   if (fn=LastFileName) then
     begin
-      W:=PSourceWindow(LastSource);
+      { Check if source window is still open }
+      W:=SourceOnDesktop(PSourceWindow(LastSource));
+      if not assigned(W) then
+      begin
+        W:=TryToOpenFile(nil,s,0,Line,false);
+        LastSource:=W;
+      end;
       if assigned(W) then
         begin
           W^.Editor^.SetCurPtr(0,Line);
@@ -2525,6 +2534,7 @@ begin
   Desktop^.GetExtent(R); R.A.Y:=R.B.Y-18;
   inherited Init(R, dialog_breakpointlist, wnNoNumber);
 
+  GrowMode:=gfGrowAll+gfGrowRel;
   HelpCtx:=hcBreakpointListWindow;
 
   GetExtent(R); R.Grow(-1,-1); R.B.Y:=R.A.Y+1;
@@ -2533,7 +2543,7 @@ begin
   ST^.GrowMode:=gfGrowHiX;
   Insert(ST);
   GetExtent(R); R.Grow(-1,-1); Inc(R.A.Y,1); R.B.Y:=R.A.Y+1;
-  New(ST, Init(R, CharStr('Ä', MaxViewWidth)));
+  New(ST, Init(R, CharStr(''#$C4'', MaxViewWidth)));
   ST^.GrowMode:=gfGrowHiX;
   Insert(ST);
   GetExtent(R); R.Grow(-1,-1); Inc(R.A.Y,2);Dec(R.B.Y,5);
@@ -2550,7 +2560,7 @@ begin
   GetExtent(R);R.Grow(-1,-1);
   Dec(R.B.Y);
   R.A.Y:=R.B.Y-2;
-  X:=(R.B.X-R.A.X) div NumButtons;
+  X:=Min(76,(R.B.X-R.A.X)) div NumButtons;
   X1:=R.A.X+(X div 2);
   R.A.X:=X1-3;R.B.X:=X1+7;
   New(Btn, Init(R, button_Close, cmClose, bfDefault));
@@ -3102,13 +3112,17 @@ end;
 procedure TWatchesListBox.EditCurrent;
 var
   P: PWatch;
+  D: PWatchItemDialog;
 begin
   if Range=0 then Exit;
   if Focused<WatchesCollection^.Count then
     P:=WatchesCollection^.At(Focused)
   else
-    P:=New(PWatch,Init(''));
-  Application^.ExecuteDialog(New(PWatchItemDialog,Init(P)),nil);
+    begin EditNew; exit; end;
+  D:=New(PWatchItemDialog,Init(P));
+  Dispose(D^.Title);
+  D^.Title:=NewStr('Edit Watch');
+  Application^.ExecuteDialog(D,nil);
   WatchesCollection^.Update;
 end;
 
@@ -3252,12 +3266,12 @@ procedure   TWatchesListBox.HandleEvent(var Event: TEvent);
 var DontClear: boolean;
 begin
   case Event.What of
-    evMouseDown : begin
-                   if Event.Double then
-                      Message(@Self,evCommand,cmEdit,nil)
-                   else
-                     ClearEvent(Event);
-                  end;
+    evMouseDown :
+      if Event.Double then
+        begin
+          Message(@Self,evCommand,cmEdit,nil);
+          ClearEvent(Event);
+        end;
     evKeyDown :
       begin
         DontClear:=false;
@@ -3346,6 +3360,7 @@ end;
       Desktop^.GetExtent(R);
       R.A.Y:=R.B.Y-7;
       inherited Init(R, dialog_watches,SearchFreeWindowNo);
+      GrowMode:=gfGrowAll+gfGrowRel;
       Palette:=wpCyanWindow;
       GetExtent(R);
       HelpCtx:=hcWatchesWindow;
@@ -3410,7 +3425,7 @@ constructor TWatchItemDialog.Init(AWatch: PWatch);
 var R,R2: TRect;
 begin
   R.Assign(0,0,50,10);
-  inherited Init(R,'Edit Watch');
+  inherited Init(R,'Add Watch');
   Watch:=AWatch;
 
   GetExtent(R); R.Grow(-3,-2);
@@ -3596,8 +3611,9 @@ end;
       R,R2 : trect;
     begin
       Desktop^.GetExtent(R);
-      R.A.Y:=R.B.Y-5;
+      R.A.Y:=R.B.Y-6;
       inherited Init(R, dialog_callstack, wnNoNumber);
+      GrowMode:=gfGrowAll+gfGrowRel;
       Palette:=wpCyanWindow;
       GetExtent(R);
       HelpCtx:=hcStackWindow;

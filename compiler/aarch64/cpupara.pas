@@ -179,10 +179,15 @@ unit cpupara;
             { ABI: any composite > 16 bytes that not a hfa/hva
               Special case: MWPascal, which passes all const parameters by
                 reference for compatibility reasons
-            }
+              Special case 2: on Windows we need to pass all const records by
+                reference due to the Windows unit (ab)using const to pass
+                pointer parameters }
             result:=
               ((varspez=vs_const) and
-               (calloption=pocall_mwpascal)) or
+               (
+                 (calloption=pocall_mwpascal) or
+                 (target_info.system=system_aarch64_win64)
+               )) or
               (not is_hfa(def,hfabasedef) and
                (def.size>16));
           variantdef,
@@ -307,7 +312,7 @@ unit cpupara;
            bits filled with unspecified values."
 
            Therefore at caller side force the ordinal result to be always 64-bit, so it
-           will be stripped to the required size and uneeded bits are discarded.
+           will be stripped to the required size and unneeded bits are discarded.
 
            According to Jonas iOS doesn't zero extend results in the callee either
          }

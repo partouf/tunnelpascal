@@ -186,6 +186,7 @@ type
     RefUnits: array of string;
     SourceFiles: TPpuContainerDef;
     LongVersion: Cardinal;
+    ByteSizeOfPpuReal : byte; { size of real constants embedded inside PPU }
 
     constructor Create(AParent: TPpuContainerDef); override;
     destructor Destroy; override;
@@ -281,7 +282,7 @@ type
     Options: TPpuObjOptions;
     IID: string;
     HelperParent: TPpuRef;
-    Size: integer;
+    Size: int64;
     constructor Create(AParent: TPpuContainerDef); override;
     destructor Destroy; override;
     function CanWrite: boolean; override;
@@ -348,8 +349,8 @@ type
   protected
     procedure BeforeWriteItems(Output: TPpuOutput); override;
   public
-    ElLow, ElHigh: integer;
-    Size: byte;
+    ElLow, ElHigh: int64;
+    Size: int64;
     CopyFrom: TPpuRef;
     constructor Create(AParent: TPpuContainerDef); override;
     destructor Destroy; override;
@@ -361,8 +362,8 @@ type
     procedure WriteDef(Output: TPpuOutput); override;
   public
     ElType: TPpuRef;
-    SetBase, SetMax: integer;
-    Size: byte;
+    SetBase, SetLow, SetMax: int64;
+    Size: int64;
     constructor Create(AParent: TPpuContainerDef); override;
     destructor Destroy; override;
   end;
@@ -409,7 +410,7 @@ type
     procedure WriteDef(Output: TPpuOutput); override;
   public
     StrType: TPpuStrType;
-    Len: integer;
+    Len: int64;
     constructor Create(AParent: TPpuContainerDef); override;
   end;
 

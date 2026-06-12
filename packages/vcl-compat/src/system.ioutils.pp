@@ -76,11 +76,10 @@ type
 
 type
   TDirectory = class
-
   protected
-    class function GetFilesAndDirectories(const aPath, aSearchPattern: string;const aSearchOption: TSearchOption; const SearchAttributes: TFileAttributes; const aPredicate: TFilterPredicateLocal): TStringDynArray;  overload; static;
-    class function GetFilesAndDirectories(const aPath, aSearchPattern: string;const aSearchOption: TSearchOption; const SearchAttributes: TFileAttributes; const aPredicate: TFilterPredicateObject): TStringDynArray;  overload; static;
-    class function GetFilesAndDirectories(const aPath, aSearchPattern: string;const aSearchOption: TSearchOption; const SearchAttributes: TFileAttributes; const aPredicate: TFilterPredicate): TStringDynArray;  overload; static;
+    class function GetFilesAndDirectories(const aPath, aSearchPattern: string;
+      const aSearchOption: TSearchOption; const SearchAttributes: TFileAttributes;
+      const aPredicate: TFilterPredicateLocal): TStringDynArray;  static;
   public
     class procedure Copy(const SourceDirName, DestDirName: string); static;
     class procedure CreateDirectory(const aPath: string); static;
@@ -170,6 +169,9 @@ type
     // Return position of first char after \\?\(UNC). Optionally return prefixtype.
     class function SkipExtendedPrefix(const aPath: string; out Prefix: TPathPrefixType): SizeInt; static;
     class function SkipExtendedPrefix(const aPath: String): SizeInt; static;
+  {$ifdef mswindows}
+    class function SkipRoot(const aPath: string): SizeInt; static;
+  {$endif}
   public
     class constructor Create;
     class function IsValidPathChar(const AChar: Char): Boolean; static;
@@ -226,6 +228,7 @@ type
     class function GetRingtonesPath: string; static;
     class function GetSharedRingtonesPath: string; static;
     class function GetTemplatesPath: string;
+    class function Exists(const aPath: string; aFollowLink: Boolean = True): Boolean; static;
     class function GetAttributes(const aPath: string; aFollowLink: Boolean = True): TFileAttributes; static;
     class procedure SetAttributes(const aPath: string; const aAttributes: TFileAttributes); static;
     class function HasExtension(const aPath: string): Boolean; static;
@@ -504,6 +507,38 @@ begin
     Result:=1;
   end;
 end;
+
+{$ifdef mswindows}
+class function TPath.SkipRoot(const aPath: string): SizeInt;
+var
+  P, Start: PChar;
+  Skip: SizeInt;
+begin
+  P := PChar(aPath); // Guarantee terminating #0 to avoid explicit length checks.
+  if P[0] in AllowDirectorySeparators then
+    if P[1] in AllowDirectorySeparators then
+    begin
+      Start := P;
+      Inc(P, 2);
+      // UNC: \\server\share, \\?\UNC\server\share, \\.\UNC\server\share. Devices: \\.\devicе, \\?\device.
+      if (P[0] in ['.', '?']) and (P[1] in AllowDirectorySeparators) and
+        (P[2] in ['u', 'U']) and (P[3] in ['n', 'N']) and (P[4] in ['c', 'C']) and (P[5] in AllowDirectorySeparators) then
+        Inc(P, 6);
+      // Skip two slash-delimited components. For UNC — server (P points to) and share, for devices — point/question mark (P points to) and device name.
+      for Skip := 0 to 1 do
+        repeat
+          if P^ = #0 then break;
+          Inc(P); // Includes the slash.
+        until P[-1] in AllowDirectorySeparators; // Breaks on slash.
+      Result := SizeUint(Pointer(P) - Pointer(Start)) div sizeof(Char);
+    end else
+      Result := 1 // One slash.
+  else if (P[0] in ['a' .. 'z', 'A' .. 'Z']) and (P[1] = ':') then
+    Result := 2 + ord(P[2] in AllowDirectorySeparators) // Drive plus maybe slash.
+  else
+    Result := 0;
+end;
+{$endif}
 
 class function TPath.HasValidPathChars(const aPath: string;
   const UseWildcards: Boolean): Boolean;
@@ -784,7 +819,7 @@ Var
                 if (i<=LenPat) then
                   begin
                     repeat
-                      {find a letter (not only first !) which maches pattern[i]}
+                      {find a letter (not only first !) which matches pattern[i]}
                       if UTF8 then
                         begin
                           while (j<=LenName) and
@@ -921,25 +956,30 @@ end;
 
 class function TPath.Combine(const Paths: array of string; const ValidateParams: Boolean = True): string;
 var
-  i: Integer;
+{$ifdef mswindows} nRoot : SizeInt; {$endif}
   Path: String;
 begin
-  if ValidateParams then
-    for i := Low(Paths) to High(Paths) do
-      if not TPath.HasValidPathChars(Paths[i], False) then
-        Raise EInOutArgumentException.CreateFmt(SErrInvalidCharsInPath,[Paths[i]],Path[i]);
   Result := '';
-  for i := High(Paths) downto Low(Paths) do
+  for Path in Paths do
   begin
-    Path := Paths[i];
-    if (Path <> '') then
+    if Path = '' then
+      continue;
+    if ValidateParams and not TPath.HasValidPathChars(Path, False) then
+      Raise EInOutArgumentException.CreateFmt(SErrInvalidCharsInPath,[Path],Path);
+  {$ifdef mswindows}
+    // Path starts with one \: root-relative.
+    if (Path[1] in AllowDirectorySeparators) and ((Length(Path) < 2) or not (Path[2] in AllowDirectorySeparators)) then
     begin
-      if (Result <> '') then
-        Path := AppendPathDelim(Path);
-      Result := Path + Result;
-      if not TPath.IsRelativePath(Result) then
-        Exit;
-    end;
+      nRoot := SkipRoot(Result);
+      if (nRoot > 0) and (Result[nRoot] in AllowDirectorySeparators) then
+        dec(nRoot); // Skip trailing \ if present, as Path already starts with a separator.
+      Result := Copy(Result, 1, nRoot) + Path;
+    end else
+  {$endif}
+    if TPath.IsRelativePath(Path) then
+      Result := AppendPathDelim(Result) + Path
+    else
+      Result := Path;
   end;
 end;
 
@@ -1474,6 +1514,11 @@ begin
 
 end;
 
+class function TPath.Exists(const aPath: string; aFollowLink: Boolean): Boolean;
+begin
+  Result:=TDirectory.Exists(aPath, aFollowLink) or TFile.Exists(aPath, aFollowLink);
+end;
+
 class function TPath.GetAttributes(const aPath: string; aFollowLink: Boolean
   ): TFileAttributes;
 begin
@@ -1493,7 +1538,7 @@ end;
 
 class function TPath.IsPathRooted(const aPath: string): Boolean;
 begin
-  Result:=aPath.StartsWith(PathSeparator) or TPath.IsDriveRooted(aPath);
+  Result:=aPath.StartsWith(PathDelim) or TPath.IsDriveRooted(aPath);
 end;
 
 { TFile }
@@ -1927,7 +1972,7 @@ begin
     Result:=TFileStream.Create(aPath, {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}Classes.fmCreate or sMode);
   TFileMode.fmOpen:
     begin
-    if Exists(aPath) then
+    if not Exists(aPath) then
       Raise EInOutError.CreateFmt(SErrFileNotFound,[aPath]);
     Result:=TFileStream.Create(aPath,fMode);
     end;
@@ -1967,11 +2012,11 @@ class function TFile.OpenText(const aPath: string): TStreamReader;
 
 var
   F : TFileStream;
-  
+
 begin
   Result:=Nil;
   F:=TFilestream.Create(aPath,fmOpenRead or fmShareDenyWrite);
-  try  
+  try
     Result := TStreamReader.Create(F,BUFFER_SIZE,True);
   except
     F.Free;
@@ -2141,6 +2186,8 @@ class function TDirectory.GetFilesAndDirectories(const aPath,
   aSearchPattern: string; const aSearchOption: TSearchOption;
   const SearchAttributes: TFileAttributes;
   const aPredicate: TFilterPredicateLocal): TStringDynArray;
+const
+   lfaDirectory = {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.faDirectory;
 
   function FilterPredicate(const aPath: string; const SearchRec: TSearchRec): Boolean;
   begin
@@ -2155,40 +2202,23 @@ begin
   IntPath     :=IncludeTrailingPathDelimiter(aPath);
   Result      :=[];
   if (FindFirst(IntPath + aSearchPattern, TFile.FileAttributesToInteger(SearchAttributes), SearchRec) = 0) then
-    repeat
-      if (aSearchOption = TSearchOption.soAllDirectories) and ((SearchRec.Attr and {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.faDirectory) <> 0)
-         and (SearchRec.Name <> '.') and (SearchRec.Name <> '..') then
-        Result:=Result + GetFilesAndDirectories(IntPath + SearchRec.Name, aSearchPattern, aSearchOption, SearchAttributes, aPredicate)
-      else if FilterPredicate(aPath, SearchRec) then
-        Result:=Result + [IntPath + SearchRec.Name];
-    until FindNext(SearchRec) <> 0;
-  {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.FindClose(SearchRec);
-end;
-
-class function TDirectory.GetFilesAndDirectories(const aPath,
-  aSearchPattern: string; const aSearchOption: TSearchOption;
-  const SearchAttributes: TFileAttributes;
-  const aPredicate: TFilterPredicateObject): TStringDynArray;
-
-  function DoFilterPredicate(const aPath: string; const SearchRec: TSearchRec): Boolean;
-  begin
-    Result:=aPredicate(aPath, SearchRec);
-  end;
-
-begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern, aSearchOption, SearchAttributes,@DoFilterPredicate);
-end;
-
-class function TDirectory.GetFilesAndDirectories(const aPath,
-  aSearchPattern: string; const aSearchOption: TSearchOption;
-const SearchAttributes: TFileAttributes; const aPredicate: TFilterPredicate
-  ): TStringDynArray;
-  function DoFilterPredicate(const aPath: string; const SearchRec: TSearchRec): Boolean;
-  begin
-    Result:=aPredicate(aPath, SearchRec);
-  end;
-begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern, aSearchOption, SearchAttributes, @DoFilterPredicate);
+    try
+      repeat
+        if FilterPredicate(aPath, SearchRec) then
+          Result:=Result + [IntPath + SearchRec.Name];
+      until FindNext(SearchRec) <> 0;
+    finally
+      {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.FindClose(SearchRec);
+    end;
+  if (aSearchOption=TSearchOption.soAllDirectories) and (FindFirst(IntPath + AllFilesMask, lfaDirectory, SearchRec) = 0) then
+    try
+      repeat
+        if SearchRec.IsDirectory and not SearchRec.IsCurrentOrParentDir then
+           Result:=Result + GetFilesAndDirectories(IntPath + SearchRec.Name, aSearchPattern, aSearchOption, SearchAttributes, aPredicate)
+      until FindNext(SearchRec) <> 0;
+   Finally
+     {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.FindClose(SearchRec);
+   end;
 end;
 
 class procedure TDirectory.Copy(const SourceDirName, DestDirName: string);
@@ -2354,21 +2384,38 @@ class function TDirectory.GetDirectories(const aPath, aSearchPattern: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicateLocal
   ): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern, aSearchOption, [TFileAttribute.faDirectory], aPredicate);
+  Result:=GetFilesAndDirectories(aPath, aSearchPattern,
+    aSearchOption, TFile.IntegerToFileAttributes(faAnyFile),
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result :=
+        (SearchRec.Attr and {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.faDirectory <> 0) and
+        (SearchRec.Name <> '.') and (SearchRec.Name <> '..');
+      if Result and Assigned(aPredicate) then
+        Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetDirectories(const aPath, aSearchPattern: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicateObject
   ): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern, aSearchOption, [TFileAttribute.faDirectory], aPredicate);
+  Result:=GetDirectories(aPath, aSearchPattern, aSearchOption,
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetDirectories(const aPath, aSearchPattern: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicate
   ): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern, aSearchOption, [TFileAttribute.faDirectory], aPredicate);
+  Result:=GetDirectories(aPath, aSearchPattern, aSearchOption,
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetDirectories(const aPath: string;
@@ -2450,22 +2497,35 @@ class function TDirectory.GetFiles(const aPath, aSearchPattern: string;
   ): TStringDynArray;
 begin
   Result:=GetFilesAndDirectories(aPath, aSearchPattern, aSearchOption,
-                                   TFile.IntegerToFileAttributes(faAnyFile) - [TFileAttribute.faDirectory],
-                                   aPredicate);
+    TFile.IntegerToFileAttributes(faAnyFile) - [TFileAttribute.faDirectory],
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := SearchRec.Attr and {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.faDirectory = 0;
+      if Result and Assigned(aPredicate) then
+        Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetFiles(const aPath, aSearchPattern: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicateObject
   ): TStringDynArray;
 begin
-  Result:=GetFiles(aPath, aSearchPattern, aSearchOption, aPredicate);
+  Result:=GetFiles(aPath, aSearchPattern, aSearchOption,
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetFiles(const aPath, aSearchPattern: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicate
   ): TStringDynArray;
 begin
-  Result:=GetFiles(aPath, aSearchPattern, aSearchOption, aPredicate);
+  Result:=GetFiles(aPath, aSearchPattern, aSearchOption,
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetFiles(const aPath: string;
@@ -2531,13 +2591,23 @@ class function TDirectory.GetFileSystemEntries(const aPath,
   aSearchPattern: string; const aPredicate: TFilterPredicateObject
   ): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern, TSearchOption.soTopDirectoryOnly, TFile.IntegerToFileAttributes(faAnyFile), aPredicate);
+  Result:=GetFilesAndDirectories(aPath, aSearchPattern,
+    TSearchOption.soTopDirectoryOnly, TFile.IntegerToFileAttributes(faAnyFile),
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetFileSystemEntries(const aPath,
   aSearchPattern: string; const aPredicate: TFilterPredicate): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, aSearchPattern,  TSearchOption.soTopDirectoryOnly, TFile.IntegerToFileAttributes(faAnyFile), aPredicate);
+  Result:=GetFilesAndDirectories(aPath, aSearchPattern,
+    TSearchOption.soTopDirectoryOnly, TFile.IntegerToFileAttributes(faAnyFile),
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetFileSystemEntries(const aPath: string;
@@ -2551,14 +2621,22 @@ class function TDirectory.GetFileSystemEntries(const aPath: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicateObject
   ): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, '*', aSearchOption, TFile.IntegerToFileAttributes(faAnyFile),aPredicate);
+  Result:=GetFilesAndDirectories(aPath, '*', aSearchOption, TFile.IntegerToFileAttributes(faAnyFile),
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class function TDirectory.GetFileSystemEntries(const aPath: string;
   const aSearchOption: TSearchOption; const aPredicate: TFilterPredicate
   ): TStringDynArray;
 begin
-  Result:=GetFilesAndDirectories(aPath, '*', aSearchOption, TFile.IntegerToFileAttributes(faAnyFile),aPredicate);
+  Result:=GetFilesAndDirectories(aPath, '*', aSearchOption, TFile.IntegerToFileAttributes(faAnyFile),
+    function(const aPath: string; const SearchRec: TSearchRec): Boolean
+    begin
+      Result := aPredicate(aPath, SearchRec);
+    end);
 end;
 
 class procedure TDirectory.ForAllEntries(const aPath, aPattern: string; const aBefore, aAfter: TFilterPredicateLocal; aRecursive: Boolean);
@@ -2595,10 +2673,10 @@ var
   sr: TSearchRec;
 begin
   Result:=True;
-  if (FindFirst(aPath, faAnyFile, sr) = 0) then
+  if (FindFirst(aPath + AllFilesMask, faAnyFile, sr) = 0) then
     repeat
       Result:=(sr.Name = '.') or (sr.Name = '..');
-    until Result and (FindNext(sr) = 0);
+    until not Result or (FindNext(sr) <> 0);
   {$IFDEF FPC_DOTTEDUNITS}System.{$ENDIF}SysUtils.FindClose(sr);
 end;
 

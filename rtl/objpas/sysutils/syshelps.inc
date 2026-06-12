@@ -3,9 +3,12 @@
   TStringHelper
   ---------------------------------------------------------------------}
 
+{$ifdef IS_ANSISTRINGHELPER}
+type
+  TTrimMode = {$push} {$scopedenums on} (Left, Right, Both) {$pop};
+{$endif}
 
-{$IFNDEF IS_SHORTSTRINGHELPER}
-{$IFNDEF IS_UNICODESTRINGHELPER}
+{$IF not defined(IS_SHORTSTRINGHELPER) and not defined(IS_UNICODESTRINGHELPER)}
 // Doubles with (wide/ansi)string...
 Function HaveChar(AChar : TStringChar; const AList: array of TStringChar) : Boolean;
 
@@ -14,15 +17,32 @@ Var
 
 begin
   I:=0;
-  Result:=False;
-  While (Not Result) and (I<Length(AList)) do
-    begin
-    Result:=(AList[i]=AChar);
+  while (I<=High(AList)) and (AList[I]<>AChar) do
     Inc(I);
-    end;
+  Result:=I<=High(AList);
 end;
 {$ENDIF}
-{$ENDIF}
+
+function Trim(const S: TStringType; const ATrimChars: array of TStringChar; mode: TTrimMode): TStringType;
+
+var
+  start, ed, ns: SizeInt;
+
+begin
+  start := 1;
+  ns := System.Length(S);
+  ed := ns;
+  if mode <> TTrimMode.Right then
+    while (start <= ed) and HaveChar(S[start], ATrimChars) do
+      inc(start);
+  if mode <> TTrimMode.Left then
+    while (start <= ed) and HaveChar(S[ed], ATrimChars) do
+      dec(ed);
+  if (start = 1) and (ed = ns) then
+    Result := S
+  else
+    Result := Copy(S, start, ed - start + 1);
+end;
 
 function TStringHelper.GetChar(AIndex: SizeInt): TStringChar;
 begin
@@ -55,8 +75,25 @@ end;
 
 class function TStringHelper.Compare(const A: TStringType; const B: TStringType;
   Options: TCompareOptions): Integer;
+var
+  LenA,LenB : integer;
 begin
-  Result:=Compare(A,0,B,0,System.Length(B),Options);
+  LenB:=System.Length(B);
+  LenA:=System.Length(A);
+  if LenB=LenA then
+    Result:=Compare(A,0,B,0,LenB,Options)
+  else if (LenB>LenA) then
+    begin
+    Result:=Compare(A,0,B,0,LenA,Options);
+    if Result=0 then // over the length of A, both are equal.
+      Result:=-1;
+    end
+  else // lenB<LenA
+    begin
+    Result:=Compare(A,0,B,0,LenB,Options);
+    if Result=0 then     // Over the length of B, both are equal
+       Result:=1;
+    end;
 end;
 
 
@@ -382,14 +419,13 @@ begin
     end;
 end;
 
-function TStringHelper.Contains(const AValue: TStringType; IgnoreCase: Boolean): Boolean;
+function TStringHelper.Contains(const AValue: TStringType; IgnoreCase: Boolean = False): Boolean;
 begin
   if IgnoreCase then
     Result:=Pos(LowerCase(AValue),LowerCase(Self))>0
   else
     Result:=Pos(AValue,Self)>0;
 end;
-
 
 function TStringHelper.CountChar(const C: TStringChar): SizeInt;
 
@@ -469,9 +505,9 @@ begin
       Result:=SameText(System.Copy(Self,NS-L+1,L),AValue)
     else
 {$IFDEF IS_SHORTSTRINGHELPER}
-      Result:=CompareChar(PTStringChar(@Self[1])[NS-L],PTStringChar(@AValue[1])^,L)=0;
+      Result:=CompareByte(PTStringChar(@Self[1])[NS-L],PTStringChar(@AValue[1])^,L*sizeof(TStringChar))=0;
 {$ELSE}
-      Result:=CompareChar(PTStringChar(Pointer(Self))[NS-L],PTStringChar(Pointer(AValue))^,L)=0;
+      Result:=CompareByte(PTStringChar(Pointer(Self))[NS-L],PTStringChar(Pointer(AValue))^,L*sizeof(TStringChar))=0;
 {$ENDIF}
 end;
 
@@ -599,10 +635,10 @@ begin
           Break;
         SP:=SP+Ofs+1;
         {$IFDEF IS_SHORTSTRINGHELPER}
-        if CompareChar(SP^,PTStringChar(@AValue[1])[1],NV-1)=0 then
+        if CompareByte(SP^,PTStringChar(@AValue[1])[1],(NV-1)*sizeof(TStringChar))=0 then
           Exit(SP-PTStringChar(@Self[1])-1);
         {$ELSE}
-        if CompareChar(SP^,PTStringChar(Pointer(AValue))[1],NV-1)=0 then
+        if CompareByte(SP^,PTStringChar(Pointer(AValue))[1],(NV-1)*sizeof(TStringChar))=0 then
           Exit(SP-PTStringChar(Pointer(Self))-1);
         {$ENDIF}
       until false;
@@ -890,12 +926,12 @@ end;
 
 
 function TStringHelper.LastIndexOf(const AValue: TStringType; AStartIndex: SizeInt; ACount: SizeInt): SizeInt;
-  
+
 var
   I,L,LS,M : SizeInt;
   S : TStringType;
   P : PTStringChar;
-    
+
 begin
   Result:=-1;
   LS:=system.Length(Self);
@@ -1324,9 +1360,9 @@ begin
       Result:=SameText(System.Copy(Self,1,L),AValue)
     else
 {$IFDEF IS_SHORTSTRINGHELPER}
-      Result:=CompareChar(PTStringChar(@Self[1])^,PTStringChar(@AValue[1])^,L)=0;
+      Result:=CompareByte(PTStringChar(@Self[1])^,PTStringChar(@AValue[1])^,L*sizeof(TStringChar))=0;
 {$ELSE}
-      Result:=CompareChar(PTStringChar(Pointer(Self))^,PTStringChar(Pointer(AValue))^,L)=0;
+      Result:=CompareByte(PTStringChar(Pointer(Self))^,PTStringChar(Pointer(AValue))^,L*sizeof(TStringChar))=0;
 {$ENDIF}
 end;
 
@@ -1339,7 +1375,10 @@ end;
 
 function TStringHelper.Substring(AStartIndex: SizeInt; ALen: SizeInt): TStringType;
 begin
-  Result:=system.Copy(Self,AStartIndex+1,ALen);
+  if (AStartIndex<=0) and (ALen>=System.Length(Self)) then
+    Result:=Self
+  else
+    Result:=system.Copy(Self,AStartIndex+1,ALen);
 end;
 
 
@@ -1443,43 +1482,19 @@ end;
 
 function TStringHelper.Trim(const ATrimChars: array of TStringChar): TStringType;
 begin
-  Result:=Self.TrimLeft(ATrimChars).TrimRight(ATrimChars);
+  Result:=SUT.Trim(Self, ATrimChars, TTrimMode.Both);
 end;
 
 
 function TStringHelper.TrimLeft(const ATrimChars: array of TStringChar): TStringType;
-
-Var
-  I,Len : SizeInt;
-
 begin
-  I:=1;
-  Len:=Self.Length;
-  While (I<=Len) and HaveChar(Self[i],ATrimChars) do Inc(I);
-  if I=1 then
-    Result:=Self
-  else if I>Len then
-    Result:=''
-  else
-    Result:=system.Copy(Self,I,Len-I+1);
+  Result:=SUT.Trim(Self, ATrimChars, TTrimMode.Left);
 end;
 
 
 function TStringHelper.TrimRight(const ATrimChars: array of TStringChar): TStringType;
-
-Var
-  I,Len : SizeInt;
-
 begin
-  Len:=Self.Length;
-  I:=Len;
-  While (I>=1) and HaveChar(Self[i],ATrimChars) do Dec(I);
-  if I<1 then
-    Result:=''
-  else if I=Len then
-    Result:=Self
-  else
-    Result:=system.Copy(Self,1,I);
+  Result:=SUT.Trim(Self, ATrimChars, TTrimMode.Right);
 end;
 
 

@@ -23,7 +23,7 @@ uses
   ,unixtype
 {$endif}
   ;
-{$ELSE}  
+{$ELSE}
 uses
   System.CTypes
 {$ifdef unix}
@@ -31,7 +31,7 @@ uses
 {$endif}
   ;
 
-{$ENDIF}  
+{$ENDIF}
 
 {$packrecords c}
 
@@ -62,7 +62,7 @@ type
   }
 
   { ObjCBOOL is one byte and uses 0/1, just like Pascal }
-{$if (defined(darwin) and defined(cpuaarch64)) or defined(VER3_0)}
+{$if defined(darwin) and defined(cpuaarch64)}
   ObjCBOOL = boolean;
 {$else}
   ObjCBOOL = boolean8;
@@ -93,7 +93,7 @@ type
   //   IMP *vtable;
   //   struct class_ro_t *ro;
   // }
-  
+
   // Full definition required by the compiler, do not make opaque!
 *)
   objc_object = record
@@ -104,7 +104,7 @@ type
     ro: pointer;
   end;
 
-  
+
   // Full definition required by the compiler, do not make opaque!
   objc_super = record
     receiver: id;
@@ -125,7 +125,7 @@ type
   //   const uint32_t size;  // sizeof(struct _protocol_t)
   //   const uint32_t flags;  // = 0
   // }
-  
+
   // Full definition required by the compiler, do not make opaque!
 *)
   objc_protocol = record
@@ -150,7 +150,7 @@ type
 ///   AnsiChar *type;
 ///   uint32_t alignment;
 ///   uint32_t size;
-  
+
   // Full definition required by the compiler, do not make opaque!
 *)
   objc_ivar = record

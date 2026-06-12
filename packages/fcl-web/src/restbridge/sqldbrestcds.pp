@@ -22,7 +22,7 @@ interface
 
 {$IFDEF FPC_DOTTEDUNITS}
 uses
-  System.Classes, System.SysUtils, System.DateUtils, Data.Db, FpJson.Data, Xml.Dom, Xml.Read, 
+  System.Classes, System.SysUtils, System.DateUtils, Data.Db, FpJson.Data, Xml.Dom, Xml.Read,
   Xml.Writer,FpWeb.RestBridge.Schema,FpWeb.RestBridge.IO, FpWeb.RestBridge.Bridge;
 {$ELSE FPC_DOTTEDUNITS}
 uses
@@ -254,7 +254,6 @@ end;
 procedure TCDSOutputStreamer.FinalizeOutput;
 
 begin
-{$IFNDEF VER3_0}
   if Not (ooHumanReadable in OutputOptions) then
     begin
     With TDOMWriter.Create(Stream,FXML) do
@@ -267,7 +266,6 @@ begin
       end;
     end
   else
-{$ENDIF}
   WriteXML(FXML,Stream);
   FreeAndNil(FXML);
 end;

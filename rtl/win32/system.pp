@@ -16,17 +16,10 @@
 unit System;
 interface
 
-
-{$DEFINE SYSTEM_HAS_FEATURE_MONITOR}
 {$define FPC_IS_SYSTEM}
 {$ifdef SYSTEMDEBUG}
   {$define SYSTEMEXCEPTIONDEBUG}
 {$endif SYSTEMDEBUG}
-
-{$ifdef VER3_0}
-{ 3.1.1+ do not require this anymore }
-{$define FPC_HAS_INDIRECT_ENTRY_INFORMATION}
-{$endif VER3_0}
 
 {$ifdef cpui386}
   {$define Set_i386_Exception_handler}
@@ -106,8 +99,8 @@ begin
       put down the entire process (DLL_PROCESS_DETACH will still
       occur). At this point RTL has been already finalized in InternalExit
       and shouldn't be finalized another time in DLL_PROCESS_DETACH.
-      Indicate this by resetting MainThreadIdWin32. }
-      MainThreadIDWin32:=0;
+      Indicate this by resetting DllProcessAttachPerformed. }
+      DllProcessAttachPerformed:=false;
   end;
   if not IsConsole then
    begin
@@ -196,7 +189,7 @@ function is_prefetch(p : pointer) : boolean;
     i : longint;
   begin
     result:=false;
-    { read memory savely without causing another exeception }
+    { read memory safely without causing another exeception }
     if not(ReadProcessMemory(GetCurrentProcess,p,@a,sizeof(a),nil)) then
       exit;
     i:=0;
@@ -648,7 +641,6 @@ initialization
   InitSystemDynLibs;
   { Reset IO Error }
   InOutRes:=0;
-  ProcessID := GetCurrentProcessID;
   DispCallByIDProc:=@DoDispCallByIDError;
 
 finalization

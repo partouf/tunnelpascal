@@ -74,9 +74,11 @@ uses
 
 {$IFNDEF JWA_IMPLEMENTATIONSECTION}
 
+{$PACKRECORDS C}
+
 type
   // #include <time.h>  // TODO
-  time_t = Longint;
+  time_t = PtrInt;
   {$EXTERNALSYM time_t}
 
 // Definitions and structures used by getnetworkparams and getadaptersinfo apis
@@ -279,7 +281,7 @@ type
   {$EXTERNALSYM _IP_ADAPTER_MULTICAST_ADDRESS}
   IP_ADAPTER_MULTICAST_ADDRESS = _IP_ADAPTER_MULTICAST_ADDRESS;
   TIpAdapterMulticastAddress = IP_ADAPTER_MULTICAST_ADDRESS;
-  PIpAdapterMulticastAddress = PIP_ADAPTER_MULTICAST_ADDRESS;  
+  PIpAdapterMulticastAddress = PIP_ADAPTER_MULTICAST_ADDRESS;
 
 //
 // Per-address Flags
@@ -310,7 +312,7 @@ type
   IP_ADAPTER_DNS_SERVER_ADDRESS = _IP_ADAPTER_DNS_SERVER_ADDRESS;
   {$EXTERNALSYM IP_ADAPTER_DNS_SERVER_ADDRESS}
   TIpAdapterDnsServerAddress = IP_ADAPTER_DNS_SERVER_ADDRESS;
-  PIpAdapterDnsServerAddress = PIP_ADAPTER_DNS_SERVER_ADDRESS;  
+  PIpAdapterDnsServerAddress = PIP_ADAPTER_DNS_SERVER_ADDRESS;
 
   PIP_ADAPTER_PREFIX = ^IP_ADAPTER_PREFIX;
   {$EXTERNALSYM PIP_ADAPTER_PREFIX}
@@ -426,7 +428,7 @@ type
   IP_ADAPTER_ADDRESSES = _IP_ADAPTER_ADDRESSES;
   {$EXTERNALSYM IP_ADAPTER_ADDRESSES}
   TIpAdapterAddresses = IP_ADAPTER_ADDRESSES;
-  PIpAdapterAddresses = PIP_ADAPTER_ADDRESSES;  
+  PIpAdapterAddresses = PIP_ADAPTER_ADDRESSES;
 
 //
 // Flags used as argument to GetAdaptersAddresses().

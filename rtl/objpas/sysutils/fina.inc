@@ -20,7 +20,7 @@ var
   i : longint;
   EndSep : Set of AnsiChar;
   SOF : Boolean;
-  
+
 begin
   i := Length(FileName);
   EndSep:=AllowDirectorySeparators+AllowDriveSeparators+[ExtensionSeparator];
@@ -66,8 +66,8 @@ begin
   EndSep:=AllowDirectorySeparators+AllowDriveSeparators;
   while (I > 0) and not CharInSet(FileName[I],EndSep) do
     Dec(I);
-  if (I > 1) 
-     and CharInSet(FileName[I],AllowDirectorySeparators) 
+  if (I > 1)
+     and CharInSet(FileName[I],AllowDirectorySeparators)
      and not CharInSet(FileName[I - 1],EndSep) then
     Dec(I);
   Result := Copy(FileName, 1, I);
@@ -83,7 +83,7 @@ begin
     exit;
 {$IFDEF HASAMIGA}
   i:=Pos(DriveSeparator,FileName);
-  if (i > 0) then Result:=Copy(FileName,1,i); 
+  if (i > 0) then Result:=Copy(FileName,1,i);
 {$ELSE}
   If CharInSet(FileName[2],AllowDriveSeparators) then
     result:=Copy(FileName,1,2)
@@ -91,7 +91,7 @@ begin
           CharInSet(FileName[2],AllowDirectorySeparators) then
     begin
       i := 2;
-      
+
       { skip share }
       While (i<l) and Not CharInSet(Filename[i+1],AllowDirectorySeparators) do
         inc(i);
@@ -121,7 +121,7 @@ var
   i : longint;
   EndSep : Set of AnsiChar;
   SOF : Boolean; // Dot at Start of filename ?
-  
+
 begin
   Result:='';
   I := Length(FileName);
@@ -331,7 +331,7 @@ Var Source, Dest   : PathStr;
 Const OneLevelBack = '..'+DirectorySeparator;
 
 begin
-  If Uppercase(ExtractFileDrive(BaseName))<>Uppercase(ExtractFileDrive(DestName)) Then
+  If not SameText(ExtractFileDrive(BaseName),ExtractFileDrive(DestName)) Then
     begin
     Result:=DestName;
     exit;
@@ -354,7 +354,7 @@ begin
   For J:=I to DC do Result:=Result+DD[J]+DirectorySeparator;
 {$else SYSUTILSUNICODE}
   { prevent conversion to DefaultSystemCodePage due to concatenation of
-    constant string -- and optimise a little by reducing the numher of
+    constant string -- and optimise a little by reducing the number of
     setlength cals }
   if SC>=I then
     begin
@@ -384,7 +384,7 @@ begin
   Result:=Result+ExtractFileName(DestName);
 end;
 
-Procedure DoDirSeparators (Var FileName : PathStr); {$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif}
+Procedure DoDirSeparators (Var FileName : PathStr); rtlproc;
 
 Var I : longint;
 
@@ -409,7 +409,7 @@ end;
   if none were found.
 }
 
-Function GetDirs (Var DirName : PathStr; Var Dirs : Array of PathPChar) : Longint; {$ifdef FPC_HAS_CPSTRING}rtlproc;{$endif}
+Function GetDirs (Var DirName : PathStr; Var Dirs : Array of PathPChar) : Longint; rtlproc;
 
 Var I : Longint;
 

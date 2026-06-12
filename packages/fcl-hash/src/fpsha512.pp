@@ -284,6 +284,7 @@ var
   A, B, C, D, E, F, G, H: QWord;
   I: UInt32;
   t1, t2: QWord;
+  {$ifdef CPU64}w2, w15, ww: QWord;{$endif}
   W : TQWordArray;
 
 begin
@@ -301,9 +302,47 @@ begin
   Move(Buffer,W,SizeOf(THashBuffer));
   for i:= 0 to 15 do
     W[i]:= BeTON(W[i]);
-  for i:= 0 to 79 do
+
+  for i:= 0 to 15 do
+  begin
+    t1:= h
+           // Sigma2(x) =  (ROR64(x, 14) ^ ROR64(x, 18) ^ ROR64(x, 41))
+         + (((e shr 14) or (e shl 50)) xor ((e shr 18) or (e shl 46)) xor ((e shr 41) or (e shl 23)))
+           // CH(x, y, z) = (((x) & (y)) | (~(x) & (z)))
+         + ((e and f) or (not e and g))
+         + k[i] + W[i];
+    t2:= // SIGMA1(x) = (ROR64(x, 28) ^ ROR64(x, 34) ^ ROR64(x, 39))
+         (((a shr 28) or (a shl 36)) xor ((a shr 34) or (a shl 30)) xor ((a shr 39) or (a shl 25))) +
+         // MAJ(x,y,z) = (((x) & (y)) | ((x) & (z)) | ((y) & (z)))
+         ((a and b) or (a and c) or (b and c));
+    h:= g;
+    g:= f;
+    f:= e;
+    e:= d + t1;
+    d:= c;
+    c:= b;
+    b:= a;
+    a:= t1 + t2;
+  end;
+
+  {$ifdef CPU64}w2:=W[16-2];{$endif}
+  for i:= 16 to 79 do
     begin
-    if I>=16 then
+{$ifdef CPU64 is done to gain up to 10% speed bump in 64 bit mode}
+      w15:=W[i-15];
+      Ww:= W[i-16]
+             // SIGMA4(x) = (ROR64(x, 19) ^ ROR64(x, 61) ^ SHR64(x, 6))
+             + (((w2 shr 19) or (W2 shl 45))
+               xor ((W2 shr 61) or (W2 shl 3))
+               xor (W2 shr 6))
+             + W[i-7]
+             // Sigma3 (x) = (ROR64(x, 1) ^ ROR64(x, 8) ^ SHR64(x, 7));
+             + (((W15 shr 1) or (W15 shl 63))
+                xor ((W15 shr 8) or (W15 shl 56))
+                xor (W15 shr 7));
+      w2:=W[i-1];
+      W[i]:=Ww;
+{$else}
       W[i]:= W[i-16]
              // SIGMA4(x) = (ROR64(x, 19) ^ ROR64(x, 61) ^ SHR64(x, 6))
              + (((W[i-2] shr 19) or (W[i-2] shl 45))
@@ -314,14 +353,14 @@ begin
              + (((W[i-15] shr 1) or (W[i-15] shl 63))
                 xor ((W[i-15] shr 8) or (W[i-15] shl 56))
                 xor (W[i-15] shr 7));
+{$endif}
 
-
-    t1:= h
+    t1:= h {$ifdef CPU64}+ Ww{$endif}
            // Sigma2(x) =  (ROR64(x, 14) ^ ROR64(x, 18) ^ ROR64(x, 41))
          + (((e shr 14) or (e shl 50)) xor ((e shr 18) or (e shl 46)) xor ((e shr 41) or (e shl 23)))
            // CH(x, y, z) = (((x) & (y)) | (~(x) & (z)))
          + ((e and f) or (not e and g))
-         + K[i] + W[i];
+         + K[i] {$ifndef CPU64}+ W[i]{$endif};
     t2:= // SIGMA1(x) = (ROR64(x, 28) ^ ROR64(x, 34) ^ ROR64(x, 39))
          (((a shr 28) or (a shl 36)) xor ((a shr 34) or (a shl 30)) xor ((a shr 39) or (a shl 25))) +
          // MAJ(x,y,z) = (((x) & (y)) | ((x) & (z)) | ((y) & (z)))
@@ -463,10 +502,6 @@ var
   SHA512, SHA512_: TSHA512;
 begin
   Result:=False;
-  if Key = nil then
-    Exit;
-  if Data = nil then
-    Exit;
   KeyBuffer:=Default(TBuf128);
   SHA512.Init;
   if KeySize > 128 then
@@ -474,7 +509,7 @@ begin
     SHA512.Update(Key, KeySize);
     SHA512.Final;
     System.Move(SHA512.Digest[0], KeyBuffer[0], SizeOf(SHA512.Digest));
-  end else
+  end else if KeySize>0 then
     System.Move(Key^, KeyBuffer[0], KeySize);
   // XOR the key buffer with the iPad value
   for Count := 0 to 127 do
@@ -527,7 +562,7 @@ begin
   repeat
      aLen:=aStream.Read(lBuffer, Length(lBuffer));
      if aLen>0 then
-       SHA512.Update(PByte(lBuffer),aLen); 
+       SHA512.Update(PByte(lBuffer),aLen);
   until aLen=0;
   SHA512.Final;
   aDigest:=SHA512.Digest;
@@ -721,10 +756,6 @@ var
   SHA384, SHA384_: TSHA384;
 begin
   Result:=False;
-  if Key = nil then
-    Exit;
-  if Data = nil then
-    Exit;
   KeyBuffer:=Default(TBuf128);
   SHA384.Init;
   if KeySize > 128 then
@@ -732,7 +763,7 @@ begin
     SHA384.Update(Key, KeySize);
     SHA384.Final;
     System.Move(SHA384.Digest[0], KeyBuffer[0], SizeOf(SHA384.Digest));
-  end else
+  end else if KeySize>0 then
     System.Move(Key^, KeyBuffer[0], KeySize);
   // XOR the key buffer with the iPad value
   for Count := 0 to 127 do

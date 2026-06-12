@@ -31,10 +31,10 @@ interface
 
 {$IFDEF FPC_DOTTEDUNITS}
   uses
-    System.SysUtils,System.SysConst,System.RtlConsts,System.TypInfo;
+    System.SysUtils,System.SysConst,System.RtlConsts,System.TypInfo,System.Types;
 {$ELSE FPC_DOTTEDUNITS}
   uses
-    sysutils,sysconst,rtlconsts,typinfo;
+    sysutils,sysconst,rtlconsts,typinfo,types;
 {$ENDIF FPC_DOTTEDUNITS}
 
 type
@@ -357,6 +357,8 @@ Procedure SetVariantProp(Instance: TObject; const PropName: AnsiString; const Va
 Procedure SetVariantProp(Instance: TObject; PropInfo : PPropInfo; const Value: Variant);
 
 
+operator :=(ANullPtr: TNullPtr): Variant; inline;
+
 {$IFDEF DEBUG_VARIANTS}
 var
   __DEBUG_VARIANTS: Boolean = False;
@@ -373,6 +375,14 @@ uses
   Math,
   VarUtils;
 {$ENDIF FPC_DOTTEDUNITS}
+
+{$IFDEF MSWINDOWS}
+  {$IFNDEF WIN16}
+    { i8086-win16 system define MSWINDOWS macro but does not support OLE strings }
+    procedure SysFreeString(bstr:pointer); stdcall; external 'oleaut32.dll' name 'SysFreeString';
+    {$DEFINE USE_MSWINDOWS_OLE}
+  {$ENDIF not WIN16}
+{$ENDIF MSWINDOWS}
 
 var
   customvarianttypes    : array of TCustomVariantType;
@@ -1544,7 +1554,7 @@ end;
 
 procedure DoVarOpInt64to32(var vl : TVarData; const vr : TVarData; const OpCode : TVarOp);
 begin
-  { can't do this well without an efficent way to check for overflows,
+  { can't do this well without an efficient way to check for overflows,
     let the Int64 version handle it and check the Result if we can downgrade it
     to integer }
   DoVarOpInt64(vl, vr, OpCode);
@@ -2317,6 +2327,10 @@ begin
       Dest.vType := varOleStr;
       Dest.vOleStr := nil;
       WideString(Pointer(Dest.vOleStr)) := WideString(Pointer(vOleStr));
+    end else if vType = varUString then begin
+      Dest.vType := varUString;
+      Dest.vustring := Nil;
+      UnicodeString(Dest.vustring) := UnicodeString(vustring);
     end else if vType = varAny then begin
       Dest := Source;
       RefAnyProc(Dest);
@@ -2446,6 +2460,11 @@ begin
         varDate:     SysVarFromTDateTime(Variant(aDest), VariantToDate(aSource));
 {$endif}
         varOleStr:   DoVarCastWStr(aDest, aSource);
+        varUString:  begin
+          DoVarClearIfComplex(aDest);
+          aDest.vType := aVarType;
+          UnicodeString(aDest.vustring) := VariantToUnicodeString(aSource);
+        end;
         varBoolean:  SysVarFromBool(Variant(aDest), VariantToBoolean(aSource));
         varShortInt: SysVarFromInt(Variant(aDest), VariantToShortInt(aSource), -1);
         varByte:     SysVarFromInt(Variant(aDest), VariantToByte(aSource), 1);
@@ -2456,13 +2475,10 @@ begin
 
         varDispatch: DoVarCastDispatch(aDest, aSource);
         varUnknown:  DoVarCastInterface(aDest, aSource);
-      else
-        case aVarType of
-          varString: DoVarCastLStr(aDest, aSource);
-          varAny:    VarCastError(vType, varAny);
+        varString:   DoVarCastLStr(aDest, aSource);
+        varAny:      VarCastError(vType, varAny);
         else
           DoVarCastComplex(aDest, aSource, aVarType);
-        end;
       end;
     end;
 
@@ -3151,6 +3167,37 @@ begin
 end;
 
 
+function DoVarArraySameValue(const A, B: Variant): Boolean;
+  var
+    i: Integer;
+    Dims: Integer;
+    Bounds: array[0..63] of TVarArrayBound;
+    Iterator: TVariantArrayIterator;
+    vA, vB: Variant;
+  begin
+    if (VarArrayDimCount(A) <> VarArrayDimCount(B)) then Exit(false);
+    Dims := VarArrayDimCount(A);
+    for i := 1 to Dims do begin
+      if (VarArrayLowBound(A, i) <> VarArrayLowBound(B, i)) then Exit(false);
+      if (VarArrayHighBound(A, i) <> VarArrayHighBound(B, i)) then Exit(false);
+      Bounds[Pred(i)].lowbound := VarArrayLowBound(A, i);
+      Bounds[Pred(i)].elementcount := VarArrayHighBound(A, i) - VarArrayLowBound(A, i) + 1;
+    end;
+    Iterator.Init(Dims, @Bounds);
+    try
+      if not(Iterator.AtEnd) then
+        repeat
+          vA := sysvararrayget(A, Dims, PLongint(Iterator.Coords));
+          vB := sysvararrayget(B, Dims, PLongint(Iterator.Coords));
+          if not VarSameValue(vA, vB) then Exit(false);
+        until not Iterator.Next;
+    finally
+      Iterator.Done;
+    end;
+    Exit(true);
+  end;
+
+
 function VarSameValue(const A, B: Variant): Boolean;
   var
     v1,v2 : TVarData;
@@ -3161,6 +3208,8 @@ function VarSameValue(const A, B: Variant): Boolean;
       Result:=v1.vType=v2.vType
     else if v2.vType in [varEmpty,varNull] then
       Result:=False
+    else if VarIsArray(A) and VarIsArray(B) then
+      Result:=DoVarArraySameValue(a, b)
     else
       Result:=A=B;
   end;
@@ -3439,7 +3488,7 @@ function VarTypeIsValidElementType(const aVarType: TVarType): Boolean;
       varSingle,varDouble,varDate,
 {$endif}
       varCurrency,varOleStr,varDispatch,varError,varBoolean,
-      varVariant,varUnknown,varShortInt,varByte,varWord,varLongWord,varInt64]) or
+      varVariant,varUnknown,varShortInt,varByte,varWord,varLongWord,varInt64, varQWord]) or
     FindCustomVariantType(aVarType,customvarianttype);
   end;
 
@@ -4101,7 +4150,11 @@ var
   arg_data: PVarData;
   dummy_data: TVarData;
   arg_advanced: boolean;
-
+{$IFDEF USE_MSWINDOWS_OLE}
+  i : integer;
+  nextstring: integer;
+  StringMap : array[0..255] of record passtr : pansistring; paswstr : punicodestring; comstr : pwidechar; end;
+{$ENDIF}
 const
   argtype_mask = $7F;
   argref_mask = $80;
@@ -4109,6 +4162,10 @@ begin
   arg_count := CallDesc^.ArgCount;
   method_name := ansistring(PAnsiChar(@CallDesc^.ArgTypes[arg_count]));
   setLength(args, arg_count);
+  {$IFDEF USE_MSWINDOWS_OLE}
+  nextstring:=0;
+  try
+  {$ENDIF}
   if arg_count > 0 then
   begin
     arg_ptr := Params;
@@ -4125,8 +4182,34 @@ begin
       end;
       if arg_byref then
       begin
+      {$IFDEF USE_MSWINDOWS_OLE}
+        case arg_type of
+          varStrArg:  begin
+                       StringMap[NextString].ComStr:=StringToOleStr(PAnsiString(ppointer(arg_ptr)^)^);
+                       StringMap[NextString].PasStr:=PAnsiString(ppointer(arg_ptr)^);
+                       StringMap[NextString].PasWStr:=nil;
+                       arg_data^.vType := arg_data^.vType or varByRef;
+                       arg_data^.volestr:=StringMap[NextString].ComStr;
+                       inc(NextString);
+                      end;
+          varUStrArg:  begin
+                       StringMap[NextString].ComStr:=StringToOleStr(PUnicodeString(ppointer(arg_ptr)^)^);
+                       StringMap[NextString].PasStr:=nil;
+                       StringMap[NextString].PasWStr:=PUnicodeString(ppointer(arg_ptr)^);
+                       arg_data^.vType := arg_data^.vType or varByRef;
+                       arg_data^.volestr:=StringMap[NextString].ComStr;
+                       inc(NextString);
+                      end;
+          else
+             begin
+               arg_data^.vType := arg_data^.vType or varByRef;
+               arg_data^.vPointer := PPointer(arg_ptr)^;
+             end;
+          end;
+      {$ELSE}
         arg_data^.vType := arg_data^.vType or varByRef;
         arg_data^.vPointer := PPointer(arg_ptr)^;
+      {$ENDIF}
         Inc(arg_ptr,sizeof(Pointer));
       end
       else
@@ -4165,6 +4248,22 @@ begin
               arg_data^.vByte := PLongint(arg_ptr)^;
             varWord:
               arg_data^.vWord := PLongint(arg_ptr)^;
+{$IFDEF USE_MSWINDOWS_OLE}
+            varStrArg:  begin
+                         StringMap[NextString].ComStr:=StringToOleStr(PAnsiString(arg_ptr)^);
+                         StringMap[NextString].PasStr:=nil;
+                         StringMap[NextString].PasWStr:=Nil;
+                         arg_data^.volestr:=StringMap[NextString].ComStr;
+                         inc(NextString);
+                        end;
+            varUStrArg:  begin
+                         StringMap[NextString].ComStr:=StringToOleStr(PunicodeString(arg_ptr)^);
+                         StringMap[NextString].PasStr:=nil;
+                         StringMap[NextString].PasWStr:=Nil;
+                         arg_data^.volestr:=StringMap[NextString].ComStr;
+                         inc(NextString);
+                        end;
+{$ENDIF}
             else
               arg_data^.vAny := PPointer(arg_ptr)^; // 32 or 64bit
           end;
@@ -4225,6 +4324,19 @@ begin
   else
     RaiseDispError;
   end;
+  {$IFDEF USE_MSWINDOWS_OLE}
+    { translate strings back }
+    for i:=0 to NextString-1 do begin
+      if assigned(StringMap[i].passtr) then
+        OleStrToStrVar(StringMap[i].comstr,StringMap[i].passtr^)
+      else if assigned(StringMap[i].paswstr) then
+        OleStrToStrVar(StringMap[i].comstr,StringMap[i].paswstr^);
+    end;
+ finally
+    for i:=0 to NextString-1 do
+      SysFreeString(StringMap[i].ComStr);
+    end;
+  {$ENDIF}
 end;
 
 function TInvokeableVariantType.DoFunction(var Dest: TVarData; const V: TVarData; const Name: AnsiString; const Arguments: TVarDataArray): Boolean;
@@ -4735,13 +4847,22 @@ begin
      tkDynArray:
        begin
          dynarr:=Nil;
-         DynArrayFromVariant(dynarr, Value, PropInfo^.PropType);
-         SetDynArrayProp(Instance, PropInfo, dynarr);
+         try
+           DynArrayFromVariant(dynarr, Value, PropInfo^.PropType);
+           SetDynArrayProp(Instance, PropInfo, dynarr);
+         finally
+           DynArrayClear(dynarr, PropInfo);
+         end;
        end;
    else
      raise EPropertyConvertError.CreateFmt('SetPropValue: Invalid Property Type %s',
                                     [PropInfo^.PropType^.Name]);
    end;
+end;
+
+operator :=(ANullPtr: TNullPtr): Variant;
+begin
+  Result := Null;
 end;
 
 var

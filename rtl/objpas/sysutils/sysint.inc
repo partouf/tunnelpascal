@@ -13,16 +13,16 @@
 
  **********************************************************************}
 
-class function TFormatSettings.Invariant : TFormatSettings; 
+class function TFormatSettings.Invariant : TFormatSettings;
 
 const
-  DefShortMonthNames : TMonthNameArray = ('Jan','Feb','Mar','Apr','May','Jun', 
+  DefShortMonthNames : TMonthNameArray = ('Jan','Feb','Mar','Apr','May','Jun',
                       'Jul','Aug','Sep','Oct','Nov','Dec');
   DefLongMonthNames : TMonthNameArray = ('January','February','March','April','May','June',
                      'July','August','September','October','November','December');
   DefShortDayNames : TWeekNameArray = ('Sun','Mon','Tue','Wed','Thu','Fri','Sat');
   DefLongDayNames : TWeekNameArray = ('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday');
-                     
+
 begin
   With Result do
     begin
@@ -52,6 +52,17 @@ class function TFormatSettings.Create: TFormatSettings; inline;
 
 begin
   Result:=DefaultFormatSettings;
+end;
+
+class function TFormatSettings.Create(const LocaleName: string): TFormatSettings;
+begin
+  // Catch
+  if LocaleName.StartsWith('en-US') then
+    Result:=TFormatSettings.Invariant
+  else if assigned(InitFormatSettingsHook) then
+    InitFormatSettingsHook(LocaleName,Result)
+  else
+    Raise ENotSupportedException.Create('No support for transforming locale name to format settings')
 end;
 
 procedure InitInternationalGeneric;

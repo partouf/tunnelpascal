@@ -21,7 +21,7 @@ type
   TDayTable = array[1..12] of Word;
   TFormatDateTimeOption = (fdoInterval);
   TFormatDateTimeOptions =  set of TFormatDateTimeOption;
-  
+
 const
    HoursPerDay = 24;
    MinsPerHour = 60;
@@ -79,7 +79,7 @@ var
       s      : second
       ss     : second (leading zero)
       [s]    : seconds (including the seconds of the full minutes, hours and days.
-               also: [ss]. 
+               also: [ss].
                Only available if fdoInterval is specified in options argument to FormatDateTime.
       t      : shorttimeformat
       tt     : longtimeformat
@@ -100,9 +100,13 @@ type
 
 {$IFNDEF HAS_SYSTEMTIME}
    TSystemTime = record
-      Year, Month, Day, DayOfWeek: word;
-      Hour, Minute, Second, MilliSecond: word;
-   end ;
+     case integer of
+       0: (Year, Month, Day, DayOfWeek: word;
+           Hour, Minute, Second, MilliSecond: word);
+       // Win32 compatibility
+       1: (wYear, wMonth, wDay, wDayOfWeek: word;
+           wHour, wMinute, wSecond, wMilliseconds: word);
+   end;
 {$ENDIF}
 
    TTimeStamp = record
@@ -205,6 +209,7 @@ procedure ReplaceDate(var DateTime: TDateTime; const NewDate: TDateTime); inline
 
 function GetLocalTimeOffset: Integer;
 function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean; out Offset: Integer): Boolean;
+function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean; out Offset: Integer; out IsDST : Boolean): Boolean;
 function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean = False): Integer;
 
 { UTC <-> Local time }

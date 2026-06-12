@@ -40,6 +40,9 @@ interface
        PE_DATADIR_ENTRIES = 16;
 
     type
+
+       TObjSymbolArray = array of TObjSymbol;
+       TObjSectionArray = array of TObjSection;
        tcoffpedatadir = packed record
          vaddr : longword;
          size  : longword;
@@ -175,13 +178,13 @@ interface
        TCoffObjInput = class(tObjInput)
        private
          FCoffsyms : tdynamicarray;
-         FCoffStrs : PChar;
+         FCoffStrs : TAnsiCharDynArray;
          FCoffStrSize: longword;
          { Convert symidx -> TObjSymbol }
-         FSymTbl   : ^TObjSymbolArray;
+         FSymTbl   : TObjSymbolArray;
          { Convert secidx -> TObjSection }
          FSecCount : Longint;
-         FSecTbl   : ^TObjSectionArray;
+         FSecTbl   : TObjSectionArray;
          win32     : boolean;
          bigobj    : boolean;
          function  GetSection(secidx:longint):TObjSection;
@@ -252,9 +255,6 @@ interface
          procedure MemPos_ExeSection(const aname:string);override;
        end;
 
-       TObjSymbolArray = array[0..high(word)] of TObjSymbol;
-       TObjSectionArray = array[0..high(smallint)] of TObjSection;
-
        TDJCoffAssembler = class(tinternalassembler)
          constructor create(info: pasminfo; smart:boolean);override;
        end;
@@ -295,6 +295,9 @@ interface
        COFF_BIG_OBJ_VERSION = 2;
 
     function ReadDLLImports(const dllname:string;readdllproc:Treaddllproc):boolean;
+    procedure MaybeSwap(var v : tcoffsechdr);
+    procedure MaybeSwap(var v : tcoffheader);
+    procedure MaybeSwap(var v : tcoffpeoptheader);
 
 implementation
 
@@ -585,7 +588,7 @@ implementation
          AddrNames,
          AddrOrds   : cardinal;
        end;
-       { MaybeSwap procedures 
+       { MaybeSwap procedures
        tcoffpedatadir = packed record
          vaddr : longword;
          size  : longword;
@@ -643,7 +646,7 @@ implementation
             v.Version:=SwapEndian(v.Version);
             v.Machine:=SwapEndian(v.Machine);
             v.TimeDateStame:=SwapEndian(v.TimeDateStame);
-	    { UUID byte array no swap neeeded }
+	    { UUID byte array no swap needed }
 	    { Assume unused fields are indeed really unused }
             v.NumberOfSections:=SwapEndian(v.NumberOfSections);
             v.PointerToSymbolTable:=SwapEndian(v.PointerToSymbolTable);
@@ -928,7 +931,7 @@ implementation
             v.AddrOrds:=SwapEndian(v.AddrOrds);
           end;
      end;
-  
+
      const
        SymbolMaxGrow = 200*sizeof(coffsymbol);
        StrsMaxGrow   = 8192;
@@ -986,7 +989,8 @@ implementation
           '.stack',
           '.heap',
           '.gcc_except_table',
-          '.ARM.attributes'
+          '.ARM.attributes',
+          '.note'
         );
 
 const go32v2stub : array[0..2047] of byte=(
@@ -1599,7 +1603,7 @@ const pemagic : array[0..3] of byte = (
         sep     : string[3];
         secname : string;
       begin
-        { section type user gives the user full controll on the section name }
+        { section type user gives the user full control on the section name }
         if atype=sec_user then
           result:=aname
         else
@@ -1639,7 +1643,18 @@ const pemagic : array[0..3] of byte = (
 
 
     procedure TCoffObjData.writereloc(data:aint;len:aword;p:TObjSymbol;reloctype:TObjRelocationType);
+      type
+        multi = record
+          case integer of
+          0 : (ba : array[0..sizeof(aint)-1] of byte);
+          1 : (b : byte);
+          2 : (w : word);
+          4 : (d : dword);
+          8 : (q : qword);
+        end;
+
       var
+        ba : multi;
         curraddr,
         symaddr : aword;
       begin
@@ -1723,7 +1738,31 @@ const pemagic : array[0..3] of byte = (
             if reloctype=RELOC_RVA then
               internalerror(200603033);
           end;
-        CurrObjSec.write(data,len);
+        if target_info.endian<>source_info.endian then
+          begin
+            ba.q:=0;
+            if (len<=sizeof(data)) then
+              case len of
+                1 : ba.b:=byte(data);
+                2 : begin
+                      ba.w:=word(data);
+                      ba.w:=swapendian(ba.w);
+                    end;
+                4 : begin
+                      ba.d:=dword(data);
+                      ba.d:=swapendian(ba.d);
+                    end;
+                8 : begin
+                      ba.q:=qword(data);
+                      ba.q:=swapendian(ba.q);
+                    end;
+              else
+                internalerror(2024012501);
+              end;
+            CurrObjSec.write(ba,len);
+          end
+        else
+          CurrObjSec.write(data,len);
       end;
 
 
@@ -1761,7 +1800,9 @@ const pemagic : array[0..3] of byte = (
     destructor TCoffObjOutput.destroy;
       begin
         FCoffSyms.free;
+        FCoffSyms := nil;
         FCoffStrs.free;
+        FCoffStrs := nil;
         inherited destroy;
       end;
 
@@ -2235,12 +2276,10 @@ const pemagic : array[0..3] of byte = (
     destructor TCoffObjInput.destroy;
       begin
         FCoffSyms.free;
-        if assigned(FCoffStrs) then
-          freemem(FCoffStrs);
-        if assigned(FSymTbl) then
-          freemem(FSymTbl);
-        if assigned(FSecTbl) then
-          freemem(FSecTbl);
+        FCoffSyms := nil;
+        FCoffStrs:=nil;
+        FSymTbl:=nil;
+        FSecTbl:=nil;
         inherited destroy;
       end;
 
@@ -2253,7 +2292,7 @@ const pemagic : array[0..3] of byte = (
             InputError('Failed reading coff file, invalid section index');
             exit;
           end;
-        result:=FSecTbl^[secidx];
+        result:=FSecTbl[secidx];
       end;
 
 
@@ -2373,7 +2412,7 @@ const pemagic : array[0..3] of byte = (
              end;
            end;
 
-           p:=FSymTbl^[rel.sym];
+           p:=FSymTbl[rel.sym];
            if assigned(p) then
              s.addsymreloc(rel.address-s.mempos,p,rel_type)
            else
@@ -2422,7 +2461,7 @@ const pemagic : array[0..3] of byte = (
            else
              nsyms:=FCoffSyms.Size div sizeof(CoffSymbol);
            { Allocate memory for symidx -> TObjSymbol table }
-           FSymTbl:=AllocMem(nsyms*sizeof(TObjSymbol));
+           SetLength(FSymTbl,nsyms);
            { Load the Symbols }
            FCoffSyms.Seek(0);
            symidx:=0;
@@ -2541,7 +2580,7 @@ const pemagic : array[0..3] of byte = (
                 else
                   UnsupportedSymbolType;
               end;
-              FSymTbl^[symidx]:=objsym;
+              FSymTbl[symidx]:=objsym;
               { read aux records }
 
               { handle COMDAT symbols }
@@ -2551,16 +2590,14 @@ const pemagic : array[0..3] of byte = (
                     begin
                       FCoffSyms.Read(boauxrec,sizeof(boauxrec));
                       psecrec:=pcoffsectionrec(@boauxrec[0]);
-		      secrec:=psecrec^;
-		      MaybeSwap(secrec);
                     end
                   else
                     begin
                       FCoffSyms.Read(auxrec,sizeof(auxrec));
                       psecrec:=pcoffsectionrec(@auxrec);
-		      secrec:=psecrec^;
-		      MaybeSwap(secrec);
                     end;
+                  secrec:=psecrec^;
+                  MaybeSwap(secrec);
 
                   case secrec.select of
                     IMAGE_COMDAT_SELECT_NODUPLICATES:
@@ -2577,13 +2614,17 @@ const pemagic : array[0..3] of byte = (
                       comdatsel:=oscs_largest;
                     else begin
                       comdatsel:=oscs_none;
-                      Message2(link_e_comdat_select_unsupported,inttostr(secrec.select),objsym.objsection.name);
+                      { there are object files out here that have comdat symbols
+                        including an associative section, but with a comdat selection
+                        of 0; it seems that other linkers just ignore those... }
+                      if secrec.select<>0 then
+                        Message2(link_e_comdat_select_unsupported,inttostr(secrec.select),objsym.objsection.name);
                     end;
                   end;
 
-                  if comdatsel in [oscs_associative,oscs_exact_match] then
+                  if comdatsel in [oscs_associative] then
                     { only temporary }
-                    Comment(V_Error,'Associative or exact match COMDAT sections are not yet supported (symbol: '+objsym.objsection.Name+')')
+                    Comment(V_Error,'Associative COMDAT sections are not yet supported (symbol: '+objsym.objsection.Name+')')
                   else if (comdatsel=oscs_associative) and (secrec.assoc=0) then
                     Message1(link_e_comdat_associative_section_expected,objsym.objsection.name)
                   else if (objsym.objsection.ComdatSelection<>oscs_none) and (comdatsel<>oscs_none) and (objsym.objsection.ComdatSelection<>comdatsel) then
@@ -2594,7 +2635,7 @@ const pemagic : array[0..3] of byte = (
 
                       if (secrec.assoc<>0) and not assigned(objsym.objsection.AssociativeSection) then
                         begin
-                          objsym.objsection.AssociativeSection:=GetSection(secrec.assoc);
+                          objsym.objsection.AssociativeSection:=GetSection(secrec.assoc-1);
                           if not assigned(objsym.objsection.AssociativeSection) then
                             Message1(link_e_comdat_associative_section_not_found,objsym.objsection.Name);
                         end;
@@ -2734,7 +2775,7 @@ const pemagic : array[0..3] of byte = (
            if (FCoffStrSize>4) then
              begin
                { allocate an extra byte and null-terminate }
-               GetMem(FCoffStrs,FCoffStrSize+1);
+               SetLength(FCoffStrs,FCoffStrSize+1);
                FCoffStrs[FCoffStrSize]:=#0;
                for i:=0 to 3 do
                  FCoffStrs[i]:=#0;
@@ -2750,7 +2791,7 @@ const pemagic : array[0..3] of byte = (
              FSecCount:=longint(boheader.NumberOfSections)
            else
              FSecCount:=header.nsects;
-           FSecTbl:=AllocMem((FSecCount+1)*sizeof(TObjSection));
+           SetLength(FSecTbl,(FSecCount+1));
            if bigobj then
              secofs:=sizeof(tcoffbigobjheader)
            else
@@ -2813,7 +2854,7 @@ const pemagic : array[0..3] of byte = (
                      end;
                  end;
                objsec:=TCoffObjSection(createsection(secname,secalign,secoptions,false));
-               FSecTbl^[i]:=objsec;
+               FSecTbl[i]:=objsec;
                if not win32 then
                  objsec.mempos:=sechdr.rvaofs;
                objsec.orgmempos:=sechdr.rvaofs;
@@ -2834,8 +2875,6 @@ const pemagic : array[0..3] of byte = (
            { Relocs }
            ObjSectionList.ForEachCall(@objsections_read_relocs,nil);
          end;
-        if assigned(FCoffStrs) then
-          freemem(FCoffStrs);
         FCoffStrs:=nil;
         FCoffSyms.Free;
         FCoffSyms:=nil;
@@ -3371,6 +3410,7 @@ const pemagic : array[0..3] of byte = (
           end;
         { Release }
         FCoffStrs.Free;
+        FCoffStrs := nil;
         result:=true;
       end;
 
@@ -3918,6 +3958,7 @@ const pemagic : array[0..3] of byte = (
             readdllproc(DLLName,FuncName);
           end;
         DLLReader.Free;
+        DLLReader := nil;
       end;
 
 {$ifdef arm}

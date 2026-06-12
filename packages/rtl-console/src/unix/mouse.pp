@@ -18,11 +18,11 @@ unit Mouse;
 {$ENDIF FPC_DOTTEDUNITS}
 interface
 
-{$if defined(aix) or defined(solaris) or (defined(bsd) and not(defined(darwin)))}
+{$if defined(aix) or defined(solaris)}
 {$define NOMOUSE}
 {$endif}
 
-{$if defined(darwin) or defined(haiku) or defined(beos)}
+{$if defined(darwin) or defined(haiku) or defined(beos) or defined(bsd)}
 {$define NOGPM}
 {$endif}
 
@@ -62,6 +62,7 @@ const
 
 var
   mousecurcell : TVideoCell;
+  MouseCurBkg : Byte; { for mouse draw in EnhancedVideoBuf }
   SysLastMouseEvent : TMouseEvent;
 
 const
@@ -84,11 +85,15 @@ begin
    MouseEvent.y:=0;
   MouseEvent.buttons:=0;
   if e.buttons and Gpm_b_left<>0 then
-   inc(MouseEvent.buttons,1);
+   inc(MouseEvent.buttons,MouseLeftButton);
   if e.buttons and Gpm_b_right<>0 then
-   inc(MouseEvent.buttons,2);
+   inc(MouseEvent.buttons,MouseRightButton);
   if e.buttons and Gpm_b_middle<>0 then
-   inc(MouseEvent.buttons,4);
+   inc(MouseEvent.buttons,MouseMiddleButton);
+  if e.buttons and $08<>0 then
+   inc(MouseEvent.buttons,MouseXButton1);
+  if e.buttons and $10<>0 then
+   inc(MouseEvent.buttons,MouseXButton2);
   case (e.EventType and $f) of
     GPM_MOVE,
     GPM_DRAG :
@@ -127,22 +132,40 @@ procedure PlaceMouseCur(ofs:longint);
 var
   upd : boolean;
 begin
-  if (VideoBuf=nil) or (MouseCurOfs=Ofs) then
-   exit;
-  upd:=false;
-
-  if (MouseCurOfs<>-1) and (VideoBuf^[MouseCurOfs]=MouseCurCell) then
-   begin
-     VideoBuf^[MouseCurOfs]:=MouseCurCell xor $7f00;
-     upd:=true;
-   end;
-  MouseCurOfs:=ofs;
-  if (MouseCurOfs<>-1) then
-   begin
-     MouseCurCell:=VideoBuf^[MouseCurOfs] xor $7f00;
-     VideoBuf^[MouseCurOfs]:=MouseCurCell;
-     upd:=true;
-   end;
+  if MouseCurOfs=Ofs then
+    exit;
+   upd:=false;
+  if assigned(EnhancedVideoBuf) then
+    begin
+      if (MouseCurOfs<>-1) then
+        if EnhancedVideoBuf[MouseCurOfs].BackgroundColor=MouseCurBkg then
+        begin
+          EnhancedVideoBuf[MouseCurOfs].BackgroundColor:=byte(MouseCurBkg xor $f);
+          upd:=true;
+        end;
+      MouseCurOfs:=ofs;
+      if (MouseCurOfs<>-1) then
+        begin
+          MouseCurBkg:=byte(EnhancedVideoBuf[MouseCurOfs].BackgroundColor xor $f);
+          EnhancedVideoBuf[MouseCurOfs].BackgroundColor:=byte(MouseCurBkg);
+          upd:=true;
+        end;
+    end
+  else if assigned(VideoBuf) then
+    begin
+      if (MouseCurOfs<>-1) and (VideoBuf^[MouseCurOfs]=MouseCurCell) then
+        begin
+          VideoBuf^[MouseCurOfs]:=MouseCurCell xor $7f00;
+          upd:=true;
+        end;
+      MouseCurOfs:=ofs;
+      if (MouseCurOfs<>-1) then
+        begin
+          MouseCurCell:=VideoBuf^[MouseCurOfs] xor $7f00;
+          VideoBuf^[MouseCurOfs]:=MouseCurCell;
+          upd:=true;
+        end;
+    end;
   if upd then
    Updatescreen(false);
 end;
@@ -181,7 +204,7 @@ begin
         t:=i;
         break;
       end;
-  if t=xterm then 
+  if t=xterm then
     begin
       {Rxvt sets TERM=xterm and COLORTERM=rxvt. Gnome does something similar.}
       term:=fpgetenv('COLORTERM');
@@ -221,7 +244,10 @@ begin
         {Use the xterm mouse, report button events only.}
         gpm_fs:=-1000;
         {write(#27'[?1001s');} { save old hilit tracking }
-        write(#27'[?1000h'); { enable mouse tracking }
+        write(#27'[?1000h'); { try to enable mouse down+up tracking }
+        write(#27'[?1002h'); { try to enable mouse down+up and drag tracking }
+        write(#27'[?1003h'); { try to enable mouse all motion tracking }
+        write(#27'[?1005h'); { try to enable mouse report format multibyte }
         if not DisableSGRExtModeMouse then
           write(#27'[?1006h'); { try to enable Extended/SGH 1006 mouse tracking }
       end;
@@ -229,7 +255,8 @@ begin
       begin
         {Use the xterm mouse, report all mouse events.}
         gpm_fs:=-1003;
-        write(#27'[?1003h'); { enable mouse tracking }
+        write(#27'[?1002h'); { enable mouse down, up and drag tracking (putty pretend to be xterm but doesn't have _[?1003h mode)}
+        write(#27'[?1003h'); { enable mouse all motion tracking }
         if not DisableSGRExtModeMouse then
           write(#27'[?1006h'); { try to enable Extended/SGH 1006 mouse tracking }
       end;
@@ -264,14 +291,19 @@ begin
     -1000:
       begin
         {xterm mouse}
-        write(#27'[?1000l'); { disable mouse tracking }
-        {write(#27'[?1001r');} { Restore old hilit tracking }
         if not DisableSGRExtModeMouse then
           write(#27'[?1006l'); { disable Extended/SGH 1006 mouse tracking }
+        write(#27'[?1005l'); { disable mouse report format multibyte }
+        write(#27'[?1003l'); { disable mouse all motion tracking }
+        write(#27'[?1002l'); { disable mouse down+up and drag tracking }
+        write(#27'[?1000l'); { disable mouse down+up tracking }
+        {write(#27'[?1001r');} { Restore old hilit tracking }
+
       end;
     -1003:
       begin
-        write(#27'[?1003l'); { disable mouse tracking }
+        write(#27'[?1003l'); { disable mouse all motion tracking }
+        write(#27'[?1002l'); { disable mouse down, up and drag tracking }
         if not DisableSGRExtModeMouse then
           write(#27'[?1006l'); { disable Extended/SGH 1006 mouse tracking }
       end;
@@ -398,7 +430,7 @@ begin
 {$ifndef NOGPM}
   if PollMouseEvent(ME) then
    begin
-     { Remove mouse event, we are only interrested in
+     { Remove mouse event, we are only interested in
        the X,Y so all other events can be thrown away }
      GetMouseEvent(ME);
      SysGetMouseX:=ME.X
@@ -422,7 +454,7 @@ begin
 {$ifndef NOGPM}
   if PollMouseEvent(ME) then
    begin
-     { Remove mouse event, we are only interrested in
+     { Remove mouse event, we are only interested in
        the X,Y so all other events can be thrown away }
      GetMouseEvent(ME);
      SysGetMouseY:=ME.Y
@@ -478,7 +510,7 @@ begin
 {$ifndef NOGPM}
   if PollMouseEvent(ME) then
    begin
-     { Remove mouse event, we are only interrested in
+     { Remove mouse event, we are only interested in
        the buttons so all other events can be thrown away }
      GetMouseEvent(ME);
      SysGetMouseButtons:=ME.Buttons;

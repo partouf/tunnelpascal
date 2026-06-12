@@ -102,7 +102,7 @@ NEEDLIBRARY........Adds -rpath to the linker for unix. This is needed to
                    test runtime library tests. The library needs the -FE.
                    option to place the .so in the correct directory.
 NEEDEDAFTER........Use it if the files are necessary for a later test.
-                   this option will avoid delteting generated file even when
+                   this option will avoid deleting generated file even when
                    TEST_DELTEMP is used.
 KNOWNRUNERROR......Known bug, which manifest itself at runtime. To the
                    right of the equal sign is the expected exit code,
@@ -112,6 +112,10 @@ KNOWNCOMPILEERROR..Known bug, which manifest itself at compile time. To
                    the right of the equal sign is the expected exit code
                    from compiler, followed by an optional note. Will not
                    be logged as a bug.
+EXPECTMSGS.........A comma separated list of message IDs (see -vq) which the
+                   compiler is expected to print during execution. If at least
+                   one is not printed then this is considered an error.
+                   Note: implicitly adds the -vq option for compilation.
 QUICKTEST..........If set, only tests without package dependencies are executed
 WPOPARAS...........Parameters to be added after -OW/-Ow to perform whole
                    program optimization tests
@@ -125,7 +129,7 @@ WPOPASSES..........Number of whole program optimization iterations to perform
         No space between the elements and the comma.
 
 
-Controling testing in more detail
+Controlling testing in more detail
 ---------------------------------
 Calling "make full" will perform tests in a standard manner. To have
 more control of the test process one must distinguish between:
@@ -135,7 +139,7 @@ more control of the test process one must distinguish between:
   OS_TARGET, OPT etc. controls this.
 
 * Test environment:  compiler/rtl etc. to be tested, to be used
-  *in* the tests. Ususal options, prepended with TEST_ , controls
+  *in* the tests. Usual options, prepended with TEST_ , controls
   this. If no such options are given, test and driver environment
   will be the same.
 

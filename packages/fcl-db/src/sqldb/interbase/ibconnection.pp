@@ -94,7 +94,7 @@ type
     FStatus                : TStatusVector;
     FDatabaseInfo          : TDatabaseInfo;
     FDialect               : integer;
-    FBlobSegmentSize       : word; //required for backward compatibilty; not used
+    FBlobSegmentSize       : word; //required for backward compatibility; not used
     FUseConnectionCharSetIfNone: Boolean;
     FWireCompression       : Boolean;
     FCursorCount : Integer;
@@ -172,9 +172,9 @@ type
     Property UseConnectionCharSetIfNone : Boolean Read FUseConnectionCharSetIfNone Write FUseConnectionCharSetIfNone;
     property WireCompression: Boolean read FWireCompression write FWireCompression default False;
   end;
-  
+
   { TIBConnectionDef }
-  
+
   TIBConnectionDef = Class(TConnectionDef)
     Class Function TypeName : String; override;
     Class Function ConnectionClass : TSQLConnectionClass; override;
@@ -184,7 +184,7 @@ type
     Class Function UnLoadFunction : TLibraryUnLoadFunction; override;
     Class Function LoadedLibraryName: string; override;
   end;
-                  
+
 implementation
 
 {$IFDEF FPC_DOTTEDUNITS}
@@ -195,11 +195,6 @@ uses
   StrUtils, FmtBCD;
 {$ENDIF FPC_DOTTEDUNITS}
 
-const
-  SQL_BOOLEAN_INTERBASE = 590;
-  SQL_BOOLEAN_FIREBIRD = 32764;
-  SQL_NULL = 32767;
-  INVALID_DATA = -1;
 
 procedure TIBConnection.CheckError(const ProcName : string; Status : PISC_STATUS);
 
@@ -506,8 +501,10 @@ begin
   ReleaseIBase60;
 {$ELSE}
   // Shutdown embedded subsystem with timeout 300ms (Firebird 2.5+)
-  // Required before unloading library; has no effect on non-embedded client
-  if (pointer(fb_shutdown)<>nil) and (fb_shutdown(300,1)<>0) then
+  // Only call fb_shutdown for embedded Firebird; calling it for a
+  // client connection shuts down the networking subsystem, causing
+  // subsequent reconnect attempts to fail with "connection shutdown".
+  if UseEmbeddedFirebird and (pointer(fb_shutdown)<>nil) and (fb_shutdown(300,1)<>0) then
   begin
     //todo: log error; still try to unload library below as the timeout may have been insufficient
   end;
@@ -679,7 +676,7 @@ var
   ADatabaseName: String;
   DPB: string;
   HN : String;
-  
+
 begin
   DPB := chr(isc_dpb_version1);
   if (UserName <> '') then
@@ -698,13 +695,13 @@ begin
 
   FDatabaseHandle := nil;
   HN:=HostName;
-  if HN <> '' then 
+  if HN <> '' then
     begin
     if Port<>0 then
       HN:=HN+'/'+IntToStr(Port);
     ADatabaseName := HN+':'+DatabaseName
     end
-  else 
+  else
     ADatabaseName := DatabaseName;
   if isc_attach_database(@FStatus[0], Length(ADatabaseName), @ADatabaseName[1],
     @FDatabaseHandle, Length(DPB), @DPB[1]) <> 0 then
@@ -804,6 +801,9 @@ begin
         TrType := ftFloat;
     SQL_BOOLEAN_INTERBASE, SQL_BOOLEAN_FIREBIRD :
         TrType := ftBoolean;
+    SQL_INT128,
+    SQL_DEC16, SQL_DEC34:
+        TrType := ftFmtBCD;
     else
         TrType := ftUnknown;
   end;
@@ -1011,7 +1011,7 @@ begin
       begin
       if isc_dsql_free_statement(@Status, @StatementHandle, DSQL_close)<>0 then
         // If transaction was closed (keepOpenOnCommit, then the cursor is already closed.
-        CheckError('Close Cursor', Status, [335544577]); 
+        CheckError('Close Cursor', Status, [335544577]);
       end;
     end;
 end;
@@ -1063,11 +1063,10 @@ var
   function GetBlobCharset(TableName,ColumnName: Pointer): smallint;
   var TransactionHandle: pointer;
       BlobDesc: TISC_BLOB_DESC;
-      Global: array[0..31] of AnsiChar;
   begin
     TransactionHandle := TIBCursor(cursor).TransactionHandle;
     if isc_blob_lookup_desc(@FStatus[0], @FDatabaseHandle, @TransactionHandle,
-         TableName, ColumnName, @BlobDesc, @Global) <> 0 then
+         TableName, ColumnName, @BlobDesc, nil) <> 0 then
       CheckError('Blob Charset', FStatus);
     Result := BlobDesc.blob_desc_charset;
   end;
@@ -1084,7 +1083,7 @@ begin
       TranslateFldType(PSQLVar^.SQLType, PSQLVar^.sqlsubtype, PSQLVar^.SQLLen, PSQLVar^.SQLScale,
         TransType, TransLen, TransPrec);
 
-      // [var]AnsiChar or blob column character set NONE or OCTETS overrides connection charset
+      // [var]char or blob column character set NONE or OCTETS overrides connection charset
       if (((TransType in [ftString, ftFixedChar]) and (PSQLVar^.sqlsubtype and $FF in [CS_NONE,CS_BINARY])) and not UseConnectionCharSetIfNone)
          or
          ((TransType = ftMemo) and (PSQLVar^.relname_length>0) and (PSQLVar^.sqlname_length>0) and (GetBlobCharset(@PSQLVar^.relname,@PSQLVar^.sqlname) in [CS_NONE,CS_BINARY])) then
@@ -1201,6 +1200,7 @@ var
   li       : LargeInt;
   CurrBuff : PAnsiChar;
   w        : word;
+  i128     : Int128Rec;
 
 begin
   {$push}
@@ -1284,6 +1284,13 @@ begin
           SetDateTime(VSQLVar^.SQLData, AParam.AsDateTime, VSQLVar^.SQLType);
         SQL_BOOLEAN_FIREBIRD:
           PByte(VSQLVar^.SQLData)^ := Byte(AParam.AsBoolean);
+        SQL_INT128:
+          begin
+            i128 := BCDToInt128(AParam.AsFMTBCD);
+            Move(i128, VSQLVar^.SQLData^, VSQLVar^.SQLLen);
+          end;
+        SQL_DEC16:
+          PQWord(VSQLVar^.SQLData)^ := BCDToDPDec64(AParam.AsFMTBCD);
       else
         if (VSQLVar^.sqltype <> SQL_NULL) then
           DatabaseErrorFmt(SUnsupportedParameter,[FieldTypeNames[AParam.DataType]],self);
@@ -1295,12 +1302,14 @@ end;
 
 function TIBConnection.LoadField(cursor : TSQLCursor; FieldDef : TFieldDef; buffer : pointer; out CreateBlob : boolean) : boolean;
 
+type
+  PInt128Rec = ^Int128Rec;
 var
   VSQLVar    : PXSQLVAR;
   VarcharLen : word;
-  CurrBuff     : PAnsiChar;
-  c            : currency;
-  AFmtBcd      : tBCD;
+  CurrBuff   : PAnsiChar;
+  c          : currency;
+  AFmtBcd    : tBCD;
 
   function BcdDivPower10(Dividend: largeint; e: integer): TBCD;
   var d: double;
@@ -1320,12 +1329,12 @@ begin
     // Joost, 5 jan 2006: I disabled the following, since it's useful for
     // debugging, but it also slows things down. In principle things can only go
     // wrong when FieldDefs is changed while the dataset is opened. A user just
-    // shoudn't do that. ;) (The same is done in PQConnection)
+    // shouldn't do that. ;) (The same is done in PQConnection)
 
     // if VSQLVar^.AliasName <> FieldDef.Name then
     // DatabaseErrorFmt(SFieldNotFound,[FieldDef.Name],self);
     if assigned(VSQLVar^.SQLInd) and (VSQLVar^.SQLInd^ = -1) then
-      result := false
+      Result := False
     else
       begin
 
@@ -1341,7 +1350,7 @@ begin
           VarCharLen := FieldDef.Size;
           end;
 
-      Result := true;
+      Result := True;
       case FieldDef.DataType of
         ftBCD :
           begin
@@ -1359,15 +1368,23 @@ begin
           end;
         ftFMTBcd :
           begin
-            case VSQLVar^.SQLLen of
-              2 : AFmtBcd := BcdDivPower10(PSmallint(CurrBuff)^, -VSQLVar^.SQLScale);
-              4 : AFmtBcd := BcdDivPower10(PLongint(CurrBuff)^,  -VSQLVar^.SQLScale);
-              8 : if Dialect < 3 then
-                    AFmtBcd := PDouble(CurrBuff)^
-                  else
-                    AFmtBcd := BcdDivPower10(PLargeint(CurrBuff)^, -VSQLVar^.SQLScale);
+            case (VSQLVar^.sqltype and not 1) of
+              SQL_DEC16:
+                AFmtBcd := DPDec64ToBcd(PQWord(CurrBuff)^);
+              SQL_DEC34:
+                Result := False; // Not implemented yet
               else
-                Result := False; // Just to be sure, in principle this will never happen
+                case VSQLVar^.SQLLen of
+                  2 : AFmtBcd := BcdDivPower10(PSmallint(CurrBuff)^, -VSQLVar^.SQLScale);
+                  4 : AFmtBcd := BcdDivPower10(PLongint(CurrBuff)^,  -VSQLVar^.SQLScale);
+                  8 : if Dialect < 3 then
+                        AFmtBcd := PDouble(CurrBuff)^
+                      else
+                        AFmtBcd := BcdDivPower10(PLargeint(CurrBuff)^, -VSQLVar^.SQLScale);
+                  16: AFmtBcd := Int128ToBcd(PInt128Rec(CurrBuff)^);
+                  else
+                    Result := False; // Just to be sure, in principle this will never happen
+                end; {case}
             end; {case}
             Move(AFmtBcd, buffer^ , sizeof(AFmtBcd));
           end;
@@ -1410,8 +1427,8 @@ begin
           end
         else
           begin
-            result := false;
-            databaseerrorfmt(SUnsupportedFieldType, [Fieldtypenames[FieldDef.DataType], Self]);
+            Result := False;
+            DatabaseErrorFmt(SUnsupportedFieldType, [Fieldtypenames[FieldDef.DataType], Self]);
           end
       end;  { case }
       end; { if/else }
@@ -1502,7 +1519,7 @@ var
 begin
   {$IFNDEF SUPPORT_MSECS}
   DateTimeToSystemTime(PTime,STime);
-  
+
   CTime.tm_year := STime.Year - 1900;
   CTime.tm_mon  := STime.Month -1;
   CTime.tm_mday := STime.Day;
@@ -1609,7 +1626,7 @@ begin
                         'WHERE '+
                           '(r.rdb$system_flag = 0 or r.rdb$system_flag is null) and (rdb$relation_name = ''' + Uppercase(SchemaObjectName) + ''') ' +
                         'ORDER BY '+
-                          'r.rdb$field_name';
+                          'r.rdb$field_position';
     stSequences  : s := 'SELECT ' +
                           'rdb$generator_id         as recno,' +
                           '''' + DatabaseName + ''' as sequence_catalog,' +
@@ -1801,7 +1818,7 @@ var info_request       : string;
     subBlockSize       : integer;
     SelectedRows,
     InsertedRows       : integer;
-    
+
 begin
   SelectedRows:=-1;
   InsertedRows:=-1;
@@ -1845,12 +1862,12 @@ class function TIBConnectionDef.TypeName: String;
 begin
   Result:='Firebird';
 end;
-  
+
 class function TIBConnectionDef.ConnectionClass: TSQLConnectionClass;
 begin
   Result:=TIBConnection;
 end;
-    
+
 class function TIBConnectionDef.Description: String;
 begin
   Result:='Connect to Firebird/Interbase directly via the client library';

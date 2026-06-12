@@ -54,7 +54,7 @@ Const
   LOCK_UN = 8;
   LOCK_NB = 4;
 
-// The portable MAP_* and PROT_ constants are exported from unit Unix for compability.
+// The portable MAP_* and PROT_ constants are exported from unit Unix for compatibility.
   PROT_READ  = BU.PROT_READ;             { page can be read }
   PROT_WRITE = BU.PROT_WRITE;             { page can be written }
   PROT_EXEC  = BU.PROT_EXEC;             { page can be executed }
@@ -130,7 +130,7 @@ function FpExecVPE(Const PathName:RawByteString;args,env:PPAnsiChar):cint;
 
 Function fpSystem(const Command:RawByteString):cint;
 
-Function WaitProcess (Pid:cint):cint; 
+Function WaitProcess (Pid:cint):cint;
 
 Function WIFSTOPPED (Status: Integer): Boolean;
 Function W_EXITCODE (ReturnCode, Signal: Integer): Integer;
@@ -737,7 +737,7 @@ begin
  {$if not(defined(beos))}
   p^.dd_size:=0;
   p^.dd_loc:=0;
- {$endif} 
+ {$endif}
 end;
 
 function TellDir(p:pdir):TOff;
@@ -748,9 +748,9 @@ begin
      telldir:=-1;
      exit;
    end;
- {$ifndef beos}   
+ {$ifndef beos}
   telldir:=fplseek(p^.dd_fd,0,seek_cur)
- {$endif}     
+ {$endif}
   { We could try to use the nextoff field here, but on my 1.2.13
     kernel, this gives nothing... This may have to do with
     the readdir implementation of libc... I also didn't find any trace of
@@ -845,7 +845,7 @@ Function AssignPipe(var pipe_in,pipe_out:file):cint;
 {
   Sets up a pair of file variables, which act as a pipe. The first one can
   be read from, the second one can be written to.
-  If the operation was unsuccesful,
+  If the operation was unsuccessful,
 }
 var
   f_in,f_out : cint;
@@ -1367,7 +1367,7 @@ begin
    s:=''
   else
    SetLength(s,strlen(@s[1]));
-  getdomainname:=s;  
+  getdomainname:=s;
 end;
 {$endif}
 
@@ -1390,7 +1390,7 @@ end;
 
 Function FSearch(const path:RawByteString;dirlist:RawByteString;CurrentDirStrategy:TFSearchOption):RawByteString;
 {
-  Searches for a file 'path' in the list of direcories in 'dirlist'.
+  Searches for a file 'path' in the list of directories in 'dirlist'.
   returns an empty string if not found. Wildcards are NOT allowed.
   If dirlist is empty, it is set to '.'
 
@@ -1403,8 +1403,7 @@ Var
   mydir,NewDir : RawByteString;
   p1     : cint;
   Info   : Stat;
-  i,j      : cint;
-  p      : PAnsiChar;
+  p,pe   : PAnsiChar;
 Begin
  SetCodePage(dirlist,DefaultFileSystemCodePage);
  if CurrentDirStrategy=CurrentDirectoryFirst Then
@@ -1425,8 +1424,7 @@ Begin
    Begin
      mypath:=ToSingleByteFileSystemEncodedFileName(path);
      p:=PAnsiChar(dirlist);
-     i:=length(dirlist);
-     j:=1;
+     pe:=p+length(dirlist); { Points to terminating #0. }
      Repeat
        mydir:=RawByteString(p);
        if (length(mydir)>0) and (mydir[length(mydir)]<>'/') then
@@ -1445,9 +1443,8 @@ Begin
         End
        Else
         NewDir:='';
-       while (j<=i) and (p^<>#0) do begin inc(j); inc(p); end;
-       if p^=#0 then inc(p);
-     Until (j>=i) or (Length(NewDir) > 0);
+       inc(p,IndexByte(p^,-1,0)+1); { Can increment to pe + 1 (at most). }
+     Until (p>=pe) or (Length(NewDir) > 0);
      FSearch:=NewDir;
      SetCodePage(FSearch,DefaultRTLFileSystemCodePage);
    End;

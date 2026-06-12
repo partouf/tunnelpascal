@@ -116,7 +116,7 @@ type
     FIndex: SizeInt;
   protected
     function DoGetCurrent: T; override;
-    function GetCurrent: T; virtual; abstract;
+    function GetCurrent: T; virtual;
   public
     constructor Create(ADictionary: TCustomDictionary<CUSTOM_DICTIONARY_CONSTRAINTS>);
   end;
@@ -184,17 +184,23 @@ type
     TPointersCollection = TOpenAddressingPointersCollection<TPointersEnumerator, TItem, PDictionaryPair>;
   public type
     PPointersCollection = ^TPointersCollection;
-  private var // FItems must be declared as first field 
+  private var // FItems must be declared as first field
     FItems: TItemsArray;
     FItemsThreshold: SizeInt;
 
     procedure Resize(ANewSize: SizeInt);
-    procedure PrepareAddingItem;
+    function PrepareAddingItem: boolean;
+    procedure InternalDoAdd(const AKey: TKey; const AValue: TValue; AHash: UInt32; var ABucketIndex: SizeInt); inline;
   protected
     function RealItemsLength: SizeInt; virtual;
     function Rehash(ASizePow2: SizeInt; AForce: Boolean = False): boolean; virtual;
     function FindBucketIndex(const AKey: TKey): SizeInt; overload; inline;
+    function FindBucketIndex(const AKey: TKey; out AHash: UInt32): SizeInt; overload; inline;
     function FindBucketIndex(const AItems: TArray<TItem>; const AKey: TKey; out AHash: UInt32): SizeInt; virtual; abstract; overload;
+    function FindBucketIndexForHash(const AItems: TArray<TItem>; const AKey: TKey; var AHash: UInt32): SizeInt; virtual;
+    function GetKeyFromBucket(ABucketIndex: SizeInt): TKey; inline;
+    function GetValueFromBucket(ABucketIndex: SizeInt): TValue; inline;
+    function GetMutableValueFromBucket(ABucketIndex: SizeInt): PValue; inline;
   public
     type
       // Enumerators
@@ -241,12 +247,14 @@ type
   protected
      // useful for using dictionary as array
     function DoRemove(AIndex: SizeInt; ACollectionNotification: TCollectionNotification): TValue; virtual;
-    function DoAdd(const AKey: TKey; const AValue: TValue): SizeInt; virtual;
+    function DoAdd(const AKey: TKey; const AValue: TValue; AHash: UInt32; ABucketIndex: SizeInt): SizeInt; virtual; overload;
+    function DoAdd(const AKey: TKey; const AValue: TValue; AHash: UInt32): SizeInt; overload;
+    function DoAdd(const AKey: TKey; const AValue: TValue): SizeInt; virtual; overload;
 
     procedure UpdateItemsThreshold(ASize: SizeInt); override;
 
     procedure SetCapacity(ACapacity: SizeInt); override;
-    // bug #24283 - can't descadent from TEnumerable
+    // bug #24283 - can't descend from TEnumerable
     function DoGetEnumerator: TEnumerator<TDictionaryPair>; override;
     procedure SetMaxLoadFactor(AValue: single); override;
     function GetLoadFactor: single; override;
@@ -261,6 +269,9 @@ type
     function ExtractPair(const AKey: TKey): TPair<TKey, TValue>;
     procedure Clear; override;
     procedure TrimExcess;
+    function GetOrAddMutableValue(const AKey: TKey): PValue; inline;
+    function GetMutableValue(const AKey: TKey): PValue; inline;
+    function TryGetMutableValue(const AKey: TKey; out APValue: PValue): Boolean;
     function TryGetValue(const AKey: TKey; out AValue: TValue): Boolean;
     function TryAdd(const AKey: TKey; const AValue: TValue): Boolean;
     procedure AddOrSetValue(const AKey: TKey; const AValue: TValue);
@@ -286,6 +297,8 @@ type
     procedure NotifyIndexChange(AFrom, ATo: SizeInt); virtual;
     function DoRemove(AIndex: SizeInt; ACollectionNotification: TCollectionNotification): TValue; override;
     function FindBucketIndex(const AItems: TArray<TItem>; const AKey: TKey; out AHash: UInt32): SizeInt; override; overload;
+    function FindBucketIndexForHash(const AItems: TArray<TItem>; const AKey: TKey;
+      var AHash: UInt32): SizeInt; override;
   end;
 
   // More info and TODO
@@ -318,6 +331,8 @@ type
   protected
     function FindBucketIndex(const AItems: TArray<TItem>; const AKey: TKey;
       out AHash: UInt32): SizeInt; override; overload;
+    function FindBucketIndexForHash(const AItems: TArray<TItem>; const AKey: TKey;
+      var AHash: UInt32): SizeInt; override;
     function FindBucketIndexOrTombstone(const AItems: TArray<TItem>; const AKey: TKey;
       out AHash: UInt32): SizeInt; override;
   end;
@@ -329,6 +344,8 @@ type
     procedure UpdateItemsThreshold(ASize: SizeInt); override;
     function FindBucketIndex(const AItems: TArray<TItem>;
       const AKey: TKey; out AHash: UInt32): SizeInt; override; overload;
+    function FindBucketIndexForHash(const AItems: TArray<TItem>; const AKey: TKey;
+      var AHash: UInt32): SizeInt; override;
     function FindBucketIndexOrTombstone(const AItems: TArray<TItem>;
       const AKey: TKey; out AHash: UInt32): SizeInt; override;
   end;
@@ -345,6 +362,8 @@ type
     procedure UpdateItemsThreshold(ASize: SizeInt); override;
     function FindBucketIndex(const AItems: TArray<TItem>; const AKey: TKey;
       out AHash: UInt32): SizeInt; override; overload;
+    function FindBucketIndexForHash(const AItems: TArray<TItem>; const AKey: TKey;
+      var AHash: UInt32): SizeInt; override;
     function FindBucketIndexOrTombstone(const AItems: TArray<TItem>; const AKey: TKey;
       out AHash: UInt32): SizeInt; override;
   strict protected
@@ -448,7 +467,7 @@ type
     TCDM = class(TOpenAddressingSH<TKey, TEmptyRecord, TDefaultHashFactory, TLinearProbing>);
     TItemsArray = array of TItem;
     TItemsDArray = array[0..Pred(TCuckooCfg.D)] of TItemsArray;
-    TPointersEnumerator = class(TDeamortizedDArrayPointersEnumerator<TCuckooCfg, TItemsArray, TItemsDArray, TQueueDictionary, PDictionaryPair>);
+    TPointersEnumerator = TDeamortizedDArrayPointersEnumerator<TCuckooCfg, TItemsArray, TItemsDArray, TQueueDictionary, PDictionaryPair>;
     TPointersCollection = TDeamortizedDArrayPointersCollection<TPointersEnumerator, TItemsDArray, TQueueDictionary, PDictionaryPair>;
   public type
     PPointersCollection = ^TPointersCollection;
@@ -524,7 +543,7 @@ type
     function GetQueueCount: SizeInt;
   protected
     procedure SetCapacity(ACapacity: SizeInt); override;
-    // bug #24283 - can't descadent from TEnumerable
+    // bug #24283 - can't decadent from TEnumerable
     function DoGetEnumerator: TEnumerator<TDictionaryPair>; override;
     procedure SetMaxLoadFactor(AValue: single); override;
     function GetLoadFactor: single; override;

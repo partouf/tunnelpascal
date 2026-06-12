@@ -612,7 +612,9 @@ implementation
                               for l:=tordconstnode(p2).value.svalue to tordconstnode(p3).value.svalue do
                                 do_set(l);
                               p2.free;
+                              p2 := nil;
                               p3.free;
+                              p3 := nil;
                             end
                            else
                             begin
@@ -649,6 +651,7 @@ implementation
 
                           do_set(tordconstnode(p2).value.svalue);
                           p2.free;
+                          p2 := nil;
                         end
                        else
                         begin
@@ -676,7 +679,7 @@ implementation
               hp:=tarrayconstructornode(tarrayconstructornode(p2).right);
               tarrayconstructornode(p2).right:=nil;
               if freep then
-                p2.free;
+                p2.free; // no nil needed
               current_filepos:=oldfilepos;
               first:=false;
             end;
@@ -687,7 +690,7 @@ implementation
          begin
            { empty set [], only remove node }
            if freep then
-             p.free;
+             p.free; // no nil needed
          end;
         { set the initial set type }
         constp.resultdef:=csetdef.create(hdef,constsetlo.svalue,constsethi.svalue,true);
@@ -895,6 +898,7 @@ implementation
             typecheckpass(fromnode);
             ttypeconvnode(hp).left:=nil;
             hp.free;
+            hp := nil;
             result:=true;
           end;
       end;
@@ -929,6 +933,7 @@ implementation
             typecheckpass(fromnode);
             ttypeconvnode(hp).left:=nil;
             hp.free;
+            hp := nil;
             result:=true;
           end;
       end;
@@ -1048,7 +1053,9 @@ implementation
         i: ttypeconvnodeflag;
       begin
         inherited printnodeinfo(t);
+        write(t,', totypedef = ',totypedef.GetTypeName);
         write(t,', convtype = ',convtype);
+        write(t,', assignment_side = ',assignment_side);
         write(t,', convnodeflags = [');
         first:=true;
         for i:=low(ttypeconvnodeflag) to high(ttypeconvnodeflag) do
@@ -1188,6 +1195,7 @@ implementation
         pchtemp  : pchar;
         arrsize  : tcgint;
         chartype : string[8];
+
       begin
         result := nil;
         with tarraydef(resultdef) do
@@ -1211,9 +1219,10 @@ implementation
                  { (2.0.x compatible)                               }
                  if (arrsize>tstringconstnode(left).len) then
                    begin
-                     pchtemp:=concatansistrings(tstringconstnode(left).value_str,pchar(StringOfChar(#0,arrsize-tstringconstnode(left).len)),tstringconstnode(left).len,arrsize-tstringconstnode(left).len);
+                     pchtemp:=concatansistrings(tstringconstnode(left).asconstpchar,pchar(StringOfChar(#0,arrsize-tstringconstnode(left).len)),tstringconstnode(left).len,arrsize-tstringconstnode(left).len);
                      left.free;
                      left:=cstringconstnode.createpchar(pchtemp,arrsize,nil);
+                     freemem(pchtemp);
                      typecheckpass(left);
                    end;
                  exit;
@@ -1251,7 +1260,7 @@ implementation
         procname: string[31];
         para : tcallparanode;
         hp : tstringconstnode;
-        ws : pcompilerwidestring;
+        ws : tcompilerwidestring;
         sa : ansistring;
         cw : tcompilerwidechar;
         l : SizeUInt;
@@ -1373,7 +1382,7 @@ implementation
 {$else cpu8bitalu}
                exprtype:=uinttype;
 {$endif cpu8bitalu}
-               { create word(byte(char) shl 8 or 1) for litte endian machines }
+               { create word(byte(char) shl 8 or 1) for little endian machines}
                { and word(byte(char) or 256) for big endian machines          }
                left := ctypeconvnode.create_internal(left,exprtype);
                if (target_info.endian = endian_little) then
@@ -1424,7 +1433,7 @@ implementation
                 (tstringdef(left.resultdef).stringtype in [st_unicodestring,st_widestring]) and
                 (tstringdef(resultdef).stringtype=st_shortstring) then
           begin
-            if not hasnonasciichars(pcompilerwidestring(tstringconstnode(left).value_str)) then
+            if not hasnonasciichars(tstringconstnode(left).valuews) then
               begin
                 tstringconstnode(left).changestringtype(resultdef);
                 Result:=left;
@@ -1668,7 +1677,7 @@ implementation
          inserttypeconv(left,cunicodestringtype);
          { evaluate again, reset resultdef so the convert_typ
            will be calculated again and cstring_to_pchar will
-           be used for futher conversion }
+           be used for further conversion }
          convtype:=tc_none;
          result:=pass_typecheck;
       end;
@@ -1711,7 +1720,7 @@ implementation
             (tstringconstnode(left).cst_type=cst_conststring) and
             (tstringconstnode(left).len=4) then
            begin
-             pb:=pbyte(tstringconstnode(left).value_str);
+             pb:=pbyte(tstringconstnode(left).asconstpchar);
              fcc:=(pb[0] shl 24) or (pb[1] shl 16) or (pb[2] shl 8) or pb[3];
              result:=cordconstnode.create(fcc,u32inttype,false);
            end
@@ -1760,6 +1769,9 @@ implementation
         { constant sets can be converted by changing the type only }
         if (left.nodetype=setconstn) then
          begin
+           if (cs_check_range in current_settings.localswitches) and (tsetconstnode(left).elements>0) and ((tsetconstnode(left).low<tsetdef(resultdef).setlow) or (tsetconstnode(left).high>tsetdef(resultdef).setmax)) then
+             Message(parser_e_range_check_error);
+
            left.resultdef:=resultdef;
            result:=left;
            left:=nil;
@@ -2099,7 +2111,7 @@ implementation
                  nil))))
 
           ));
-        { add assignment statememnts }
+        { add assignment statements }
         addstatement(newstatement,ctempdeletenode.create(temp2));
         addstatement(newstatement,assnode);
         { the last statement should return the value as
@@ -2157,7 +2169,7 @@ implementation
         temp2:=ctempcreatenode.create_value(sinttype,sinttype.size,tt_persistent,false,cordconstnode.create(paracount,s32inttype,true));
         addstatement(newstatement,temp2);
 
-        { add assignment statememnts }
+        { add assignment statements }
         addstatement(newstatement,ctempdeletenode.create(temp2));
         addstatement(newstatement,assnode);
         { the last statement should return the value as
@@ -2709,6 +2721,7 @@ implementation
             typecheckpass(left);
             ttypeconvnode(hp).left:=nil;
             hp.free;
+            hp := nil;
           end;
 
         intfdef:=capturer_add_procvar_or_proc(current_procinfo,left,capturer,hp);
@@ -3474,6 +3487,7 @@ implementation
                       n:=newblock;
                       do_typecheckpass(n);
                       originaldivtree.free;
+                      originaldivtree := nil;
                     end;
                 end
               else
@@ -3611,6 +3625,7 @@ implementation
                   if ([nf_explicit,nf_internal] * flags <> []) then
                     include(result.flags, nf_explicit);
                   hp.free;
+                  hp := nil;
                 end;
             end;
 
@@ -3639,7 +3654,7 @@ implementation
               else
                { remove typeconv after niln, but not when the result is a
                  methodpointer. The typeconv of the methodpointer will then
-                 take care of updateing size of niln to OS_64 }
+                 take care of updating size of niln to OS_64 }
                if not((resultdef.typ=procvardef) and
                       not(tprocvardef(resultdef).is_addressonly)) and
                   { converting (dynamic array) nil to a an open array is not allowed }
@@ -3656,7 +3671,7 @@ implementation
 
           ordconstn :
             begin
-              { ordinal contants can be directly converted }
+              { ordinal constants can be directly converted }
               { but not char to char because it is a widechar to char or via versa }
               { which needs extra code to do the code page transistion             }
               { constant ordinal to pointer }
@@ -3683,7 +3698,7 @@ implementation
                      exclude(left.flags, nf_explicit);
                    { when converting from one boolean type to another, force }
                    { booleans to 0/1, and byte/word/long/qwordbool to 0/-1   }
-                   { (Delphi-compatibile)                                    }
+                   { (Delphi-compatible)                                     }
                    if is_boolean(left.resultdef) and
                       is_boolean(resultdef) and
                       (is_cbool(left.resultdef) or
@@ -4634,7 +4649,7 @@ implementation
                 is_void(left.resultdef) or
                 (left.resultdef.typ=formaldef) or
                 { int 2 int with same size reuses same location, or for
-                  tp7 mode also allow size < orignal size }
+                  tp7 mode also allow size < original size }
                 (
                  (convtype=tc_int_2_int) and
                  (
@@ -4665,8 +4680,11 @@ implementation
         { the same goes for changing the sign of equal-sized values which
           are smaller than an entire register }
         if result and
-           { don't try to check the size of an open array }
+           { don't try to check the size of an open array or an array of const }
            (is_open_array(resultdef) or
+            is_open_array(left.resultdef) or
+            is_array_of_const(resultdef) or
+            is_array_of_const(left.resultdef) or
             (resultdef.size<left.resultdef.size) or
             ((resultdef.size=left.resultdef.size) and
              (left.resultdef.size<sizeof(aint)) and
@@ -5127,6 +5145,7 @@ implementation
 
       begin
         call.free;
+        call := nil;
         inherited destroy;
       end;
 

@@ -146,7 +146,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_stabs;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -311,6 +311,7 @@ unit i_linux;
             llvmdatalayout : 'E-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v128:128:128-n32';
           );
 
+    var
        system_powerpc64_linux_info : tsysteminfo =
           (
             system       : system_powerpc64_LINUX;
@@ -353,7 +354,13 @@ unit i_linux;
             res          : res_elf;
             dbg          : dbg_dwarf2;
             script       : script_unix;
+  { default to little endian either when compiling with -dppc64le, or when
+    compiling on a little endian ppc64 platform }
+{$if defined(ppc64le) or (defined(cpupowerpc64) and defined(FPC_LITTLE_ENDIAN))}
+            endian       : endian_little;
+{$else}
             endian       : endian_big;
+{$endif}
             alignment    :
               (
                 procalign       : 8;
@@ -375,10 +382,15 @@ unit i_linux;
             first_parm_offset : 8;
             stacksize    : 10*1024*1024;
             stackalign   : 16;
-            abi : abi_powerpc_sysv;
+{$if defined(ppc64le) or (defined(cpupowerpc64) and defined(FPC_LITTLE_ENDIAN))}
+            abi          : abi_powerpc_elfv2;
+{$else}
+            abi          : abi_powerpc_sysv;
+{$endif}
             llvmdatalayout : 'E-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-f128:64:64-v128:128:128-n32:64';
           );
 
+    const
        system_x86_64_linux_info : tsysteminfo =
           (
             system       : system_x86_64_LINUX;
@@ -855,7 +867,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_stabs;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -1144,7 +1156,7 @@ unit i_linux;
             linkextern   : ld_linux;
             ar           : ar_gnu_ar;
             res          : res_elf;
-            dbg          : dbg_stabs;
+            dbg          : dbg_dwarf3;
             script       : script_unix;
             endian       : endian_big;
             alignment    :
@@ -1297,18 +1309,18 @@ unit i_linux;
                 coalescealign   : 0;
                 coalescealignskipmax: 0;
                 constalignmin   : 0;
-                constalignmax   : 8;
+                constalignmax   : 16;
                 varalignmin     : 0;
-                varalignmax     : 8;
+                varalignmax     : 16;
                 localalignmin   : 4;
-                localalignmax   : 8;
+                localalignmax   : 16;
                 recordalignmin  : 0;
-                recordalignmax  : 8;
-                maxCrecordalign : 8
+                recordalignmax  : 16;
+                maxCrecordalign : 16
               );
             first_parm_offset : 0;
             stacksize    : 32*1024*1024;
-            stackalign   : 8;
+            stackalign   : 16;
             abi : abi_riscv_ilp32;
             llvmdatalayout : 'e-p:32:32:32-i1:8:8-i8:8:32-i16:16:32-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-n32-S64';
           );
@@ -1381,7 +1393,7 @@ unit i_linux;
             first_parm_offset : 16;
             stacksize    : 10*1024*1024;
             stackalign   : 16;
-            abi : abi_riscv_hf;
+            abi : abi_riscv_lp64d;
             llvmdatalayout : 'E-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-f128:64:64-v128:128:128-n32:64';
           );
 

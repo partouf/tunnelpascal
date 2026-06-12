@@ -32,7 +32,7 @@ unit itcpugas;
       gas_op2str: array[tasmop] of string[14] = ('<none>',
         'nop','call','la','lla','lga','li','mv','not','neg','negw',
         'sext.b','sext.h','zext.b','zext.h','seqz','sneg','sltz','sgtz',
-        'fmv.s','fabs.s','fneg.s','fmv.d','fabs.d','fneg.d',
+        'fmv.s','fabs.s','fneg.s','fmv.d','fabs.d','fneg.d','fneg.q',
         'beqz','bnez','blez','bgez','bltz','bgtz','gt','ble',
         'bgtu','bleu','j','jr','ret','tail',
         'lui','auipc','jal','jalr',
@@ -74,15 +74,55 @@ unit itcpugas;
         'amoor.d','amomin.d','amomax.d','amominu.d','amomaxu.d',
 {$endif RISCV64}
 
+        { B-extension }
+        'add.uw','andn','clmul','clmulh','clmulr','clz',
+{$ifdef RISCV64}
+        'clzw',
+{$endif RISCV64}
+        'cpop',
+{$ifdef RISCV64}
+        'cpopw',
+{$endif RISCV64}
+        'ctz',
+{$ifdef RISCV64}
+        'ctzw',
+{$endif RISCV64}
+        'max','maxu','min','minu','orc.b','orn','rev8','rol',
+{$ifdef RISCV64}
+        'rolw',
+{$endif RISCV64}
+        'ror','rori',
+{$ifdef RISCV64}
+        'roriw',
+        'rorw',
+{$endif RISCV64}
+        'bclr','bclri','bext','bexti','binv','binvi','bset','seti',{ 'sext.b','sext.h', }
+        'sh1add',
+{$ifdef RISCV64}
+        'sh1add.uw',
+{$endif RISCV64}
+        'sh2add',
+{$ifdef RISCV64}
+        'sh2add.uw',
+{$endif RISCV64}
+        'sh3add',
+{$ifdef RISCV64}
+        'sh3add.uw',
+        'slli.uw',
+{$endif RISCV64}
+        'xnor',
+        { 'zext.h', }
+
         { f-extension }
         'flw','fsw',
         'fmadd.s','fmsub.s','fnmsub.s','fnmadd.s',
         'fadd.s','fsub.s','fmul.s','fdiv.s',
         'fsqrt.s','fsgnj.s','fsgnjn.s','fsgnjx.s',
         'fmin.s','fmax.s',
-        'fmv.x.s','feq.s','flt.s','fle.s','fclass.s',
+        'fmv.x.s','fmv.x.w',
+        'feq.s','flt.s','fle.s','fclass.s',
         'fcvt.w.s','fcvt.wu.s','fcvt.s.w','fcvt.s.wu',
-        'fmv.s.x',
+        'fmv.s.x','fmv.w.x',
         'frcsr','frrm','frflags','fscsr','fsrm',
         'fsflags','fsrmi','fsflagsi',
 
@@ -108,6 +148,25 @@ unit itcpugas;
         'fcvt.d.l','fcvt.d.lu','fmv.d.x',
 {$endif RISCV64}
 
+        { Zfa extension }
+        'fli.s','fli.d','fli.q','fli.h',
+        'fminm.s','fmaxm.s','fminm.d','fmaxm.d','fminm.h','fmaxm.h','fminm.q','fmaxm.q',
+        'fround.s','froundnx.s','fround.d','froundnx.d','fround.h','froundnx.h','fround.q','froundnx.q',
+        'fcvtmod.w.d',
+        'fmvh.x.d,','fmvp.d.x','fmvh.x.q','fmvp.q.x',
+        'fleq.s,','fltq.s',
+        'fleq.d,','fltq.d',
+        'fleq.h,','fltq.h',
+        'fleq.q,','fltq.q',
+
+        { q-extension }
+        'flq','fsq',
+        'fmax.q','fmax.q',
+        'feq.q','flt.q','fle.q','fclass.q',
+
+        { Zihintpause }
+        'pause',
+
         { Machine mode }
         'mret','hret','sret','uret',
         'wfi',
@@ -115,7 +174,7 @@ unit itcpugas;
         { Supervisor mode }
         'sfence.vm',
 
-        { pseudo instructions for accessiong control and status registers }
+        { pseudo instructions for accessing control and status registers }
         'rdinstret','rdinstreth','rdcycle','rdcycleh','rdtime','rdtimeh','csrr','csrw','csrs','csrc','csrwi',
         'csrsi','csrci'
         );

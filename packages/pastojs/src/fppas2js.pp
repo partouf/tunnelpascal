@@ -1,7 +1,7 @@
 { **********************************************************************
 
     This file is part of the Free Component Library (FCL)
-    Copyright (c) 2020 by Michael Van Canneyt
+    Copyright (c) 2025 by Michael Van Canneyt
 
     Pascal to Javascript converter class.
 
@@ -540,6 +540,7 @@ resourcestring
   sInvalidVariableModifier = 'Invalid variable modifier "%s"';
   sPublishedNameMustMatchExternal = 'Published name must match external';
   sAWaitOnlyInAsyncProcedure = 'await only available in async procedure';
+  sAsyncFunctionOrPromise = 'async function or promise';
   sNewInstanceFunctionMustBeVirtual = 'NewInstance function must be virtual';
   sNewInstanceFunctionMustHaveTwoParameters = 'NewInstance function must have two parameters';
   sNewInstanceFunctionMustNotHaveOverloadAtX = 'NewInstance function must not have overload at %s';
@@ -558,9 +559,19 @@ resourcestring
 
 const
   ExtClassBracketAccessor = '[]'; // external name '[]' marks the array param getter/setter
-  IsExtModePasClassInstance = 1;
-  IsExtModePasClass = 2;
+  IsExtModePasClassInstance = 1; // rtl.isExt param for is-class-instance
+  IsExtModePasClass = 2; // rtl.isExt param for is-class
   LocalVarHide = '-';
+  ExtRTTIVisPrivate = 0;
+  ExtRTTIVisProtected = 1;
+  ExtRTTIVisPublic = 2;
+  ExtRTTIVisPublished = 3;
+  ExtRTTIVisPublicPublished = 4; // in source published, in RTTI public
+  ExtRTTIVisStrictPrivate = 5;
+  ExtRTTIVisStrictProtected = 6;
+  ExtRTTIVisDefaultField = ExtRTTIVisPublic;
+  ExtRTTIVisDefaultMethod = ExtRTTIVisPublic;
+  ExtRTTIVisDefaultProperty = ExtRTTIVisPublicPublished;
 
 type
   TPas2JSBuiltInName = (
@@ -568,8 +579,10 @@ type
     pbifnArray_Concat,
     pbifnArray_ConcatN,
     pbifnArray_Copy,
+    pbifnArray_DeleteR,
     pbifnArray_Equal,
     pbifnArray_Insert,
+    pbifnArray_Managed,
     pbifnArray_Length,
     pbifnArray_Push,
     pbifnArray_PushN,
@@ -600,7 +613,6 @@ type
     pbifnHelperNew,
     pbifnIntf_AddRef,
     pbifnIntf_Release,
-    pbifnIntf_ReleaseArray,
     pbifnIntfAddMap,
     pbifnIntfAsClass,
     pbifnIntfAsIntfT, // COM intfvar as intftype
@@ -688,6 +700,7 @@ type
     pbivnIntfGUID,
     pbivnIntfKind,
     pbivnIntfMaps,
+    pbivnIntfRefCnt, // param for arrayClone, arraySetLength
     pbivnImplementation,
     pbivnImplCode,
     pbivnMessageInt,
@@ -761,8 +774,10 @@ const
     'arrayConcat', // rtl.arrayConcat    pbifnArray_Concat
     'arrayConcatN', // rtl.arrayConcatN   pbifnArray_ConcatN
     'arrayCopy', // rtl.arrayCopy      pbifnArray_Copy
+    'arrayDeleteR', // rtl.arrayDeleteR      pbifnArray_DeleteR
     'arrayEq', // rtl.arrayEq          pbifnArray_Equal
     'arrayInsert', // rtl.arrayCopy      pbifnArray_Insert
+    'arrayManaged', // rtl.arrayManaged      pbifnArray_Managed
     'length', // rtl.length    pbifnArray_Length
     'arrayPush', // rtl.arrayPush   pbifnArray_Push
     'arrayPushN', // rtl.arrayPushN   pbifnArray_PushN
@@ -786,33 +801,32 @@ const
     'createClass', // pbifnCreateClass   rtl.createClass
     'createClassExt', // pbifnCreateClassExt  rtl.createClassExt
     'createHelper', // pbifnCreateHelper  rtl.createHelper
-    'getChar', // rtl.getChar
-    'getNumber', // rtl.getNumber
-    'getObject', // rtl.getObject
-    'getResStr', // rtl.getResStr
-    '$new', // helpertype.$new
-    '_AddRef', // rtl._AddRef
-    '_Release', // rtl._Release
-    '_ReleaseArray', // rtl._ReleaseArray
-    'addIntf', // rtl.addIntf  pbifnIntfAddMap
-    'intfAsClass', // rtl.intfAsClass
-    'intfAsIntfT', // rtl.intfAsIntfT
-    'createInterface', // rtl.createInterface
-    'createTGUID', // rtl.createTGUID
-    'ref', // $ir.ref  pbifnIntfExprRefsAdd
-    'createIntfRefs', // rtl.createIntfRefs
-    'free', // $ir.free
-    'getIntfGUIDR', // rtl.getIntfGUIDR
-    'getIntfT',   // rtl.getIntfT
-    'guidrToStr', // rtl.guidrToStr
-    'intfIsClass', // rtl.intfIsClass
-    'intfIsIntfT', // rtl.intfIsIntfT
-    'intfToClass', // rtl.intfToClass
-    'setIntfL', // rtl.setIntfL
-    'setIntfP', // rtl.setIntfP
-    'strToGUIDR', // rtl.strToGUIDR
-    'queryIntfIsT', // rtl.queryIntfIsT
-    'queryIntfT', // rtl.queryIntfT
+    'getChar', // pbifnGetChar rtl.getChar
+    'getNumber', // pbifnGetNumber rtl.getNumber
+    'getObject', // pbifnGetObject rtl.getObject
+    'getResStr', // pbifnGetResourcestring rtl.getResStr
+    '$new', // pbifnHelperNew helpertype.$new
+    '_AddRef', // pbifnIntf_AddRef rtl._AddRef
+    '_Release', // pbifnIntf_Release rtl._Release
+    'addIntf', // pbifnIntfAddMap rtl.addIntf
+    'intfAsClass', // pbifnIntfAsClass rtl.intfAsClass
+    'intfAsIntfT', // pbifnIntfAsIntfT rtl.intfAsIntfT
+    'createInterface', // pbifnIntfCreate rtl.createInterface
+    'createTGUID', // pbifnIntfCreateTGUID rtl.createTGUID
+    'ref', // pbifnIntfExprRefsAdd $ir.ref
+    'createIntfRefs', // pbifnIntfExprRefsCreate rtl.createIntfRefs
+    'free', // pbifnIntfExprRefsFree $ir.free
+    'getIntfGUIDR', // pbifnIntfGetGUIDR rtl.getIntfGUIDR
+    'getIntfT',   // pbifnIntfGetIntfT rtl.getIntfT
+    'guidrToStr', // pbifnIntfGuidRToStr rtl.guidrToStr
+    'intfIsClass', // pbifnIntfIsClass rtl.intfIsClass
+    'intfIsIntfT', // pbifnIntfIsIntf rtl.intfIsIntfT
+    'intfToClass', // pbifnIntfToClass rtl.intfToClass
+    'setIntfL', // pbifnIntfSetIntfL rtl.setIntfL
+    'setIntfP', // pbifnIntfSetIntfP rtl.setIntfP
+    'strToGUIDR', // pbifnIntfStrToGUIDR rtl.strToGUIDR
+    'queryIntfIsT', // pbifnIntfQueryIntfIsT rtl.queryIntfIsT
+    'queryIntfT', // pbifnIntfQueryIntfT rtl.queryIntfT
     'is', // pbifnIs  rtl.is
     'isExt', // pbifnIsExt  rtl.isExt
     'floatToStr', // pbifnFloatToStr  rtl.floatToStr
@@ -880,6 +894,7 @@ const
     '$guid',// pbivnIntfGUID
     '$kind', // pbivnIntfKind
     '$intfmaps', // pbivnIntfMaps
+    'R', // pbivnIntfRefCnt param for arrayClone
     '$impl', // pbivnImplementation
     '$implcode', // pbivnImplCode
     '$msgint', // pbivnMessageInt
@@ -1261,6 +1276,7 @@ type
   public
     JSName: string;
     MemberOverloadsRenamed: boolean;
+    Managed: boolean; // true: needs reference counting
   end;
 
   { TPas2JSProcedureScope }
@@ -1281,6 +1297,7 @@ type
   TPas2JSArrayScope = Class(TPasArrayScope)
   public
     JSName: string;
+    Managed: boolean; // true: needs reference counting
   end;
 
   { TPas2JSProcTypeScope }
@@ -1373,7 +1390,8 @@ const
     po_ResolveStandardTypes,
     po_ExtConstWithoutExpr,
     po_StopOnUnitInterface,
-    po_AsyncProcs];
+    po_AsyncProcs,
+    po_CheckDirectiveRTTI];
 
   btAllJSBaseTypes = [
     btChar,
@@ -1644,6 +1662,8 @@ type
       Params: TParamsExpr; Flags: TResEvalFlags; out Evaluated: TResEvalValue); virtual;
     procedure BI_AWait_OnFinishParamsExpr(Proc: TResElDataBuiltInProc;
       Params: TParamsExpr); virtual;
+
+    function IsPromiseClass(aClass: TPasClassType): Boolean;
   public
     constructor Create; reintroduce;
     destructor Destroy; override;
@@ -1679,13 +1699,15 @@ type
     procedure ComputeResultElement(El: TPasResultElement; out
       ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags;
       StartEl: TPasElement = nil); override;
+    function ComputeProcAsyncResult(El: TPasElement; var ResolvedEl: TPasResolverResult;
+      Flags: TPasResolverComputeFlags; StartEl: TPasElement=nil): boolean; override;
     // CustomData
     function GetElementData(El: TPasElementBase;
       DataClass: TPas2JsElementDataClass): TPas2JsElementData; virtual;
     procedure AddElementData(Data: TPas2JsElementData); virtual;
     function CreateElementData(DataClass: TPas2JsElementDataClass;
       El: TPasElement): TPas2JsElementData; virtual;
-    // checking compatibilility
+    // checking compatibility
     function CheckEqualCompatibilityUserType(const LHS,
       RHS: TPasResolverResult; ErrorEl: TPasElement;
       RaiseOnIncompatible: boolean): integer; override;
@@ -1696,12 +1718,14 @@ type
     function GetBaseDescription(const R: TPasResolverResult; AddPath: boolean=
       false): string; override;
     function HasTypeInfo(El: TPasType): boolean; override;
+    function HasExtRTTI(El: TPasMembersType): boolean; virtual;
     function ProcHasImplElements(Proc: TPasProcedure): boolean; override;
     function HasAnonymousFunctions(El: TPasImplElement): boolean;
     function GetTopLvlProcScope(El: TPasElement): TPas2JSProcedureScope;
     function ProcCanBePrecompiled(DeclProc: TPasProcedure): boolean; virtual;
-    function IsReadEqWrite(const ExprResolved: TPasResolverResult): boolean; virtual;
+    function IsReadEqWrite(const ExprResolved: TPasResolverResult): boolean; virtual; // read and write uses the same JS accessor
     function IsTObjectFreeMethod(El: TPasExpr): boolean; virtual;
+    function IsManagedJSType(TypeEl: TPasType): boolean; virtual;
     function IsExternalBracketAccessor(El: TPasElement): boolean;
     function IsExternalClassConstructor(El: TPasElement): boolean;
     function IsForInExtArray(Loop: TPasImplForLoop; const VarResolved,
@@ -2005,6 +2029,7 @@ type
     Function ComputeConstString(Expr: TPasExpr; AContext: TConvertContext; NotEmpty: boolean): String; virtual;
     Function IsLiteralInteger(El: TJSElement; out Number: TMaxPrecInt): boolean;
     Function IsLiteralNumber(El: TJSElement; out n: TJSNumber): boolean;
+    Function IsLiteralNull(El: TJSElement): boolean;
     // Name mangling
     Function GetOverloadName(El: TPasElement; AContext: TConvertContext): string;
     Function CanClashWithGlobal(El: TPasElement): boolean;
@@ -2051,9 +2076,9 @@ type
     Function CreateArrayEl(El: TPasExpr; JS: TJSElement; AContext: TConvertContext): TJSElement; virtual;
     Function CreateArgumentAccess(Arg: TPasArgument; AContext: TConvertContext;
       PosEl: TPasElement): TJSElement; virtual;
-    Function CreateUnary(Members: array of string; E: TJSElement): TJSUnary;
+    Function CreateUnary(const Members: array of string; E: TJSElement): TJSUnary;
     Function CreateUnaryPlus(Expr: TJSElement; El: TPasElement): TJSUnaryPlusExpression;
-    Function CreateMemberExpression(Members: array of string): TJSElement;
+    Function CreateMemberExpression(const Members: array of string): TJSElement;
     Function CreateCallExpression(El: TPasElement): TJSCallExpression;
     Function CreateCallCharCodeAt(Arg: TJSElement; aNumber: integer; El: TPasElement): TJSCallExpression; virtual;
     Function CreateCallFromCharCode(Arg: TJSElement; El: TPasElement): TJSCallExpression; virtual;
@@ -2165,6 +2190,7 @@ type
       OpCode: TExprOpCode): TJSElement; virtual;
     Function CreateCloneStaticArray(El: TPasElement; ArrTypeEl: TPasArrayType;
       ArrayExpr: TJSElement; AContext: TConvertContext): TJSElement; virtual;
+    Function CreateArrayManaged(El: TPasElement; RefCnt, aMode: integer; Arg: TJSElement): TJSCallExpression; virtual;
     // class
     Procedure AddClassConDestructorFunction(El: TPasClassType; Src: TJSSourceElements;
       ClassContext: TConvertContext; IsTObject: boolean; Ancestor: TPasType;
@@ -2197,11 +2223,12 @@ type
     Function CreateRTTINewType(El: TPasType; const CallFuncName: string;
       IsForward: boolean; AContext: TConvertContext; out ObjLit: TJSObjectLiteral): TJSCallExpression; virtual;
     Function CreateRTTIAttributes(const Attr: TPasExprArray; PosEl: TPasElement; aContext: TConvertContext): TJSElement; virtual;
-    Function CreateRTTIMemberField(Members: TFPList; Index: integer;
+    Function GetExtRTTIVisibilityParam(El: TPasElement; const Vis: TPasMembersType.TRTTIVisibilitySections): word; virtual;
+    Function CreateRTTIMemberField(ParentEl: TPasMembersType; Members: TFPList; Index: integer;
       AContext: TConvertContext): TJSElement; virtual;
-    Function CreateRTTIMemberMethod(Members: TFPList; Index: integer;
+    Function CreateRTTIMemberMethod(ParentEl: TPasMembersType; Members: TFPList; Index: integer;
       AContext: TConvertContext): TJSElement; virtual;
-    Function CreateRTTIMemberProperty(Members: TFPList; Index: integer;
+    Function CreateRTTIMemberProperty(ParentEl: TPasMembersType; Members: TFPList; Index: integer;
       AContext: TConvertContext): TJSElement; virtual;
     Procedure CreateRTTIAnonymous(El: TPasType; AContext: TConvertContext); virtual; // needed by precompiled files from 2.0.0
     Function CreateRTTIAnonymousArray(El: TPasArrayType; AContext: TConvertContext): TJSCallExpression; virtual;
@@ -2214,21 +2241,24 @@ type
       FinishedGUIDs: TStringList; ObjLit: TJSObjectLiteral; aContext: TFunctionContext);
     Function CreateGUIDObjLit(aTGUIDRecord: TPasRecordType; const GUID: TGUID;
       PosEl: TPasElement; AContext: TConvertContext): TJSObjectLiteral;
-    Function CreateAssignComIntfVar(const LeftResolved: TPasResolverResult;
+    Function CreateAssignManagedVar(const LeftResolved: TPasResolverResult;
       var LHS, RHS: TJSElement; AContext: TConvertContext; PosEl: TPasElement): TJSElement; virtual;
     Function IsInterfaceRef(Expr: TJSElement): boolean;
+    Function CreateAddRef(Expr: TJSElement; PosEl: TPasElement): TJSCallExpression;
     Function CreateIntfRef(Expr: TJSElement; aContext: TConvertContext;
       PosEl: TPasElement): TJSCallExpression; virtual;
     Function RemoveIntfRef(Call: TJSCallExpression; AContext: TConvertContext): TJSElement;
     Procedure CreateFunctionTryFinally(FuncContext: TFunctionContext);
     Procedure AddFunctionFinallySt(NewEl: TJSElement; PosEl: TPasElement;
       FuncContext: TFunctionContext);
-    Procedure AddFunctionFinallyRelease(SubEl: TPasElement; FuncContext: TFunctionContext; IsArray: boolean = false);
+    Procedure AddFunctionFinallyRelease(SubEl: TPasElement; FuncContext: TFunctionContext); virtual;
     Procedure AddInFrontOfFunctionTry(NewEl: TJSElement; PosEl: TPasElement;
-      FuncContext: TFunctionContext);
-    Procedure AddInterfaceReleases(FuncContext: TFunctionContext; PosEl: TPasElement);
+      FuncContext: TFunctionContext); virtual;
+    Procedure AddInterfaceReleases(FuncContext: TFunctionContext; PosEl: TPasElement); virtual;
+    Procedure AddInterfaceRelease_Result(FuncContext: TFunctionContext;
+      const ResultVarName: string; PosEl: TPasElement); virtual;
     Procedure AddClassSupportedInterfaces(El: TPasClassType; Src: TJSSourceElements;
-      FuncContext: TFunctionContext);
+      FuncContext: TFunctionContext); virtual;
     // create elements for helpers
     Function CreateCallHelperMethod(Proc: TPasProcedure; Expr: TPasExpr;
       AContext: TConvertContext; Implicit: boolean = false): TJSCallExpression; virtual;
@@ -2369,6 +2399,7 @@ type
       pfStoredFunction = 12; // stored function, function name is in Stored
       pfHasIndex = 16; { if getter is function, append Index as last param
                          if setter is function, append Index as second last param }
+      pfClassProperty = 32;  // class property
     type
       TMethodKind = (
         mkProcedure,      // 0  default
@@ -2720,13 +2751,21 @@ begin
   if Index>=0 then
     begin
     // insert LIFO - last in, first out
+    {$IFDEF VER3_2}
     OldItem:=TPasIdentifier(FElevatedLocals.List^[Index].Data);
+    {$ELSE}
+    OldItem:=TPasIdentifier(FElevatedLocals.List[Index].Data);
+    {$ENDIF}
     {$IFDEF VerbosePasResolver}
     if lowercase(OldItem.Identifier)<>LoName then
       raise Exception.Create('20160925183438');
     {$ENDIF}
     Item.NextSameIdentifier:=OldItem;
+    {$IFDEF VER3_2}
     FElevatedLocals.List^[Index].Data:=Item;
+    {$ELSE}
+    FElevatedLocals.List[Index].Data:=Item;
+    {$ENDIF}
     end
   else
     begin
@@ -3294,13 +3333,21 @@ begin
   if Index>=0 then
     begin
     // insert LIFO - last in, first out
+    {$IFDEF VER3_2}
     OldItem:=TPasIdentifier(FExternalNames.List^[Index].Data);
+    {$ELSE}
+    OldItem:=TPasIdentifier(FExternalNames.List[Index].Data);
+    {$ENDIF}
     {$IFDEF VerbosePasResolver}
     if OldItem.Identifier<>aName then
       raise Exception.Create('20170322235429');
     {$ENDIF}
     Item.NextSameIdentifier:=OldItem;
+    {$IFDEF VER3_2}
     FExternalNames.List^[Index].Data:=Item;
+    {$ELSE}
+    FExternalNames.List[Index].Data:=Item;
+    {$ENDIF}
     end
   else
     FExternalNames.Add(aName, Item);
@@ -3391,7 +3438,7 @@ begin
     if TPasProcedure(El).IsOverride then
       exit(true); // using name of overridden
     if El.Visibility=visPublished then
-      exit(false);
+      exit(false); // published elements are always using the pascal identifier
 
     // Note: external proc pollutes the name space
     ProcScope:=TPasProcedureScope(El.CustomData);
@@ -4309,6 +4356,12 @@ begin
     if El.ExternalName='' then
       RaiseMsg(20170321151109,nMissingExternalName,sMissingExternalName,[],El);
     AddExternalPath(El.ExternalName,El);
+    if El.RTTIVisibility.Fields<>[] then
+      RaiseNotYetImplemented(20250103153804,El,'RTTI for external class');
+    if El.RTTIVisibility.Methods<>[] then
+      RaiseNotYetImplemented(20250103153905,El,'RTTI for external class');
+    if El.RTTIVisibility.Properties<>[] then
+      RaiseNotYetImplemented(20250103153913,El,'RTTI for external class');
     end;
   if El.IsPacked then
     RaiseMsg(20180326155616,nPasElementNotSupported,sPasElementNotSupported,
@@ -4375,14 +4428,14 @@ var
 begin
   inherited FinishArrayType(El);
   ElType:=ResolveAliasType(El.ElType);
-  while ElType is TPasArrayType do
-    ElType:=ResolveAliasType(TPasArrayType(ElType).ElType);
-  if IsInterfaceType(ElType,citCom) then
-    {$IFDEF EnableCOMArrayOfIntf}
-    ;
-    {$ELSE}
-    RaiseMsg(20180404134515,nNotSupportedX,sNotSupportedX,['array of COM-interface'],El);
-    {$ENDIF}
+  if IsManagedJSType(ElType) then
+    begin
+    if length(El.Ranges)>0 then
+      RaiseMsg(20250623180523,nNotSupportedX,sNotSupportedX,['static array of COM-interface'],El);
+    if El.CustomData=nil then
+      CreateScope(El,ScopeClass_Array);
+    (El.CustomData as TPas2JSArrayScope).Managed:=true;
+    end;
 end;
 
 procedure TPas2JSResolver.FinishAncestors(aClass: TPasClassType);
@@ -4526,7 +4579,7 @@ begin
     begin
     // record member
     RaiseVarModifierNotSupported(RecordVarModifiersAllowed);
-    if IsInterfaceType(El.VarType,citCom) then
+    if IsManagedJSType(El.VarType) then
       RaiseMsg(20180404135105,nNotSupportedX,sNotSupportedX,['COM-interface as record member'],El);
     if (El.ClassType=TPasConst) and (TPasConst(El).Expr<>nil)
         and (vmExternal in TPasConst(El).VarModifiers) then
@@ -4595,6 +4648,13 @@ begin
 
     if El.Expr<>nil then
       begin
+      if IsManagedJSType(TypeEl) then
+        begin
+        if El.Expr is TNilExpr then
+          // ok
+        else
+          RaiseMsg(20250623135850,nNotSupportedX,sNotSupportedX,['initial value of managed type'],El.Expr);
+        end;
       if (TypeEl.ClassType=TPasRecordType) then
         begin
         if GetAssignGUIDString(TPasRecordType(TypeEl),El.Expr,GUID) then
@@ -4748,7 +4808,7 @@ begin
           else if C=TPasConstructor then
             begin
             if Proc.IsVirtual then
-              // constructor of external class can't be overriden -> forbid virtual
+              // constructor of external class can't be overridden -> forbid virtual
               RaiseMsg(20170323100447,nInvalidXModifierY,sInvalidXModifierY,
                 [Proc.ElementTypeName,'virtual,external'],Proc);
             ComputeConstString(Proc.LibrarySymbolName,true,true);
@@ -5861,7 +5921,7 @@ begin
       if (rrfReadable in ParamResolved.Flags)
           and (ParamResolved.BaseType=btContext)
           and (ParamResolved.LoTypeEl is TPasClassType)
-          and IsExternalClass_Name(TPasClassType(ParamResolved.LoTypeEl),'Promise') then
+          and IsPromiseClass(TPasClassType(ParamResolved.LoTypeEl)) then
         begin
         // "exit(aPromise)"  inside async proc
         exit(cCompatible);
@@ -6131,12 +6191,35 @@ function TPas2JSResolver.BI_AWait_OnGetCallCompatibility(
 // await(T; jsvalue): T
 // await(AsyncFuncWithResultT): T
 // await(AsyncProc);
+
 var
   Params: TParamsExpr;
   Param: TPasExpr;
   ParamResolved, Param2Resolved: TPasResolverResult;
   ParentProc: TPasProcedure;
   TypeEl: TPasType;
+
+  function CheckProcedureAsync(const Proc: TPasProcedureType): Boolean;
+  var
+    FunctionType: TPasFunctionType absolute Proc;
+
+  begin
+    Result := Proc.IsAsync or ((Proc is TPasFunctionType)
+      and ((FunctionType.ResultEl.ResultType is TPasClassType) and IsPromiseClass(FunctionType.ResultEl.ResultType as TPasClassType))
+        or (FunctionType.ResultEl.ResultType is TPasSpecializeType) and (IsPromiseClass(TPasSpecializeType(FunctionType.ResultEl.ResultType).DestType as TPasClassType)));
+
+    if not Result then
+    begin
+      {$IFDEF VerbosePas2JS}
+      writeln('TPas2JSResolver.BI_AWait_OnGetCallCompatibility ',GetResolverResultDbg(ParamResolved));
+      {$ENDIF}
+
+      if RaiseOnError then
+        RaiseMsg(20201229232446, nXExpectedButYFound, sXExpectedButYFound, [
+          sAsyncFunctionOrPromise, GetResolverResultDescription(ParamResolved)], Expr);
+    end;
+  end;
+
 begin
   Result:=cIncompatible;
 
@@ -6165,31 +6248,21 @@ begin
     if (ParamResolved.IdentEl is TPasResultElement) then
       begin
       // await(AsyncFuncCall)
-      if not TPasFunctionType(ParamResolved.IdentEl.Parent).IsAsync then
-        begin
-        {$IFDEF VerbosePas2JS}
-        writeln('TPas2JSResolver.BI_AWait_OnGetCallCompatibility ',GetResolverResultDbg(ParamResolved));
-        {$ENDIF}
-        if RaiseOnError then
-          RaiseMsg(20201229232446,nXExpectedButYFound,sXExpectedButYFound,['async function',GetResolverResultDescription(ParamResolved)],Expr)
-        else
-          exit(cIncompatible);
-        end;
+      if not CheckProcedureAsync(TPasProcedureType(ParamResolved.IdentEl.Parent)) then
+        Exit(cIncompatible);
       end
     else if (ParamResolved.BaseType=btContext)
         and (TypeEl is TPasProcedureType) then
       begin
       // await(AsyncFuncTypeVar)
-      if not TPasProcedureType(TypeEl).IsAsync then
-        begin
-        {$IFDEF VerbosePas2JS}
-        writeln('TPas2JSResolver.BI_AWait_OnGetCallCompatibility ',GetResolverResultDbg(ParamResolved));
-        {$ENDIF}
-        if RaiseOnError then
-          RaiseMsg(20201229232541,nXExpectedButYFound,sXExpectedButYFound,['async function',GetResolverResultDescription(ParamResolved)],Expr)
-        else
-          exit(cIncompatible);
-        end;
+      if not CheckProcedureAsync(TPasProcedureType(TypeEl)) then
+        Exit(cIncompatible);
+      end
+    else if (ParamResolved.BaseType=btContext)
+        and (ParamResolved.IdentEl is TPasProcedure) then
+      begin
+      if not CheckProcedureAsync(TPasProcedure(ParamResolved.IdentEl).ProcType) then
+        Exit(cIncompatible)
       end
     else
       begin
@@ -6225,7 +6298,7 @@ begin
       // custom type
       if (ParamResolved.BaseType=btContext)
           and (ParamResolved.LoTypeEl is TPasClassType)
-          and IsExternalClass_Name(TPasClassType(ParamResolved.LoTypeEl),'Promise') then
+          and IsPromiseClass(TPasClassType(ParamResolved.LoTypeEl)) then
         begin
         // awit(TJSPromise,x) ->  await resolves all promises
         exit(CheckRaiseTypeArgNo(20201120001741,1,Param,ParamResolved,'non Promise type',RaiseOnError));
@@ -6250,7 +6323,7 @@ begin
       // await(T,CallAsyncFuncResultS)
       if (Param2Resolved.BaseType=btContext)
           and (Param2Resolved.LoTypeEl is TPasClassType)
-          and IsExternalClass_Name(TPasClassType(Param2Resolved.LoTypeEl),'Promise') then
+          and IsPromiseClass(TPasClassType(Param2Resolved.LoTypeEl)) then
         begin
         // await(T,CallAsyncFuncReturningPromise) -> good
         end
@@ -6275,7 +6348,7 @@ begin
 
       if (Param2Resolved.BaseType=btContext)
           and (Param2Resolved.LoTypeEl is TPasClassType)
-          and IsExternalClass_Name(TPasClassType(Param2Resolved.LoTypeEl),'Promise') then
+          and IsPromiseClass(TPasClassType(Param2Resolved.LoTypeEl)) then
         // await(T,aPromise)
       else if IsJSBaseType(Param2Resolved,pbtJSValue) then
         // await(T,jsvalue)
@@ -6308,7 +6381,7 @@ begin
       // await(CallAsynFuncResultT): T
       if (ResolvedEl.BaseType=btContext)
           and (ResolvedEl.LoTypeEl is TPasClassType)
-          and IsExternalClass_Name(TPasClassType(ResolvedEl.LoTypeEl),'Promise') then
+          and IsPromiseClass(TPasClassType(ResolvedEl.LoTypeEl)) then
         // async function returns a promise, await resolve all promises -> need final type as first param
         RaiseMsg(20201229235932,nWrongNumberOfParametersForCallTo,
           sWrongNumberOfParametersForCallTo,[AwaitSignature2],Param);
@@ -6388,7 +6461,7 @@ begin
       TypeEl:=ParamResolved.LoTypeEl;
       IdentEl:=ParamResolved.IdentEl;
       if TypeEl.ClassType=TPasClassType then
-        IsPromise:=IsExternalClass_Name(TPasClassType(TypeEl),'Promise')
+        IsPromise:=IsPromiseClass(TPasClassType(TypeEl))
       else if (ParamResolved.BaseType=btProc) and (IdentEl=nil)
           and (TypeEl is TPasProcedureType) then
         IsPromise:=TPasProcedureType(TypeEl).IsAsync
@@ -6487,6 +6560,11 @@ begin
   if HasValue and not (rrfReadable in TypeResolved.Flags) then
     exit(false);
   Result:=true;
+end;
+
+function TPas2JSResolver.IsPromiseClass(aClass: TPasClassType): Boolean;
+begin
+  Result := IsExternalClass_Name(aClass, 'Promise');
 end;
 
 procedure TPas2JSResolver.AddObjFPCBuiltInIdentifiers(
@@ -7246,27 +7324,49 @@ procedure TPas2JSResolver.ComputeResultElement(El: TPasResultElement; out
   ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags;
   StartEl: TPasElement);
 var
-  FuncType: TPasFunctionType;
   Proc: TPasProcedure;
+  ProcType: TPasProcedureType;
   JSPromiseClass: TPasClassType;
 begin
-  if (rcCall in Flags) and (El.Parent is TPasFunctionType) then
+  if (rcCall in Flags) and (El.Parent is TPasProcedureType) then
     begin
-    FuncType:=TPasFunctionType(El.Parent);
-    if FuncType.Parent is TPasProcedure then
+    ProcType:=TPasProcedureType(El.Parent);
+    if ProcType.Parent is TPasProcedure then
       begin
-      Proc:=TPasProcedure(FuncType.Parent);
+      Proc:=TPasProcedure(ProcType.Parent);
       if Proc.IsAsync then
         begin
-        // an async function call returns a TJSPromise
-        JSPromiseClass:=FindTJSPromise(StartEl);
-        SetResolverIdentifier(ResolvedEl,btContext,El,
-                       JSPromiseClass,JSPromiseClass,[rrfReadable,rrfWritable]);
-        exit;
+        // an async function returns a TJSPromise if available
+        JSPromiseClass:=FindTJSPromise(nil); // nil for no error on fail
+        if JSPromiseClass<>nil then
+          begin
+           SetResolverIdentifier(ResolvedEl, btContext, El, JSPromiseClass,
+             JSPromiseClass, [rrfReadable, rrfWritable]);
+           Exit;
+          end;
         end;
       end;
     end;
   inherited ComputeResultElement(El, ResolvedEl, Flags, StartEl);
+end;
+
+function TPas2JSResolver.ComputeProcAsyncResult(El: TPasElement;
+  var ResolvedEl: TPasResolverResult; Flags: TPasResolverComputeFlags; StartEl: TPasElement
+  ): boolean;
+var
+  JSPromiseClass: TPasClassType;
+begin
+  JSPromiseClass:=FindTJSPromise(nil); // nil for no error on fail
+  if JSPromiseClass=nil then
+    exit(false)
+  else
+    begin
+    SetResolverIdentifier(ResolvedEl, btContext, El, JSPromiseClass,
+      JSPromiseClass, [rrfReadable, rrfWritable]);
+    exit(true);
+    end;
+  if StartEl=nil then ;
+  if Flags=[] then ;
 end;
 
 function TPas2JSResolver.GetElementData(El: TPasElementBase;
@@ -7383,6 +7483,28 @@ begin
   if not Result then exit;
   if El.Parent is TProcedureBody then
     Result:=false;
+end;
+
+function TPas2JSResolver.HasExtRTTI(El: TPasMembersType): boolean;
+var
+  Members: TFPList;
+  i: Integer;
+  ChildEl: TPasElement;
+  V: TPasMembersType.TRTTIVisibility;
+begin
+  Result:=false;
+  V:=El.RTTIVisibility;
+  if (V.Fields=[])
+      and (V.Methods=[])
+      and (V.Properties=[]) then exit;
+
+  Members:=El.Members;
+  for i:=0 to Members.Count-1 do
+    begin
+    ChildEl:=TPasElement(Members[i]);
+    if El.HasExtRTTI(ChildEl) then
+      exit(true);
+    end;
 end;
 
 function TPas2JSResolver.ProcHasImplElements(Proc: TPasProcedure): boolean;
@@ -7512,6 +7634,21 @@ begin
       or (TPasProcedure(Decl).ProcType.Args.Count>0) then
     exit;
   Result:=true;
+end;
+
+function TPas2JSResolver.IsManagedJSType(TypeEl: TPasType): boolean;
+begin
+  Result:=false;
+  if TypeEl=nil then exit;
+  TypeEl:=ResolveAliasType(TypeEl);
+  if (TypeEl.ClassType=TPasClassType)
+      and (TPasClassType(TypeEl).ObjKind=okInterface)
+      and (TPasClassType(TypeEl).InterfaceType=citCom) then
+    Result:=true
+  else if TypeEl is TPasArrayType then
+    Result:=(TypeEl.CustomData<>nil) and (TypeEl.CustomData as TPas2JSArrayScope).Managed
+  else if TypeEl is TPasRecordType then
+    Result:=(TypeEl.CustomData as TPas2JSRecordScope).Managed;
 end;
 
 function TPas2JSResolver.IsExternalBracketAccessor(El: TPasElement): boolean;
@@ -8906,6 +9043,11 @@ begin
   n:=Value.AsNumber;
 end;
 
+function TPasToJSConverter.IsLiteralNull(El: TJSElement): boolean;
+begin
+  Result:=(El is TJSLiteral) and TJSLiteral(El).Value.IsNull;
+end;
+
 function TPasToJSConverter.GetOverloadName(El: TPasElement;
   AContext: TConvertContext): string;
 begin
@@ -9294,6 +9436,8 @@ end;
 function TPasToJSConverter.ConvertBinaryExpressionRes(El: TBinaryExpr;
   AContext: TConvertContext; const LeftResolved,
   RightResolved: TPasResolverResult; var A, B: TJSElement): TJSElement;
+var
+  aResolver: TPas2JSResolver;
 
   procedure NotSupported(id: TMaxPrecInt);
   begin
@@ -9336,10 +9480,11 @@ function TPasToJSConverter.ConvertBinaryExpressionRes(El: TBinaryExpr;
     Result:=Call;
     Call.AddArg(A); A:=nil;
     Call.AddArg(B); B:=nil;
+    if aResolver.IsManagedJSType(ArrayType) then
+      Result:=CreateIntfRef(Result,AContext,El);
   end;
 
 var
-  aResolver: TPas2JSResolver;
   FunName: String;
   Call: TJSCallExpression;
   InOp: TJSRelationalExpressionIn;
@@ -9416,6 +9561,8 @@ begin
       LeftResolved.HiTypeEl,El.left,LeftResolved.Flags);
     Call:=CreateArrayConcat(ResolvedEl,El,AContext);
     Result:=Call;
+    if aResolver.IsManagedJSType(LeftResolved.LoTypeEl) then
+      Result:=CreateIntfRef(Result,AContext,El);
     Call.AddArg(A); A:=nil;
     Call.AddArg(B); B:=nil;
     exit;
@@ -10354,7 +10501,8 @@ begin
       end;
     pekStringMultiLine:
       begin
-      Result:=CreateLiteralJSString(El,StrToJSString(El.Value));
+      S:={$IFDEF pas2js}DeQuoteString{$ELSE}AnsiDequotedStr{$ENDIF}(El.Value,'''');
+      Result:=CreateLiteralString(EL,S);
       //writeln('TPasToJSConverter.ConvertPrimitiveExpression Result="',TJSLiteral(Result).Value.AsString,'" ',GetObjName(AContext.Resolver));
       end;
     pekNumber:
@@ -10434,8 +10582,8 @@ var
     NeedIntfRef:=false;
     if (ProcType is TPasFunctionType)
         and not ProcType.IsAsync
-        and AContext.Resolver.IsInterfaceType(
-          TPasFunctionType(ProcType).ResultEl.ResultType,citCom)
+        and AContext.Resolver.IsManagedJSType(
+          TPasFunctionType(ProcType).ResultEl.ResultType)
     then
       NeedIntfRef:=true;
 
@@ -10964,7 +11112,7 @@ function TPasToJSConverter.ConvertInheritedExpr(El: TInheritedExpr;
           and TPasClassType(AncestorProc.Parent).IsExternal then
         begin
         // ancestor is in an external class
-        // They could be overriden, without a Pascal declaration
+        // They could be overridden, without a Pascal declaration
         // -> use the direct ancestor class of the current proc
         aClass:=SelfContext.ThisVar.Element as TPasClassType;
         if aClass.CustomData=nil then
@@ -11010,8 +11158,8 @@ function TPasToJSConverter.ConvertInheritedExpr(El: TInheritedExpr;
 
       if (AncestorProc is TPasFunction)
           and not AncestorProc.IsAsync
-          and AContext.Resolver.IsInterfaceType(
-              TPasFunction(AncestorProc).FuncType.ResultEl.ResultType,citCom) then
+          and AContext.Resolver.IsManagedJSType(
+              TPasFunction(AncestorProc).FuncType.ResultEl.ResultType) then
         Call:=CreateIntfRef(Call,AContext,El);
 
       Result:=Call;
@@ -11759,7 +11907,7 @@ var
       if AContext.Access=caRead then
         begin
         TypeEl:=aResolver.GetPasPropertyType(Prop);
-        if aResolver.IsInterfaceType(TypeEl,citCom) then
+        if aResolver.IsManagedJSType(TypeEl) then
           Call:=CreateIntfRef(Call,AContext,El);
         end;
 
@@ -12012,6 +12160,7 @@ var
   end;
 
   function ConvertJSArrayLit(Param: TPasExpr; const ParamResolved: TPasResolverResult): TJSElement;
+  // TJSArray(Param)
   var
     ParamExpr: TParamsExpr;
     ArrayType: TPasArrayType;
@@ -12452,9 +12601,13 @@ begin
   NeedIntfRef:=false;
   if (TargetProcType is TPasFunctionType) and (aResolver<>nil) then
     begin
-    if aResolver.IsInterfaceType(TPasFunctionType(TargetProcType).ResultEl.ResultType,citCom)
+    if aResolver.IsManagedJSType(TPasFunctionType(TargetProcType).ResultEl.ResultType)
         and not TargetProcType.IsAsync then
+      begin
+      // when part of an expression use $ir.ref
+      // ToDo: if proc call, i.e. result is not used, use rtl._release()
       NeedIntfRef:=true;
+      end;
     end;
 
   if Call=nil then
@@ -13185,6 +13338,8 @@ var
   DimSize: TMaxPrecInt;
   StaticDims: TObjectList;
   Lit: TJSLiteral;
+  ArrScope: TPas2JSArrayScope;
+  aManaged: Boolean;
 begin
   Result:=nil;
   Param0:=El.Params[0];
@@ -13224,10 +13379,13 @@ begin
         ElType:=aResolver.ResolveAliasType(aResolver.GetArrayElType(ArrayType));
         ArrayType:=ElType as TPasArrayType;
         end;
+      ArrScope:=ArrayType.CustomData as TPas2JSArrayScope;
+      aManaged:=(ArrScope<>nil) and ArrScope.Managed;
+
       ElType:=aResolver.ResolveAliasType(aResolver.GetArrayElType(ArrayType));
       while (ElType.ClassType=TPasArrayType) and (length(TPasArrayType(ElType).Ranges)>0) do
         begin
-        // array of static array, Note: setlength reallocs static arrays
+        // array of static array, Note: setlength reallocate static arrays
         ArrayType:=ElType as TPasArrayType;
         for i:=0 to length(ArrayType.Ranges)-1 do
           begin
@@ -13248,6 +13406,8 @@ begin
         end;
       if ElType.ClassType=TPasRecordType then
         ValInit:=CreateReferencePathExpr(ElType,AContext)
+      else if aManaged then
+        ValInit:=CreateLiteralJSString(Param0,TJSString(GetBIName(pbivnIntfRefCnt)))
       else
         ValInit:=CreateValInit(ElType,nil,Param0,AContext);
       Call.AddArg(ValInit);
@@ -13359,8 +13519,10 @@ var
   St: TJSStatementList;
   ImplProc, DeclProc: TPasProcedure;
   ImplTry: TPasImplTry;
-  ResultIsRead: Boolean;
+  ResultIsRead, aManaged: Boolean;
   ResultEl: TPasResultElement;
+  TypeEl: TPasType;
+  Call: TJSCallExpression;
 begin
   {$IFDEF VerbosePas2JS}
   writeln('TPasToJSConverter.ConvertBuiltIn_Exit ',GetObjName(El));
@@ -13371,16 +13533,28 @@ begin
   // ParentEl can be nil, when exit is in program begin block
   ImplProc:=TPasProcedure(ParentEl);
   ResultVarName:='';
+  ResultEl:=nil;
+  aManaged:=false;
   if ImplProc<>nil then
     begin
     ImplProcScope:=ImplProc.CustomData as TPas2JSProcedureScope;
-    if ImplProc.ProcType is TPasFunctionType then
+    DeclProc:=ImplProcScope.DeclarationProc;
+    if DeclProc=nil then
+      DeclProc:=ImplProc; // Note: references refer to ResultEl of DeclProc
+    if DeclProc.ProcType is TPasFunctionType then
       begin
       ResultVarName:=ImplProcScope.ResultVarName; // ResultVarName needs ImplProc
       if ResultVarName='' then
         ResultVarName:=ResolverResultVar;
+      ResultEl:=TPasFunctionType(DeclProc.ProcType).ResultEl;
+      TypeEl:=AContext.Resolver.ResolveAliasType(ResultEl.ResultType);
+      aManaged:=AContext.Resolver.IsManagedJSType(TypeEl);
       end;
-    end;
+    end
+  else
+    DeclProc:=nil;
+  FuncContext:=AContext.GetFunctionContext;
+
   Result:=TJSReturnStatement(CreateElement(TJSReturnStatement,El));
   if (El is TParamsExpr) and (length(TParamsExpr(El).Params)>0) then
     begin
@@ -13388,10 +13562,6 @@ begin
     ResultIsRead:=false;
     if (ResultVarName<>'') then
       begin
-      DeclProc:=ImplProcScope.DeclarationProc;
-      if DeclProc=nil then
-        DeclProc:=ImplProc; // Note: references refer to ResultEl of DeclProc
-      ResultEl:=TPasFunctionType(DeclProc.ProcType).ResultEl;
       ParentEl:=El.Parent;
       while (ParentEl<>ImplProc) do
         begin
@@ -13411,7 +13581,24 @@ begin
         end;
       end;
 
-    if ResultIsRead then
+    if aManaged then
+      begin
+      FuncContext.ResultNeedsIntfRelease:=true;
+      // create "Result = rtl.setIntfL(Result,param); return Result;"
+      Call:=CreateCallExpression(El);
+      Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntfSetIntfL)]);
+      Call.AddArg(CreatePrimitiveDotExpr(ResultVarName,El));
+      Call.AddArg(ConvertExpression(TParamsExpr(El).Params[0],AContext));
+      AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,El));
+      AssignSt.LHS:=CreatePrimitiveDotExpr(ResultVarName,El);
+      AssignSt.Expr:=Call;
+      TJSReturnStatement(Result).Expr:=CreatePrimitiveDotExpr(ResultVarName,El);
+      St:=TJSStatementList(CreateElement(TJSStatementList,El));
+      St.A:=AssignSt;
+      St.B:=Result;
+      Result:=St;
+      end
+    else if ResultIsRead then
       begin
       // create "Result = param; return Result;"
       AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,El));
@@ -13441,7 +13628,6 @@ begin
       ; // in a procedure, "return;" which means "return undefined;"
     end;
 
-  FuncContext:=AContext.GetFunctionContext;
   if (FuncContext<>nil) and FuncContext.ResultNeedsIntfRelease then
     begin
     // add "$ok = true;"
@@ -14569,29 +14755,36 @@ var
   i: Integer;
   Call: TJSCallExpression;
   JS: TJSElement;
+  aResolver: TPas2JSResolver;
+  aManaged: Boolean;
 begin
   Result:=nil;
   Params:=El.Params;
   if length(Params)<1 then
     RaiseInconsistency(20170331000332,El);
   Param0:=El.Params[0];
+  aResolver:=AContext.Resolver;
+  aResolver.ComputeElement(Param0,ParamResolved,[]);
   if length(Params)=1 then
     begin
     // concat(array1)  ->  array1
     {$IFDEF VerbosePas2JS}
     writeln('TPasToJSConverter.ConvertBuiltInConcatArray Count=',length(El.Params));
     {$ENDIF}
-    Result:=CreateArrayRef(El,ConvertExpression(Param0,AContext));
+    Result:=ConvertExpression(Param0,AContext);
+    if not aResolver.IsManagedJSType(ParamResolved.LoTypeEl) then
+      Result:=CreateArrayRef(El,Result);
     end
   else
     begin
     // concat(array1,array2,...)
     Call:=nil;
-    AContext.Resolver.ComputeElement(Param0,ParamResolved,[]);
+    aManaged:=false;
     if ParamResolved.LoTypeEl is TPasArrayType then
       begin
       ArrayType:=TPasArrayType(ParamResolved.LoTypeEl);
       Call:=CreateArrayConcat(ArrayType,El,AContext);
+      aManaged:=aResolver.IsManagedJSType(ArrayType);
       end
     else if ParamResolved.BaseType=btArrayLit then
       begin
@@ -14613,6 +14806,8 @@ begin
         Call.AddArg(JS);
         end;
       Result:=Call;
+      if aManaged then
+        Result:=CreateIntfRef(Result,AContext,El);
     finally
       if Result=nil then
         Call.Free;
@@ -14662,6 +14857,8 @@ var
   Call: TJSCallExpression;
   ArrayType: TPasArrayType;
   aResolver: TPas2JSResolver;
+  LoElType: TPasType;
+  aManaged: Boolean;
 begin
   Result:=nil;
   aResolver:=AContext.Resolver;
@@ -14669,11 +14866,13 @@ begin
   try
     Param:=El.Params[0];
     aResolver.ComputeElement(El,ParamResolved,[]);
+    aManaged:=false;
     if (ParamResolved.BaseType=btContext)
         and (ParamResolved.LoTypeEl.ClassType=TPasArrayType) then
       begin
       ArrayType:=TPasArrayType(ParamResolved.LoTypeEl);
       aResolver.ComputeElement(aResolver.GetArrayElType(ArrayType),ElTypeResolved,[rcType]);
+      aManaged:=aResolver.IsManagedJSType(ArrayType);
       end
     else if ParamResolved.BaseType=btArrayLit then
       begin
@@ -14685,10 +14884,18 @@ begin
     TypeParam:=nil;
     if ElTypeResolved.BaseType=btContext then
       begin
-      C:=ElTypeResolved.LoTypeEl.ClassType;
+      LoElType:=ElTypeResolved.LoTypeEl;
+      C:=LoElType.ClassType;
       if C=TPasRecordType then
         // copy array of record
-        TypeParam:=CreateReferencePathExpr(TPasRecordType(ElTypeResolved.LoTypeEl),AContext);
+        TypeParam:=CreateReferencePathExpr(TPasRecordType(LoElType),AContext)
+      else if (C=TPasClassType)
+          and (TPasClassType(LoElType).ObjKind=okInterface)
+          and (TPasClassType(LoElType).InterfaceType=citCom) then
+        begin
+        // copy array of COM interface
+        TypeParam:=CreateLiteralString(El,GetBIName(pbivnIntfRefCnt));
+        end;
       end
     else if ElTypeResolved.BaseType=btSet then
       // copy array of set
@@ -14711,6 +14918,8 @@ begin
     if length(El.Params)>=3 then
       Call.AddArg(ConvertExpression(El.Params[2],AContext));
     Result:=Call;
+    if aManaged then
+      Result:=CreateIntfRef(Result,AContext,El);
   finally
     if Result=nil then
       Call.Free;
@@ -14724,11 +14933,20 @@ function TPasToJSConverter.ConvertBuiltIn_InsertArray(El: TParamsExpr;
   AContext: TConvertContext): TJSElement;
 // procedure insert(item,var AnArray,const position)
 // ->  AnArray=rtl.arrayInsert(item,AnArray,position);
+//   for array of COM interface: rtl.arrayInsert(item,AnArray,position,"R");
 var
   Call: TJSCallExpression;
   AssignSt: TJSSimpleAssignStatement;
+  aResolver: TPas2JSResolver;
+  Param: TPasExpr;
+  ParamJS: TJSElement;
+  ParamResolved: TPasResolverResult;
+  ItemType: TPasType;
+  C: TClass;
+  aManaged: Boolean;
 begin
   Result:=nil;
+  aResolver:=AContext.Resolver;
   AssignSt:=nil;
   try
     // AnArray=
@@ -14739,11 +14957,30 @@ begin
     // rtl.arrayInsert
     Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnArray_Insert)]);
     // param: item
-    Call.AddArg(ConvertExpression(El.Params[0],AContext));
+    Param:=El.Params[0];
+    ParamJS:=ConvertExpression(Param,AContext);
+
+    aManaged:=false;
+    aResolver.ComputeElement(Param,ParamResolved,[]);
+    if (ParamResolved.BaseType=btContext) then
+      begin
+      ItemType:=ParamResolved.LoTypeEl;
+      aManaged:=aResolver.IsManagedJSType(ItemType);
+      C:=ItemType.ClassType;
+      if C=TPasRecordType then
+        begin
+        // todo: clone
+        end
+      end;
+
+     Call.AddArg(ParamJS);
     // param: AnArray
     Call.AddArg(ConvertExpression(El.Params[1],AContext));
     // param: position
     Call.AddArg(ConvertExpression(El.Params[2],AContext));
+    // optional param: type
+    if aManaged then
+      Call.AddArg(CreateLiteralJSString(El,TJSString(GetBIName(pbivnIntfRefCnt))));
     Result:=AssignSt;
   finally
     if Result=nil then
@@ -14754,24 +14991,58 @@ end;
 function TPasToJSConverter.ConvertBuiltIn_DeleteArray(El: TParamsExpr;
   AContext: TConvertContext): TJSElement;
 // proc delete(var array,const start,count)
-// ->  array.splice(start,count)
 var
   ArrEl: TJSElement;
   Call: TJSCallExpression;
+  Param: TPasExpr;
+  aResolver: TPas2JSResolver;
+  ParamResolved: TPasResolverResult;
+  AssignSt: TJSSimpleAssignStatement;
 begin
   Result:=nil;
-  Call:=nil;
-  try
-    Call:=CreateCallExpression(El);
-    ArrEl:=ConvertExpression(El.Params[0],AContext);
-    Call.Expr:=CreateDotNameExpr(El,ArrEl,'splice');
-    Call.AddArg(ConvertExpression(El.Params[1],AContext));
-    Call.AddArg(ConvertExpression(El.Params[2],AContext));
-    Result:=Call;
-  finally
-    if Result=nil then
-      Call.Free;
-  end;
+  aResolver:=AContext.Resolver;
+  Param:=El.Params[0];
+  aResolver.ComputeElement(Param,ParamResolved,[]);
+  if aResolver.IsManagedJSType(ParamResolved.LoTypeEl) then
+    begin
+    // for array of COM interface: array=rtl.arrayDeleteR(array,index,count);
+    AssignSt:=nil;
+    try
+      // AnArray=
+      AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,El));
+      AssignSt.LHS:=ConvertExpression(Param,AContext);
+      Call:=CreateCallExpression(El);
+      AssignSt.Expr:=Call;
+      // rtl.arrayInsert
+      Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnArray_DeleteR)]);
+      // param: AnArray
+      Call.AddArg(ConvertExpression(Param,AContext));
+      // param: position
+      Call.AddArg(ConvertExpression(El.Params[1],AContext));
+      // param: count
+      Call.AddArg(ConvertExpression(El.Params[2],AContext));
+      Result:=AssignSt;
+    finally
+      if Result=nil then
+        AssignSt.Free;
+    end;
+    end
+  else
+    begin
+    // array.splice(start,count)
+    Call:=nil;
+    try
+      Call:=CreateCallExpression(El);
+      ArrEl:=ConvertExpression(El.Params[0],AContext);
+      Call.Expr:=CreateDotNameExpr(El,ArrEl,'splice');
+      Call.AddArg(ConvertExpression(El.Params[1],AContext));
+      Call.AddArg(ConvertExpression(El.Params[2],AContext));
+      Result:=Call;
+    finally
+      if Result=nil then
+        Call.Free;
+    end;
+    end;
 end;
 
 function TPasToJSConverter.ConvertBuiltIn_TypeInfo(El: TParamsExpr;
@@ -15672,38 +15943,6 @@ Var
     ReleaseEvalValue(Value);
   end;
 
-  procedure AddResultInterfacRelease(FuncContext: TFunctionContext);
-  var
-    AssignSt: TJSSimpleAssignStatement;
-    IfSt: TJSIfStatement;
-    VarSt: TJSVariableStatement;
-    Call: TJSCallExpression;
-  begin
-    AddInterfaceReleases(FuncContext,ProcBody);
-    if FuncContext.ResultNeedsIntfRelease then
-      begin
-      // add in front of try "var $ok=false;"
-      VarSt:=CreateVarStatement(GetBIName(pbivnProcOk),CreateLiteralBoolean(ProcBody,false),ProcBody);
-      AddInFrontOfFunctionTry(VarSt,ProcBody,FuncContext);
-      // add in front of finally "$ok=true;"
-      AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,ProcBody));
-      AddToStatementList(FuncContext.TrySt.Block as TJSStatementList,AssignSt,ProcBody);
-      AssignSt.LHS:=CreatePrimitiveDotExpr(GetBIName(pbivnProcOk),ProcBody);
-      AssignSt.Expr:=CreateLiteralBoolean(ProcBody,true);
-      // add finally: "if(!$ok) rtl._Release(Result);"
-      IfSt:=TJSIfStatement(CreateElement(TJSIfStatement,ProcBody));
-      AddFunctionFinallySt(IfSt,ProcBody,FuncContext);
-      // !$ok
-      IfSt.Cond:=CreateUnaryNot(
-          CreatePrimitiveDotExpr(GetBIName(pbivnProcOk),ProcBody),ProcBody);
-      // rtl._Release(Result)
-      Call:=CreateCallExpression(ProcBody);
-      IfSt.BTrue:=Call;
-      Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntf_Release)]);
-      Call.AddArg(CreatePrimitiveDotExpr(ResultVarName,ProcBody));
-      end;
-  end;
-
   procedure InitForwards(Decls: TFPList; SectionContext: TSectionContext);
   var
     i: Integer;
@@ -15788,6 +16027,7 @@ var
   I : Integer;
   P: TPasElement;
   C: TClass;
+  FuncContext: TFunctionContext;
 begin
   Result:=nil;
   {
@@ -15874,10 +16114,13 @@ begin
 
         if AContext is TFunctionContext then
           begin
-          TFunctionContext(AContext).BodySt:=BodySt;
+          FuncContext:=TFunctionContext(AContext);
+          FuncContext.BodySt:=BodySt;
           // if needed add try..finally for COM interfaces
-          AddResultInterfacRelease(TFunctionContext(AContext));
-          BodySt:=TFunctionContext(AContext).BodySt;
+          AddInterfaceReleases(FuncContext,ProcBody);
+          if FuncContext.ResultNeedsIntfRelease then
+            AddInterfaceRelease_Result(FuncContext,ResultVarName,ProcBody);
+          BodySt:=FuncContext.BodySt;
           end;
 
         Add(BodySt,ProcBody);
@@ -16079,7 +16322,8 @@ begin
       end;
 
     NeedInitFunction:=true;
-    NeedTypeInfo:=(pcsfPublished in Scope.Flags) or HasTypeInfo(El,AContext);
+    NeedTypeInfo:=(pcsfPublished in Scope.Flags) or HasTypeInfo(El,AContext)
+                  or aResolver.HasExtRTTI(El);
     IntfKind:='';
     if El.ObjKind=okInterface then
       begin
@@ -17584,7 +17828,7 @@ begin
           end;
         end;
 
-      if (bsRangeChecks in ImplProcScope.BoolSwitches) and (aResolver<>nil) then
+      if (aResolver<>nil) then
         for i:=0 to El.ProcType.Args.Count-1 do
           begin
           Arg:=TPasArgument(El.ProcType.Args[i]);
@@ -17592,28 +17836,36 @@ begin
           aResolver.ComputeElement(Arg,ArgResolved,[rcType]);
           ArgTypeEl:=ArgResolved.LoTypeEl;
           if ArgTypeEl=nil then continue;
-          if ArgResolved.BaseType in btAllJSRangeCheckTypes then
-            AddRangeCheckType(Arg,ArgTypeEl,FuncContext)
-          else if ArgResolved.BaseType=btContext then
+
+          if (Arg.Access=argDefault) and aResolver.IsManagedJSType(ArgTypeEl) then
+            FuncContext.Add_InterfaceRelease(Arg);
+
+          if (bsRangeChecks in ImplProcScope.BoolSwitches) then
             begin
-            if ArgTypeEl.ClassType=TPasEnumType then
-              AddRangeCheckType(Arg,ArgTypeEl,FuncContext);
-            end
-          else if ArgResolved.BaseType=btRange then
-            begin
-            if ArgResolved.SubType in btAllJSRangeCheckTypes then
+            if ArgResolved.BaseType in btAllJSRangeCheckTypes then
               AddRangeCheckType(Arg,ArgTypeEl,FuncContext)
-            else if ArgResolved.SubType=btContext then
-              AddRangeCheckType(Arg,ArgTypeEl,FuncContext)
-            else
+            else if ArgResolved.BaseType=btContext then
               begin
-              {$IFDEF VerbosePas2JS}
-              writeln('TPasToJSConverter.ConvertProcedure ',GetResolverResultDbg(ArgResolved));
-              RaiseNotSupported(Arg,AContext,20180424120701);
-              {$ENDIF}
+              if ArgTypeEl.ClassType=TPasEnumType then
+                AddRangeCheckType(Arg,ArgTypeEl,FuncContext);
+              end
+            else if ArgResolved.BaseType=btRange then
+              begin
+              if ArgResolved.SubType in btAllJSRangeCheckTypes then
+                AddRangeCheckType(Arg,ArgTypeEl,FuncContext)
+              else if ArgResolved.SubType=btContext then
+                AddRangeCheckType(Arg,ArgTypeEl,FuncContext)
+              else
+                begin
+                {$IFDEF VerbosePas2JS}
+                writeln('TPasToJSConverter.ConvertProcedure ',GetResolverResultDbg(ArgResolved));
+                RaiseNotSupported(Arg,AContext,20180424120701);
+                {$ENDIF}
+                end;
               end;
             end;
           end;
+
       {$IFDEF VerbosePas2JS}
       //FuncContext.WriteStack;
       {$ENDIF}
@@ -18921,6 +19173,17 @@ begin
           VarAssignSt.Expr:=CreateCloneStaticArray(PasVar,TPasArrayType(PasVarType),
                                               SrcExpr,aContext);
           end
+        else if aResolver.IsManagedJSType(PasVarType) then
+          begin
+          // assign managed array -> "rtl.setIntfP(this,A,s.A);"
+          Call:=CreateCallExpression(PasVar);
+          AddToSourceElements(Src,Call);
+          Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntfSetIntfP)]);
+          Call.AddArg(CreatePrimitiveDotExpr('this',PasVar));
+          Call.AddArg(CreatePrimitiveDotExpr(Varname,PasVar));
+          Call.AddArg(SrcExpr);
+          continue;
+          end
         else
           // reference dynamic array
           VarAssignSt.Expr:=CreateArrayRef(PasVar,SrcExpr);
@@ -18962,7 +19225,11 @@ begin
   end;
 
   HasRTTIMembers:=CreateRTTIMembers(El,Src,FuncContext,MembersSrc,MembersFuncContext,Call,false);
-  if not HasRTTIMembers then
+  if HasRTTIMembers then
+    // append this:  module.$rtti.$Record("typename",{},this);
+    // The rtti gets a $record reference to the record type.
+    Call.AddArg(CreatePrimitiveDotExpr('this', El))
+  else
     begin
     // no published members, add "module.$rtti.$Record..."
     if Src=MembersSrc then
@@ -19000,6 +19267,7 @@ var
   Func: TPas2JSBuiltInName;
   TypeEl: TPasType;
   ArrayType: TPasArrayType;
+  C: TClass;
 begin
   Result:=nil;
   Call:=CreateCallExpression(PosEl);
@@ -19014,12 +19282,14 @@ begin
     if ElTypeResolved.BaseType=btContext then
       begin
       TypeEl:=ElTypeResolved.LoTypeEl;
+      C:=TypeEl.ClassType;
       if TypeEl.ClassType=TPasArrayType then
         begin
+        // array of array
         ArrayType:=TPasArrayType(TypeEl);
         if length(ArrayType.Ranges)>0 then
           begin
-          // static array
+          // array of static array
           Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(Func)]);
           if AContext.Resolver.HasStaticArrayCloneFunc(ArrayType) then
             // static array with $clone: rtl.arrayConcat(TArrayOfStaticRec$clone,array1,array2,...)
@@ -19027,18 +19297,24 @@ begin
           else
             // static array of simple type: rtl.arrayConcat("slice",array1,array2,...)
             Call.AddArg(CreateLiteralString(PosEl,'slice'));
-          end;
+          end
         end
-      else if TypeEl.ClassType=TPasRecordType then
+      else if C=TPasRecordType then
         begin
-        // record: rtl.arrayConcat(RecordType,array1,array2,...)
+        // array of record: rtl.arrayConcat(RecordType,array1,array2,...)
         Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(Func)]);
         Call.AddArg(CreateReferencePathExpr(TypeEl,AContext));
+        end
+      else if AContext.Resolver.IsManagedJSType(TypeEl) then
+        begin
+        // array of COM interface -> rtl.arrayConcat("R",array1,array2,...)
+        Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(Func)]);
+        Call.AddArg(CreateLiteralString(TypeEl,GetBIName(pbivnIntfRefCnt)));
         end;
       end
     else if ElTypeResolved.BaseType=btSet then
       begin
-      // set: rtl.arrayConcat("refSet",array1,array2,...)
+      // array of set: rtl.arrayConcat("refSet",array1,array2,...)
       Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(Func)]);
       Call.AddArg(CreateLiteralString(PosEl,GetBIName(pbifnSet_Reference)));
       end;
@@ -19121,9 +19397,9 @@ function TPasToJSConverter.CreateArrayInit(ArrayType: TPasArrayType;
     Result:=nil;
     NextArrType:=CurArrType;
     NextRgIndex:=RgIndex+1;
+    aResolver:=AContext.Resolver;
     if RgIndex>=length(CurArrType.Ranges)-1 then
       begin
-      aResolver:=AContext.Resolver;
       aResolver.ComputeElement(aResolver.GetArrayElType(CurArrType),ElTypeResolved,[rcType]);
       if (ElTypeResolved.BaseType=btContext)
           and (ElTypeResolved.LoTypeEl.ClassType=TPasArrayType) then
@@ -19148,11 +19424,13 @@ function TPasToJSConverter.CreateArrayInit(ArrayType: TPasArrayType;
       end
     else if IsAdd(CurExpr) then
       begin
-      // A+B  ->  rtl.arrayConcat(null,A,B)
+      // A+B+...  ->  rtl.arrayConcat(type,A,B,...)
       Call:=CreateArrayConcat(ArrayType,CurExpr,AContext);
       try
         TraverseAdd(TBinaryExpr(CurExpr),Call);
         Result:=Call;
+        if aResolver.IsManagedJSType(ArrayType) then
+          Result:=CreateIntfRef(Result,AContext,CurExpr);
       finally
         if Result=nil then
           Call.Free;
@@ -19281,11 +19559,15 @@ var
   US: TJSString;
   DimLits: TObjectList;
   aResolver: TPas2JSResolver;
+  ArrScope: TPas2JSArrayScope;
+  aManaged: Boolean;
 begin
   {$IFDEF VerbosePas2JS}
   writeln('TPasToJSConverter.CreateArrayInit ',GetObjName(ArrayType),' ',ArrayType.ParentPath,' Expr=',GetObjName(Expr));
   {$ENDIF}
   aResolver:=AContext.Resolver;
+  ArrScope:=(ArrayType.CustomData as TPas2JSArrayScope);
+  aManaged:=(ArrScope<>nil) and ArrScope.Managed;
   if Assigned(Expr) then
     begin
     // init array with expression
@@ -19299,7 +19581,29 @@ begin
       if ArrayType.ElType=nil then
         Result:=ConvertExprToVarRec(Expr)
       else
+        begin
         Result:=ConvertArrayExpr(ArrayType,0,Expr);
+        if aManaged then
+          begin
+          // pass an array literal to an array of COM interface
+          if Result is TJSArrayLiteral then
+            begin
+            if (TJSArrayLiteral(Result).Count=0) then
+              begin
+              // [] -> null
+              Result.Free;
+              Result:=CreateLiteralNull(Expr);
+              end
+            else
+              begin
+              // $ir.ref( rtl.arrayManaged(1,2,[values,...]) )
+              Result:=CreateArrayManaged(Expr,1,2,Result);
+              if not IsLiteralNull(Result) then
+                Result:=CreateIntfRef(Result,AContext,Expr);
+              end;
+            end;
+          end;
+        end;
       end
     else if ExprResolved.BaseType in btAllStringAndChars then
       begin
@@ -19311,15 +19615,22 @@ begin
       end
     else if ExprResolved.BaseType=btNil then
       begin
-      Result:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,Expr));
+      if aManaged then
+        Result:=CreateLiteralNull(Expr)
+      else
+        Result:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,Expr));
       end
     else
       RaiseNotSupported(Expr,AContext,20170223133034);
+
     end
   else if length(ArrayType.Ranges)=0 then
     begin
-    // empty dynamic array: []
-    Result:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,El));
+    // empty dynamic array: [] or null for managed
+    if aManaged then
+      Result:=CreateLiteralNull(El)
+    else
+      Result:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,El));
     end
   else
     begin
@@ -19480,6 +19791,21 @@ begin
     end;
 end;
 
+function TPasToJSConverter.CreateArrayManaged(El: TPasElement; RefCnt, aMode: integer;
+  Arg: TJSElement): TJSCallExpression;
+var
+  Call: TJSCallExpression;
+begin
+  Call:=CreateCallExpression(El);
+  Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnArray_Managed)]);
+  Call.AddArg(CreateLiteralFloat(El,RefCnt));
+  if (Arg<>nil) or (aMode>0) then
+    Call.AddArg(CreateLiteralFloat(El,aMode));
+  if Arg<>nil then
+    Call.AddArg(Arg);
+  Result:=Call;
+end;
+
 procedure TPasToJSConverter.AddClassConDestructorFunction(El: TPasClassType;
   Src: TJSSourceElements; ClassContext: TConvertContext; IsTObject: boolean;
   Ancestor: TPasType; Kind: TMemberFunc);
@@ -19542,7 +19868,6 @@ var
   VarType: TPasType;
   AssignSt: TJSSimpleAssignStatement;
   C: TClass;
-  ElClass: TPasClassType;
   Call: TJSCallExpression;
 begin
   // add instance members
@@ -19574,19 +19899,15 @@ begin
           if vmExternal in TPasVariable(P).VarModifiers then continue;
           VarType:=ClassContext.Resolver.ResolveAliasType(TPasVariable(P).VarType);
           C:=VarType.ClassType;
-          if (C=TPasClassType) then
+          if ClassContext.Resolver.IsManagedJSType(VarType) then
             begin
-            ElClass:=TPasClassType(VarType);
-            if (ElClass.ObjKind=okInterface) and (ElClass.InterfaceType=citCom) then
-              begin
-              // rtl.setIntfP(this,"FieldName",null)
-              Call:=CreateCallExpression(El);
-              NewEl:=Call;
-              Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntfSetIntfP)]);
-              Call.AddArg(CreatePrimitiveDotExpr('this',El));
-              Call.AddArg(CreateLiteralString(El,TransformElToJSName(P,New_FuncContext)));
-              Call.AddArg(CreateLiteralNull(El));
-              end;
+            // rtl.setIntfP(this,"FieldName",null)
+            Call:=CreateCallExpression(El);
+            NewEl:=Call;
+            Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntfSetIntfP)]);
+            Call.AddArg(CreatePrimitiveDotExpr('this',El));
+            Call.AddArg(CreateLiteralString(El,TransformElToJSName(P,New_FuncContext)));
+            Call.AddArg(CreateLiteralNull(El));
             end;
           if (NewEl=nil)
               and ((C=TPasRecordType)
@@ -20090,7 +20411,7 @@ var
   Statements: TJSStatementList;
   VarSt: TJSVariableStatement;
   FuncContext: TFunctionContext;
-  List, GetCurrent, J: TJSElement;
+  List, GetCurrent, J, LHS, RHS: TJSElement;
   Call: TJSCallExpression;
   TrySt: TJSTryFinallyStatement;
   WhileSt: TJSWhileStatement;
@@ -20098,9 +20419,9 @@ var
   GetEnumeratorFunc, MoveNextFunc: TPasFunction;
   CurrentProp: TPasProperty;
   DotContext: TDotContext;
-  ResolvedEl: TPasResolverResult;
-  EnumeratorTypeEl: TPasType;
-  NeedTryFinally, NeedIntfRef: Boolean;
+  ResolvedEl, VarResolved: TPasResolverResult;
+  EnumeratorTypeEl, CurrentPropTypeEl: TPasType;
+  NeedTryFinally, NeedIntfRef, IsCurrentPropCOMIntf: Boolean;
 begin
   aResolver:=AContext.Resolver;
   ForScope:=TPasForLoopScope(El.CustomData);
@@ -20150,6 +20471,10 @@ begin
     RaiseNotSupported(El,AContext,20171225104316);
   if CurrentProp.Parent.ClassType<>TPasClassType then
     RaiseNotSupported(El,AContext,20190208154003);
+  CurrentPropTypeEl:=AContext.Resolver.ResolveAliasType(CurrentProp.VarType);
+  IsCurrentPropCOMIntf:=(CurrentPropTypeEl is TPasClassType)
+      and (TPasClassType(CurrentPropTypeEl).ObjKind=okInterface)
+      and (TPasClassType(CurrentPropTypeEl).InterfaceType=citCom);
 
   // get function context
   FuncContext:=AContext.GetFunctionContext;
@@ -20200,19 +20525,41 @@ begin
 
     // read property "Current"
     // Item=$in.GetCurrent();  or Item=$in.FCurrent;
-    AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,PosEl));
-    WhileSt.Body:=AssignSt;
-    AssignSt.LHS:=ConvertExpression(El.VariableName,AContext); // beware: might fail
-
-    DotContext:=TDotContext.Create(El.StartExpr,nil,AContext);
+    LHS:=nil;
+    RHS:=nil;
+    DotContext:=nil;
     try
+      LHS:=ConvertExpression(El.VariableName,AContext); // beware: might fail
+
+      DotContext:=TDotContext.Create(El.StartExpr,nil,AContext);
       GetCurrent:=CreatePropertyGet(CurrentProp,nil,DotContext,PosEl); // beware: might fail
       if DotContext.JS<>nil then
         RaiseNotSupported(El,AContext,20180509134302,GetObjName(DotContext.JS));
+      RHS:=CreateDotExpression(PosEl,CreateInName,GetCurrent,true);
+
+      if IsCurrentPropCOMIntf then
+        begin
+        // create "Item = rtl.setIntfL(Item,$in.GetCurrent);"
+        aResolver.ComputeElement(El.VariableName,VarResolved,[]);
+        WhileSt.Body:=CreateAssignManagedVar(VarResolved,LHS,RHS,AContext,El.VariableName);
+        LHS:=nil;
+        RHS:=nil;
+        end
+      else
+        begin
+        // Item=$in.GetCurrent();  or Item=$in.FCurrent;
+        AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,PosEl));
+        WhileSt.Body:=AssignSt;
+        AssignSt.LHS:=LHS;
+        LHS:=nil;
+        AssignSt.Expr:=RHS;
+        RHS:=nil;
+        end;
     finally
       FreeAndNil(DotContext);
+      FreeAndNil(LHS);
+      FreeAndNil(RHS);
     end;
-    AssignSt.Expr:=CreateDotExpression(PosEl,CreateInName,GetCurrent,true);
 
     // add body
     if El.Body<>nil then
@@ -20356,7 +20703,7 @@ begin
     end;
     end;
   TypeEl:=aResolver.GetPasPropertyType(Prop);
-  if aResolver.IsInterfaceType(TypeEl,citCom) then
+  if aResolver.IsManagedJSType(TypeEl) then
     Call:=CreateIntfRef(Call,AContext,PosEl);
   Result:=Call;
 end;
@@ -20529,12 +20876,31 @@ begin
     Param.Elements.AddElement.Expr:=CreateLiteralNumber(Arg,Flags);
 end;
 
-function TPasToJSConverter.GetClassBIName(El: TPasClassType;
-  AContext: TConvertContext): string;
+function TPasToJSConverter.GetClassBIName(El: TPasClassType; AContext: TConvertContext): string;
+
+  function IsAncestorExternal: Boolean;
+  var
+    Element: TPasClassType;
+
+  begin
+    Element := El;
+    Result := False;
+
+    while not Result and Assigned(Element) do
+    begin
+      Result := Element.IsExternal;
+
+      if Element.AncestorType is TPasAliasType then
+        Element := TPasAliasType(Element.AncestorType).DestType as TPasClassType
+      else
+        Element := Element.AncestorType as TPasClassType;
+    end;
+  end;
+
 begin
   case El.ObjKind of
   okClass:
-    if El.IsExternal then
+    if IsAncestorExternal then
       Result:=GetBIName(pbifnRTTINewExtClass)
     else
       Result:=GetBIName(pbifnRTTINewClass);
@@ -20694,7 +21060,33 @@ begin
   end;
 end;
 
-function TPasToJSConverter.CreateRTTIMemberField(Members: TFPList;
+function TPasToJSConverter.GetExtRTTIVisibilityParam(El: TPasElement; const Vis: TPasMembersType.
+  TRTTIVisibilitySections): word;
+var
+  ExtVis: TPasMembersType.TRTTIVisibilitySection;
+begin
+  ExtVis:=TPasMembersType.VisibilityToExtRTTI[El.Visibility];
+  case ExtVis of
+    vcPrivate:
+      if El.Visibility=visStrictPrivate then
+        Result:=ExtRTTIVisStrictPrivate
+      else
+        Result:=ExtRTTIVisPrivate;
+    vcProtected:
+      if El.Visibility=visStrictProtected then
+        Result:=ExtRTTIVisStrictProtected
+      else
+        Result:=ExtRTTIVisProtected;
+    vcPublic: Result:=ExtRTTIVisPublic;
+    vcPublished:
+      if not (vcPublished in Vis) then
+        Result:=ExtRTTIVisPublicPublished
+      else
+        Result:=ExtRTTIVisPublished;
+  end;
+end;
+
+function TPasToJSConverter.CreateRTTIMemberField(ParentEl: TPasMembersType; Members: TFPList;
   Index: integer; AContext: TConvertContext): TJSElement;
 // create $r.addField("varname",typeinfo);
 // create $r.addField("varname",typeinfo,options);
@@ -20702,6 +21094,12 @@ var
   V: TPasVariable;
   Call: TJSCallExpression;
   OptionsEl: TJSObjectLiteral;
+  ExtVis: word;
+
+  procedure AddExtRTTIVisibility;
+  begin
+    Call.AddArg(CreateLiteralNumber(V,ExtVis));
+  end;
 
   procedure AddOption(const aName: String; JS: TJSElement);
   var
@@ -20710,6 +21108,8 @@ var
     if JS=nil then exit;
     if OptionsEl=nil then
       begin
+      if ExtVis=ExtRTTIVisDefaultField then
+        AddExtRTTIVisibility;
       OptionsEl:=TJSObjectLiteral(CreateElement(TJSObjectLiteral,V));
       Call.AddArg(OptionsEl);
       end;
@@ -20754,6 +21154,7 @@ begin
 
   JSTypeInfo:=CreateTypeInfoRef(VarType,AContext,V);
   OptionsEl:=nil;
+  ExtVis:=GetExtRTTIVisibilityParam(V,ParentEl.RTTIVisibility.Fields);
 
   // Note: create JSTypeInfo first, it may raise an exception
   Call:=CreateCallExpression(V);
@@ -20765,6 +21166,9 @@ begin
     Call.AddArg(CreateLiteralString(V,aName));
     // param typeinfo
     Call.AddArg(JSTypeInfo);
+    // extended RTTI
+    if ExtVis<>ExtRTTIVisDefaultField then
+      AddExtRTTIVisibility;
 
     // param options if needed as {}
     // option: attributes
@@ -20780,7 +21184,7 @@ begin
   end;
 end;
 
-function TPasToJSConverter.CreateRTTIMemberMethod(Members: TFPList;
+function TPasToJSConverter.CreateRTTIMemberMethod(ParentEl: TPasMembersType; Members: TFPList;
   Index: integer; AContext: TConvertContext): TJSElement;
 // create $r.addMethod("funcname",methodkind,params,resulttype,options)
 var
@@ -20789,6 +21193,14 @@ var
   ResultTypeInfo: TJSElement;
   Call: TJSCallExpression;
   Flags: Integer;
+  ExtVis: Integer;
+
+  procedure AddExtRTTIVisibility;
+  begin
+    if ExtVis > -1 then
+      Call.AddArg(CreateLiteralNumber(Proc,ExtVis));
+    ExtVis := -1;
+  end;
 
   procedure AddOption(const aName: String; JS: TJSElement);
   var
@@ -20797,6 +21209,7 @@ var
     if JS=nil then exit;
     if OptionsEl=nil then
       begin
+      AddExtRTTIVisibility;
       OptionsEl:=TJSObjectLiteral(CreateElement(TJSObjectLiteral,Proc));
       Call.AddArg(OptionsEl);
       end;
@@ -20866,6 +21279,11 @@ begin
     // param params as []
     Call.AddArg(CreateRTTIArgList(Proc,Proc.ProcType.Args,AContext));
 
+    // add visibility
+    ExtVis:=GetExtRTTIVisibilityParam(Proc,ParentEl.RTTIVisibility.Methods);
+    if ExtVis<>ExtRTTIVisDefaultMethod then
+      AddExtRTTIVisibility;
+
     // optional params:
     ResultTypeInfo:=nil;
     Flags:=0;
@@ -20885,10 +21303,17 @@ begin
       ResultEl:=TPasFunction(Proc).FuncType.ResultEl;
       ResultTypeInfo:=CreateTypeInfoRef(ResultEl.ResultType,AContext,ResultEl);
       if ResultTypeInfo<>nil then
+        begin
+        AddExtRTTIVisibility;
         Call.AddArg(ResultTypeInfo);
+        end;
       end;
+
     if (ResultTypeInfo=nil) and ((Flags>0) or (length(Attr)>0)) then
+    begin
+      AddExtRTTIVisibility;
       Call.AddArg(CreateLiteralNull(Proc));
+    end;
 
     // flags if needed
     if (Flags>0) or (length(Attr)>0) then
@@ -20906,13 +21331,20 @@ begin
   end;
 end;
 
-function TPasToJSConverter.CreateRTTIMemberProperty(Members: TFPList;
+function TPasToJSConverter.CreateRTTIMemberProperty(ParentEl: TPasMembersType; Members: TFPList;
   Index: integer; AContext: TConvertContext): TJSElement;
 // create  $r.addProperty("propname",flags,proptype,"getter","setter",{options})
 var
   Prop: TPasProperty;
   Call: TJSCallExpression;
   OptionsEl: TJSObjectLiteral;
+
+  ExtVis: word;
+
+  procedure AddExtRTTIVisibility;
+  begin
+    Call.AddArg(CreateLiteralNumber(Prop,ExtVis));
+  end;
 
   function GetAccessorName(Decl: TPasElement): String;
   begin
@@ -20926,6 +21358,8 @@ var
     if JS=nil then exit;
     if OptionsEl=nil then
       begin
+      if ExtVis=ExtRTTIVisDefaultProperty then
+        AddExtRTTIVisibility;
       OptionsEl:=TJSObjectLiteral(CreateElement(TJSObjectLiteral,Prop));
       Call.AddArg(OptionsEl);
       end;
@@ -21004,6 +21438,8 @@ begin
           inc(Flags,pfStoredField);
         end;
       end;
+    if Prop.IsClass then
+      inc(Flags,pfClassProperty);
     Call.AddArg(CreateLiteralNumber(Prop,Flags));
 
     // add type
@@ -21026,6 +21462,11 @@ begin
       Call.AddArg(CreateLiteralString(Prop,''))
     else
       Call.AddArg(CreateLiteralString(Prop,GetAccessorName(SetterPas)));
+
+    // add visibility
+    ExtVis:=GetExtRTTIVisibilityParam(Prop,ParentEl.RTTIVisibility.Properties);
+    if ExtVis<>ExtRTTIVisDefaultProperty then
+      AddExtRTTIVisibility;
 
     // add option "index"
     IndexExpr:=aResolver.GetPasPropertyIndex(Prop);
@@ -21258,35 +21699,35 @@ begin
       mtClass:
         if (P.Visibility=visPublished) then
           // published member
-        else if (P is TPasConstructor) and (P.Visibility = visPublic)
-            and (pcsfPublished in TPas2JSClassScope(El.CustomData).Flags) then
-          // this class supports published members -> add public constructor to RTTI
-          // workaround til extended RTTI
-          // see issue #37752
+        else if El.HasExtRTTI(P) then
+          // extended RTTI
         else
           continue;
       mtInterface: ; // all members of an interface are published
       mtRecord:
         // a published record publishes all non private members
         if P.Visibility in [visPrivate,visStrictPrivate] then
-          continue
+          begin
+          if not El.HasExtRTTI(P) then
+            continue;
+          end
         else if P.ClassType=TPasConst then
           continue;
       end;
       if not IsElementUsed(P) then continue;
 
       if C=TPasVariable then
-        NewEl:=CreateRTTIMemberField(Members,i,MembersFuncContext)
+        NewEl:=CreateRTTIMemberField(El,Members,i,MembersFuncContext)
       else if C.InheritsFrom(TPasProcedure) then
         begin
         if aResolver.GetProcTemplateTypes(TPasProcedure(P))<>nil then
-          continue; // parametrized functions cannot be published
+          continue; // parameterized functions cannot be published
         if (P.CustomData as TPas2JSProcedureScope).SpecializedFromItem<>nil then
           continue; // specialized function cannot be published
-        NewEl:=CreateRTTIMemberMethod(Members,i,MembersFuncContext);
+        NewEl:=CreateRTTIMemberMethod(El,Members,i,MembersFuncContext);
         end
       else if C=TPasProperty then
-        NewEl:=CreateRTTIMemberProperty(Members,i,MembersFuncContext)
+        NewEl:=CreateRTTIMemberProperty(El,Members,i,MembersFuncContext)
       else if C.InheritsFrom(TPasType)
           or (C=TPasAttributes) then
       else
@@ -21403,10 +21844,7 @@ begin
           else
             begin
             // 'guid': function(){ return rtl._AddRef(this.FField); },
-            Call:=CreateCallExpression(Prop);
-            Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntf_AddRef)]);
-            Call.AddArg(GetterJS);
-            GetterJS:=Call;
+            GetterJS:=CreateAddRef(GetterJS,Prop);
             end;
           end;
         citCorba:
@@ -21487,7 +21925,7 @@ begin
     ArrLit.AddElement(CreateLiteralHexNumber(PosEl,GUID.D4[i],2));
 end;
 
-function TPasToJSConverter.CreateAssignComIntfVar(
+function TPasToJSConverter.CreateAssignManagedVar(
   const LeftResolved: TPasResolverResult; var LHS, RHS: TJSElement;
   AContext: TConvertContext; PosEl: TPasElement): TJSElement;
 
@@ -21521,7 +21959,7 @@ var
   ok, SkipAddRef: Boolean;
 begin
   {$IFDEF VerbosePas2JS}
-  writeln('TPasToJSConverter.CreateAssignComIntfVar LeftResolved=',GetResolverResultDbg(LeftResolved),' LHS=',LHS.ClassName,' RHS=',RHS.ClassName);
+  writeln('TPasToJSConverter.CreateAssignManagedVar LeftResolved=',GetResolverResultDbg(LeftResolved),' LHS=',LHS.ClassName,' RHS=',RHS.ClassName);
   {$ENDIF}
 
   Result:=nil;
@@ -21634,6 +22072,13 @@ begin
       and (TJSPrimaryExpressionIdent(DotExpr.MExpr).Name=TJSString(GetBIName(pbivnIntfExprRefs)));
 end;
 
+function TPasToJSConverter.CreateAddRef(Expr: TJSElement; PosEl: TPasElement): TJSCallExpression;
+begin
+  Result:=CreateCallExpression(PosEl);
+  Result.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntf_AddRef)]);
+  Result.AddArg(Expr);
+end;
+
 function TPasToJSConverter.CreateIntfRef(Expr: TJSElement;
   aContext: TConvertContext; PosEl: TPasElement): TJSCallExpression;
 // enclose Expr
@@ -21698,7 +22143,7 @@ begin
 end;
 
 procedure TPasToJSConverter.AddFunctionFinallyRelease(SubEl: TPasElement;
-  FuncContext: TFunctionContext; IsArray: boolean);
+  FuncContext: TFunctionContext);
 // add to finally: rtl._Release(IntfVar)
 var
   Call: TJSCallExpression;
@@ -21706,10 +22151,7 @@ var
 begin
   Call:=CreateCallExpression(SubEl);
   AddFunctionFinallySt(Call,SubEl,FuncContext);
-  if IsArray then
-    FuncName:=GetBIName(pbifnIntf_ReleaseArray)
-  else
-    FuncName:=GetBIName(pbifnIntf_Release);
+  FuncName:=GetBIName(pbifnIntf_Release);
   Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),FuncName]);
   Call.AddArg(CreateReferencePathExpr(SubEl,FuncContext));
 end;
@@ -21743,22 +22185,13 @@ end;
 
 procedure TPasToJSConverter.AddInterfaceReleases(FuncContext: TFunctionContext;
   PosEl: TPasElement);
-var
-  aResolver: TPas2JSResolver;
-
-  function IsArray(aType: TPasType): boolean;
-  begin
-    aType:=aResolver.ResolveAliasType(aType);
-    Result:=aType is TPasArrayType;
-  end;
-
+// add the interface release object $ir
 var
   i: Integer;
   P: TPasElement;
   Call: TJSCallExpression;
   VarSt: TJSVariableStatement;
 begin
-  aResolver:=FuncContext.Resolver;
   if FuncContext.IntfExprReleaseCount>0 then
     begin
     // add in front of try..finally "var $ir = rtl.createIntfRefs();"
@@ -21779,23 +22212,49 @@ begin
       P:=TPasElement(FuncContext.IntfElReleases[i]);
       if P.ClassType=TPasVariable then
         begin
-        AddFunctionFinallyRelease(P,FuncContext,IsArray(TPasVariable(P).VarType));
+        AddFunctionFinallyRelease(P,FuncContext);
         end
-      else if P.ClassType=TPasArgument then
+      else if (P.ClassType=TPasArgument) and (TPasArgument(P).Access=argDefault) then
         begin
-        if IsArray(TPasArgument(P).ArgType) then
-          continue;
         // add in front of try..finally "rtl._AddRef(arg);"
-        Call:=CreateCallExpression(P);
+        Call:=CreateAddRef(CreateReferencePathExpr(P,FuncContext),P);
         AddInFrontOfFunctionTry(Call,PosEl,FuncContext);
-        Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntf_AddRef)]);
-        Call.AddArg(CreateReferencePathExpr(P,FuncContext));
         // add in finally: "rtl._Release(arg);"
         AddFunctionFinallyRelease(P,FuncContext);
         end
       else
         RaiseInconsistency(20180401165742,P);
       end;
+end;
+
+procedure TPasToJSConverter.AddInterfaceRelease_Result(FuncContext: TFunctionContext;
+  const ResultVarName: string; PosEl: TPasElement);
+// add interface release for Result if not $ok
+var
+  VarSt: TJSVariableStatement;
+  AssignSt: TJSSimpleAssignStatement;
+  IfSt: TJSIfStatement;
+  Call: TJSCallExpression;
+begin
+  // add in front of try "var $ok=false;"
+  VarSt:=CreateVarStatement(GetBIName(pbivnProcOk),CreateLiteralBoolean(PosEl,false),PosEl);
+  AddInFrontOfFunctionTry(VarSt,PosEl,FuncContext);
+  // add in front of finally "$ok=true;"
+  AssignSt:=TJSSimpleAssignStatement(CreateElement(TJSSimpleAssignStatement,PosEl));
+  AddToStatementList(FuncContext.TrySt.Block as TJSStatementList,AssignSt,PosEl);
+  AssignSt.LHS:=CreatePrimitiveDotExpr(GetBIName(pbivnProcOk),PosEl);
+  AssignSt.Expr:=CreateLiteralBoolean(PosEl,true);
+  // add finally: "if(!$ok) rtl._Release(Result);"
+  IfSt:=TJSIfStatement(CreateElement(TJSIfStatement,PosEl));
+  AddFunctionFinallySt(IfSt,PosEl,FuncContext);
+  // !$ok
+  IfSt.Cond:=CreateUnaryNot(
+      CreatePrimitiveDotExpr(GetBIName(pbivnProcOk),PosEl),PosEl);
+  // rtl._Release(Result)
+  Call:=CreateCallExpression(PosEl);
+  IfSt.BTrue:=Call;
+  Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntf_Release)]);
+  Call.AddArg(CreatePrimitiveDotExpr(ResultVarName,PosEl));
 end;
 
 procedure TPasToJSConverter.AddClassSupportedInterfaces(El: TPasClassType;
@@ -22065,7 +22524,7 @@ var
     AssignSt: TJSSimpleAssignStatement;
     Arg: TPasArgument;
     TypeEl: TPasType;
-    IsCOMIntf: Boolean;
+    aManaged: Boolean;
   begin
     // implicit Left (e.g. "with Left do proc", or "Proc")
 
@@ -22089,17 +22548,15 @@ var
       begin
       // SetExpr  "ImplicitLeft = v"
       TypeEl:=LeftResolved.LoTypeEl;
-      IsCOMIntf:=(TypeEl is TPasClassType)
-             and (TPasClassType(TypeEl).ObjKind=okInterface)
-             and (TPasClassType(TypeEl).InterfaceType=citCom);
+      aManaged:=AContext.Resolver.IsManagedJSType(TypeEl);
       SetExpr:=ConvertLeftExpr;
       SetterArgName:=TempRefObjSetterArgName;
       FindAvailableLocalName(SetterArgName,SetExpr);
       RHS:=CreatePrimitiveDotExpr(SetterArgName,PosEl);
-      if IsCOMIntf then
+      if aManaged then
         begin
         // create   rtl.setIntfP(path,"IntfVar",v)
-        SetExpr:=CreateAssignComIntfVar(LeftResolved,SetExpr,RHS,AContext,PosEl);
+        SetExpr:=CreateAssignManagedVar(LeftResolved,SetExpr,RHS,AContext,PosEl);
         end
       else
         begin
@@ -22129,7 +22586,7 @@ var
     AssignSt: TJSSimpleAssignStatement;
     SetterArgName, aName: String;
     TypeEl: TPasType;
-    IsCOMIntf: Boolean;
+    aManaged: Boolean;
   begin
     // explicit Left is property
     // path.Prop.Proc or Prop.Proc
@@ -22144,9 +22601,7 @@ var
     {$ENDIF}
 
     TypeEl:=LeftResolved.LoTypeEl;
-    IsCOMIntf:=(TypeEl is TPasClassType)
-           and (TPasClassType(TypeEl).ObjKind=okInterface)
-           and (TPasClassType(TypeEl).InterfaceType=citCom);
+    aManaged:=AContext.Resolver.IsManagedJSType(TypeEl);
 
     PathExpr:=nil;
     SetterArgName:='';
@@ -22178,10 +22633,10 @@ var
            CreatePrimitiveDotExpr(aName,PosEl))
       else
         SetExpr:=CreateMemberExpression(['this',TempRefGetPathName,aName]);
-      if IsCOMIntf then
+      if aManaged then
         begin
         // create   rtl.setIntfP(path,"IntfVar",v)
-        SetExpr:=CreateAssignComIntfVar(LeftResolved,SetExpr,RHS,AContext,PosEl);
+        SetExpr:=CreateAssignManagedVar(LeftResolved,SetExpr,RHS,AContext,PosEl);
         end
       else
         begin
@@ -22541,10 +22996,10 @@ begin
     CreateProcedureCallArgs(ArgElements,ParamsExpr,ProcType,AContext);
 
     if (ProcType is TPasFunctionType)
-        and aResolver.IsInterfaceType(
-          TPasFunctionType(ProcType).ResultEl.ResultType,citCom)
+        and aResolver.IsManagedJSType(TPasFunctionType(ProcType).ResultEl.ResultType)
     then
       // need interface reference: $ir.ref(id,fnname())
+      // ToDo: if Result is not used, use rtl._release() instead
       Call:=CreateIntfRef(Call,AContext,PosEl);
 
     Result:=Call;
@@ -22927,8 +23382,13 @@ begin
         begin
         if aResolver.IsArrayType(AssignContext.LeftResolved) then
           begin
-          // array:=nil -> array:=[]
-          AssignContext.RightSide:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,El.Right));
+          // array:=nil
+          if aResolver.IsManagedJSType(AssignContext.LeftResolved.LoTypeEl) then
+            // -> rtl.setIntfL(...,null,...)
+            AssignContext.RightSide:=CreateLiteralNull(El.Right)
+          else
+            // -> array=[]
+            AssignContext.RightSide:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,El.Right));
           end;
         end
       else if AssignContext.LeftResolved.BaseType=btContext then
@@ -23032,7 +23492,7 @@ begin
             end;
           end
         else if RightTypeEl.Parent.ClassType=TPasArgument then
-         // right side is open array
+          // right side is open array
         else
           begin
           // right side is dynamic array
@@ -23041,11 +23501,17 @@ begin
             begin
             if El.Kind<>akDefault then
               aResolver.RaiseMsg(20201028213335,nIllegalQualifier,sIllegalQualifier,[AssignKindNames[El.Kind]],El);
-            if (not RightIsTemporaryVar)
-                and (not LeftIsConstSetter) then
+            if (not RightIsTemporaryVar) and (not LeftIsConstSetter) then
               begin
-              // DynArrayA := DynArrayB  ->  DynArrayA = rtl.arrayRef(DynArrayB)
-              AssignContext.RightSide:=CreateArrayRef(El.Right,AssignContext.RightSide);
+              if aResolver.IsManagedJSType(AssignContext.LeftResolved.LoTypeEl) then
+                begin
+                // ManagedDynArr := ManagedDynArr -> uses normal rtl.setIntfL/P
+                end
+              else
+                begin
+                // DynArrayA := DynArrayB  ->  DynArrayA = rtl.arrayRef(DynArrayB)
+                AssignContext.RightSide:=CreateArrayRef(El.Right,AssignContext.RightSide);
+                end;
               end;
             end;
           end;
@@ -23177,12 +23643,10 @@ begin
       LeftTypeEl:=AssignContext.LeftResolved.LoTypeEl;
       if AssignContext.LeftResolved.BaseType=btContext then
         begin
-        if (LeftTypeEl is TPasClassType)
-            and (TPasClassType(LeftTypeEl).ObjKind=okInterface)
-            and (TPasClassType(LeftTypeEl).InterfaceType=citCom) then
+        if aResolver.IsManagedJSType(LeftTypeEl) then
           begin
-          // left side is a COM interface variable
-          Result:=CreateAssignComIntfVar(AssignContext.LeftResolved,
+          // left side is a COM interface variable (or array of COM intf)
+          Result:=CreateAssignManagedVar(AssignContext.LeftResolved,
                                   LHS,AssignContext.RightSide,AssignContext,El);
           if Result<>nil then exit;
           end;
@@ -23335,7 +23799,7 @@ begin
             Result:=ConvertExpression(FirstParam,ParentContext);
             exit;
             end;
-          // A:=Concat(A,[b,c])  ->  A=rtl.arrayPushN(A,b,c);
+          // A:=Concat(A,[b,c])  ->  A=rtl.arrayPushN(A,b,c);  or arrayPush
           try
             Call:=CreateArrayConcat(AssignContext.LeftResolved.LoTypeEl as TPasArrayType,
                                     El,ParentContext,true);
@@ -23343,9 +23807,10 @@ begin
             for i:=0 to length(SubParams.Params)-1 do
               begin
               JS:=ConvertExpression(SubParams.Params[i],ParentContext);
-              //JS:=CreateArrayEl(SubParams.Params[i],ParentContext);
               Call.AddArg(JS);
               end;
+            if AssignContext.Resolver.IsManagedJSType(AssignContext.LeftResolved.LoTypeEl) then
+              Result:=CreateIntfRef(Result,AssignContext,El);
             Result:=Call;
           finally
             if Result=nil then
@@ -23382,7 +23847,7 @@ begin
   BinRight:=Bin.Right;
   if BinRight.Kind=pekSet then
     begin
-    // A:=A+[b,...]  ->  A=rtl.arrayPushN(A,b,...);
+    // A:=A+[b,...]  ->  A=rtl.arrayPush(A,b,...);   or arrayPushN
     SubParams:=TParamsExpr(BinRight);
     ParentContext:=AssignContext.Parent;
     if length(SubParams.Params)=0 then
@@ -23402,6 +23867,8 @@ begin
         Call.AddArg(JS);
         end;
       Result:=Call;
+      if AssignContext.Resolver.IsManagedJSType(AssignContext.LeftResolved.LoTypeEl) then
+        Result:=CreateIntfRef(Result,AssignContext,El);
     finally
       if Result=nil then
         Call.Free;
@@ -23535,6 +24002,7 @@ type
     ikChar,
     ikString,
     ikArray,
+    ikArrayManaged,
     ikSetInt,
     ikSetBool,
     ikSetChar,
@@ -23744,6 +24212,7 @@ var
         // for v in <variable> do
         if InResolved.BaseType in btAllStrings then
           begin
+          // for v in string do
           InKind:=ikString;
           StartInt:=0;
           end
@@ -23766,7 +24235,10 @@ var
             begin
             if length(TPasArrayType(TypeEl).Ranges)<=1 then
               begin
-              InKind:=ikArray;
+              if aResolver.IsManagedJSType(VarResolved.LoTypeEl) then
+                InKind:=ikArrayManaged
+              else
+                InKind:=ikArray;
               StartInt:=0;
               end
             else
@@ -24025,7 +24497,7 @@ begin
             TJSAdditiveExpressionMinus(V).A:=CreatePrimitiveDotExpr(CurInVarName+'.length',PosEl);
             TJSAdditiveExpressionMinus(V).B:=CreateLiteralNumber(PosEl,1);
             end;
-          ikArray:
+          ikArray,ikArrayManaged:
             begin
             // add "rtl.length($in)-1"
             Call:=CreateCallExpression(PosEl);
@@ -24124,13 +24596,25 @@ begin
             Call.AddArg(SimpleAss.Expr);
             SimpleAss.Expr:=Call;
             end;
-          ikArray:
+          ikArray,ikArrayManaged:
             begin
             // $in[$l]
             Br:=TJSBracketMemberExpression(CreateElement(TJSBracketMemberExpression,PosEl));
             Br.MExpr:=CreatePrimitiveDotExpr(CurInVarName,El.StartExpr);
             Br.Name:=SimpleAss.Expr;
             SimpleAss.Expr:=Br;
+            if InKind=ikArrayManaged then
+              begin
+              // VarName=rtl.setIntfL(VarName,$in[$l])
+              Call:=CreateCallExpression(PosEl);
+              Call.Expr:=CreateMemberExpression([GetBIName(pbivnRTL),GetBIName(pbifnIntfSetIntfL)]);
+              Call.AddArg(ConvertExpression(El.VariableName,AContext));
+              Call.AddArg(Br);
+              SimpleAss.Expr:=Call;
+              if VarResolved.IdentEl=nil then
+                RaiseNotSupported(El.VariableName,AContext,20250625190022,'for-in variable');
+              FuncContext.Add_InterfaceRelease(VarResolved.IdentEl)
+              end;
             end;
           else
             {$IFDEF VerbosePas2JS}
@@ -24687,7 +25171,7 @@ begin
     end;
 end;
 
-function TPasToJSConverter.CreateUnary(Members: array of string; E: TJSElement): TJSUnary;
+function TPasToJSConverter.CreateUnary(const Members: array of string; E: TJSElement): TJSUnary;
 var
   unary: TJSUnary;
   asi: TJSSimpleAssignStatement;
@@ -24707,8 +25191,7 @@ begin
   Result.A:=Expr;
 end;
 
-function TPasToJSConverter.CreateMemberExpression(Members: array of string
-  ): TJSElement;
+function TPasToJSConverter.CreateMemberExpression(const Members: array of string): TJSElement;
 // Examples:
 //   foo   ->  foo
 //   foo,bar  -> foo.bar
@@ -26520,7 +27003,7 @@ var
 
 var
   ExprFlags: TPasResolverComputeFlags;
-  IsRecord, NeedVar, ArgTypeIsArray: Boolean;
+  IsRecord, NeedVar, ArgTypeIsArray, aManaged: Boolean;
   ArgTypeEl, ExprTypeEl: TPasType;
   Call: TJSCallExpression;
   aResolver: TPas2JSResolver;
@@ -26543,6 +27026,9 @@ begin
   ArgTypeEl:=ArgResolved.LoTypeEl;
   IsRecord:=ArgTypeEl is TPasRecordType;
   ArgTypeIsArray:=ArgTypeEl is TPasArrayType;
+  aManaged:=false;
+  if ArgTypeIsArray then
+    aManaged:=aResolver.IsManagedJSType(ArgTypeEl);
   NeedVar:=(TargetArg.Access in [argVar,argOut]) and not IsRecord;
   ExprFlags:=[];
   if NeedVar then
@@ -26572,8 +27058,12 @@ begin
       // array as argument
       if ExprResolved.BaseType=btNil then
         begin
-        // nil to array ->  pass []
-        Result:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,El));
+        if aManaged then
+          // nil to array of COM interface ->  pass null
+          Result:=CreateLiteralNull(El)
+        else
+          // nil to array -> pass []
+          Result:=TJSArrayLiteral(CreateElement(TJSArrayLiteral,El));
         exit;
         end
       else if ExprResolved.BaseType in btAllStringAndChars then
@@ -26669,8 +27159,9 @@ begin
               and not (ArgResolved.LoTypeEl.Parent is TPasArgument)
               and not ExprIsTemporaryVar then
             begin
-            // pass dyn array to argDefault array  -> reference
-            Result:=CreateArrayRef(El,Result);
+            // pass dyn array to argDefault array -> reference
+            if not aManaged then
+              Result:=CreateArrayRef(El,Result);
             end;
           end;
         end
@@ -26683,8 +27174,7 @@ begin
           if TPasClassType(ExprTypeEl).ObjKind=okInterface then
             begin
             // pass IntfVarOrType to string  ->  IntfVarOrType.$guid
-            Result:=CreateDotNameExpr(El,Result,
-                                           TJSString(GetBIName(pbivnIntfGUID)));
+            Result:=CreateDotNameExpr(El,Result,TJSString(GetBIName(pbivnIntfGUID)));
             end;
           end
         else if ArgTypeEl.ClassType=TPasRecordType then
@@ -26870,7 +27360,7 @@ var
   SetterArgName: String;
   TypeEl: TPasType;
   FuncContext: TFunctionContext;
-  IsCOMIntf, HasCustomSetter: Boolean;
+  aManaged, HasCustomSetter: Boolean;
   Call: TJSCallExpression;
   StList: TJSStatementList;
 begin
@@ -27072,13 +27562,11 @@ begin
       FindAvailableLocalName(SetterArgName,SetExpr);
       RHS:=CreatePrimitiveDotExpr(SetterArgName,El);
       TypeEl:=ResolvedEl.LoTypeEl;
-      IsCOMIntf:=(TypeEl is TPasClassType)
-          and (TPasClassType(TypeEl).ObjKind=okInterface)
-          and (TPasClassType(TypeEl).InterfaceType=citCom);
-      if IsCOMIntf and (TargetArg.ArgType<>nil) then
+      aManaged:=AContext.Resolver.IsManagedJSType(TypeEl);
+      if aManaged and (TargetArg.ArgType<>nil) then
         begin
         // create   rtl.setIntfP(path,"IntfVar",v)
-        SetExpr:=CreateAssignComIntfVar(ResolvedEl,SetExpr,RHS,AContext,El);
+        SetExpr:=CreateAssignManagedVar(ResolvedEl,SetExpr,RHS,AContext,El);
         end
       else if (TypeEl is TPasRecordType) then
         begin
@@ -27096,7 +27584,7 @@ begin
         AssignSt.LHS:=SetExpr;
         AssignSt.Expr:=RHS;
         SetExpr:=AssignSt;
-        if IsCOMIntf and (TargetArg.ArgType=nil) then
+        if aManaged and (TargetArg.ArgType=nil) then
           begin
           // IntfVar is passed to an untyped parameter
           // This must not call AddRef, but the IntfVar must still be
@@ -27188,30 +27676,32 @@ var
   ResolvedEl: TPasResolverResult;
   ArrayType: TPasArrayType;
   TypeEl: TPasType;
+  C: TClass;
 begin
   Result:=JS;
   AContext.Resolver.ComputeElement(El,ResolvedEl,[rcNoImplicitProcType]);
   if ResolvedEl.IdentEl<>nil then
     begin
-    // pass a variable
+    // add a variable
     if ResolvedEl.BaseType=btSet then
       begin
-      // pass a set variable  -> create reference   rtl.refSet(Expr)
+      // add a set variable  -> create reference   rtl.refSet(Expr)
       Result:=CreateReferencedSet(El,Result);
       end
     else if ResolvedEl.BaseType=btContext then
       begin
       TypeEl:=ResolvedEl.LoTypeEl;
-      if TypeEl.ClassType=TPasArrayType then
+      C:=TypeEl.ClassType;
+      if C=TPasArrayType then
         begin
         ArrayType:=TPasArrayType(TypeEl);
         if length(ArrayType.Ranges)>0 then
-          // pass static array variable  ->  clone
+          // add static array variable  ->  clone
           Result:=CreateCloneStaticArray(El,ArrayType,Result,AContext);
         end
-      else if TypeEl.ClassType=TPasRecordType then
+      else if C=TPasRecordType then
         begin
-        // pass record variable ->  clone "new RightRecordType(RightRecord)"
+        // add record variable ->  clone
         Result:=CreateRecordCallClone(El,TPasRecordType(TypeEl),Result,AContext);
         end;
       end;

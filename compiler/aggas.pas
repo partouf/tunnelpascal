@@ -71,6 +71,7 @@ interface
         destructor destroy; override;
 {$ifdef WASM}
         procedure WriteFuncType(functype: TWasmFuncType);
+        procedure WriteFuncTypeDirective(hp:tai_functype);virtual;abstract;
 {$endif WASM}
        private
         setcount: longint;
@@ -176,6 +177,7 @@ implementation
     destructor TGNUAssembler.Destroy;
       begin
         InstrWriter.free;
+        InstrWriter := nil;
         inherited destroy;
       end;
 
@@ -205,6 +207,7 @@ implementation
            create_smartlink_sections and
            (atype<>sec_toc) and
            (atype<>sec_user) and
+           (atype<>sec_note) and
            { on embedded systems every byte counts, so smartlink bss too }
            ((atype<>sec_bss) or (target_info.system in (systems_embedded+systems_freertos)));
       end;
@@ -221,11 +224,11 @@ implementation
 { vtable for a class called Window:                                       }
 { .section .data.rel.ro._ZTV6Window,"awG",@progbits,_ZTV6Window,comdat    }
 { TODO: .data.ro not yet working}
-{$if defined(arm) or defined(aarch64) or defined(riscv64) or defined(powerpc) or defined(x86_64) or defined(loongarch64)}
+{$if defined(support_rodata)}
           '.rodata',
-{$else defined(arm) or defined(aarch64) or defined(riscv64) or defined(powerpc) or defined(x86_64) or defined(loongarch64)}
+{$else defined(support_rodata)}
           '.data',
-{$endif defined(arm) or defined(aarch64) or defined(riscv64) or defined(powerpc) or defined(x86_64) or defined(loongarch64)}
+{$endif defined(support_rodata)}
           '.rodata',
           '.bss',
           '.threadvar',
@@ -281,7 +284,8 @@ implementation
           '.stack',
           '.heap',
           '.gcc_except_table',
-          '.ARM.attributes'
+          '.ARM.attributes',
+          '.note'
         );
         secnames_pic : array[TAsmSectiontype] of string[length('__DATA, __datacoal_nt,coalesced')] = ('','',
           '.text',
@@ -342,7 +346,8 @@ implementation
           '.stack',
           '.heap',
           '.gcc_except_table',
-          '..ARM.attributes'
+          '.ARM.attributes',
+          '.note'
         );
       var
         sep     : string[3];
@@ -393,9 +398,12 @@ implementation
             end;
           end;
 
-        { section type user gives the user full controll on the section name }
+        { section type user gives the user full control on the section name }
         if atype=sec_user then
           secname:=aname;
+
+        if atype=sec_note then
+          secname:='.note'+aname;
 
         if is_smart_section(atype) and (aname<>'') then
           begin
@@ -511,8 +519,9 @@ implementation
          system_i386_OS2,
          system_i386_EMX: ;
          system_m68k_atari, { atari tos/mint GNU AS also doesn't seem to like .section (KB) }
-         system_m68k_amiga, { amiga has old GNU AS (2.14), which blews up from .section (KB) }
+         system_m68k_amiga, { amiga has old GNU AS (2.14), which blows up from .section (KB) }
          system_m68k_sinclairql, { same story, only ancient GNU tools available (KB) }
+         system_m68k_palmos, { see above... (KB) }
          system_m68k_human68k: { see above... (KB) }
            begin
              { ... but vasm is GAS compatible on amiga/atari, and supports named sections }
@@ -558,7 +567,14 @@ implementation
              if (atype in [sec_stub]) then
                writer.AsmWrite('.section ');
            end;
-         system_wasm32_wasi,
+         system_powerpc_macosclassic:
+           begin
+             if atype<>sec_toc then
+               writer.AsmWrite('.csect ');
+           end;
+         system_wasm32_wasip1,
+         system_wasm32_wasip1threads,
+         system_wasm32_wasip2,
          system_wasm32_embedded:
            begin
              writer.AsmWrite('.section ');
@@ -569,7 +585,10 @@ implementation
              { sectionname may rename those sections, so we do not write flags/progbits for them,
                the assembler will ignore them/spite out a warning anyways }
              if not(atype in [sec_data,sec_rodata,sec_rodata_norel]) and
-                not(asminfo^.id=as_solaris_as) then
+                not(asminfo^.id=as_solaris_as) and
+                not(atype=sec_fpc) and
+                not(atype=sec_note) and
+                not(target_info.system in (systems_embedded+systems_freertos)) then
                begin
                  usesectionflags:=true;
                  usesectionprogbits:=true;
@@ -635,6 +654,8 @@ implementation
                     internalerror(2006031101);
                 end;
               end;
+            sec_note :
+              writer.AsmWrite(', "", @note');
           else
             { GNU AS won't recognize '.text.n_something' section name as belonging
               to '.text' and assigns default attributes to it, which is not
@@ -814,16 +835,6 @@ implementation
         end;
 
 {$ifdef WASM}
-      procedure WriteFuncTypeDirective(hp:tai_functype);
-        begin
-          writer.AsmWrite(#9'.functype'#9);
-          writer.AsmWrite(hp.funcname);
-          writer.AsmWrite(' ');
-          WriteFuncType(hp.functype);
-          writer.AsmLn;
-        end;
-
-
       procedure WriteTagType(hp: tai_tagtype);
         var
           wasm_basic_typ: TWasmBasicType;
@@ -845,6 +856,23 @@ implementation
             end;
           writer.AsmLn;
         end;
+
+      procedure WriteWasmLocalDirective(hp: tai_local);
+        var
+          t: TWasmBasicType;
+          first: boolean=true;
+        begin
+          writer.AsmWrite(#9'.local'#9);
+          for t in tai_local(hp).locals do
+            begin
+              if first then
+                first:=false
+              else
+                writer.AsmWrite(', ');
+              writer.AsmWrite(gas_wasm_basic_type_str[t]);
+            end;
+          writer.AsmLn;
+        end;
 {$endif WASM}
 
     var
@@ -856,8 +884,8 @@ implementation
       i,pos,l  : longint;
       InlineLevel : cardinal;
       last_align : longint;
-      do_line  : boolean;
 
+      do_line  : boolean;
       sepChar : char;
       replaceforbidden: boolean;
     begin
@@ -1285,13 +1313,14 @@ implementation
                          writer.AsmWrite(#9'.ascii'#9'"');
                          pos:=20;
                        end;
-                      ch:=tai_string(hp).str[i-1];
+                      ch:=AnsiChar(tai_string(hp).str[i-1]);
                       case ch of
-                                #0, {This can't be done by range, because a bug in FPC}
-                           #1..#31,
-                        #128..#255 : s:='\'+tostr(ord(ch) shr 6)+tostr((ord(ch) and 63) shr 3)+tostr(ord(ch) and 7);
-                               '"' : s:='\"';
-                               '\' : s:='\\';
+                        #0, {This can't be done by range, because a bug in FPC}
+                        #1..#31,
+                        '"',#128..#255:
+                          s:='\'+tostr(ord(ch) shr 6)+tostr((ord(ch) and 63) shr 3)+tostr(ord(ch) and 7);
+                        '\':
+                          s:='\\';
                       else
                         s:=ch;
                       end;
@@ -1326,7 +1355,7 @@ implementation
                          writer.AsmWriteln(tai_label(hp).labsym.name);
                        end;
 {$ifdef arm}
-                     { do no change arm mode accidently, .globl seems to reset the mode }
+                     { do no change arm mode accidentally, .globl seems to reset the mode }
                      if GenerateThumbCode or GenerateThumb2Code then
                        writer.AsmWriteln(#9'.thumb_func'#9);
 {$endif arm}
@@ -1483,7 +1512,13 @@ implementation
              end;
            ait_symbol_end :
              begin
-               if tf_needs_symbol_size in target_info.flags then
+               if (tf_needs_symbol_size in target_info.flags) and
+                  (tai_symbol_end(hp).sym.is_used) and
+                 { On WebAssembly, the .size directive shouldn't be generated for
+                   function symbols, otherwise LLVM-MC v16 and above produce the
+                   'warning: .size directive ignored for function symbols' message. }
+                  (not (target_info.system in systems_wasm) or
+                   (tai_symbol_end(hp).sym.typ<>AT_FUNCTION)) then
                 begin
                   s:=asminfo^.labelprefix+'e'+tostr(symendcount);
                   inc(symendcount);
@@ -1620,15 +1655,15 @@ implementation
                { as of today, vasm does not support the eabi directives }
                if target_asm.id<>as_arm_vasm then
                  begin
-                   case tai_eabi_attribute(hp).eattr_typ of
+                   case tai_attribute(hp).eattr_typ of
                      eattrtype_dword:
-                       writer.AsmWrite(#9'.eabi_attribute '+tostr(tai_eabi_attribute(hp).tag)+','+tostr(tai_eabi_attribute(hp).value));
+                       writer.AsmWrite(#9'.eabi_attribute '+tostr(tai_attribute(hp).tag)+','+tostr(tai_attribute(hp).value));
                      eattrtype_ntbs:
                        begin
-                         if assigned(tai_eabi_attribute(hp).valuestr) then
-                           writer.AsmWrite(#9'.eabi_attribute '+tostr(tai_eabi_attribute(hp).tag)+',"'+tai_eabi_attribute(hp).valuestr^+'"')
+                         if assigned(tai_attribute(hp).valuestr) then
+                           writer.AsmWrite(#9'.eabi_attribute '+tostr(tai_attribute(hp).tag)+',"'+tai_attribute(hp).valuestr^+'"')
                          else
-                           writer.AsmWrite(#9'.eabi_attribute '+tostr(tai_eabi_attribute(hp).tag)+',""');
+                           writer.AsmWrite(#9'.eabi_attribute '+tostr(tai_attribute(hp).tag)+',""');
                        end
                      else
                        Internalerror(2019100601);
@@ -1637,17 +1672,26 @@ implementation
                  end;
              end;
 
+           ait_attribute:
+             begin
+               case tai_attribute(hp).eattr_typ of
+                 eattrtype_dword:
+                   writer.AsmWrite(#9'.attribute '+tostr(tai_attribute(hp).tag)+','+tostr(tai_attribute(hp).value));
+                 eattrtype_ntbs:
+                   begin
+                     if assigned(tai_attribute(hp).valuestr) then
+                       writer.AsmWrite(#9'.attribute '+tostr(tai_attribute(hp).tag)+',"'+tai_attribute(hp).valuestr^+'"')
+                     else
+                       writer.AsmWrite(#9'.attribute '+tostr(tai_attribute(hp).tag)+',""');
+                   end
+                 else
+                   Internalerror(2024123001);
+               end;
+               writer.AsmLn;
+             end;
 {$ifdef WASM}
            ait_local:
-             begin
-               if tai_local(hp).first then
-                 writer.AsmWrite(#9'.local'#9)
-               else
-                 writer.AsmWrite(', ');
-               writer.AsmWrite(gas_wasm_basic_type_str[tai_local(hp).bastyp]);
-               if tai_local(hp).last then
-                 writer.AsmLn;
-             end;
+             WriteWasmLocalDirective(tai_local(hp));
            ait_globaltype:
              begin
                writer.AsmWrite(#9'.globaltype'#9);
@@ -1718,12 +1762,12 @@ implementation
                    WriteTree(tai_wasmstruc_if(hp).else_asmlist);
                    writer.AsmWriteLn('.err } endif');
                  end
-               else if hp is tai_wasmstruc_try then
+               else if hp is tai_wasmstruc_legacy_try then
                  begin
                    writer.AsmWriteLn('.err try {');
-                   WriteTree(tai_wasmstruc_try(hp).try_asmlist);
-                   if hp is tai_wasmstruc_try_catch then
-                     with tai_wasmstruc_try_catch(hp) do
+                   WriteTree(tai_wasmstruc_legacy_try(hp).try_asmlist);
+                   if hp is tai_wasmstruc_legacy_try_catch then
+                     with tai_wasmstruc_legacy_try_catch(hp) do
                        begin
                          for i:=low(catch_list) to high(catch_list) do
                            begin
@@ -1737,7 +1781,7 @@ implementation
                            end;
                          writer.AsmWriteLn('.err } end try');
                        end
-                   else if hp is tai_wasmstruc_try_delegate then
+                   else if hp is tai_wasmstruc_legacy_try_delegate then
                      writer.AsmWriteLn('.err } delegate')
                    else
                      writer.AsmWriteLn('.err unknown try structured instruction: ' + hp.ClassType.ClassName);
@@ -1788,7 +1832,7 @@ implementation
         { on Windows/(PE)COFF, global symbols are hidden by default: global
           symbols that are not explicitly exported from an executable/library,
           become hidden }
-        if (target_info.system in (systems_windows+systems_wince+systems_nativent)) then
+        if (target_info.system in (systems_windows+systems_wince+systems_nativent+[system_i386_go32v2])) then
           exit;
         if target_info.system in systems_darwin then
           writer.AsmWrite(#9'.private_extern ')
@@ -1950,6 +1994,9 @@ implementation
         name has to be translated as well }
       if dir=asd_cpu then
         writer.AsmWrite(asminfo^.comment+' CPU ')
+      { indent for easier reading }
+      else if dir in [asd_option] then
+        writer.AsmWrite(#9'.'+directivestr[dir]+' ')
       else
         writer.AsmWrite('.'+directivestr[dir]+' ');
     end;
@@ -2227,7 +2274,8 @@ implementation
          sec_none (* sec_stack *),
          sec_none (* sec_heap *),
          sec_none (* gcc_except_table *),
-         sec_none (* sec_arm_attribute *)
+         sec_none (* sec_arm_attribute *),
+         sec_none (* sec_note *)
         );
       begin
         Result := inherited SectionName (SecXTable [AType], AName, AOrder);

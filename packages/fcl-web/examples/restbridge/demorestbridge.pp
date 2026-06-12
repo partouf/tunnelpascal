@@ -2,7 +2,7 @@
     This file is part of the Free Pascal run time library.
     Copyright (c) 2019 by the Free Pascal development team
 
-    SQLDB REST rest bridge demo applocation.
+    SQLDB REST rest bridge demo application.
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -23,7 +23,7 @@ uses
   {$ENDIF}{$ENDIF}
   Classes, SysUtils, CustApp, sqldbrestbridge, fphttpapp, IBConnection, odbcconn, mysql55conn, mysql56conn, pqconnection,
   mssqlconn, oracleconnection, sqldbrestxml, sqldbrestio, sqldbrestschema, sqldbrestdata, sqldbrestjson, sqldbrestcsv, sqldbrestcds,
-  sqldbrestado,  sqldbrestconst, sqldbrestauth, sqldbrestini, sqldb, sqldbrestauthini;
+  sqldbrestado,  sqldbrestconst, sqldbrestauth, sqldbrestini, sqldb, sqldbrestauthini, sqldbrestopenapi;
 
 type
   { TXMLSQLDBRestDispatcher }
@@ -107,7 +107,7 @@ begin
     FAuth.DefaultUserName:='me';
     FAuth.DefaultPassword:='secret';
     FAuth.AuthenticateUserSQL.Text:='select uID from users where (uLogin=:UserName) and (uPassword=:Password)';
-    FDisp.DispatchOptions:=FDisp.DispatchOptions+[rdoCustomView,rdoHandleCORS];
+    FDisp.DispatchOptions:=FDisp.DispatchOptions+[rdoCustomView,rdoHandleCORS,rdoOpenAPI];
     UN:=GetOptionValue('u','user');
     if UN='' then
       UN:='You';
