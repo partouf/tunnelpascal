@@ -2765,6 +2765,57 @@ var
             Result:=false;
           end;
 
+          function find_loaded_unit(const aname:TIDString):tppumodule;
+          var
+            h : tppumodule;
+          begin
+            { search all loaded units, skip program/library }
+            h:=tppumodule(loaded_units.first);
+            while assigned(h) and ((h.modulename^<>aname) or not h.is_unit) do
+              h:=tppumodule(h.next);
+            find_loaded_unit:=h;
+          end;
+
+          function find_loaded_unit_ns(const aname:TIDString):tppumodule;
+          { The same unit can enter loaded_units under two spellings: its
+            short name (e.g. "SYSUTILS", from a uses clause resolved via a
+            -FN namespace) and its fully namespaced name (e.g.
+            "SYSTEM.SYSUTILS", as stored in another unit's ppu dependency
+            list). Namespace resolution only happens later, at load time, so
+            the plain compare in find_loaded_unit can miss the already-present
+            counterpart and create a duplicate module object -- which then
+            corrupts the unit init/finalization order. Bridge the two
+            spellings here, in both directions, against the active namespaces. }
+          var
+            nslists : array[0..1] of TCmdStrList;
+            i       : longint;
+            nsitem  : TCmdStrListItem;
+            nsup    : TIDString;
+          begin
+            find_loaded_unit_ns:=nil;
+            nslists[0]:=current_namespacelist;
+            nslists[1]:=namespacelist;
+            for i:=low(nslists) to high(nslists) do
+              begin
+                if not assigned(nslists[i]) then
+                  continue;
+                nsitem:=TCmdStrListItem(nslists[i].first);
+                while assigned(nsitem) do
+                  begin
+                    nsup:=upper(nsitem.str);
+                    if pos('.',aname)=0 then
+                      { short name given: look for the namespaced spelling }
+                      find_loaded_unit_ns:=find_loaded_unit(nsup+'.'+aname)
+                    else if copy(aname,1,length(nsup)+1)=nsup+'.' then
+                      { namespaced name given: look for the short spelling }
+                      find_loaded_unit_ns:=find_loaded_unit(copy(aname,length(nsup)+2,length(aname)));
+                    if assigned(find_loaded_unit_ns) then
+                      exit;
+                    nsitem:=TCmdStrListItem(nsitem.next);
+                  end;
+              end;
+          end;
+
       var
         ups   : TIDString;
         hp    : tppumodule;
@@ -2778,10 +2829,12 @@ var
         { Info }
         ups:=upper(s);
 
-        { search all loaded units, skip program/library }
-        hp:=tppumodule(loaded_units.first);
-        while assigned(hp) and ((hp.modulename^<>ups) or not hp.is_unit) do
-          hp:=tppumodule(hp.next);
+        { search all loaded units by plain name, skip program/library }
+        hp:=find_loaded_unit(ups);
+
+        { not found: it may already be loaded under a namespaced name }
+        if not assigned(hp) then
+          hp:=find_loaded_unit_ns(ups);
 
         is_new:=not assigned(hp);
         if is_new then
