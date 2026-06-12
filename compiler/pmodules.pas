@@ -673,7 +673,25 @@ implementation
                begin
                hp2:=registerunit(curr,sorg,fn,isnew);
                if isnew then
-                 usedunits.concat(tused_unit.create(hp2,curr.in_interface,true,nil));
+                 usedunits.concat(tused_unit.create(hp2,curr.in_interface,true,nil))
+               else
+                 begin
+                   { the plain-name check above can miss a unit that is
+                     already used under a different spelling (e.g. a short
+                     name vs its namespaced name); registerunit resolves
+                     both to the same module, so detect the duplicate by
+                     module identity }
+                   pu:=tused_unit(curr.used_units.first);
+                   while assigned(pu) do
+                    begin
+                      if (pu.u=hp2) then
+                       begin
+                         Message1(sym_e_duplicate_id,s);
+                         break;
+                       end;
+                      pu:=tused_unit(pu.next);
+                    end;
+                 end;
                end
              else
                Message1(sym_e_duplicate_id,s);
