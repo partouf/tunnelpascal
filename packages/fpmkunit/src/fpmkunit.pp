@@ -14,7 +14,7 @@
 
  **********************************************************************}
 
-unit fpmkunit;
+unit fpMkUnit;
 
 {$Mode objfpc}
 {$H+}
@@ -166,14 +166,14 @@ Type
     win64,wince,gba,nds,embedded,symbian,haiku,iphonesim,
     aix,java,android,nativent,msdos,wii,aros,dragonfly,
     win16,freertos,zxspectrum,msxdos,ios,amstradcpc,sinclairql,
-    wasi,human68k
+    wasip1,human68k,ps1,wasip1threads,wasip2
   );
   TOSes = Set of TOS;
 
   TCompilerMode = (cmFPC,cmTP,cmObjFPC,cmDelphi,cmMacPas,cmDelphiUnicode);
   TCompilerModes = Set of TCompilerMode;
 
-  TInstallMOde = (imInstall, imUnInstall);
+  TInstallMode = (imInstall, imUnInstall);
 
   TTargetType = (ttProgram,ttUnit,ttImplicitUnit,ttCleanOnlyUnit,ttExampleUnit,ttExampleProgram,ttFPDoc,ttSharedLibrary);
   TTargetTypes = set of TTargetType;
@@ -227,7 +227,7 @@ Type
 
 Const
   // Aliases
-  Amd64   = X86_64;
+  Amd64 = X86_64;
   PPC = PowerPC;
   PPC64 = PowerPC64;
   DOS = Go32v2;
@@ -240,6 +240,7 @@ Const
   AllWindowsOSes  = [Win32,Win64,WinCE];
   AllAmigaLikeOSes = [Amiga,MorphOS,AROS];
   AllLimit83fsOses = [go32v2,os2,emx,watcom,msdos,win16,atari,human68k];
+  AllWebAssemblyOSes = [wasip1, wasip1threads, wasip2];
 
   AllSmartLinkLibraryOSes = [Linux,msdos,win16,palmos]; // OSes that use .a library files for smart-linking
   AllImportLibraryOSes = AllWindowsOSes + [os2,emx,netwlibc,netware,watcom,go32v2,macosclassic,nativent,msdos,win16];
@@ -252,7 +253,7 @@ Const
     { go32v2 }  ( false, true,  false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
     { win32 }   ( false, true,  false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
     { os2 }     ( false, true,  false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
-    { freebsd } ( false, true,  false, false, false, true,  false, false, false, false, false, false, false, false,   false, false, true , false, false,  false,  false,   false, false, false),
+    { freebsd } ( false, true,  false, false, false, true,  false, true,  false, false, false, false, false, false,   false, false, true , false, false,  false,  false,   false, false, false),
     { beos }    ( false, true,  false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
     { netbsd }  ( false, true,  true,  true,  true,  true,  true,  false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
     { amiga }   ( false, false, true,  true,  false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
@@ -292,8 +293,11 @@ Const
     { ios }     ( false, false, false, false, false, false,  true, false, false, false, false, false, false, false,   false, false, true , false, false,  false,  false,   false, false, false),
     {amstradcpc}( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, true,  false),
     {sinclairql}( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
-    { wasi }    ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, true,  false,  false,  false,   false, false, false),
-    { human68k }( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false)
+    { wasip1 }  ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, true,  false,  false,  false,   false, false, false),
+    { human68k }( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false, false, false, false, false,  false,  false,   false, false, false),
+    { ps1 }     ( false, false, false, false, false, false, false, false, false, false, false, true,  false, false,   false, false, false, false, false,  false,  false,   false, false, false),
+ {wasip1threads}( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, true,  false,  false,  false,   false, false, false),
+    { wasip2 }  ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   false, false, false, true,  false,  false,  false,   false, false, false)
   );
 
   // Useful
@@ -308,10 +312,12 @@ Const
   RsjExt  = '.rsj';
   LibExt  = '.a';
   SharedLibExt = '.so';
+  WasiSharedLibExt = '';
   DyLibExt = '.dylib';
   DLLExt  = '.dll';
   AIXSharedLibExt = '.a';
   ExeExt  = '.exe';
+  WasiExeExt  = '.wasm';
   DbgExt  = '.dbg';
   ZipExt  = '.zip';
   FpmkExt = '.fpm';
@@ -459,11 +465,12 @@ Type
     FOSes   : TOSes;
     FCPUs   : TCPUs;
     FValue  : String;
+    procedure SetValue(const Value: String);
   Public
     Procedure Assign(aSource : TPersistent); override;
     Function Match (aCPU : TCPU; aOS : TOS) : Boolean;
     Function Match (const aValue : String; aCPU : TCPU; aOS : TOS) : Boolean;
-    Property Value : String Read FValue Write FValue;
+    Property Value : String Read FValue Write SetValue;
     Property OSes  : TOSes Read FOSes Write FOSes;
     Property CPUs : TCPUs Read FCPUS Write FCPUs;
   end;
@@ -683,6 +690,7 @@ Type
   { TDependencies }
 
   TDependencies = Class(TConditionalStrings)
+  Private
     function GetDependency(Index : Integer): TDependency;
     procedure SetDependency(Index : Integer; const AValue: TDependency);
   Public
@@ -776,7 +784,7 @@ Type
     procedure SetXML(const AValue: string);
     // Deprecated API
     Procedure GetCleanFiles(List : TStrings; const APrefixU, APrefixB : String; ACPU:TCPU; AOS : TOS; const aSubTarget : String); virtual; deprecated 'use TcompileTarget instead';
-    Procedure GetArchiveFiles(List : TStrings; ACPU:TCPU; AOS : TOS); virtual; virtual; deprecated 'use TcompileTarget instead';
+    Procedure GetArchiveFiles(List : TStrings; ACPU:TCPU; AOS : TOS); virtual; deprecated 'use TcompileTarget instead';
     Procedure GetInstallFiles(List : TStrings; const APrefixU, APrefixB : String; ACPU:TCPU; AOS : TOS; const aSubTarget : String); virtual; deprecated 'use TcompileTarget instead';
     Procedure GetCleanFiles(List : TStrings; const APrefixU, APrefixB : String; const aTarget : TcompileTarget); virtual;
     Procedure GetInstallFiles(List : TStrings; const APrefixU, APrefixB : String; const aTarget : TCompileTarget); virtual;
@@ -1050,8 +1058,9 @@ Type
     procedure SaveUnitConfigToFile(Const AFileName: String;ACPU:TCPU;AOS:TOS);
     procedure EnterResolveDirsCS;
     procedure LeaveResolveDirsCS;
-    procedure ApplyNameSpaces(aEngine : TBuildEngine; aFileName : string; aTarget : TCompileTarget);
+    Function AddTargetsFromDir(const aDirectory : String; const aMask : String = '') : longint;
     // applies namespaces if map is set
+    procedure ApplyNameSpaces(aEngine : TBuildEngine; aFileName : string; aTarget : TCompileTarget);
     procedure ApplyNameSpaces(aEngine : TBuildEngine; aTarget : TCompileTarget);
     Function SubTargetAllowed(Const aSubTarget : String) : Boolean;
     Property Version : String Read GetVersion Write SetVersion;
@@ -1181,6 +1190,7 @@ Type
     FExamplesInstallDir : String;
     FSingleFPDocFile: Boolean;
     FSearchPath: TStrings;
+    FSkipAllPrograms: boolean;
     FSkipCrossPrograms: boolean;
     FThreadsAmount: integer;
     FRemoveTree: String;
@@ -1191,6 +1201,7 @@ Type
     FUseEnvironment: Boolean;
     FZipPrefix: String;
     FExplicitOSNone: Boolean;
+    FUnitOutputDirectory: String;
     function GetTarget: String;
     function SafeExpandFileName(const AFileName: string): string;
     function GetBuildCPU: TCpu;
@@ -1232,7 +1243,7 @@ Type
   Public
     Constructor Create;
     Destructor Destroy; override;
-    Procedure InitDefaults;
+    Procedure InitDefaults; virtual;
     Function HaveOptions: Boolean;
     Procedure AddOption(const aValue : string);
     function IsBuildDifferentFromTarget: boolean;
@@ -1270,7 +1281,7 @@ Type
     // current target and for which all dependencies are compiled earlier.
     // When no package is available the thread remains idle until another thread
     // has finished it's task. Compilation stops when all packages are compiled
-    // or when an error occures.
+    // or when an error occurs.
     //
     // When ThreadsAmount is not specified (-1), all packages are compiled on by one.
     // Dependencies are compiled recursively. When a package is already compiled
@@ -1280,6 +1291,7 @@ Type
     // paths etc.
     Property LocalUnitDir : String Read GetLocalUnitDir Write SetLocalUnitDir;
     Property GlobalUnitDir : String Read GetGlobalUnitDir Write SetGlobalUnitDir;
+    property UnitOutputDirectory: String read FUnitOutputDirectory write FUnitOutputDirectory;
     // The SearchPath contains a list of directories in which packages are
     // installed. Packages are searched for in order of this list.
     Property SearchPath: TStrings read GetSearchPath write SetSearchPath;
@@ -1311,9 +1323,10 @@ Type
     Property BuildMode: TBuildMode read FBuildMode write FBuildMode;
     Property SingleFPDocFile : Boolean Read FSingleFPDocFile Write FSingleFPDocFile;
     Property Namespaces : Boolean Read FNamespaces Write FNameSpaces;
-    // Installation optioms
+    // Installation options
     Property InstallExamples: Boolean read FInstallExamples write FInstallExamples;
     Property SkipCrossPrograms: boolean read FSkipCrossPrograms write FSkipCrossPrograms;
+    Property SkipAllPrograms: boolean read FSkipAllPrograms write FSkipAllPrograms;
   end;
 
   { TBasicDefaults }
@@ -1411,6 +1424,7 @@ Type
 
     // Public Copy/delete/Move/Archive/Mkdir Commands.
     Procedure ExecuteCommand(const Cmd : String; const Args : TStrings; Env: TStrings = nil; IgnoreError : Boolean = False); virtual;
+    Function GetExecuteCommandOutput(const Cmd : String; const Args : TStrings; Env: TStrings = nil; IgnoreError : Boolean = False) : string; virtual;
     procedure CmdCopyFiles(List: TStrings; const DestDir: String; APackage: TPackage);
     Procedure CmdCreateDir(const DestDir : String);
     Procedure CmdMoveFiles(List : TStrings; Const DestDir : String);
@@ -1528,6 +1542,7 @@ Type
     Destructor destroy; override;
     Function AddPackage(Const AName : String) : TPackage;
     Function AddPackageVariant(AName: string; AIsInheritable: boolean; AutoAddToPackage: Boolean = false): TPackageVariants;
+    Function AddPackageFromDir(Const AName : String; const aDirectory : String; const aMask : string = '') : TPackage;
     Function Run : Boolean;
     Property FPMakeOptionsString: string read FFPMakeOptionsString;
     Property BuildEngine : TBuildEngine Read FBuildEngine;
@@ -1552,15 +1567,21 @@ Type
   { TValueItem }
 
   TValueItem = Class(TObject)
+  Private
     FValue : String;
+  Public
     Constructor Create(AValue : String);
+    Property Value : String Read FValue;
   end;
 
   { TFunctionItem }
 
   TFunctionItem = Class(TObject)
+  Private
     FFunc : TReplaceFunction;
+  public
     Constructor Create(AFunc : TReplaceFunction);
+    Property Func : TReplaceFunction Read FFunc;
   end;
 
 {$ifndef NO_THREADING}
@@ -2033,6 +2054,7 @@ ResourceString
   SHelpNoFPCCfg       = 'Compiler will not use fpc.cfg';
   SHelpBaseInstallDir = 'Use indicated directory as base install dir.';
   SHelpLocalUnitDir   = 'Use indicated directory as local (user) unit dir.';
+  SHelpOutpuUnitDir   = 'Use indicated directory to save the compiled units.';
   SHelpGlobalUnitDir  = 'Use indicated directory as global unit dir.';
   SHelpSearchPath     = 'Add search directory for packages.';
   SHelpUnitInstallDir = 'Use indicated directory to install units into.';
@@ -2044,6 +2066,7 @@ ResourceString
   SHelpInteractive    = 'Allow to interact with child processes';
   SHelpInstExamples   = 'Install the example-sources.';
   SHelpSkipCrossProgs = 'Skip programs when cross-compiling/installing';
+  SHelpSkipAllProgs   = 'Skip all programs even if native-compiling/installing';
   SHelpIgnoreInvOpt   = 'Ignore further invalid options.';
   sHelpFpdocOutputDir = 'Use indicated directory as fpdoc output folder.';
   sHelpSingleFpdocFile = 'Create a single fpdoc project file for all projects';
@@ -2061,6 +2084,7 @@ ResourceString
   sHelpPackageVariant4= ' +[variantname]*=[variant1],<variant2>,...';
   sHelpPackageVariant5= 'To add specific options for one package-variant:';
   sHelpPackageVariant6= ' --options_[variantname]_[variant1]=Value';
+  SSwitchingToBuildUnitCompilation = 'Switching to buildunit compilation of package %s';
 
 
 Const
@@ -2092,7 +2116,8 @@ Const
   KeyDocInstallDir      = 'DocInstallDir';
   KeyExamplesInstallDir = 'ExamplesInstallDir';
   KeyInstallExamples    = 'InstallExamples';
-  KeySkipCrossProdrams  = 'SkipCrossPrograms';
+  KeySkipCrossPrograms  = 'SkipCrossPrograms';
+  KeySkipAllPrograms    = 'SkipAllPrograms';
   // Keys for unit config
   KeyName     = 'Name';
   KeyVersion  = 'Version';
@@ -2955,6 +2980,8 @@ function AddProgramExtension(const ExecutableName: string; AOS : TOS): string;
 begin
   if AOS in [Go32v2,Win32,Win64,Wince,OS2,EMX,Watcom] then
     Result:=ExecutableName+ExeExt
+  else if AOS in [wasip1,wasip1threads,wasip2] then
+    Result:=ExecutableName+WasiExeExt
   else
     Result:=ExecutableName;
 end;
@@ -2967,6 +2994,8 @@ begin
     Result:=LibraryName+DyLibExt
   else if aOS = Aix then
     Result:=LibraryName+AIXSharedLibExt
+  else if AOS in [wasip1,wasip1threads,wasip2] then
+    Result:=LibraryName+WasiSharedLibExt
   else
     Result:=LibraryName+SharedLibExt;
 end;
@@ -5124,6 +5153,50 @@ begin
 {$endif}
 end;
 
+function TPackage.AddTargetsFromDir(const aDirectory: String; const aMask: String): longint;
+var
+  lMasks : Array of string;
+  lMask : string;
+  lDir,lFile : string;
+  lInfo : TSearchRec;
+begin
+  if aDirectory='' then
+    lDir:='./'
+  else
+    lDir:=IncludeTrailingPathDelimiter(aDirectory);
+  if not DirectoryExists(lDir) then
+    Exit(-1);
+  if aMask='' then
+    lMasks:=['*.pp','*.pas','*.lpr']
+  else
+    lMasks:=aMask.Split([';']);
+  Result:=0;
+  for lMask in lMasks do
+    begin
+    if FindFirst(lDir+lMask,0,lInfo)=0 then
+      try
+        repeat
+          lFile:=ldir+lInfo.Name;
+          if SameFileName(ExtractFileExt(lInfo.Name),'.lpr') then
+            Targets.AddProgram(lFile)
+          else
+            // Todo: add some detection for program/unit
+            Targets.AddUnit(lFile);
+          Installer.Log(vlInfo,Format('Adding unit %s to targets of %s',[lFile,Name]));
+          Inc(Result);
+        until FindNext(lInfo)<>0;
+      finally
+        FindClose(lInfo)
+      end;
+    end;
+  if Result>0 then
+    begin
+    Installer.Log(vlInfo, Format(SSwitchingToBuildUnitCompilation, [Name]));
+    Defaults.BuildMode:=bmBuildUnit;
+    FSupportBuildModes:=[bmBuildUnit];
+    end;
+end;
+
 procedure TPackage.ChangePaths(Aliases : TStrings; aTarget : TCompileTarget);
 
 var
@@ -5142,7 +5215,7 @@ begin
       Continue;
     aPath:=aLine[2];
     aOp:=aLine[3];
-    aDir:=Copy(aLine,5,P-5);
+    aDir:= ExtractFileDir(Copy(aLine, 5, P - 5));
     P:=Pos('=',aLine);
     if (P>0) then
       aDest:=Copy(aLine,P+1);
@@ -5170,7 +5243,7 @@ begin
         '+':
             begin
             CS:=CSL.Find(aDir,aTarget.Cpu,aTarget.OS);
-            if not Assigned(CS) then
+            if Assigned(CS) then
               CSL.Add(aDir,[aTarget.Cpu],[aTarget.OS]);
             end;
       end;
@@ -5184,17 +5257,26 @@ Var
   N,V : String;
 
 begin
+{$IFDEF WINDOWS}
+  for I := 0 to Pred(Aliases.Count) do
+    Aliases[I] := FixPath(Aliases[I]);
+{$ENDIF}
+
   For I:=Aliases.Count-1 downto 0 do
     if pos('=',Aliases[i])>0 then
-      begin
+    begin
       Aliases.GetNameValue(I,N,V);
-      N:=ExtractFileName(N);
-      V:=ExtractFileName(V);
-      Aliases.Add(N+'='+V);
-      N:=ChangeFileExt(N,'');
-      V:=ChangeFileExt(V,'');
-      Aliases.Add(N+'='+V);
+
+      if not N.StartsWith('{') then
+      begin
+        N:=ExtractFileName(N);
+        V:=ExtractFileName(V);
+        Aliases.Add(N+'='+V);
+        N:=ChangeFileExt(N,'');
+        V:=ChangeFileExt(V,'');
+        Aliases.Add(N+'='+V);
       end;
+    end;
 end;
 
 procedure TPackage.ApplyNameSpaces(aEngine: TBuildEngine; aFileName: string; aTarget : TCompileTarget);
@@ -5845,7 +5927,9 @@ begin
       if FInstallExamples then
           Values[KeyInstallExamples]:='Y';
       if FSkipCrossPrograms then
-        Values[KeySkipCrossProdrams]:='Y';
+        Values[KeySkipCrossPrograms]:='Y';
+      if FSkipAllPrograms then
+        Values[KeySkipAllPrograms]:='Y';
       end;
     L.SaveToStream(S);
   Finally
@@ -5904,7 +5988,8 @@ begin
       FDocInstallDir:=Values[KeyDocInstallDir];
       FExamplesInstallDir:=Values[KeyExamplesInstallDir];
       FInstallExamples:=(Upcase(Values[KeyInstallExamples])='Y');
-      FSkipCrossPrograms:=(Upcase(Values[KeySkipCrossProdrams])='Y');
+      FSkipCrossPrograms:=(Upcase(Values[KeySkipCrossPrograms])='Y');
+      FSkipAllPrograms:=(Upcase(Values[KeySkipAllPrograms])='Y');
       FNoFPCCfg:=(Upcase(Values[KeyNoFPCCfg])='Y');
       FUseEnvironment:=(Upcase(Values[KeyUseEnv])='Y');
 
@@ -6057,6 +6142,9 @@ function TCustomInstaller.AddPackage(const AName: String): TPackage;
 begin
   result:=Packages.AddPackage(AName);
   AddAutoPackageVariantsToPackage(result);
+
+  if Defaults.UnitOutputDirectory <> '' then
+    Result.FUnitsOutputDir := IncludeTrailingPathDelimiter(Defaults.UnitOutputDirectory) + Result.FUnitsOutputDir;
 end;
 
 function TCustomInstaller.AddPackageVariant(AName: string;
@@ -6067,6 +6155,15 @@ begin
   result.FIsInheritable:=AIsInheritable;
   result.FAutoAddToPackage:=AutoAddToPackage;
   FPackageVariants.Add(result);
+end;
+
+function TCustomInstaller.AddPackageFromDir(const AName: String; const aDirectory: String; const aMask: string): TPackage;
+begin
+  Result:=AddPackage(aName);
+  if Result.AddTargetsFromDir(aDirectory,aMask)<=0 then
+    Result.Free
+  else
+    Result.Dependencies.Clear;
 end;
 
 procedure TCustomInstaller.AnalyzeOptions;
@@ -6342,6 +6439,8 @@ begin
           Log(vlWarning,SWarnCombinedPathAndUDir);
         Defaults.GlobalUnitDir:=OptionArg(I)
       end
+    else if CheckOption(I,'UO','unitoutputdir') then
+      Defaults.UnitOutputDirectory := OptionArg(I)
     else if CheckOption(I,'sp','searchpath') then
       begin
         SearchPathSet:=true;
@@ -6361,6 +6460,8 @@ begin
       DefaultsFileName:=OptionArg(I)
     else if CheckOption(I,'ie','installexamples') then
       Defaults.InstallExamples:=true
+    else if CheckOption(I,'sap','skipallprograms') then
+      Defaults.SkipAllPrograms:=true
     else if CheckOption(I,'scp','skipcrossprograms') then
       Defaults.SkipCrossPrograms:=true
     else if CheckOption(I,'bu','buildunit') then
@@ -6448,6 +6549,7 @@ begin
 {$endif}
   LogOption('ie','installexamples',SHelpInstExamples);
   LogOption('bu','buildunit',SHelpUseBuildUnit);
+  LogOption('sap','skipallprograms',SHelpSkipAllProgs);
   LogOption('scp','skipcrossprograms',SHelpSkipCrossProgs);
   LogOption('io','ignoreinvalidoption',SHelpIgnoreInvOpt);
   LogArgOption('C','cpu',SHelpCPU);
@@ -6459,6 +6561,7 @@ begin
   LogArgOption('BI','bininstalldir',SHelpBaseInstalldir);
   LogArgOption('LI','libinstalldir',SHelpBaseInstalldir);
   LogArgOption('UL','localunitdir',SHelpLocalUnitdir);
+  LogArgOption('UO','unitoutputdir',SHelpOutpuUnitDir);
   LogArgOption('UG','globalunitdir',SHelpGlobalUnitdir);
   LogArgOption('sp','searchpath',SHelpSearchPath);
   LogArgOption('U','unitinstalldir',SHelpUnitInstallDir);
@@ -6824,13 +6927,14 @@ begin
 end;
 
 
-procedure TBuildEngine.ExecuteCommand(const Cmd : String; const Args : TStrings;  Env: TStrings = nil; IgnoreError : Boolean = False);
+function TBuildEngine.GetExecuteCommandOutput(const Cmd : String; const Args : TStrings; Env: TStrings = nil; IgnoreError : Boolean = False) : string;
 Var
   E : Integer;
   cmdLine: string;
   ConsoleOutput: TMemoryStream;
   s: string;
 begin
+  Result:='';
   cmdLine:='';
   if Args.Count<>0 then
     for s in Args do
@@ -6857,11 +6961,18 @@ begin
             Error(SErrExternalCommandFailed,[cmdLine,E,s]);
           end;
       finally
+        ConsoleOutput.Seek(0, soBeginning);
+        SetLength(Result,ConsoleOutput.Size);
+        ConsoleOutput.Read(Result[1],ConsoleOutput.Size);
         ConsoleOutput.Free;
       end;
     end;
 end;
 
+procedure TBuildEngine.ExecuteCommand(const Cmd : String; const Args : TStrings;  Env: TStrings = nil; IgnoreError : Boolean = False);
+begin
+  GetExecuteCommandOutput(Cmd,Args,Env,IgnoreError);
+end;
 
 function TBuildEngine.SysDirectoryExists(const ADir: string): Boolean;
 begin
@@ -7236,7 +7347,7 @@ begin
           CmdCreateDir(ExtractFilePath(DestFileName));
           SysCopyFile(AddPathPrefix(APackage, List.Names[i]),DestFileName)
         end
-      else
+      else if List[i]<>'' then
         SysCopyFile(AddPathPrefix(APackage, List[i]), DestDir);
 end;
 
@@ -8180,9 +8291,10 @@ function TBuildEngine.TargetOK(ATarget: TTarget; const aCompileTarget : TCompile
 
 
 begin
-  if Defaults.SkipCrossPrograms and
-     (ATarget.TargetType in ProgramTargets) and
-     IsDifferentFromBuild(aCOmpileTarget.CPU, aCOmpileTarget.OS) then
+  if (ATarget.TargetType in ProgramTargets) and
+     (Defaults.SkipAllPrograms or
+      (Defaults.SkipCrossPrograms and
+       IsDifferentFromBuild(aCOmpileTarget.CPU, aCOmpileTarget.OS))) then
     result := False
   else
     Result:=(aCompileTarget.CPU in ATarget.CPUs)
@@ -8490,8 +8602,8 @@ begin
                    Result:=(P.State=tsCompiled);
                    if Result then
                      begin
-                     break;
                      CompileReason:=Format(SDbgPackageDepRecompiled,[P.Name]);
+                     break;
                      end;
                  end;
              end;
@@ -8508,8 +8620,8 @@ begin
             Result:=NeedsCompile(APackage,APackage.Targets.TargetItems[i]);
             if Result then
               begin
-              break;
               CompileReason:=Format(SDbgTargetHasToBeCompiled,[APackage.Targets.TargetItems[i].Name]);
+              break;
               end;
           end;
       Finally
@@ -8670,14 +8782,15 @@ Var
     L: TStrings;
     F: Text;
     Dep : TDependency;
-    aUnitName : string;
+    aUnitName, aUnitSourceDir : string;
     CompilationFailed: Boolean;
 
   begin
     if (APackage.FBUTarget.Dependencies.Count>0) then
       begin
         Log(vldebug, Format(SDbgGenerateBuildUnit, [APackage.FBUTarget.Name]));
-        system.Assign(F,AddPathPrefix(APackage,APackage.FBUTarget.FTargetSourceFileName));
+        aPath:=AddPathPrefix(APackage,APackage.GetUnitsOutputDir(Defaults.CompileTarget));
+        system.Assign(F,IncludeTrailingPathDelimiter(apath)+APackage.FBUTarget.FTargetSourceFileName);
         Rewrite(F);
         writeln(F,'unit ' + APackage.FBUTarget.Name +';');
         writeln(F,'interface');
@@ -8688,8 +8801,11 @@ Var
               write(F,',');
             Dep:=APackage.FBUTarget.Dependencies.Dependencies[i];
             aUnitName:=Dep.Value;
-            if aUnitName='' then
-              Writeln('Aloha2');
+	    aUnitSourceDir:=ExtractFileDir(Dep.TargetFileName);
+            if aUnitSourceDir='' then
+              APackage.UnitPath.Add('.')
+            else
+              APackage.UnitPath.Add(aUnitSourceDir);
             writeln(F,aUnitName);
           end;
         writeln(F,';');
@@ -8700,6 +8816,7 @@ Var
 
         APackage.FBuildMode:=bmOneByOne;
         Compilationfailed:=false;
+        APackage.FBUTarget.FTargetSourceFileName:=IncludeTrailingPathDelimiter(APackage.GetUnitsOutputDir(Defaults.CompileTarget))+APackage.FBUTarget.FTargetSourceFileName;
         try
           try
             Compile(APackage,APackage.FBUTarget);
@@ -8724,7 +8841,7 @@ Var
             try
               aPath:=AddPathPrefix(APackage,APackage.GetUnitsOutputDir(Defaults.CompileTarget));
               APackage.FBUTarget.GetCleanFiles(L,IncludeTrailingPathDelimiter(aPath),'',Defaults.CompileTarget);
-              L.Add(AddPathPrefix(APackage,APackage.FBUTarget.SourceFileName));
+              L.Add(AddPathPrefix(APackage,APackage.FBUTarget.FTargetSourceFileName));
               CmdDeleteFiles(L);
             finally
               L.Free;
@@ -9309,7 +9426,7 @@ procedure TBuildEngine.DoAfterClean(APackage: TPackage);
 begin
   If Assigned(APackage.AfterClean) then
     APackage.AfterClean(APackage);
-  If Assigned(APackage.AfterInstallProc) then
+  If Assigned(APackage.AfterCleanProc) then
     APackage.AfterCleanProc(APackage);
   ExecuteCommands(APackage.Commands,caAfterClean);
 end;
@@ -10627,6 +10744,11 @@ begin
   Result:=Match(aCPU,aOS) and (aValue=Value)
 end;
 
+
+procedure TConditionalString.SetValue(const Value: String);
+begin
+  FValue := FixPath(Value);
+end;
 
 {****************************************************************************
                            TConditionalStrings

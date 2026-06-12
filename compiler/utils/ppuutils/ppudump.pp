@@ -240,7 +240,7 @@ const
   { 111 } 'Darwin-AArch64',
   { 112 } 'AmstradCPC-Z80',
   { 113 } 'SinclairQL-m68k',
-  { 114 } 'WASI-WASM32',
+  { 114 } 'WASIp1-WASM32',
   { 115 } 'FreeBSD-AArch64',
   { 116 } 'Embedded-aarch64',
   { 117 } 'Linux-MIPS64',
@@ -248,7 +248,11 @@ const
   { 119 } 'FreeRTos-RiscV32',
   { 120 } 'Linux-LoongArch64',
   { 121 } 'iPhoneSim-AArch64',
-  { 122 } 'Human68k-m68k'
+  { 122 } 'Human68k-m68k',
+  { 123 } 'PS1-mipsel',
+  { 124 } 'WASIp1threads-WASM32',
+  { 125 } 'WASIp2-WASM32',
+  { 126 } 'FreeBSD-powerpc64'
   );
 
 const
@@ -258,6 +262,8 @@ const
   thus widecharsize seems to always be 2 bytes }
 
   widecharsize : longint = 2;
+
+var
   cpu : tsystemcpu = cpu_no;
 
 { This type is defined in scanner.pas unit }
@@ -537,12 +543,6 @@ const
     e_qw, mantval : qword;
     e_w : word;
   begin
-    if ppufile.change_endian then
-      begin
-        for i:=0 to 9 do
-          new.bytes[i]:=e.bytes[9-i];
-        e:=new;
-      end;
     if sizeof(ext)=10 then
       begin
         ext:=pextended(@e)^;
@@ -559,6 +559,11 @@ const
       begin
         e_w:=pword(@(e.bytes[8]))^;
         e_qw:=pqword(@(e.bytes[0]))^;
+      end;
+    if ppufile.change_endian then
+      begin
+        e_w:=swapendian(e_w);
+        e_qw:=swapendian(e_qw);
       end;
     sign := (e_w and $8000) <> 0;
     expMaximal := (e_w and $7fff) = 32767;
@@ -609,9 +614,10 @@ const
   end;
 {$POP}
 
-const has_errors : boolean = false;
-      has_warnings : boolean = false;
-      has_more_infos : boolean = false;
+var
+  has_errors : boolean = false;
+  has_warnings : boolean = false;
+  has_more_infos : boolean = false;
 
 procedure SetHasErrors;
 begin
@@ -793,6 +799,17 @@ begin
     Cpu2Str:=Unknown('cpu',w);
 end;
 
+{Avoid dependency on cpuinfo because the cpu directory isn't
+ searched during utils building.}
+{$ifdef GENERIC_CPU}
+type  bestreal=extended;
+{$else}
+{$ifdef x86}
+type  bestreal=extended;
+{$else}
+type  bestreal=double;
+{$endif}
+{$endif}
 
 Function Varspez2Str(w:longint):string;
 const
@@ -1243,7 +1260,7 @@ type
          { Label for debug or other non-program information }
          AT_METADATA,
          { label for data that must always be accessed indirectly, because it
-           is handled explcitely in the system unit or (e.g. RTTI and threadvar
+           is handled explicitly in the system unit or (e.g. RTTI and threadvar
            tables) -- never seen in an assembler/assembler writer, always
            changed to AT_DATA }
          AT_DATA_FORCEINDIRECT,
@@ -1578,6 +1595,7 @@ end;
 
          packrecords     : shortint;
          maxfpuregisters : shortint;
+         verbosity       : longint;
 
          cputype,
          optimizecputype : tcputype;
@@ -1705,8 +1723,9 @@ const
          (mask:pi_uses_ymm;
          str:' uses ymm register (x86 only)'),
          (mask:pi_no_framepointer_needed;
-         str:' set if no frame pointer is needed, the rules when this applies is target specific'
-         )
+         str:' set if no frame pointer is needed, the rules when this applies is target specific'),
+         (mask:pi_normalized;
+         str:'  has been normalized so no expressions contain block nodes ')
   );
 var
   procinfooptions : tprocinfoflags;
@@ -2149,6 +2168,7 @@ var
 
             packrecords:=gettokenbufshortint;
             maxfpuregisters:=gettokenbufshortint;
+            verbosity:=gettokenbuflongint;
 
             cputype:=tcputype(tokenreadenum(sizeof(tcputype)));
             optimizecputype:=tcputype(tokenreadenum(sizeof(tcputype)));
@@ -2176,6 +2196,9 @@ var
              controllertype:=tcontrollertype(tokenreadenum(sizeof(tcontrollertype)))
             else
              ControllerType:=ct_none;
+            lineendingtype:=tlineendingtype(tokenreadenum(sizeof(tlineendingtype)));
+            whitespacetrimcount:=gettokenbufword;
+            whitespacetrimauto:=boolean(gettokenbufbyte);
 {$POP}
            endpos:=tbi;
            if endpos-startpos<>expected_size then
@@ -2203,6 +2226,7 @@ var
 
          packrecords     : shortint;
          maxfpuregisters : shortint;
+         verbosity       : longint;
 
          cputype,
          optimizecputype,
@@ -2239,7 +2263,7 @@ var
        end; *)
 
 const
-    targetswitchname : array[ttargetswitch] of string[37] =
+    targetswitchname : array[ttargetswitch] of string[77] =
        { global target-specific switches }
        ('Target None', {ts_none}
          { generate code that results in smaller TOCs than normal (AIX) }
@@ -2248,7 +2272,7 @@ const
            constants in order to reduce the generated code size (Java routines
            are limited to 64kb of bytecode) }
         'JVM compact int array init', {ts_compact_int_array_init}
-         { for the JVM target: intialize enum fields in constructors with the
+         { for the JVM target: initialize enum fields in constructors with the
            enum class instance corresponding to ordinal value 0 (not done by
            default because this initialization can only be performed after the
            inherited constructors have run, and if they call a virtual method
@@ -2283,9 +2307,10 @@ const
         'Use odd BP for far procs', {ts_x86_far_procs_push_odd_bp}
         'No exception support', {ts_wasm_no_exceptions}
         'Branchful exceptions support', {ts_wasm_bf_exceptions}
-        'JavaScript-based exception support', {ts_wasm_js_exceptions}
-        'Native WebAssembly exceptions support', {ts_wasm_native_exceptions}
-        'WebAssembly threads support' {ts_wasm_threads}
+        'Native WebAssembly exceptions with exnref support', {ts_wasm_native_exnref_exceptions}
+        'Native WebAssembly legacy exceptions support', {ts_wasm_native_legacy_exceptions}
+        'WebAssembly threads support', {ts_wasm_threads}
+        'Use WebAssembly saturating (nontrapping) float to int conversion instructions' {ts_wasm_saturating_float_to_int}
        );
     moduleswitchname : array[tmoduleswitch] of string[40] =
        ('Module None', {cs_modulenone,}
@@ -2373,8 +2398,9 @@ const
         'Discard code initializing the zero register and stack pointer', {cs_link_discard_zeroreg_sp}
         'Discard initializing data', {cs_link_discard_copydata}
         'Discard jump to PASCALMAIN', {cs_link_discard_jmp_main}
+        'Link compact vector table startup code',
         'Link-Time Optimization disabled for system unit', {cs_lto_nosystem}
-        'Assemble on target OS', {cs_asemble_on_target}
+        'Assemble on target OS', {cs_assemble_on_target}
         'Use a memory model to support >2GB static data on 64 Bit target', {cs_large}
         'Generate UF2 binary', {cs_generate_uf2}
         'Link using ld.lld GNU compatible LLVM linker' {cs_link_lld}
@@ -2444,7 +2470,7 @@ const
          'm_tp_procvar',          { tp style procvars (no @ needed) }
          'm_mac_procvar',         { macpas style procvars }
          'm_repeat_forward',      { repeating forward declarations is needed }
-         'm_pointer_2_procedure', { allows the assignement of pointers to
+         'm_pointer_2_procedure', { allows the assignment of pointers to
                                   procedure variables                     }
          'm_autoderef',           { does auto dereferencing of struct. vars }
          'm_initfinal',           { initialization/finalization for units }
@@ -2481,7 +2507,8 @@ const
          'm_underscoreisseparator',{ _ can be used as separator to group digits in numbers }
          'm_implicit_function_specialization', { attempt to specialize generic function by inferring types from parameters }
          'm_function_references', { enable Delphi-style function references }
-         'm_anonymous_functions'  { enable Delphi-style anonymous functions }
+         'm_anonymous_functions',  { enable Delphi-style anonymous functions }
+         'm_multiline_strings'    { multi-line strings denoted with '`' are enabled and valid }
        );
        { optimizer }
        optimizerswitchname : array[toptimizerswitch] of string[50] =
@@ -2620,6 +2647,7 @@ const
        writeln(['Pack enums ',new_settings.packenum]);
        writeln(['Pack records ',new_settings.packrecords]);
        writeln(['Max FPU registers ',new_settings.maxfpuregisters]);
+       writeln('Verbosity '+hexstr(new_settings.verbosity,8));
 
        writeln(['CPU type ',new_settings.cputype]);
        writeln(['CPU optimize type ',new_settings.optimizecputype]);
@@ -3302,7 +3330,8 @@ const
      (mask:oo_has_new_destructor; str:'HasNewDestructor'),
      (mask:oo_is_funcref;         str:'IsFuncRef'),
      (mask:oo_is_invokable;       str:'IsInvokable'),
-     (mask:oo_is_capturer;        str:'IsCapturer')
+     (mask:oo_is_capturer;        str:'IsCapturer'),
+     (mask:oo_inherits_not_specialized; str:'InheritedNotSpecialized')
   );
 var
   i      : longint;
@@ -3479,7 +3508,8 @@ end;
     ppo_implements,
     ppo_enumerator_current,
     ppo_overrides,
-    ppo_dispid_write              { no longer used }
+    ppo_default_is_single,
+    ppo_default_is_set
   );
   tpropertyoptions=set of tpropertyoption;
 *)
@@ -3499,7 +3529,8 @@ const
     (mask:ppo_implements;str:'implements'),
     (mask:ppo_enumerator_current;str:'enumerator current'),
     (mask:ppo_overrides;str:'overrides'),
-    (mask:ppo_dispid_write;str:'dispid write')  { no longer used }
+    (mask:ppo_default_is_single;str:'default is a single'),
+    (mask:ppo_default_is_set;str:'default is a set')
   );
 var
   i      : longint;
@@ -3701,9 +3732,11 @@ var
   realvalue : ppureal;
   doublevalue : double;
   singlevalue : single;
+  extvalue : extended;
+  aset : set of 0..31;
   realstr : shortstring;
   extended : TSplit80bitReal;
-  pw : pcompilerwidestring;
+  pw : tcompilerwidestring;
   varoptions : tvaroptions;
   propoptions : tpropertyoptions;
   iexp: Tconstexprint;
@@ -3892,16 +3925,16 @@ begin
                      be byteswapped
                    }
                      begin
-                       for i:=0 to pw^.len-1 do
-                         pw^.data[i]:=ppufile.getword;
-                       SetString(ws, PWideChar(pw^.data), pw^.len);
+                       for i:=0 to pw.len-1 do
+                         pw.data[i]:=ppufile.getword;
+                       SetString(ws, PWideChar(pw.data), pw.len);
                        constdef.VStr:=UTF8Encode(ws);
                        constdef.ConstType:=ctStr;
                      end
                    else if widecharsize=4 then
                      begin
-                       for i:=0 to pw^.len-1 do
-                         pw^.data[i]:=cardinal(ppufile.getlongint);
+                       for i:=0 to pw.len-1 do
+                         pw.data[i]:=cardinal(ppufile.getlongint);
                      end
                    else
                      begin
@@ -3909,7 +3942,7 @@ begin
                      end;
                    Write([space,'Wide string type']);
                    startnewline:=true;
-                   for i:=0 to pw^.len-1 do
+                   for i:=0 to pw.len-1 do
                      begin
                        if startnewline then
                          begin
@@ -3917,7 +3950,7 @@ begin
                            write(space);
                            startnewline:=false;
                          end;
-                       ch:=pw^.data[i];
+                       ch:=pw.data[i];
                        if widecharsize=2 then
                          write(hexstr(ch,4))
                        else
@@ -3925,7 +3958,7 @@ begin
                        if ((i + 1) mod 8)= 0 then
                          startnewline:=true
                        else
-                         if i <> pw^.len-1 then
+                         if i <> pw.len-1 then
                            write(', ');
                      end;
                    donewidestring(pw);
@@ -4075,7 +4108,42 @@ begin
              write  ([space,'    Prop Type : ']);
              readderef('',TPpuPropDef(def).PropType);
              writeln([space,'        Index : ',getlongint]);
-             writeln([space,'      Default : ',getlongint]);
+             if ppo_default_is_single in propoptions then
+               begin
+                 if (CurUnit.ByteSizeOfPpuReal=10) and (sizeof(extvalue)<10) then
+                   begin
+                     getdata(extended,10);
+                     ss:=Real80bitToStr(extended,extvalue);
+                     writeln([space,'      Default (single): ',ss]);
+                   end
+                 else
+                   begin
+                     singlevalue:=getrealsize(CurUnit.ByteSizeOfPpuReal);
+                     writeln([space,'      Default (single): ',singlevalue]);
+                   end
+               end
+             else if ppo_default_is_set in propoptions then
+               begin
+                 { this is always a 4-byte long set }
+                 ppufile.getset(tppuset4(aset));
+                 write([space,'      Default (set): ']);
+                 for j:=0 to 3 do
+                   begin
+                     if j>0 then
+                       write(',');
+                     if not ppufile.change_endian then
+                       b:=pbyte(@aset)[j]
+                     else
+                       begin
+                         b:=pbyte(@aset)[3-j];
+                         b:=reverse_byte(b);
+                       end;
+                     write(hexstr(b,2));
+                   end;
+                 writeln;
+               end
+             else
+               writeln([space,'      Default : ',getlongint]);
              write  ([space,'   Index Type : ']);
              readderef('');
              { palt_none }
@@ -4121,7 +4189,7 @@ end;
 
 
 {****************************************************************************
-                         Read defintions Part
+                         Read definitions Part
 ****************************************************************************}
 
 procedure readdefinitions(const s:string; ParentDef: TPpuContainerDef);
@@ -4583,6 +4651,7 @@ begin
                begin
                  writeln([space,'       FieldAlign : ',shortint(getbyte)]);
                  writeln([space,'      RecordAlign : ',shortint(getbyte)]);
+                 writeln([space,'  ExplRecordAlign : ',shortint(getbyte)]);
                  writeln([space,'         PadAlign : ',shortint(getbyte)]);
                  writeln([space,'UseFieldAlignment : ',shortint(getbyte)]);
                  writeln([space,'   RecordAlignMin : ',shortint(getbyte)]);
@@ -4806,6 +4875,8 @@ begin
              writeln([space,'             Size : ',setdef.Size]);
              setdef.SetBase:=getasizeint;
              writeln([space,'         Set Base : ',setdef.SetBase]);
+             setdef.SetLow:=getasizeint;
+             writeln([space,'          Set Low : ',setdef.SetLow]);
              setdef.SetMax:=getasizeint;
              writeln([space,'          Set Max : ',setdef.SetMax]);
            end;
@@ -5112,7 +5183,9 @@ begin
   if b<>ibextraheader then
     exit;
   CurUnit.LongVersion:=cardinal(ppufile.getlongint);
+  CurUnit.ByteSizeOfPpuReal:=ppufile.getbyte;
   Writeln(['LongVersion: ',CurUnit.LongVersion]);
+  Writeln(['Byte size of PPU real: ',CurUnit.ByteSizeOfPpuReal]);
   ppufile.getset(tppuset4(CurUnit.ModuleFlags));
   result:=ppufile.EndOfEntry and (CurUnit.LongVersion=CurrentPPULongVersion);
   if mf_symansistr in CurUnit.ModuleFlags then
@@ -5331,7 +5404,6 @@ var
   startpara,
   nrfile,i  : longint;
   para      : string;
-const
   error_on_more : boolean = false;
 begin
   if paramcount<1 then

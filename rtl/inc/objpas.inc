@@ -42,22 +42,53 @@
            aobject.inheritsfrom(aclass);
       end;
 
+type
+  TCastErrorFromMode = (CastErrorFromNA, CastErrorFromClass, CastErrorFromExternalInterface);
+  TCastErrorToMode = (CastErrorToNA, CastErrorToClass, CastErrorToComInterface, CastErrorToCorbaInterface);
+
+{$IFDEF FPC_HAS_FEATURE_THREADING}
+threadvar
+{$ELSE}
+var
+{$ENDIF}
+  CastError: record
+    From: record
+    case Mode: TCastErrorFromMode of
+      CastErrorFromClass: (_Class: TClass);
+    end;
+    _To: record
+    case Mode: TCastErrorToMode of
+      CastErrorToClass: (_Class: TClass);
+      CastErrorToComInterface: (IID: TGUID);
+      CastErrorToCorbaInterface: (CorbaName: string[15]);
+    end;
+  end;
+
 
     { the reverse order of the parameters make code generation easier }
     function fpc_do_as(aclass : tclass;aobject : tobject): tobject;[public,alias: 'FPC_DO_AS']; compilerproc;
       begin
          if assigned(aobject) and not(aobject.inheritsfrom(aclass)) then
+           begin
+           CastError.From.Mode:=CastErrorFromClass;
+           CastError.From._Class:=aObject.ClassType;
+           CastError._To.Mode:=CastErrorToClass;
+           CastError._To._Class:=aClass;
            handleerroraddrframeInd(219,get_pc_addr,get_frame);
+           end;
          result := aobject;
       end;
 
     { interface helpers }
     procedure fpc_intf_decr_ref(var i: pointer);[public,alias: 'FPC_INTF_DECR_REF']; compilerproc;
+      var
+        iFetch: pointer;
       begin
-        if assigned(i) then
+        iFetch:=i;
+        if assigned(iFetch) then
           begin
-            IUnknown(i)._Release;
             i:=nil;
+            IUnknown(iFetch)._Release;
           end;
       end;
 
@@ -202,12 +233,24 @@
     function fpc_intf_as(const S: pointer; const iid: TGUID): IInterface;[public,alias: 'FPC_INTF_AS']; compilerproc;
       var
         tmpi: pointer; // _AddRef before _Release
+        errObj : TObject;
       begin
         if assigned(S) then
           begin
              tmpi:=nil;
              if IUnknown(S).QueryInterface(iid,tmpi)<>S_OK then
+               begin
+               if (IUnknown(S).QueryInterface(IObjectInstance,errObj)=S_OK) then
+                 begin
+                 CastError.From.Mode:=CastErrorFromClass;
+                 CastError.From._Class:=errObj.ClassType;
+                 end
+               else
+                 CastError.From.Mode:=CastErrorFromExternalInterface;
+               CastError._To.Mode:=CastErrorToComInterface;
+               CastError._To.IID:=iid;
                handleerror(219);
+               end;
              // decrease reference count
              fpc_intf_as:=nil;
              pointer(fpc_intf_as):=tmpi;
@@ -220,11 +263,23 @@
     function fpc_intf_as_class(const S: pointer; const aclass: tclass): pointer;[public,alias: 'FPC_INTF_AS_CLASS']; compilerproc;
       var
         tmpo: tobject;
+        errObj : TObject;
       begin
         if assigned(S) then
           begin
             if not ((IUnknown(S).QueryInterface(IObjectInstance,tmpo)=S_OK) and tmpo.inheritsfrom(aclass)) then
+              begin
+              if (IUnknown(S).QueryInterface(IObjectInstance,errObj)=S_OK) then
+                begin
+                CastError.From.Mode:=CastErrorFromClass;
+                CastError.From._Class:=errObj.ClassType;
+                end
+              else
+                CastError.From.Mode:=CastErrorFromExternalInterface;
+              CastError._To.Mode:=CastErrorToClass;
+              CastError._To._Class:=aClass;
               handleerror(219);
+              end;
             fpc_intf_as_class:=tmpo;
           end
         else
@@ -236,13 +291,20 @@
       var
         tmpi: pointer; // _AddRef before _Release
         tmpi2: pointer; // weak!
+        errObj : TObject;
       begin
         if assigned(S) then
           begin
              tmpi:=nil;
              tmpi2:=nil;
              if not ((TObject(S).GetInterfaceWeak(IUnknown,tmpi2) and (IUnknown(tmpi2).QueryInterface(IID,tmpi)=S_OK)) or TObject(S).GetInterface(IID,tmpi)) then
+               begin
+               CastError.From.Mode:=CastErrorFromClass;
+               CastError.From._Class:=TObject(S).ClassType;
+               CastError._To.Mode:=CastErrorToComInterface;
+               CastError._To.IID:=iid;
                handleerror(219);
+               end;
              // decrease reference count
              fpc_class_as_intf:=nil;
              pointer(fpc_class_as_intf):=tmpi;
@@ -260,7 +322,13 @@
           begin
              tmpi:=nil;
              if not TObject(S).GetInterface(iid,tmpi) then
+               begin
+               CastError.From.Mode:=CastErrorFromClass;
+               CastError.From._Class:=TObject(S).ClassType;
+               CastError._To.Mode:=CastErrorToCorbaInterface;
+               CastError._To.CorbaName:=iid;
                handleerror(219);
+               end;
              fpc_class_as_corbaintf:=tmpi;
           end
         else
@@ -274,14 +342,10 @@
 
     function TVmt.GetvParent: PVmt;
       begin
-        {$ifdef VER3_0}
-        GetvParent:=vParentRef;
-        {$else VER3_0}
         if Assigned(vParentRef) then
           GetvParent:=vParentRef^
         else
           GetvParent:=Nil;
-        {$endif VER3_0}
       end;
 
 
@@ -319,6 +383,7 @@ begin
   Result:=Create(PByte(@aData),aBigEndian);
 end;
 
+
 class function TGUID.Create(const aData : PByte; aBigEndian: Boolean = False): TGUID; overload; static;
 
 const
@@ -331,6 +396,54 @@ begin
   Result.D1:=SwapEndian(Result.D1);
   Result.D2:=SwapEndian(Result.D2);
   Result.D3:=SwapEndian(Result.D3);
+end;
+
+
+const
+  cAsStringByteScatter: array[0 .. 15] of byte =
+  (
+    // Character 1: {.
+    // Bytes 0−3 go to characters 2−9 as uint32.
+  {$ifdef ENDIAN_LITTLE} 8{..9}, 6{..7}, 4{..5}, 2{..3}, {$else} 2{..3}, 4{..5}, 6{..7}, 8{..9}, {$endif}
+    // Character 10: -.
+    // Bytes 4−5 go to characters 11−14 as uint16.
+    // Character 15: -.
+    // Bytes 6-7 go to characters 16−19 as uint16.
+  {$ifdef ENDIAN_LITTLE} 13{..14}, 11{..12}, 18{..19}, 16{..17}, {$else} 11{..12}, 13{..14}, 16{..17}, 18{..19}, {$endif}
+    // Character 20: -.
+    // Bytes 8-9 go to characters 21−24 as single bytes.
+    21{..22}, 23{..24},
+    // Character 25: -.
+    // Bytes 10-15 go to characters 26−37 as single bytes.
+    26{..27}, 28{..29}, 30{..31}, 32{..33}, 34{..35}, 36{..37}
+    // Character 38: }.
+  );
+
+class function TGUID.FromString(const S: ShortString; out GUID: TGUID): Boolean;
+  function ParseHexDigit(c: char; var aRes : Boolean): Byte;
+  begin
+    case c of
+      '0'..'9': Result := Byte(c) - Byte('0');
+      'a'..'f': Result := Byte(c) - Byte('a') + 10;
+      'A'..'F': Result := Byte(c) - Byte('A') + 10;
+    else
+      aRes := False;
+    end;
+  end;
+
+var
+  iByte: SizeInt;
+  sp: PChar;
+
+begin
+  Result := (Length(S)=38) and (S[1]='{') and (S[10]='-') and (S[15]='-') and (S[20]='-') and (S[25]='-') and (S[38]='}');
+  if not Result then exit;
+  for iByte := 0 to High(cAsStringByteScatter) do
+  begin
+    sp := PChar(Pointer(@S[1])) + cAsStringByteScatter[iByte] - 1 { AsStringByteScatter values are 1-based. };
+    PByte(@Guid)[iByte] := ParseHexDigit(sp[0], Result) shl 4 + ParseHexDigit(sp[1],Result);
+
+  end;
 end;
 
 
@@ -354,7 +467,27 @@ begin
   Result:=(P[0]=0) and (P[1]=0) and (P[2]=0) and (P[3]=0)
 end;
 
+function TGUID.AsString : ShortString;
 
+
+var
+  iByte, iRes: SizeInt;
+
+begin
+  Result[0]:=#38;
+  Result[1]:='{';
+  Result[10]:='-';
+  Result[15]:='-';
+  Result[20]:='-';
+  Result[25]:='-';
+  Result[38]:='}';
+  for iByte:=0 to High(cAsStringByteScatter) do
+  begin
+    iRes:=cAsStringByteScatter[iByte];
+    PAnsiChar(@Result[0])[iRes]:=HexTbl[PByte(@Self)[iByte] shr 4];
+    PAnsiChar(@Result[0])[iRes+1]:=HexTbl[PByte(@Self)[iByte] and $F];
+  end;
+end;
 
 {****************************************************************************
                            TINTERFACEENTRY
@@ -363,27 +496,19 @@ end;
 
     function tinterfaceentry.GetIID: pguid;
       begin
-        {$ifdef VER3_0}
-        GetIID:=IIDRef;
-        {$else VER3_0}
         if Assigned(IIDRef) then
           GetIID:=IIDRef^
         else
           GetIID:=Nil;
-        {$endif VER3_0}
       end;
 
 
     function tinterfaceentry.GetIIDStr: pshortstring;
       begin
-        {$ifdef VER3_0}
-        GetIIDStr:=IIDStrRef;
-        {$else VER3_0}
         if Assigned(IIDStrRef) then
           GetIIDStr:=IIDStrRef^
         else
           GetIIDStr:=Nil;
-        {$endif VER3_0}
       end;
 
 
@@ -397,6 +522,10 @@ end;
 
       destructor TObject.Destroy;
         begin
+          {$IFDEF ENABLE_OBJECTHOOK}
+          if assigned(DestroyObjectHook) then
+            DestroyObjectHook(Self);
+          {$ENDIF}
         end;
 
       procedure TObject.Free;
@@ -413,59 +542,45 @@ end;
            InstanceSize := PVmt(Self)^.vInstanceSize;
         end;
 
-      {$ifdef VER3_0}
-      var
-        emptyintf: ptruint; public name 'FPC_EMPTYINTF';
-      {$endif VER3_0}
-
       procedure InitInterfacePointers(objclass: tclass;instance : pointer);
 
         var
           ovmt: PVmt;
-          i: longint;
+          i: sizeuint;
           intftable: pinterfacetable;
           Res: pinterfaceentry;
         begin
           ovmt := PVmt(objclass);
-          while assigned(ovmt) and {$ifdef VER3_0}(ovmt^.vIntfTable <> @emptyintf){$else}assigned(ovmt^.vIntfTable){$endif} do
+          while assigned(ovmt) and assigned(ovmt^.vIntfTable) do
             begin
               intftable:=ovmt^.vIntfTable;
-              {$ifdef VER3_0}
-              if assigned(intftable) then
-              {$endif VER3_0}
-              begin
-                i:=intftable^.EntryCount;
-                Res:=@intftable^.Entries[0];
-                while i>0 do begin
-                  if Res^.IType = etStandard then
-                    ppointer(@(pbyte(instance)[Res^.IOffset]))^:=
-                      pointer(Res^.VTable);
-                  inc(Res);
-                  dec(i);
-                end;
+              i:=intftable^.EntryCount;
+              Res:=@intftable^.Entries[0];
+              while i>0 do begin
+                if Res^.IType = etStandard then
+                  ppointer(@(pbyte(instance)[Res^.IOffset]))^:=
+                    pointer(Res^.VTable);
+                inc(Res);
+                dec(i);
               end;
               ovmt:=ovmt^.vParent;
             end;
         end;
 
-      class function TObject.InitInstance(instance : pointer) : tobject;
+      class procedure TObject.InitZeroedInstance(instance : pointer);
 
-{$ifndef VER3_0}
         var
            vmt  : PVmt;
            inittable : pointer;
+           Res : ^TRTTIRecordOpOffsetEntry;
 {$ifdef FPC_HAS_FEATURE_RTTI}
            mopinittable : PRTTIRecordOpOffsetTable;
 {$endif def FPC_HAS_FEATURE_RTTI}
-           i : longint;
-{$endif VER3_0}
+           i : longword;
         begin
-           I:=instancesize;
-           { the size is saved at offset 0 }
-           fillchar(instance^, InstanceSize, 0);
            { insert VMT pointer into the new created memory area }
            { (in class methods self contains the VMT!)           }
-           {$IFNDEF SYSTEM_HAS_FEATURE_MONITOR}
+           {$IFNDEF FPC_HAS_FEATURE_MONITOR}
              ppointer(instance)^:=pointer(self);
            {$ELSE}
              {$IFDEF VER3_2}
@@ -477,10 +592,9 @@ end;
              {$ENDIF}
           {$ENDIF}
 
-           if {$ifdef VER3_0}PVmt(self)^.vIntfTable <> @emptyintf{$else}assigned(PVmt(self)^.vIntfTable){$endif} then
+           if assigned(PVmt(self)^.vIntfTable) then
              InitInterfacePointers(self,instance);
 
-{$ifndef VER3_0}
 {$ifdef FPC_HAS_FEATURE_RTTI}
            { for management operators like initialize call int_initialize }
            vmt := PVmt(self);
@@ -495,16 +609,32 @@ end;
                        {$push}
                        { ensure that no range check errors pop up with the [0..0] array }
                        {$R-}
-                       for i:=0 to mopinittable^.Count-1 do
-                         TRTTIRecVarOp(mopinittable^.Entries[i].ManagmentOperator)(PByte(Instance)+mopinittable^.Entries[i].FieldOffset);
+                       i:=mopinittable^.Count;
+                       Res:=@mopinittable^.Entries[0];
+                       while i>0 do
+                         begin
+                           TRTTIRecVarOp(Res^.ManagmentOperator)(PByte(Instance)+Res^.FieldOffset);
+                           inc(Res);
+                           dec(i);
+                         end;
                        {$pop}
                      end;
                  end;
              end;
 {$endif def FPC_HAS_FEATURE_RTTI}
-{$endif VER3_0}
 
-           InitInstance:=TObject(Instance);
+           {$IFDEF ENABLE_OBJECTHOOK}
+           If Assigned(AllocateObjectHook) then
+             AllocateObjectHook(TObject(Instance));
+           {$ENDIF}
+        end;
+
+      class function TObject.InitInstance(instance : pointer) : tobject;
+
+        begin
+          FillChar(Instance^, InstanceSize, 0);
+          InitZeroedInstance(Instance);
+          InitInstance:=TObject(Instance);
         end;
 
       class function TObject.ClassParent : tclass;
@@ -518,13 +648,12 @@ end;
       class function TObject.NewInstance : tobject;
 
         var
-           p : pointer;
+           p : pointer absolute result;
 
         begin
-           getmem(p, InstanceSize);
-           if p <> nil then
-              InitInstance(p);
-           NewInstance:=TObject(p);
+           p:=AllocMem(InstanceSize);
+           if p<>nil then
+              InitZeroedInstance(p);
         end;
 
       procedure TObject.FreeInstance;
@@ -705,15 +834,36 @@ end;
           ClassName := PVmt(Self)^.vClassName^;
         end;
 
+      {$if SIZEOF(CHAR)=2}
+      class function TObject.ClassNameIs(const name : AnsiString) : boolean;
+      var
+          SS : ShortString;
+      begin
+        SS:=Name;
+        ClassNameIs:=ClassNameIs(SS);
+      end;
+      {$ENDIF}
+
+      class function TObject.ClassNameIs(const name : ShortString) : boolean;
+      begin
+        ClassNameIs:=ShortCompareText(PVmt(Self)^.vClassName^, name) = 0;
+      end;
+
+      {$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
       class function TObject.ClassNameIs(const name : RTLString) : boolean;
 
         var
           SS : ShortString;
-          
+
         begin
-           SS:=ShortString(Name);
-           ClassNameIs:=ShortCompareText(PVmt(Self)^.vClassName^, SS) = 0;
+           {$if SIZEOF(CHAR)=2}
+           SS:=UTF8Encode(Name);
+           {$ELSE}
+           SS:=Name;
+           {$ENDIF}
+           ClassNameIs:=ClassNameIs(SS);
         end;
+      {$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
       class function TObject.InheritsFrom(aclass : TClass) : Boolean;
 
@@ -858,13 +1008,13 @@ end;
                Temp:= vmt^.vInitTable;
 {$ifdef FPC_HAS_FEATURE_RTTI}
                { The RTTI format matches one for records, except the type is tkClass.
-                 Since RecordRTTI does not check the type, calling it yields the desired result. }
+                 Since FinalizeRecordFields does not check the type, calling it yields the desired result. }
                if Assigned(Temp) then
-                 RecordRTTI(Self,Temp,@int_finalize);
+                 FinalizeRecordFields(Self,aligntoqword(Temp+2+PByte(Temp)[1]));
 {$endif def FPC_HAS_FEATURE_RTTI}
                vmt:= vmt^.vParent;
              end;
-           {$IFDEF SYSTEM_HAS_FEATURE_MONITOR}
+           {$IFDEF FPC_HAS_FEATURE_MONITOR}
            if Assigned(_MonitorData) then
              TMonitor.FreeMonitorData(_MonitorData);
            {$ENDIF}
@@ -1034,24 +1184,22 @@ end;
 
       class function TObject.GetInterfaceEntry(const iid : tguid) : pinterfaceentry;
         var
-          i: longint;
+          i: sizeuint;
           intftable: pinterfacetable;
           ovmt: PVmt;
         begin
           ovmt := PVmt(Self);
-          while Assigned(ovmt) and {$ifdef VER3_0}(ovmt^.vIntfTable <> @emptyintf){$else}Assigned(ovmt^.vIntftable){$endif} do
+          while Assigned(ovmt) and Assigned(ovmt^.vIntftable) do
           begin
             intftable:=ovmt^.vIntfTable;
-            {$ifdef VER3_0}
-            if assigned(intftable) then
-            {$endif VER3_0}
+            i:=intftable^.EntryCount;
+            result:=@intftable^.Entries[0];
+            while i>0 do
             begin
-              for i:=0 to intftable^.EntryCount-1 do
-              begin
-                result:=@intftable^.Entries[i];
-                if assigned(Result^.iid) and IsGUIDEqual(Result^.iid^,iid) then
-                  Exit;
-              end;
+              if assigned(Result^.iid) and IsGUIDEqual(Result^.iid^,iid) then
+                Exit;
+              inc(Result);
+              dec(i);
             end;
             ovmt := ovmt^.vParent;
           end;
@@ -1060,24 +1208,22 @@ end;
 
       class function TObject.GetInterfaceEntryByStr(const iidstr : shortstring) : pinterfaceentry;
         var
-          i: longint;
+          i: sizeuint;
           intftable: pinterfacetable;
           ovmt: PVmt;
         begin
           ovmt := PVmt(Self);
-          while Assigned(ovmt) and {$ifdef VER3_0}(ovmt^.vIntfTable <> @emptyintf){$else}Assigned(ovmt^.vIntfTable){$endif} do
+          while Assigned(ovmt) and Assigned(ovmt^.vIntfTable) do
           begin
             intftable:=ovmt^.vIntfTable;
-            {$ifdef VER3_0}
-            if assigned(intftable) then
-            {$endif VER3_0}
+            i:=intftable^.EntryCount;
+            result:=@intftable^.Entries[0];
+            while i>0 do
             begin
-              for i:=0 to intftable^.EntryCount-1 do
-              begin
-                result:=@intftable^.Entries[i];
-                if assigned(result^.iidstr) and (result^.iidstr^ = iidstr) then
-                  Exit;
-              end;
+              if assigned(result^.iidstr) and (result^.iidstr^ = iidstr) then
+                Exit;
+              inc(Result);
+              dec(i);
             end;
             ovmt := ovmt^.vParent;
           end;
@@ -1088,6 +1234,24 @@ end;
         begin
           getinterfacetable:=PVmt(Self)^.vIntfTable;
         end;
+
+      class procedure TObject.GetLastCastErrorInfo(out aFrom,aTo : shortstring);
+
+      begin
+        case CastError.From.Mode of
+          CastErrorFromClass: aFrom:=CastError.From._Class.ClassName;
+          CastErrorFromExternalInterface: aFrom:='External interface';
+          else aFrom:='';
+        end;
+        case CastError._To.Mode of
+          CastErrorToClass: aTo:=CastError._To._Class.ClassName;
+          CastErrorToComInterface: aTo:=CastError._To.IID.AsString;
+          CastErrorToCorbaInterface: aTo:=CastError._To.CorbaName;
+          else aTo:='';
+        end;
+        CastError.From.Mode:=CastErrorFromNA;
+        CastError._To.Mode:=CastErrorToNA;
+      end;
 
       class function TObject.UnitName : RTLString;
 {$ifdef FPC_HAS_FEATURE_RTTI}
@@ -1155,25 +1319,25 @@ end;
         begin
           result:=ClassName;
         end;
-        
+
       procedure TObject.DisposeOf;
       begin
         Free;
       end;
-      
+
       function TObject.GetDisposed : Boolean;
-      
+
       begin
         Result:=False;
-      end;    
-      
+      end;
+
       procedure TObject.CheckDisposed;
-      
+
       begin
         // Do nothing since we have no reference count.
       end;
 
-      {$IFDEF SYSTEM_HAS_FEATURE_MONITOR}
+      {$IFDEF FPC_HAS_FEATURE_MONITOR}
 
        function TObject.SetMonitorData(aData,aCheckOld : Pointer) : Pointer;
        begin
@@ -1184,7 +1348,7 @@ end;
        begin
          Result:=_MonitorData;
        end;
-      {$ENDIF}
+      {$ENDIF FPC_HAS_FEATURE_MONITOR}
 
 
 {****************************************************************************
@@ -1204,18 +1368,33 @@ end;
     function TInterfacedObject._AddRef : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 
       begin
-         _addref:=interlockedincrement(frefcount);
+         _addref:=frefcount;
+         if _addref<>0 then
+           begin
+             if _addref>0 then
+               _addref:=interlockedincrement(frefcount);
+             exit;
+           end;
+         frefcount:=1; { Work non-atomically in the common case of refcount = 0 (typical state after the complete object construction). }
+         _addref:=1;
       end;
 
     function TInterfacedObject._Release : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 
       begin
-         _Release:=interlockeddecrement(frefcount);
-         if _Release=0 then
+         _Release:=frefcount;
+         if _Release<>1 then
            begin
-           if interlockedincrement(fdestroycount)=1 then
-             self.destroy;
-           end;
+             if _Release<=0 then { -1 means recursive call from destructor... 0 is impossible. }
+               exit;
+             _Release:=interlockeddecrement(frefcount);
+             if _Release>0 then
+               exit;
+           end
+         else
+           _Release:=0; { Work non-atomically in the common case of refcount = 1 (typical state for the last owner... which is often the only owner). }
+         frefcount:=-1; { Prevent recursive _Release from destroying twice (bug 32168). }
+         self.destroy;
       end;
 
    destructor TInterfacedObject.Destroy;
@@ -1223,7 +1402,6 @@ end;
    begin
      // We must explicitly reset. Bug ID 32353
      FRefCount:=0;
-     FDestroyCount:=0;
      inherited Destroy;
    end;
 
@@ -1232,13 +1410,16 @@ end;
       begin
          { we need to fix the refcount we forced in newinstance }
          { further, it must be done in a thread safe way        }
-         declocked(frefcount);
+         if frefcount=1 then
+           frefcount:=0 { Work non-atomically in the common case of refcount = 1 (usual state before AfterConstruction). }
+         else
+           declocked(frefcount);
       end;
 
     procedure TInterfacedObject.BeforeDestruction;
 
       begin
-         if frefcount<>0 then
+         if frefcount>0 then { Legitimate values: -1 if destroying by _Release, 0 if destroying manually. }
            HandleError(204);
       end;
 
@@ -1386,7 +1567,7 @@ Procedure TInterfaceThunk.Thunk(aMethod: Longint; aCount : Longint; aData : PArg
 
 begin
   if Assigned(FCallBack) then
-    FCallBack(Self,aMethod,aCount,aData); 
+    FCallBack(Self,aMethod,aCount,aData);
 end;
 
 function TInterfaceThunk.QueryInterface({$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} iid : tguid;out obj) : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
@@ -1400,6 +1581,8 @@ begin
       result:=S_OK;
   if (Result<>S_OK) then
     Result:=Inherited QueryInterface(iid,obj);
+  if (Result<>S_OK) and Assigned(OnQueryInterface) then
+    OnQueryInterface(iid,Result,obj);
 end;
 
 function TInterfaceThunk.InterfaceVMTOffset : word;
@@ -1413,8 +1596,10 @@ end;
 ****************************************************************************}
 
 {$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
-  {$if defined(FPC_WASM_NATIVE_EXCEPTIONS)}
-    {$I except_native.inc}
+  {$if defined(FPC_WASM_EXNREF_EXCEPTIONS)}
+    {$I except_exnref.inc}
+  {$elseif defined(FPC_WASM_LEGACY_EXCEPTIONS)}
+    {$I except_legacy.inc}
   {$elseif defined(FPC_WASM_BRANCHFUL_EXCEPTIONS)}
     {$I except_branchful.inc}
   {$else}
@@ -1438,7 +1623,7 @@ end;
 
 class operator TMethod.>(const aLeft, aRight: TMethod): Boolean; inline;
 begin
-  Result:=(PtrUInt(aLeft.Data)>PtrUInt(aRight.Data)) 
+  Result:=(PtrUInt(aLeft.Data)>PtrUInt(aRight.Data))
             or
           ((aLeft.Data=aRight.Data) and (PtrUInt(aLeft.Code)>PtrUint(aRight.Code)));
 end;
@@ -1450,7 +1635,7 @@ end;
 
 class operator TMethod.<(const aLeft, aRight: TMethod): Boolean; inline;
 begin
-  Result:=(PtrUInt(aLeft.Data)<PtrUInt(aRight.Data)) 
+  Result:=(PtrUInt(aLeft.Data)<PtrUInt(aRight.Data))
             or
           ((aLeft.Data=aRight.Data) and (PtrUInt(aLeft.Code)<PtrUint(aRight.Code)));
 end;
@@ -1928,6 +2113,6 @@ end;
 
 {$ENDIF}
 
-{$IFDEF SYSTEM_HAS_FEATURE_MONITOR}
+{$IFDEF FPC_HAS_FEATURE_MONITOR}
 {$i monitor.inc}
-{$ENDIF}
+{$ENDIF FPC_HAS_FEATURE_MONITOR}

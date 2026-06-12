@@ -25,8 +25,9 @@ uses
 {$ifdef macos}
   macutils,
 {$endif}
-  teststr,
-  testu,
+  tsstring,
+  tsutils,
+  tstypes,
   redir,
   bench,
   classes;
@@ -95,6 +96,7 @@ const
   DoKnown : boolean = false;
   DoAll : boolean = false;
   DoUsual : boolean = true;
+  ForceTestThreads : Boolean = false;
   { TargetDir : string = ''; unused }
   BenchmarkInfo : boolean = false;
   ExtraCompilerOpts : string = '';
@@ -123,15 +125,33 @@ const
   NoWorkingUnicodeSupport='$nounicode';
   TargetHasNoWorkingUnicodeSupport = 'msdos';
   NoWorkingThread='$nothread';
-  TargetHasNoWorkingThreadSupport = 'go32v2,msdos,wasi';
+  TargetHasNoWorkingThreadSupport = 'go32v2,msdos,wasip1';
 
 procedure TranslateConfig(var AConfig: TConfig);
 begin
   AConfig.SkipTarget:=ReplaceText(AConfig.SkipTarget, NoSharedLibSupportPattern, TargetHasNoSharedLibSupport);
   AConfig.SkipTarget:=ReplaceText(AConfig.SkipTarget, NoWorkingUnicodeSupport, TargetHasNoWorkingUnicodeSupport);
-  AConfig.SkipTarget:=ReplaceText(AConfig.SkipTarget, NoWorkingThread, TargetHasNoWorkingThreadSupport);
+  if not ForceTestThreads then
+    AConfig.SkipTarget:=ReplaceText(AConfig.SkipTarget, NoWorkingThread, TargetHasNoWorkingThreadSupport);
 end;
 
+const
+  VerbosePrefix : string = '';
+
+procedure Verbose(lvl:TVerboseLevel;const s:string);
+var
+  su : string;
+begin
+  if UniqueSuffix<>'' then
+    begin
+      if VerbosePrefix='' then
+        VerbosePrefix:='#'+UniqueSuffix+'# ';
+      su:=VerbosePrefix+s;
+      tsutils.Verbose(lvl,su);
+    end
+  else
+    tsutils.Verbose(lvl,s);
+end;
 
 function ToStr(l:longint):string;
 var
@@ -589,7 +609,8 @@ begin
     (LTarget='iphonesim') or
     (LTarget='darwin') or
     (LTarget='aix') or
-    (LTarget='android');
+    (LTarget='android') or
+    (LTarget='dragonfly');
 
   { Set ExeExt for CompilerTarget.
     This list has been set up 2013-01 using the information in
@@ -619,7 +640,7 @@ begin
     end
   else if LTarget='wii' then
     ExeExt:='.dol'
-  else if LTarget='wasi' then
+  else if (LTarget='wasip1') or (LTarget='wasip1threads') then
     ExeExt:='.wasm';
 end;
 
@@ -718,6 +739,47 @@ begin
 end;
 
 
+function CheckForMessages(const OutName:string;const Msgs:array of longint;var Found:array of boolean):boolean;
+var
+  t : text;
+  s,id : string;
+  fnd,i : longint;
+begin
+  CheckForMessages:=false;
+  for i:=0 to high(Found) do
+    Found[i]:=False;
+  if length(Msgs)<>length(Found) then
+    exit;
+  assign(t,Outname);
+  {$I-}
+  reset(t);
+  {$I+}
+  if ioresult<>0 then
+    exit;
+  fnd:=0;
+  for i:=0 to high(Found) do
+    Found[i]:=False;
+  while not eof(t) do
+    begin
+      readln(t,s);
+      for i:=0 to high(Msgs) do
+        begin
+          str(Msgs[i],id);
+          id:='('+id+')';
+          if startsstr(id,s) or (pos(': '+id,s)>0) then
+            begin
+              if not Found[i] then
+                inc(fnd);
+              Found[i]:=True;
+              { there can only be a single message per line }
+              break;
+            end;
+        end;
+    end;
+  close(t);
+  CheckForMessages:=fnd=Length(Msgs);
+end;
+
 { Takes each option from AddOptions list
   considered as a space separated list
   and adds the option to args
@@ -770,7 +832,7 @@ end;
   the list of options passed to the compiler.
   %DELOPT=XYZ  will remove XYZ exactly
   %DELOPT=XYZ* will remove all options starting with XYZ.
-  NOTE: This fuinction does not handle quoted options. }
+  NOTE: This function does not handle quoted options. }
 function DelOptions(Pattern, opts : string) : string;
 var
   currentopt : string;
@@ -840,13 +902,15 @@ end;
 
 function RunCompiler(const ExtraPara: string):boolean;
 var
-  args,LocalExtraArgs,
+  args,LocalExtraArgs,msgid,
   wpoargs,wposuffix : string;
+  i,
   passnr,
   passes  : longint;
   execres : boolean;
   EndTicks,
   StartTicks : int64;
+  fndmsgs : array of boolean;
 begin
   RunCompiler:=false;
   args:='-n -T'+CompilerTarget+' -Fu'+RTLUnitsDir;
@@ -881,6 +945,12 @@ begin
     end;
   if Config.NeedOptions<>'' then
    AppendOptions(Config.NeedOptions,args);
+  { we need to check for message IDs, so request them }
+  if Length(Config.ExpectMsgs) <> 0 then
+    begin
+      AppendOptions('-vq',args);
+      SetLength(fndmsgs,Length(Config.ExpectMsgs));
+    end;
   wpoargs:='';
   wposuffix:='';
   if (Config.WpoPasses=0) or
@@ -952,6 +1022,34 @@ begin
          Verbose(V_Warning,'Internal error in compiler');
          exit;
        end;
+
+      if length(Config.ExpectMsgs)<>0 then
+        begin
+          Verbose(V_Debug,'Checking for messages: '+ToStr(Length(Config.ExpectMsgs)));
+          if not CheckForMessages(CompilerLogFile,Config.ExpectMsgs,fndmsgs) then
+            begin
+              AddLog(FailLogFile,TestName);
+              if Config.Note<>'' then
+                AddLog(FailLogFile,Config.Note);
+              AddLog(ResLogFile,message_missing+PPFileInfo[current]);
+              AddLog(LongLogFile,line_separation);
+              AddLog(LongLogFile,message_missing+PPFileInfo[current]);
+              if Config.Note<>'' then
+                AddLog(LongLogFile,Config.Note);
+              for i:=0 to length(Config.ExpectMsgs) do
+                if not fndmsgs[i] then
+                  begin
+                    str(Config.ExpectMsgs[i],msgid);
+                    AddLog(LongLogFile,message_missing+msgid);
+                  end;
+              CopyFile(CompilerLogFile,LongLogFile,true);
+              { avoid to try again }
+              AddLog(ExeLogFile,message_missing+PPFileInfo[current]);
+              exit;
+            end
+          else
+            Verbose(V_Debug,'All messages found');
+        end;
     end;
 
   { Should the compile fail ? }
@@ -1035,7 +1133,7 @@ begin
   if ioresult<>0 then
    exit;
   GetCompilerTarget;
-  is_wasi:=(CompilerTarget='wasi');
+  is_wasi:=(CompilerTarget='wasip1') or (CompilerTarget='wasip1threads');
   while not eof(t) do
    begin
      readln(t,s);
@@ -1346,7 +1444,7 @@ begin
        ChDir(OldDir);
       {$I+}
       GetCompilerTarget;
-      if (CompilerTarget='wasi') then
+      if (CompilerTarget='wasip1') or (CompilerTarget='wasip1threads') then
        begin
          CheckTestExitCode(FullEXELogFile);
        end;
@@ -1794,7 +1892,7 @@ var
   PPDir,LibraryName,LogSuffix,PPPrefix : string;
   Res : boolean;
 begin
-  Res:=GetConfig(PPFile[current],Config);
+  Res:=GetConfig('',PPFile[current],Config);
   TranslateConfig(Config);
 
   if Res then
@@ -1823,7 +1921,7 @@ begin
         begin
 {$ifndef MACOS}
           { handle paths that are parallel to the tests directory (let's hope
-            that noone uses ../../ -.- ) }
+            that none uses ../../ -.- ) }
           { ToDo: check relative paths on MACOS }
           PPPrefix:=Copy(PPDir,1,3);
           if (PPPrefix='../') or (PPPrefix='..\') then
@@ -2075,6 +2173,8 @@ end;
 
 
 begin
+  if GetEnvironmentVariable('TEST_THREADS')='1' then
+    ForceTestThreads:=True;
   Current:=0;
   PPFile:=TStringList.Create;
   PPFile.Capacity:=10;

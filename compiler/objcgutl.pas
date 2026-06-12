@@ -151,7 +151,6 @@ procedure objcreatestringpoolentryintern(p: pchar; len: longint; pooltype: tcons
   var
     entry  : PHashSetItem;
     strlab : tasmlabel;
-    pc     : pchar;
     pool   : THashSet;
     tcb    : ttai_typedconstbuilder;
   begin
@@ -167,17 +166,14 @@ procedure objcreatestringpoolentryintern(p: pchar; len: longint; pooltype: tcons
         { Make sure strlab has a reference }
         strlab.increfs;
 
-        getmem(pc,entry^.keylength+1);
-        move(entry^.key^,pc^,entry^.keylength);
-        pc[entry^.keylength]:=#0;
-
-        { add the string to the approriate section }
+        { add the string to the appropriate section }
         tcb:=ctai_typedconstbuilder.create([tcalo_is_lab,tcalo_new_section]);
-        def:=tcb.emit_pchar_const(pc,entry^.keylength,false);
+        def:=tcb.emit_pchar_const(pchar(entry^.key),entry^.keylength);
         current_asmdata.asmlists[al_objc_pools].concatList(
           tcb.get_final_asmlist(strlab,def,stringsec,strlab.name,1)
         );
         tcb.free;
+        tcb := nil;
         def:=cpointerdef.getreusable(def);
       end
     else
@@ -212,6 +208,7 @@ procedure objcfinishstringrefpoolentry(entry: phashsetitem; stringpool: tconstpo
           tcb.get_final_asmlist(reflab,strdef,refsec,reflab.name,sizeof(pint))
           );
         tcb.free;
+        tcb := nil;
 
         { in case of a class reference, also add a lazy symbol reference for
           the class (the linker requires this for the fragile ABI). }
@@ -257,6 +254,7 @@ procedure objcfinishclassrefnfpoolentry(entry: phashsetitem; classdef: tobjectde
           tcb.get_final_asmlist(reflab,voidpointertype,sec_objc_cls_refs,reflab.name,sizeof(pint))
         );
         tcb.free;
+        tcb := nil;
       end;
   end;
 
@@ -376,6 +374,7 @@ procedure tobjcrttiwriter.gen_objc_methods(list: tasmlist; objccls: tobjectdef; 
       )
     );
     tcb.free;
+    tcb := nil;
   end;
 
 
@@ -425,9 +424,13 @@ procedure tobjcrttiwriter.gen_objc_protocol_elements(list: tasmlist; protocol: t
       optclssym:=nil;
 
     reqinstmlist.Free;
+    reqinstmlist := nil;
     reqclsmlist.Free;
+    reqclsmlist := nil;
     optinstmlist.Free;
+    optinstmlist := nil;
     optclsmlist.Free;
+    optclsmlist := nil;
 end;
 
 
@@ -503,6 +506,7 @@ procedure tobjcrttiwriter.gen_objc_protocol_list(list: tasmlist; protolist: tfpo
       )
     );
     tcb.free;
+    tcb := nil;
     { the symbol will point to a record }
   end;
 
@@ -552,6 +556,7 @@ begin
       listsym,tcb.end_anonymous_record,section,sectname,sizeof(pint))
   );
   tcb.free;
+  tcb := nil;
 end;
 
 
@@ -614,11 +619,17 @@ constructor tobjcrttiwriter.create(_abi: tobjcabi);
 destructor tobjcrttiwriter.destroy;
   begin
     classdefs.free;
+    classdefs := nil;
     classsyms.free;
+    classsyms := nil;
     classrttidefs.free;
+    classrttidefs := nil;
     catrttidefs.free;
+    catrttidefs := nil;
     catdefs.free;
+    catdefs := nil;
     catsyms.free;
+    catsyms := nil;
     inherited destroy;
   end;
 
@@ -726,6 +737,7 @@ function tobjcrttiwriter_fragile.gen_objc_protocol_ext(list: TAsmList; optinstsy
           )
         );
         tcb.free;
+        tcb := nil;
       end
     else
       Result:=nil;
@@ -778,6 +790,7 @@ procedure tobjcrttiwriter_fragile.gen_objc_protocol(list:TAsmList; protocol: tob
       )
     );
     tcb.free;
+    tcb := nil;
   end;
 
 
@@ -849,6 +862,7 @@ procedure tobjcrttiwriter_fragile.gen_objc_category_sections(list:TAsmList; objc
       )
     );
     tcb.free;
+    tcb := nil;
 
     catlabel:=catsym;
     catlabeldef:=catdef;
@@ -1041,6 +1055,7 @@ procedure tobjcrttiwriter_fragile.gen_objc_classes_sections(list:TAsmList; objcl
       )
     );
     tcb.free;
+    tcb := nil;
 
     classlabel:=clssym;
     classlabeldef:=clsDef;
@@ -1140,6 +1155,7 @@ procedure tobjcrttiwriter_fragile.gen_objc_info_sections(list: tasmlist);
           end;
       end;
     superclasses.free;
+    superclasses := nil;
     { reference symbols for all classes and categories defined in this unit }
     for i:=0 to classdefs.count-1 do
       list.concat(tai_symbol.Createname_global_value('.objc_class_name_'+tobjectdef(classdefs[i]).objextname^,AT_DATA,0,0,voidpointertype));
@@ -1245,6 +1261,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_ivars(list: tasmlist; objccls: tob
                 )
               );
               tcb.free;
+              tcb := nil;
               inc(vcnt);
             end
           else
@@ -1294,6 +1311,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_ivars(list: tasmlist; objccls: tob
       )
     );
     tcb.free;
+    tcb := nil;
   end;
 
 
@@ -1400,6 +1418,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_protocol(list: tasmlist; protocol:
       )
     );
     tcb.free;
+    tcb := nil;
   end;
 
 (*
@@ -1460,6 +1479,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_category_sections(list:TAsmList; o
       )
     );
     tcb.free;
+    tcb := nil;
 
     catlabel:=catsym;
     catlabeldef:=catdef;
@@ -1672,6 +1692,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_class_ro_part(list: tasmlist; objc
       )
     );
     tcb.free;
+    tcb := nil;
     classrolabel:=rosym;
   end;
 
@@ -1786,6 +1807,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_classes_sections(list:TAsmList; ob
       )
     );
     metatcb.free;
+    metatcb := nil;
 
     { 2) regular class declaration }
     { the isa }
@@ -1806,6 +1828,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_classes_sections(list:TAsmList; ob
       )
     );
     isatcb.free;
+    isatcb := nil;
 
     classlabel:=clssym;
     classlabeldef:=classdef;
@@ -1893,7 +1916,9 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_info_sections(list: tasmlist);
     addclasslist(list,sec_objc_nlcatlist,target_asm.labelprefix+'_OBJC_LABEL_NONLAZY_CATEGORY_$',nonlazycategories);
 
     nonlazyclasses.free;
+    nonlazyclasses := nil;
     nonlazycategories.free;
+    nonlazycategories := nil;
     { the non-fragile abi doesn't have any module info, nor lazy references
       to used classes or to parent classes }
   end;
@@ -1925,6 +1950,7 @@ procedure MaybeGenerateObjectiveCImageInfo(globalst, localst: tsymtable);
         objcrttiwriter.gen_objc_rtti_sections(current_asmdata.asmlists[al_objc_data],localst);
         objcrttiwriter.gen_objc_info_sections(current_asmdata.asmlists[al_objc_data]);
         objcrttiwriter.free;
+        objcrttiwriter := nil;
       end;
   end;
 

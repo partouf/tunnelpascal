@@ -45,7 +45,8 @@ type
   TOprType=(OPR_NONE,OPR_CONSTANT,OPR_SYMBOL,OPR_LOCAL,
             OPR_REFERENCE,OPR_REGISTER,OPR_COND,OPR_REGSET,
             OPR_SHIFTEROP,OPR_MODEFLAGS,OPR_SPECIALREG,
-            OPR_REGPAIR,OPR_FENCEFLAGS,OPR_INDEXEDREG);
+            OPR_REGPAIR,OPR_FENCEFLAGS,OPR_INDEXEDREG,OPR_FLOATCONSTANT,
+            OPR_FUNCTYPE);
 
   TOprRec = record
     case typ:TOprType of
@@ -89,6 +90,10 @@ type
 {$if defined(riscv32) or defined(riscv64)}
       OPR_FENCEFLAGS: (fenceflags : TFenceFlags);
 {$endif aarch64}
+{$ifdef wasm32}
+      OPR_FLOATCONSTANT: (floatval:double);
+      OPR_FUNCTYPE     : (functype: TWasmFuncType);
+{$endif wasm32}
   end;
 
   TInstruction = class;
@@ -129,7 +134,7 @@ type
     constructor create(optype : tcoperand);virtual;
     destructor  destroy;override;
     { converts the instruction to an instruction how it's used by the assembler writer
-      and concats it to the passed list. The newly created item is returned if the
+      and concatenate it to the passed list. The newly created item is returned if the
       instruction was valid, otherwise nil is returned }
     function ConcatInstruction(p:TAsmList) : tai;virtual;
   end;
@@ -176,7 +181,7 @@ type
      Function RPNPop: tcgint;
      Procedure RPNCalc(const token: String; prefix: boolean);
      Procedure OpPush(_Operator: char; prefix: boolean);
-     { In reality returns TExprOperaotr }
+     { In reality returns TExprOperator }
      Procedure OpPop(var _Operator:TExprOperator);
   end;
 
@@ -515,6 +520,7 @@ Begin
   expr:=TExprParse.create;
   CalculateExpression:=expr.Evaluate(expression);
   expr.Free;
+  expr := nil;
 end;
 
 
@@ -1266,7 +1272,7 @@ var
   i : longint;
 Begin
   for i:=1 to max_operands do
-   Operands[i].free;
+   FreeAndNil(Operands[i]);
 end;
 
 
@@ -1332,6 +1338,19 @@ end;
              OPR_FENCEFLAGS:
                ai.loadfenceflags(i-1,fenceflags);
 {$endif riscv32 or riscv64}
+{$ifdef wasm32}
+              OPR_FLOATCONSTANT:
+                case opcode of
+                  a_f32_const:
+                    ai.loadsingle(i-1,floatval);
+                  a_f64_const:
+                    ai.loaddouble(i-1,floatval);
+                  else
+                    internalerror(2024072001);
+                end;
+              OPR_FUNCTYPE:
+                ai.loadfunctype(i-1,functype);
+{$endif wasm32}
               { ignore wrong operand }
               OPR_NONE:
                 ;
@@ -1763,7 +1782,12 @@ Begin
       begin
         if symtablestack.top.symtablelevel<>srsymtable.symtablelevel then
           begin
-            Tlabelsym(sym).nonlocal:=true;
+{$ifndef LLVM}
+	    { LLVM compiler requires that the static label RawThunkEnd
+             in packages/rtl-objpas/src/rtti.pp unit is set to nonlocal }
+            if (srsymtable.symtabletype=globalsymtable) or create_smartlink_library then
+{$endif LLVM}
+              Tlabelsym(sym).nonlocal:=true;
             if emit then
               include(current_procinfo.flags,pi_has_interproclabel);
           end;

@@ -41,9 +41,9 @@ BETATARGETS=mips64 mips64el
 ALLTARGETS=$(CYCLETARGETS)
 
 # All OS targets that do not support native compiler
-NO_NATIVE_COMPILER_OS_LIST=amstradcpc embedded freertos gba macosclassic msdos msxdos nds palmos sinclairql symbian watcom wii win16 zxspectrum
+NO_NATIVE_COMPILER_OS_LIST=amstradcpc embedded freertos gba macosclassic msdos msxdos nds palmos sinclairql symbian watcom wii win16 zxspectrum ps1 wasip2
 # All CPU targets that do not support native compiler
-NO_NATIVE_COMPILER_CPU_LIST=avr i8086 jvm z80 wasm32
+NO_NATIVE_COMPILER_CPU_LIST=avr i8086 jvm z80
 
 # Don't compile a native compiler & utilities for targets
 # which do not support it
@@ -378,7 +378,7 @@ endif
 endif
 
 # set correct defines (-d$(CPU_TARGET) is automatically added in makefile.fpc)
-override LOCALOPT+=-d$(CPC_TARGET) -dGDB
+override LOCALOPT+=-d$(CPC_TARGET)
 
 #include LLVM define/directory if requested
 ifdef LLVM
@@ -386,9 +386,10 @@ ifeq ($(findstring $(PPC_TARGET),x86_64 aarch64 arm),)
 $(error The $(PPC_TARGET) architecture is not (yet) supported by the FPC/LLVM code generator)
 endif
 
-ifeq ($(findstring $(OS_TARGET),darwin iphonesim linux),)
-$(error The $(OS_TARGET) target OS is not (yet) supported by the FPC/LLVM code generator)
-endif
+# No need to prevent cross-OS compilation
+#ifeq ($(findstring $(OS_TARGET),darwin iphonesim linux openbsd),)
+#$(error The $(OS_TARGET) target OS is not (yet) supported by the FPC/LLVM code generator)
+#endif
 
 override LOCALOPT+=-dllvm -Fullvm
 endif
@@ -485,7 +486,7 @@ endif
 
 # WASM32 specific
 ifeq ($(PPC_TARGET),wasm32)
-override LOCALOPT+=-dNOOPT
+override LOCALOPT+=-Fuwasm32
 endif
 
 # LoongArch64 specific
@@ -726,7 +727,7 @@ alltargets: $(ALLTARGETS)
 
 all: compiler $(addsuffix _all,$(TARGET_DIRS))
 
-compiler: $(COMPILER_UNITTARGETDIR) $(COMPILER_TARGETDIR) $(EXENAME)
+compiler: msg $(COMPILER_UNITTARGETDIR) $(COMPILER_TARGETDIR) $(EXENAME)
 
 ifeq ($(MAKELEVEL),0)
 ifndef STARTTIME
@@ -774,7 +775,7 @@ cycleclean: cleanall $(addsuffix _clean,$(CPC_TARGET))
 clean: tempclean execlean cleanall $(addsuffix _clean,$(CPC_TARGET)) $(addsuffix _clean,$(TARGET_DIRS))
 
 distclean: tempclean execlean cleanall $(addsuffix _clean,$(ALLTARGETS) $(BETATARGETS)) $(addsuffix _distclean,$(TARGET_DIRS))
-
+        -$(DEL) msgtxt.inc msgidx.inc
 
 #####################################################################
 # Make targets
@@ -786,6 +787,7 @@ $(MSG2INC): $(COMPILER_TARGETDIR) $(COMPILER_UNITTARGETDIR) $(COMPILERUTILSDIR)/
 # The msgtxt.inc only depends on the error?.msg file, not on msg2inc,
 # because that one will be new almost everytime
 msgtxt.inc: $(MSGFILE)
+        $(MAKE) rtl
         $(MAKE) $(MSG2INC)
         $(MSG2INC) $(MSGFILE) msg msg
 
@@ -904,6 +906,12 @@ ifeq ($(COMPILEREXENAME),)
 COMPILEREXENAME:=$(EXENAME)
 endif
 
+ifeq ($(OS_SOURCE),morphos)
+COMPILEREXEDIR:=$(shell echo $(BASEDIR) | sed 's/\///;s/\//:/')
+else
+COMPILEREXEDIR:=$(BASEDIR)
+endif
+
 .PHONY : revision
 
 revision :
@@ -928,7 +936,7 @@ else
 endif
         $(COMPILER) version.pas
 endif
-        $(COMPILER) -o$(BASEDIR)/$(COMPILEREXENAME) pp.pas
+        $(COMPILER) -o$(COMPILEREXEDIR)/$(COMPILEREXENAME) pp.pas
         $(EXECPPAS)
 
 #####################################################################
@@ -974,7 +982,7 @@ wpocycle:
         $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3PREFIX)$(TEMPNAME3)' 'OPT=$(strip $(RTLOPT) $(OPTWPOPERFORM) $(OPTNEW))' rtlclean
         $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3PREFIX)$(TEMPNAME3)' 'OPT=$(strip $(RTLOPT) $(OPTWPOPERFORM) $(OPTNEW))' rtl
         $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3PREFIX)$(TEMPNAME3)' 'OPT=$(strip $(LOCALOPT) $(OPTNEW) $(OPTWPOPERFORM) $(subst pp1.wpo,pp2.wpo,$(OPTWPOCOLLECT)))' $(addsuffix _clean,$(ALLTARGETS))
-	$(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3PREFIX)$(TEMPNAME3)' 'OPT=$(strip $(LOCALOPT) $(OPTNEW) $(OPTWPOPERFORM) $(subst pp1.wpo,pp2.wpo,$(OPTWPOCOLLECT)))' 'COMPILEREXENAME=$(TEMPWPONAME1PREFIX)$(TEMPWPONAME1)' compiler 
+	$(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3PREFIX)$(TEMPNAME3)' 'OPT=$(strip $(LOCALOPT) $(OPTNEW) $(OPTWPOPERFORM) $(subst pp1.wpo,pp2.wpo,$(OPTWPOCOLLECT)))' 'COMPILEREXENAME=$(TEMPWPONAME1PREFIX)$(TEMPWPONAME1)' compiler
 	$(MAKE) 'FPC=$(BASEDIR)/$(TEMPWPONAME1PREFIX)$(TEMPWPONAME1)' 'OPT=$(strip $(RTLOPT) $(OPTNEW) $(subst pp1.wpo,pp2.wpo,$(OPTWPOPERFORM)))' rtlclean
         $(MAKE) 'FPC=$(BASEDIR)/$(TEMPWPONAME1PREFIX)$(TEMPWPONAME1)' 'OPT=$(strip $(RTLOPT) $(OPTNEW) $(subst pp1.wpo,pp2.wpo,$(OPTWPOPERFORM)))' rtl
         $(MAKE) 'FPC=$(BASEDIR)/$(TEMPWPONAME1PREFIX)$(TEMPWPONAME1)' 'OPT=$(strip $(LOCALOPT) $(OPTNEW) $(subst pp1.wpo,pp2.wpo,$(OPTWPOPERFORM)))' $(addsuffix _clean,$(ALLTARGETS))
@@ -1186,7 +1194,8 @@ full_targets:
 #####################################################################
 
 htmldocs:
-        $(PASDOC) -p -h -o html$(PATHSEP)$(PPC_TARGET) -d fpc -d gdb -d $(PPC_TARGET) -u $(PPC_TARGET) $(PPC_TARGET)$(PATHSEP)*.pas systems$(PATHSEP)*.pas *.pas
+        mkdir -p html$(PATHSEP)$(PPC_TARGET)
+        $(PASDOC) -p -h -E html$(PATHSEP)$(PPC_TARGET) -D fpc -D gdb -D $(PPC_TARGET) $(PPC_TARGET)$(PATHSEP)*.pas systems$(PATHSEP)*.pas *.pas
 
 #####################################################################
 # Installation
@@ -1280,7 +1289,7 @@ rtlinstall:
 #####################################################################
 
 PPUDIR=$(COMPILER_UNITTARGETDIR)
-ALLPPUDIR=$(CPU_TARGET)/units/*
+ALLPPUDIRS:=$(wildcard $(CPU_TARGET)/units/*)
 PPULIST=$(wildcard $(PPUDIR)/*.ppu)
 PPULOGLIST=$(subst .ppu,.log-ppu,$(PPULIST))
 
@@ -1306,6 +1315,7 @@ vpath %.log-ppu $(PPUDIR) $(RTLPPUDIR) $(ALLPPUDIR)
 	$(MAKE) -C $(COMPILERUTILSDIR) ppudump$(EXEEXT)
 
 ppuinfo :
+	echo list of PPU directories is "$(ALLPPUDIRS)"
 	echo PPU list is "$(PPULIST)"
 	echo PPULOG list is "$(PPULOGLIST)"
 	echo RTLPPUDIR is "$(RTLPPUDIR)"

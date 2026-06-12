@@ -65,10 +65,14 @@ unit agppcgas;
       procedure WriteDirectiveName(dir: TAsmDirective); override;
     end;
 
+    TPPCMacOSAssembler=class(TPPCGNUAssembler)
+      function sectionname(atype: TAsmSectiontype; const aname: string; aorder: TAsmSectionOrder): string; override;
+    end;
+
     topstr = string[4];
 
     function branchmode(o: tasmop): topstr;
-    function cond2str(op: tasmop; c: tasmcond): string;  
+    function cond2str(op: tasmop; c: tasmcond): string;
 
   implementation
 
@@ -97,12 +101,13 @@ unit agppcgas;
     begin
        with ref do
         begin
-          if ((offset < -32768) or (offset > 32767)) and
-             (refaddr = addr_no) then
-            internalerror(2006052501);
           case refaddr of
             addr_no:
-              s := '';
+              begin
+                if (offset < -32768) or (offset > 32767) { or assigned(symbol) } then
+                  internalerror(2006052501);
+                s:='';
+              end;
             addr_pic_no_got:
               begin
                 { used for TOC-based loads }
@@ -142,15 +147,15 @@ unit agppcgas;
               end;
           end;
           if offset<0 then
-           s:=s+tostr(offset)
+            s:=s+tostr(offset)
           else
-           if (offset>0) then
-            begin
-              if assigned(symbol) then
-                s:=s+'+'+tostr(offset)
-              else
-                s:=s+tostr(offset);
-            end;
+            if (offset>0) then
+             begin
+               if assigned(symbol) then
+                 s:=s+'+'+tostr(offset)
+               else
+                 s:=s+tostr(offset);
+             end;
 
            if not(refaddr in [addr_no,addr_pic_no_got]) then
              begin
@@ -160,8 +165,8 @@ unit agppcgas;
                  s := s+refaddr2str[refaddr];
              end;
 {$ifdef cpu64bitaddr}
-           if (refaddr=addr_pic) and
-              (target_info.system=system_powerpc64_linux) then
+           if (refaddr=addr_pic) and ((target_info.system=system_powerpc64_linux) or 
+             (target_info.system=system_powerpc64_freebsd)) then
              s := s + '@got';
 {$endif cpu64bitaddr}
 
@@ -501,7 +506,7 @@ unit agppcgas;
         hp : tai;
         max_al : longint;
       begin
-        { Parse all asmlists to get maximum alignement used for all types }
+        { Parse all asmlists to get maximum alignment used for all types }
         for hal:=low(TasmlistType) to high(TasmlistType) do
           begin
             if not (current_asmdata.asmlists[hal].empty) then
@@ -510,11 +515,11 @@ unit agppcgas;
                 hp:=tai(current_asmdata.asmlists[hal].First);
                 while assigned(hp) do
                   begin
-                    case hp.typ of 
+                    case hp.typ of
                      ait_align :
                        begin
                          if tai_align_abstract(hp).aligntype > max_alignment[cur_sectype] then
-                           begin 
+                           begin
                              max_alignment[cur_sectype]:=tai_align_abstract(hp).aligntype;
                              current_asmdata.asmlists[hal].InsertAfter(tai_comment.Create(strpnew('Alignment put to '+tostr(tai_align_abstract(hp).aligntype))),hp);
                            end;
@@ -568,7 +573,7 @@ unit agppcgas;
         { make sure we always have a code and toc section,
           the linker expects that }
         writer.AsmWriteln(#9'.csect .text[PR],'+sectionalignment_aix(sec_code,max_alignment[sec_code]));
-        { set _text_s, to be used by footer below } 
+        { set _text_s, to be used by footer below }
         writer.AsmWriteln(#9'_text_s:');
         writer.AsmWriteln(#9'.toc');
       end;
@@ -627,6 +632,32 @@ unit agppcgas;
       end;
 
 
+    function TPPCMacOSAssembler.sectionname(atype: TAsmSectiontype; const aname: string; aorder: TAsmSectionOrder): string;
+      begin
+        case atype of
+          sec_code:
+            result:='.text[PR]';
+          sec_data,
+          sec_rodata,
+          { don't use .bss[BS], causes relocation problems }
+          sec_bss:
+            result:='.data[RW]';
+          sec_rodata_norel:
+            result:='.text[RO]';
+          sec_fpc:
+            result:='.fpc[RO]';
+          sec_toc:
+            result:='.toc';
+          { automatically placed in the right section }
+          sec_stab,
+          sec_stabstr:
+            result:='';
+          else
+            internalerror(2025010201);
+        end;
+      end;
+
+
 {*****************************************************************************
                                   Initialize
 *****************************************************************************}
@@ -644,8 +675,23 @@ unit agppcgas;
          asmcmd: '$ENDIAN -o $OBJ $EXTRAOPT $ARCH $ASM';
 {$endif cpu64bitaddr}
          supported_targets : [system_powerpc_linux,system_powerpc_netbsd,system_powerpc_openbsd,
-                              system_powerpc_MorphOS,system_powerpc_Amiga,system_powerpc_wii,
+                              system_powerpc_MorphOS,system_powerpc_Amiga,system_powerpc_wii,system_powerpc64_freebsd,
                               system_powerpc64_linux,system_powerpc_embedded,system_powerpc64_embedded];
+         flags : [af_needar,af_smartlink_sections];
+         labelprefix : '.L';
+         labelmaxlen : -1;
+         comment : '# ';
+         dollarsign: '$';
+       );
+
+    as_ppc_gas_macosclassic_info : tasminfo =
+       (
+         id     : as_powerpc_gas_macosclassic;
+
+         idtxt  : 'AS-MACOS';
+         asmbin : 'as';
+         asmcmd: '-o $OBJ $EXTRAOPT $ARCH $ASM';
+         supported_targets : [system_powerpc_macosclassic];
          flags : [af_needar,af_smartlink_sections];
          labelprefix : '.L';
          labelmaxlen : -1;
@@ -750,6 +796,7 @@ unit agppcgas;
 
 begin
   RegisterAssembler(as_ppc_gas_info,TPPCGNUAssembler);
+  RegisterAssembler(as_ppc_gas_macosclassic_info,TPPCMACOsAssembler);
   RegisterAssembler(as_ppc_gas_legacy_info,TPPCGNUAssembler);
   RegisterAssembler(as_ppc_gas_darwin_powerpc_info,TPPCAppleGNUAssembler);
   RegisterAssembler(as_ppc_clang_darwin_info,TPPCAppleGNUAssembler);

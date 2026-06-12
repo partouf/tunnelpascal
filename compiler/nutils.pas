@@ -134,10 +134,11 @@ interface
     function has_conditional_nodes(n : tnode) : boolean;
 
     { count the number of nodes in the node tree,
-      rough estimation how large the tree "node" is }
-    function node_count(node : tnode) : dword;
+      rough estimation how large the tree "node" is
+      If more than max nodes, returns max, so node_count(n, 10 + 1) <= 10 answers whether the tree has ≤10 nodes but avoids traversing the remaining 990. }
+    function node_count(node : tnode; max : dword = High(dword)) : dword;
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode; max : dword = High(dword)) : dword;
 
     { returns true, if the value described by node is constant/immutable, this approximation is safe
       if no dirty tricks like buffer overflows or pointer magic are used }
@@ -156,7 +157,7 @@ interface
     procedure replacenode(var dest,src : tnode);
 
     { strip off deref/addr combinations when looking for a the load node of an open array/array of const
-      since there is no possiblity to defined a pointer to an open array/array of const, we have not to
+      since there is no possibility to defined a pointer to an open array/array of const, we have not to
       take care of type casts, further, it means also that deref/addr nodes must always appear coupled
     }
     function get_open_const_array(p : tnode) : tnode;
@@ -168,7 +169,7 @@ interface
     procedure node_change_local_switch(p : tnode;cs : tlocalswitch;enable : boolean);
 
     { returns true, if p is a node which shall be short boolean evaluated,
-      if it is not an orn/andn with boolean operans, the result is undefined }
+      if it is not an orn/andn with boolean operands, the result is undefined }
     function doshortbooleval(p : tnode) : Boolean;
 
     { returns true if the node has the int value l }
@@ -180,12 +181,15 @@ interface
     { returns true if the node is an inline node of type i }
     function is_inlinefunction(p : tnode;i : tinlinenumber) : Boolean;
 
-    { checks if p is a series of length(a) statments, if yes, they are returned
+    { checks if p is a series of length(a) statements, if yes, they are returned
       in a and the function returns true }
     function GetStatements(p : tnode;var a : array of tstatementnode) : Boolean;
 
     { checks if p is a single statement, if yes, it is returned in s }
     function IsSingleStatement(p : tnode;var s : tnode) : Boolean;
+
+    { gets the last statement in a sequence of statements/blocks }
+    function GetLastStatement(p : tnode) : tnode;
 
     type
       TMatchProc2 = function(n1,n2 : tnode) : Boolean is nested;
@@ -201,7 +205,7 @@ interface
       combinations are tested, if it returns true, transformproc is called,
       the result of transformproc is assigned to res
 
-      this allows to find pattern like (3*a)+(3*b) and transfrom them into 3*(a+b)
+      this allows to find pattern like (3*a)+(3*b) and transform them into 3*(a+b)
     }
     function MatchAndTransformNodesCommutative(n1,n2,n3,n4 : tnode;matchproc : TMatchProc4;transformproc : TTransformProc4;var res : tnode) : Boolean;
 
@@ -209,6 +213,13 @@ interface
       resets all flags so that nf_write/nf_modify information is regenerated
     }
     procedure node_reset_pass1_write(n: tnode);
+
+    { Returns True if n one of its children has a type that appears in TypeList }
+    function has_node_of_type(n: TNode; TypeList: TNodeTypeSet): Boolean; {$IFDEF USEINLINE}inline;{$ENDIF USEINLINE}
+
+    { returns true if n is guranteed not to return an ordinal zero }
+    function node_not_zero(n : tnode) : Boolean;
+
 
 implementation
 
@@ -220,106 +231,132 @@ implementation
       cpubase,cgbase,procinfo,
       pass_1;
 
-  function foreachnode(procmethod : tforeachprocmethod;var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
+    type
+      ForEachNodeContext = object
+        procmethod: tforeachprocmethod;
+        f: staticforeachnodefunction;
+        arg: pointer;
+        res: boolean;
+        procedure perform(var n: tnode);
+        procedure process_children(n: tnode);
+        procedure process_casenode(n: tcasenode);
+      end;
 
-    function process_children(res : boolean) : boolean;
+
+    procedure ForEachNodeContext.perform(var n: tnode);
       var
-        i: longint;
+        fr: foreachnoderesult;
       begin
-        result:=res;
+        if not assigned(n) then
+          exit;
+        if procmethod=pm_preprocess then
+          process_children(n);
+
+        fr:=f(n,arg);
+        res:=(fr in [fen_true, fen_norecurse_true]) or res;
+        if fr in [fen_norecurse_false, fen_norecurse_true] then
+          exit;
+
+        if procmethod in [pm_postprocess,pm_postandagain] then
+          begin
+            process_children(n);
+            if procmethod=pm_postandagain then
+              begin
+                fr:=f(n,arg);
+                res:=(fr in [fen_true, fen_norecurse_true]) or res;
+              end;
+          end;
+      end;
+
+
+    procedure ForEachNodeContext.process_children(n: tnode);
+      begin
         case n.nodetype of
           asn:
             if assigned(tasnode(n).call) then
               begin
-                result := foreachnode(procmethod,tasnode(n).call,f,arg);
+                perform(tasnode(n).call);
                 exit
               end;
           calln:
             begin
-              result := foreachnode(procmethod,tnode(tcallnode(n).callinitblock),f,arg) or result;
-              result := foreachnode(procmethod,tcallnode(n).methodpointer,f,arg) or result;
-              result := foreachnode(procmethod,tcallnode(n).funcretnode,f,arg) or result;
-              result := foreachnode(procmethod,tnode(tcallnode(n).callcleanupblock),f,arg) or result;
+              perform(tnode(tcallnode(n).callinitblock));
+              perform(tcallnode(n).methodpointer);
+              perform(tcallnode(n).funcretnode);
+              perform(tnode(tcallnode(n).vmt_entry));
+              perform(tnode(tcallnode(n).callcleanupblock));
             end;
           callparan:
             begin
-              result := foreachnode(procmethod,tnode(tcallparanode(n).fparainit),f,arg) or result;
-              result := foreachnode(procmethod,tcallparanode(n).fparacopyback,f,arg) or result;
+              perform(tnode(tcallparanode(n).fparainit));
+              perform(tcallparanode(n).fparacopyback);
             end;
           ifn, whilerepeatn, forn, tryexceptn:
             begin
-              { not in one statement, won't work because of b- }
-              result := foreachnode(procmethod,tloopnode(n).t1,f,arg) or result;
-              result := foreachnode(procmethod,tloopnode(n).t2,f,arg) or result;
+              perform(tloopnode(n).t1);
+              perform(tloopnode(n).t2);
             end;
           raisen, tryfinallyn:
             { frame tree/copy of finally code }
-            result := foreachnode(ttertiarynode(n).third,f,arg) or result;
+            perform(ttertiarynode(n).third);
           tempcreaten:
             { temp. initialization code }
             if assigned(ttempcreatenode(n).tempinfo^.tempinitcode) then
-              result := foreachnode(ttempcreatenode(n).tempinfo^.tempinitcode,f,arg) or result;
+              perform(ttempcreatenode(n).tempinfo^.tempinitcode);
           casen:
-            begin
-              for i := 0 to tcasenode(n).blocks.count-1 do
-                if assigned(tcasenode(n).blocks[i]) then
-                  result := foreachnode(procmethod,pcaseblock(tcasenode(n).blocks[i])^.statement,f,arg) or result;
-              result := foreachnode(procmethod,tcasenode(n).elseblock,f,arg) or result;
-            end;
+            process_casenode(tcasenode(n));
           else
             ;
         end;
         if n.inheritsfrom(tbinarynode) then
           begin
             { first process the "payload" of statementnodes }
-            result := foreachnode(procmethod,tbinarynode(n).left,f,arg) or result;
-            result := foreachnode(procmethod,tbinarynode(n).right,f,arg) or result;
+            perform(tbinarynode(n).left);
+            perform(tbinarynode(n).right);
           end
         else if n.inheritsfrom(tunarynode) then
-          result := foreachnode(procmethod,tunarynode(n).left,f,arg) or result;
+          perform(tunarynode(n).left);
       end;
 
-    begin
-      result := false;
-      if not assigned(n) then
-        exit;
-      if procmethod=pm_preprocess then
-        result:=process_children(result);
-      case f(n,arg) of
-        fen_norecurse_false:
-          exit;
-        fen_norecurse_true:
+
+    procedure ForEachNodeContext.process_casenode(n: tcasenode);
+      var
+        i: SizeInt;
+        block: pointer;
+      begin
+        for i := 0 to n.blocks.count-1 do
           begin
-            result := true;
-            exit;
+            block := n.blocks[i];
+            if assigned(block) then
+              perform(pcaseblock(block)^.statement);
           end;
-        fen_true:
-          result := true;
-       { result is already false
-        fen_false:
-          result := false; }
-        else
-          ;
+        perform(n.elseblock);
       end;
-      if (procmethod=pm_postprocess) or (procmethod=pm_postandagain) then
-        result:=process_children(result);
-      if procmethod=pm_postandagain then
-        begin
-          case f(n,arg) of
-            fen_norecurse_false:
-              exit;
-            fen_norecurse_true:
-              begin
-                result := true;
-                exit;
-              end;
-            fen_true:
-              result := true;
-            else
-              ;
-          end;
-        end;
-    end;
+
+
+    { Adapts foreachnodefunction to staticforeachnodefunction. }
+    type
+      BoundToStaticForEachNodeContext = record
+        f: foreachnodefunction;
+        arg: pointer;
+      end;
+
+    function BoundToStaticForEachNodeAdapter(var n: tnode; arg: pointer): foreachnoderesult;
+      var
+        adaptCtx: ^BoundToStaticForEachNodeContext absolute arg;
+      begin
+        result := adaptCtx^.f(n, adaptCtx^.arg);
+      end;
+
+
+    function foreachnode(procmethod : tforeachprocmethod;var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
+      var
+        adaptCtx: BoundToStaticForEachNodeContext;
+      begin
+        adaptCtx.f := f;
+        adaptCtx.arg := arg;
+        result:=foreachnodestatic(procmethod,n,@BoundToStaticForEachNodeAdapter,@adaptCtx);
+      end;
 
 
     function foreachnode(var n: tnode; f: foreachnodefunction; arg: pointer): boolean;
@@ -328,106 +365,17 @@ implementation
       end;
 
 
-  function foreachnodestatic(procmethod : tforeachprocmethod;var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean;
-
-    function process_children(res : boolean) : boolean;
+    function foreachnodestatic(procmethod : tforeachprocmethod;var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean;
       var
-        i: longint;
+        fen: ForEachNodeContext;
       begin
-        result:=res;
-        case n.nodetype of
-        asn:
-          if assigned(tasnode(n).call) then
-            begin
-              result := foreachnodestatic(procmethod,tasnode(n).call,f,arg);
-              exit
-            end;
-          calln:
-            begin
-              result := foreachnodestatic(procmethod,tnode(tcallnode(n).callinitblock),f,arg) or result;
-              result := foreachnodestatic(procmethod,tcallnode(n).methodpointer,f,arg) or result;
-              result := foreachnodestatic(procmethod,tcallnode(n).funcretnode,f,arg) or result;
-              result := foreachnodestatic(procmethod,tnode(tcallnode(n).callcleanupblock),f,arg) or result;
-            end;
-          callparan:
-            begin
-              result := foreachnodestatic(procmethod,tnode(tcallparanode(n).fparainit),f,arg) or result;
-              result := foreachnodestatic(procmethod,tcallparanode(n).fparacopyback,f,arg) or result;
-            end;
-          ifn, whilerepeatn, forn, tryexceptn:
-            begin
-              { not in one statement, won't work because of b- }
-              result := foreachnodestatic(procmethod,tloopnode(n).t1,f,arg) or result;
-              result := foreachnodestatic(procmethod,tloopnode(n).t2,f,arg) or result;
-            end;
-          raisen, tryfinallyn:
-            { frame tree/copy of finally code }
-            result := foreachnodestatic(ttertiarynode(n).third,f,arg) or result;
-          tempcreaten:
-            { temp. initialization code }
-            if assigned(ttempcreatenode(n).tempinfo^.tempinitcode) then
-              result := foreachnodestatic(ttempcreatenode(n).tempinfo^.tempinitcode,f,arg) or result;
-          casen:
-            begin
-              for i := 0 to tcasenode(n).blocks.count-1 do
-                if assigned(tcasenode(n).blocks[i]) then
-                  result := foreachnodestatic(procmethod,pcaseblock(tcasenode(n).blocks[i])^.statement,f,arg) or result;
-              result := foreachnodestatic(procmethod,tcasenode(n).elseblock,f,arg) or result;
-            end;
-          else
-            ;
-        end;
-        if n.inheritsfrom(tbinarynode) then
-          begin
-            { first process the "payload" of statementnodes }
-            result := foreachnodestatic(procmethod,tbinarynode(n).left,f,arg) or result;
-            result := foreachnodestatic(procmethod,tbinarynode(n).right,f,arg) or result;
-          end
-        else if n.inheritsfrom(tunarynode) then
-          result := foreachnodestatic(procmethod,tunarynode(n).left,f,arg) or result;
+        fen.procmethod := procmethod;
+        fen.f := f;
+        fen.arg := arg;
+        fen.res := false;
+        fen.perform(n);
+        result := fen.res;
       end;
-
-    begin
-      result := false;
-      if not assigned(n) then
-        exit;
-      if procmethod=pm_preprocess then
-        result:=process_children(result);
-      case f(n,arg) of
-        fen_norecurse_false:
-          exit;
-        fen_norecurse_true:
-          begin
-            result := true;
-            exit;
-          end;
-        fen_true:
-          result := true;
-       { result is already false
-        fen_false:
-          result := false; }
-        else
-          ;
-      end;
-      if (procmethod=pm_postprocess) or (procmethod=pm_postandagain) then
-        result:=process_children(result);
-      if procmethod=pm_postandagain then
-        begin
-          case f(n,arg) of
-            fen_norecurse_false:
-              exit;
-            fen_norecurse_true:
-              begin
-                result := true;
-                exit;
-              end;
-            fen_true:
-              result := true;
-            else
-              ;
-          end;
-        end;
-    end;
 
 
     function foreachnodestatic(var n: tnode; f: staticforeachnodefunction; arg: pointer): boolean;
@@ -769,26 +717,63 @@ implementation
     { at will, probably best mainly in terms of required memory      }
     { accesses                                                       }
     function node_complexity(p: tnode): cardinal;
+
+    {$ifdef x86}
+      function in_const_set_complexity(cs: tsetconstnode): cardinal;
+        var
+          i,maxranges,lastv: cardinal;
+        begin
+          { maxranges value should match the logic in nx86set.pas:tx86innode.pass_generate_code.analizeset. }
+          if is_smallset(cs.resultdef) then
+            maxranges:=3
+          else if cs_opt_size in current_settings.optimizerswitches then
+            maxranges:=8
+          else
+            maxranges:=5;
+
+          result:=0;
+          lastv:=High(lastv)-1;
+          for i:=tsetdef(cs.resultdef).setbase to tsetdef(cs.resultdef).setmax do
+            if i in cs.value_set^ then
+              begin
+                if i<>lastv+1 then
+                  begin
+                    inc(result);
+                    if result>maxranges then
+                      exit(3);
+                  end;
+                lastv:=i;
+              end;
+        end;
+    {$endif}
+
       var
-        correction: byte;
+        cv : cardinal;
 {$ifdef ARM}
         dummy : byte;
 {$endif ARM}
       begin
-        result := 0;
-        while assigned(p) do
+        cv:=0;
+        result:=NODE_COMPLEXITY_INF; { For early exits by default. }
+        while assigned(p) and (cv<NODE_COMPLEXITY_INF) do { break = return cv, exit = return NODE_COMPLEXITY_INF. }
           begin
             case p.nodetype of
               { floating point constants usually need loading from memory }
               realconstn:
                 begin
-                  result:=2;
-                  exit;
+                  inc(cv,2);
+                  break;
+                end;
+              temprefn:
+                begin
+                  if (ttemprefnode(p).tempinfo^.typedef.needs_inittable) or
+                    not(ti_may_be_in_reg in ttemprefnode(p).tempflags) then
+                    inc(cv);
+                  break;
                 end;
               rttin,
               setconstn,
               stringconstn,
-              temprefn,
               loadvmtaddrn,
               { main reason for the next one: we can't take the address of }
               { loadparentfpnode, so replacing it by a temp which is the   }
@@ -797,146 +782,114 @@ implementation
               { still works with nodeinlining (JM)                         }
               loadparentfpn:
                 begin
-                  result := 1;
-                  exit;
+                  inc(cv);
+                  break;
                 end;
               loadn:
                 begin
                   if assigned(tloadnode(p).left) then
-                    inc(result,node_complexity(tloadnode(p).left));
+                    inc(cv,node_complexity(tloadnode(p).left));
                   { threadvars need a helper call }
                   if (tloadnode(p).symtableentry.typ=staticvarsym) and
                      (vo_is_thread_var in tstaticvarsym(tloadnode(p).symtableentry).varoptions) then
-                    inc(result,5)
+                    inc(cv,5)
                   else if not((tloadnode(p).symtableentry.typ in [staticvarsym,localvarsym,paravarsym,fieldvarsym]) and
                     (tabstractvarsym(tloadnode(p).symtableentry).varregable in [vr_intreg,vr_mmreg,vr_fpureg])) then
-                    inc(result);
+                    inc(cv);
                   if (tloadnode(p).symtableentry.typ=paravarsym) and
                      not(tabstractvarsym(tloadnode(p).symtableentry).varregable=vr_addr) and
                      tloadnode(p).is_addr_param_load then
-                    inc(result);
-                  if (result >= NODE_COMPLEXITY_INF) then
-                    result := NODE_COMPLEXITY_INF;
-                  exit;
+                    inc(cv);
+                  p:=nil; { Check for NODE_COMPLEXITY_INF and return cv. }
                 end;
               subscriptn:
                 begin
                   if is_implicit_pointer_object_type(tunarynode(p).left.resultdef) or
                     is_bitpacked_access(p) then
-                    inc(result,2)
+                    inc(cv,2)
                   { non-packed, int. regable records cause no extra
                     overhead no overhead if the fields are aligned to register boundaries }
                   else if tstoreddef(p.resultdef).is_intregable and (tsubscriptnode(p).vs.fieldoffset mod sizeof(aint)<>0) then
-                    inc(result,1);
-                  if (result = NODE_COMPLEXITY_INF) then
-                    exit;
-                  p := tunarynode(p).left;
+                    inc(cv,1);
+                  p:=tunarynode(p).left;
                 end;
-              labeln,
               blockn:
-                p := tunarynode(p).left;
+                p:=tunarynode(p).left;
               callparan:
                 begin
                   { call to decr? }
                   if is_managed_type(tunarynode(p).left.resultdef) and
                      assigned(tcallparanode(p).parasym) and (tcallparanode(p).parasym.varspez=vs_out) then
-                    begin
-                      result:=NODE_COMPLEXITY_INF;
-                      exit;
-                    end
-                  else
-                    begin
-                      inc(result);
-                      if (result = NODE_COMPLEXITY_INF) then
-                        exit;
-                      p := tunarynode(p).left;
-                    end;
+                    exit;
+                  inc(cv);
+                  p:=tunarynode(p).left;
                 end;
               notn,
-              derefn :
+              derefn,
+              addrn :
                 begin
-                  inc(result);
-                  if (result = NODE_COMPLEXITY_INF) then
-                    exit;
-                  p := tunarynode(p).left;
-                end;
-              addrn:
-                begin
-                  inc(result);
-                  if (result = NODE_COMPLEXITY_INF) then
-                    exit;
-                  p := tunarynode(p).left;
+                  inc(cv);
+                  p:=tunarynode(p).left;
                 end;
               typeconvn:
                 begin
                   { may be more complex in some cases }
                   if not(ttypeconvnode(p).retains_value_location) and
                     not((ttypeconvnode(p).convtype=tc_pointer_2_array) and (ttypeconvnode(p).left.expectloc in [LOC_CREGISTER,LOC_REGISTER,LOC_CONSTANT])) then
-                    inc(result);
-                  if result = NODE_COMPLEXITY_INF then
-                    exit;
-                  p := tunarynode(p).left;
-                end;
-              vecn:
-                begin
-                  inc(result,node_complexity(tbinarynode(p).left));
-                  inc(result);
-                  if (result >= NODE_COMPLEXITY_INF) then
-                    begin
-                      result := NODE_COMPLEXITY_INF;
-                      exit;
-                    end;
-                  p := tbinarynode(p).right;
+                    inc(cv);
+                  p:=tunarynode(p).left;
                 end;
               statementn:
                 begin
-                  inc(result,node_complexity(tbinarynode(p).left));
-                  if (result >= NODE_COMPLEXITY_INF) then
-                    begin
-                      result := NODE_COMPLEXITY_INF;
-                      exit;
-                    end;
-                  p := tbinarynode(p).right;
+                  inc(cv,node_complexity(tbinarynode(p).left));
+                  p:=tbinarynode(p).right;
                 end;
-              addn,subn,orn,andn,xorn,muln,divn,modn,symdifn,
+              addn,subn,orn,andn,xorn,symdifn,
               shln,shrn,
               equaln,unequaln,gtn,gten,ltn,lten,
-              assignn,
-              slashn:
+              assignn,vecn:
                 begin
-{$ifdef CPU64BITALU}
-                  correction:=1;
-{$else CPU64BITALU}
-                  correction:=2;
-{$endif CPU64BITALU}
-                  inc(result,node_complexity(tbinarynode(p).left)+1*correction);
-                  if (p.nodetype in [divn,modn,slashn]) then
-                    inc(result,10*correction*correction)
-                  else if p.nodetype=muln then
-                    inc(result,4*correction*correction);
-                  if (result >= NODE_COMPLEXITY_INF) then
+                  inc(cv,node_complexity(tbinarynode(p).left)+1);
+                  p:=tbinarynode(p).right;
+                end;
+              muln:
+                begin
+                  inc(cv,node_complexity(tbinarynode(p).left)+{$ifdef CPU64BITALU}4{$else}8{$endif});
+                  p:=tbinarynode(p).right;
+                end;
+              divn,modn,slashn:
+                begin
+                  inc(cv,node_complexity(tbinarynode(p).left)+{$ifdef CPU64BITALU}10{$else}20{$endif});
+                  p:=tbinarynode(p).right;
+                end;
+              inn:
+                begin
+                  inc(cv,node_complexity(tinnode(p).left));
+{$if declared(in_const_set_complexity)}
+                  if tinnode(p).right.nodetype=setconstn then
                     begin
-                      result := NODE_COMPLEXITY_INF;
-                      exit;
+                      inc(cv,in_const_set_complexity(tsetconstnode(tinnode(p).right)));
+                      break;
                     end;
-                  p := tbinarynode(p).right;
+{$endif in_const_set_complexity}
+                  inc(cv,3);
+                  p:=tbinarynode(p).right;
                 end;
               ordconstn:
                 begin
 {$ifdef ARM}
                   if not(is_shifter_const(aint(tordconstnode(p).value.svalue),dummy)) then
-                    result:=2;
+                    inc(cv,2);
 {$endif ARM}
-                  exit;
+{$ifdef RISCV}
+                  if not(is_imm12(aint(tordconstnode(p).value.svalue))) then
+                    inc(cv,2);
+{$endif RISCV}
+                  break;
                 end;
               exitn:
                 begin
-                  inc(result,2);
-                  if (result >= NODE_COMPLEXITY_INF) then
-                    begin
-                      result := NODE_COMPLEXITY_INF;
-                      exit;
-                    end;
+                  inc(cv,2);
                   p:=texitnode(p).left;
                 end;
               tempcreaten,
@@ -944,7 +897,7 @@ implementation
               pointerconstn,
               nothingn,
               niln:
-                exit;
+                break;
               inlinen:
                 begin
                   { this code assumes that the inline node has   }
@@ -973,7 +926,7 @@ implementation
                     in_volatile_x,
                     in_prefetch_var:
                       begin
-                        inc(result);
+                        inc(cv);
                         p:=tunarynode(p).left;
                       end;
                     in_cos_real,
@@ -982,45 +935,30 @@ implementation
                     in_sqrt_real,
                     in_ln_real:
                       begin
-                        inc(result,15);
-                        if (result >= NODE_COMPLEXITY_INF) then
-                          begin
-                            result:=NODE_COMPLEXITY_INF;
-                            exit;
-                          end;
+                        inc(cv,15);
                         p:=tunarynode(p).left;
                       end;
                     in_sqr_real:
                       begin
-                        inc(result,2);
-                        if (result >= NODE_COMPLEXITY_INF) then
-                          begin
-                            result:=NODE_COMPLEXITY_INF;
-                            exit;
-                          end;
+                        inc(cv,2);
                         p:=tunarynode(p).left;
                       end;
                     in_abs_long:
                       begin
-                        inc(result,3);
-                        if (result >= NODE_COMPLEXITY_INF) then
-                          begin
-                            result:=NODE_COMPLEXITY_INF;
-                            exit;
-                          end;
+                        inc(cv,3);
                         p:=tunarynode(p).left;
                       end;
                     in_sizeof_x,
                     in_typeof_x:
                       begin
-                        inc(result);
+                        inc(cv);
                         if (tinlinenode(p).left.nodetype<>typen) then
                           { get instance vmt }
                           p:=tunarynode(p).left
                         else
                           { type vmt = global symbol, result is }
                           { already increased above             }
-                          exit;
+                          break;
                       end;
           {$ifdef SUPPORT_MMX}
                     in_mmx_pcmpeqb..in_mmx_pcmpgtw,
@@ -1032,10 +970,14 @@ implementation
                     in_get_caller_frame,
                     in_get_caller_addr:
                       begin
-                        inc(result);
-                        exit;
+                        inc(cv);
+                        break;
                       end;
 
+                    in_ror_x,
+                    in_ror_x_y,
+                    in_rol_x,
+                    in_rol_x_y,
                     in_inc_x,
                     in_dec_x,
                     in_include_x_y,
@@ -1043,33 +985,30 @@ implementation
                     in_assert_x_y :
                       begin
                         { operation (add, sub, or, and }
-                        inc(result);
-                        { left expression }
-                        inc(result,node_complexity(tcallparanode(tunarynode(p).left).left));
-                        if (result >= NODE_COMPLEXITY_INF) then
+                        inc(cv);
+                        { rox_x has no call para node, so check for this }
+                        if tunarynode(p).left.nodetype=callparan then
                           begin
-                            result := NODE_COMPLEXITY_INF;
-                            exit;
-                          end;
-                        p:=tcallparanode(tunarynode(p).left).right;
-                        if assigned(p) then
-                          p:=tcallparanode(p).left;
+                            { left expression }
+                            inc(cv,node_complexity(tcallparanode(tunarynode(p).left).left));
+                            p:=tcallparanode(tunarynode(p).left).right;
+                            if assigned(p) then
+                              p:=tcallparanode(p).left;
+                          end
+                        else
+                          p:=tunarynode(p).left;
                       end;
                     else
-                      begin
-                        result := NODE_COMPLEXITY_INF;
-                        exit;
-                      end;
+                      exit;
                   end;
-
                 end;
               else
-                begin
-                  result := NODE_COMPLEXITY_INF;
-                  exit;
-                end;
+                exit;
             end;
         end;
+        if cv>NODE_COMPLEXITY_INF then
+          cv:=NODE_COMPLEXITY_INF;
+        result:=cv;
       end;
 
 
@@ -1151,7 +1090,7 @@ implementation
             doinlinesimplify(tloopnode(n).left);
             // call directly second part below,
             // which might change the loopnode into
-            // something else if the conditino is a constant node
+            // something else if the condition is a constant node
             include(tloopnode(n).loopflags,lnf_simplify_processing);
             callsimplify(n,arg);
             // Be careful, n might have change node type
@@ -1464,7 +1403,7 @@ implementation
            ) or
            { foreachonode does not recurse into the init code for temprefnode as this is done for
              by the tempcreatenode but the considered tree might not contain the tempcreatenode so play
-             save and recurce into the init code if there is any }
+             save and recurrence into the init code if there is any }
            ((n.nodetype=temprefn) and (ti_executeinitialisation in ttemprefnode(n).tempflags) and
             might_have_sideeffects(ttemprefnode(n).tempinfo^.tempinitcode,pmhs_flags(arg)^)) then
            result:=fen_norecurse_true
@@ -1480,7 +1419,7 @@ implementation
     function check_for_conditional_nodes(var n: tnode; arg: pointer): foreachnoderesult;
       begin
         result:=fen_false;
-        { this check is not complete yet, but sufficent to cover the current use case: swapping
+        { this check is not complete yet, but sufficient to cover the current use case: swapping
           of trees in expressions }
         if (n.nodetype in [ifn,whilerepeatn,forn,tryexceptn]) or
           ((n.nodetype in [orn,andn]) and is_boolean(n.resultdef) and doshortbooleval(n)) then
@@ -1493,37 +1432,49 @@ implementation
         result:=foreachnodestatic(n,@check_for_conditional_nodes,nil);
       end;
 
-    var
-      nodecount : dword;
 
     function donodecount(var n: tnode; arg: pointer): foreachnoderesult;
       begin
-        inc(nodecount);
-        result:=fen_false;
+        if PDWord(arg)^>0 then
+          begin
+            dec(PDWord(arg)^);
+            result:=fen_false;
+          end
+        else
+          result:=fen_norecurse_false;
       end;
 
 
-    function node_count(node : tnode) : dword;
+    function node_count(node : tnode; max : dword = High(dword)) : dword;
+      var
+        left : dword;
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount,nil);
-        result:=nodecount;
+        left:=max;
+        foreachnodestatic(node,@donodecount,@left);
+        result:=max-left;
       end;
 
 
     function donodecount_weighted(var n: tnode; arg: pointer): foreachnoderesult;
       begin
-        if not(n.nodetype in [blockn,statementn,callparan,nothingn]) then
-          inc(nodecount);
-        result:=fen_false;
+        if PDWord(arg)^>0 then
+          begin
+            if not(n.nodetype in [blockn,statementn,callparan,nothingn]) then
+              dec(PDWord(arg)^);
+            result:=fen_false;
+          end
+        else
+          result:=fen_norecurse_false;
       end;
 
 
-    function node_count_weighted(node : tnode) : dword;
+    function node_count_weighted(node : tnode; max : dword = High(dword)) : dword;
+      var
+        left : dword;
       begin
-        nodecount:=0;
-        foreachnodestatic(node,@donodecount_weighted,nil);
-        result:=nodecount;
+        left:=max;
+        foreachnodestatic(node,@donodecount_weighted,@left);
+        result:=max-left;
       end;
 
 
@@ -1653,7 +1604,7 @@ implementation
       end;
 
 
-    { checks if p is a series of length(a) statments, if yes, they are returned
+    { checks if p is a series of length(a) statements, if yes, they are returned
       in a and the function returns true }
     function GetStatements(p : tnode;var a : array of tstatementnode) : Boolean;
       var
@@ -1693,6 +1644,34 @@ implementation
               end
             else
               ;
+          end;
+      end;
+
+
+    { gets the last statement in a sequence of statements/blocks }
+    function GetLastStatement(p : tnode) : tnode;
+      var
+        i: Integer;
+      begin
+        Result:=p;
+        while assigned(Result) do
+          begin
+            if Result.nodetype=statementn then
+              begin
+                if assigned(tstatementnode(Result).next) then
+                  Result:=tstatementnode(Result).next
+                else if tstatementnode(Result).statement.nodetype=blockn then
+                  Result:=tblocknode(tstatementnode(Result).left).statements
+                else
+                  begin
+                    Result:=tstatementnode(Result).statement;
+                    exit;
+                  end;
+              end
+            else if Result.nodetype=blockn then
+              Result:=tblocknode(Result).statements
+            else
+              exit;
           end;
       end;
 
@@ -1755,5 +1734,28 @@ implementation
          foreachnodestatic(n,@_node_reset_pass1_write,nil);
        end;
 
+
+     function node_in_list(var n: tnode; arg: pointer): foreachnoderesult;
+       begin
+         if (n.nodetype in PNodeTypeSet(arg)^) then
+           result := fen_norecurse_true
+         else
+           result := fen_false;
+       end;
+
+
+     function has_node_of_type(n: TNode; TypeList: TNodeTypeSet): Boolean;
+       begin
+         Result := foreachnodestatic(n, @node_in_list, @TypeList);
+       end;
+
+
+     function node_not_zero(n: tnode): Boolean;
+       begin
+         result:=(is_constintnode(n) and (get_int_value(n)<>0)) or
+           ((n.resultdef.typ=orddef) and ((torddef(n.resultdef).low>0) or (torddef(n.resultdef).high<0))) or
+           ((n.nodetype=typeconvn) and (ttypeconvnode(n).convtype=tc_int_2_int) and (n.resultdef.size>=ttypeconvnode(n).resultdef.size) and node_not_zero(ttypeconvnode(n).left)) or
+           ((n.nodetype=orn) and (node_not_zero(taddnode(n).left) or node_not_zero(taddnode(n).right)));
+       end;
 
 end.

@@ -41,6 +41,8 @@ procedure recordpendingalignmentfullswitch(const alignment : talignmentinfo);
 procedure recordpendingsetalloc(alloc:shortint);
 procedure recordpendingpackenum(size:shortint);
 procedure recordpendingpackrecords(size:shortint);
+procedure recordpendingasmmode(asmmode:tasmmode);
+procedure recordpendingoptimizerswitches(optimizerswitches:toptimizerswitches);
 procedure flushpendingswitchesstate;
 
 implementation
@@ -50,7 +52,7 @@ uses
   { override optimizer switches }
   llvminfo,
 {$endif llvm}
-  globals,verbose,comphook,dirparse,
+  globals,verbose,comphook,dirparse,cclasses,
   fmodule;
 
 {****************************************************************************
@@ -306,6 +308,9 @@ procedure recordpendingmessagestate(msg: longint; state: tmsgstate);
     pstate : pmessagestaterecord;
   begin
     new(pstate);
+    {$IFDEF DEBUG_MESSAGESTATE}
+    pstate^.owner:=current_module; { nil for global option }
+    {$ENDIF}
     pstate^.next:=pendingstate.nextmessagerecord;
     pstate^.value:=msg;
     pstate^.state:=state;
@@ -366,6 +371,13 @@ procedure recordpendingsetalloc(alloc:shortint);
   end;
 
 
+procedure recordpendingasmmode(asmmode:tasmmode);
+  begin
+    pendingstate.nextasmmode:=asmmode;
+    include(pendingstate.flags,psf_asmmode_changed);
+  end;
+
+
 procedure recordpendingpackenum(size:shortint);
   begin
     pendingstate.nextpackenum:=size;
@@ -380,10 +392,19 @@ procedure recordpendingpackrecords(size:shortint);
   end;
 
 
+procedure recordpendingoptimizerswitches(optimizerswitches:toptimizerswitches);
+  begin
+    pendingstate.nextoptimizerswitches:=optimizerswitches;
+    include(pendingstate.flags,psf_optimizerswitches_changed);
+  end;
+
+
 procedure flushpendingswitchesstate;
   var
     tmpproccal: tproccalloption;
     fstate, pstate : pmessagestaterecord;
+    msgset : thashset;
+    msgfound : boolean;
   begin
     { process pending localswitches (range checking, etc) }
     if psf_local_switches_changed in pendingstate.flags then
@@ -417,18 +438,44 @@ procedure flushpendingswitchesstate;
         current_settings.setalloc:=pendingstate.nextsetalloc;
         exclude(pendingstate.flags,psf_setalloc_changed);
       end;
+    if psf_asmmode_changed in pendingstate.flags then
+      begin
+        current_settings.asmmode:=pendingstate.nextasmmode;
+        exclude(pendingstate.flags,psf_asmmode_changed);
+      end;
+    if psf_optimizerswitches_changed in pendingstate.flags then
+      begin
+        current_settings.optimizerswitches:=pendingstate.nextoptimizerswitches;
+        exclude(pendingstate.flags,psf_optimizerswitches_changed);
+      end;
     { process pending verbosity changes (warnings on, etc) }
     if pendingstate.nextverbositystr<>'' then
       begin
         setverbosity(pendingstate.nextverbositystr);
         pendingstate.nextverbositystr:='';
       end;
+    msgset:=thashset.create(10,false,false);
+    { we need to start from a clean slate }
+    if not assigned(current_settings.pmessage) then
+      RestoreLocalVerbosity(nil);
     fstate:=pendingstate.nextmessagerecord;
     pstate:=pendingstate.nextmessagerecord;
     while assigned(pstate) do
       begin
+        {$IFDEF DEBUG_MESSAGESTATE}
+        if assigned(pstate^.owner) and (pstate^.owner<>current_module) then
+          begin
+            writeln('flushpendingswitchesstate cur: ',current_module.modulename^,' ',current_module.statestr);
+            writeln('flushpendingswitchesstate pstate: ',tmodule(pstate^.owner).modulename^,' ',tmodule(pstate^.owner).statestr);
+            Internalerror(2026030701);
+          end;
+        {$ENDIF}
         pendingstate.nextmessagerecord:=pstate^.next;
-        SetMessageVerbosity(pstate^.value,pstate^.state);
+        { the message records are ordered newest to oldest, so only apply the newest change }
+        msgfound:=false;
+        if not assigned(msgset.findoradd(@pstate^.value,sizeof(pstate^.value),msgfound)) or
+            not msgfound then
+          SetMessageVerbosity(pstate^.value,pstate^.state);
         if not assigned(pstate^.next) then
           begin
             pstate^.next:=current_settings.pmessage;
@@ -439,6 +486,8 @@ procedure flushpendingswitchesstate;
           pstate:=pstate^.next;
         pendingstate.nextmessagerecord:=nil;
       end;
+    msgset.free;
+    msgset := nil;
     { process pending calling convention changes (calling x) }
     if pendingstate.nextcallingstr<>'' then
       begin

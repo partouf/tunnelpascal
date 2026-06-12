@@ -17,6 +17,7 @@ Unit JdMarker;
 interface
 
 {$I jconfig.inc}
+{$modeswitch nestedprocvars}
 
 {$IFDEF FPC_DOTTEDUNITS}
 uses
@@ -161,7 +162,7 @@ procedure jpeg_set_marker_processor (cinfo : j_decompress_ptr;
                                      routine : jpeg_marker_parser_method);
 Var
   on_unknown_marker : function (cinfo : j_decompress_ptr) : int; far;
-  
+
 implementation
 
 {$IFDEF FPC_DOTTEDUNITS}
@@ -1665,13 +1666,13 @@ begin
 end;
 
 {LOCAL}
-function examine_app1 (cinfo : j_decompress_ptr;
+procedure examine_app1 (cinfo : j_decompress_ptr;
                         var header : array of JOCTET;
                         headerlen : uint;
                         var remaining : INT32;
                         datasrc : jpeg_source_mgr_ptr;
                         var next_input_byte : JOCTETptr;
-                        var bytes_in_buffer : size_t): Boolean;
+                        var bytes_in_buffer : size_t);
 
 { Read Exif marker.
   headerlen is # of bytes at header[], remaining is length of rest of marker header.
@@ -1790,7 +1791,7 @@ begin
 
     // read data
     if not Read16(numRecords) then
-      Exit(False);
+      Exit;
 
     for i:=1 to numRecords do
     begin
@@ -1804,8 +1805,12 @@ begin
       ifdRec.tag_id := FixEndian16(ifdRec.tag_id);
       ifdRec.data_type := FixEndian16(ifdRec.data_type);
 
+      if (ifdRec.data_type < 1) or (ifdRec.data_type > 13) then
+        Continue;
       ifdRec.data_count := FixEndian32(ifdRec.data_count);
       byteCount := Integer(ifdRec.data_count) * TagElementSize[ifdRec.data_type];
+      if byteCount > 65536 then
+        Continue;
       if byteCount>0 then
       begin
         SetLength(data, bytecount);
@@ -1820,6 +1825,12 @@ begin
         my_marker_ptr(cinfo^.marker)^.handle_exif_tag(cinfo, ifdRec, BigEndian, data, EXIF_TAGPARENT_PRIMARY);
       end;
     end;
+  end else
+  if Assigned(cinfo.extensions) and Assigned(cinfo.extensions^.read_ext_appn) and (headerlen>0) then
+  begin
+    BigEndian := False;
+    Offset := APP1_HEADER_LEN;
+    cinfo.extensions^.read_ext_appn(cinfo, M_APP1, header, headerlen, remaining, Read);
   end;
 end;
 
@@ -1936,7 +1947,7 @@ begin
       numtoread := uint(length)
     else
       numtoread := 0;
-      
+
   if numtoread > 0 then
   begin
     for i := 0 to numtoread-1 do
@@ -2585,7 +2596,7 @@ begin
           end;
         { // This is the previous code.
           ERREXIT1(j_common_ptr(cinfo) , JERR_UNKNOWN_MARKER,cinfo^.unread_marker);
-        }  
+        }
     end; { end of case }
     { Successfully processed marker, so reset state variable }
     cinfo^.unread_marker := 0;

@@ -16,15 +16,17 @@ unit WViews;
 
 interface
 
-uses Objects,Drivers,Views,Menus,Dialogs;
+uses Objects,Drivers,Views,Menus,Dialogs,Outline,Stddlg;
 
 const
       evIdle                 = $8000;
 
-      cmCopyWin = 240;
-      cmPasteWin = 241;
+      cmCopyWin           = 240;
+      cmPasteWin          = 241;
       cmSelectAll         = 246;
       cmUnselect          = 247;
+      cmCommentSel        = 250;
+      cmUnCommentSel      = 251;
 
       cmLocalMenu            = 54100;
       cmUpdate               = 54101;
@@ -41,7 +43,7 @@ const
       cmUserBtn3             = $fee2;
       cmUserBtn4             = $fee3;
 
-      CPlainCluster          = #7#8#9#9;
+      CPlainCluster          = #7#8#9#9#13#9;{normal}{ active }{shortcut}{..}{disabled}{..}
 
 type
     longstring = ansistring;
@@ -104,6 +106,15 @@ type
       LastLocalCmd: word;
     end;
 
+    TLocalMenuOutlineViewer = object(TOutlineViewer)
+      procedure   HandleEvent(var Event: TEvent); virtual;
+      procedure   LocalMenu(P: TPoint); virtual;
+      function    GetLocalMenu: PMenu; virtual;
+      function    GetCommandTarget: PView; virtual;
+    private
+      LastLocalCmd: word;
+    end;
+
     PColorStaticText = ^TColorStaticText;
     TColorStaticText = object(TAdvancedStaticText)
       Color: word;
@@ -139,6 +150,13 @@ type
       procedure   Draw; virtual;
     end;
 
+    { Dialog that broadcasts empty space mouse clicks }
+    { Needed for dialogs that contains TDropDownListBox }
+    PDialogEmptyClick = ^TDialogEmptyClick;
+    TDialogEmptyClick = object(TCenterDialog)
+      procedure HandleEvent(var Event: TEvent); virtual;
+    end;
+
     PDropDownListBox = ^TDropDownListBox;
 
     PDDHelperLB = ^TDDHelperLB;
@@ -150,6 +168,8 @@ type
       function    GetText(Item,MaxLen: Sw_Integer): String; virtual;
       function    GetLocalMenu: PMenu; virtual;
       function    GetCommandTarget: PView; virtual;
+    private
+      procedure   CloseItSelf;
     private
       Link : PDropDownListBox;
       LastTT: longint;
@@ -179,6 +199,7 @@ type
       ListDropped : boolean;
       ListBox     : PDDHelperLB;
       SB          : PScrollBar;
+      KeepSelect  : boolean;
     end;
 
     PGroupView = ^TGroupView;
@@ -197,6 +218,22 @@ type
       function GetPalette: PPalette; virtual;
     end;
 
+    PScrollerRadioButtons = ^TScrollerRadioButtons;
+    TScrollerRadioButtons = object (TRadioButtons)
+      VScrollBar  : PScrollBar;
+      Delta : TPoint;
+      constructor Init (Var Bounds: TRect; AStrings: PSItem; aVScrollBar:PScrollBar);
+      procedure HandleEvent (Var Event: TEvent); Virtual;
+      procedure MovedTo (Item: Sw_Integer); Virtual;
+      procedure ScrollDraw; Virtual;
+      procedure Draw; Virtual;
+      procedure DrawScrollMultiBox (Const Icon, Marker: String);
+      procedure ScrollTo (X,Y: Sw_Integer); Virtual;
+      procedure CentreSelected;
+      private
+      function FindSel (P: TPoint): Sw_Integer;
+   end;
+
     PPanel = ^TPanel;
     TPanel = object(TGroup)
       constructor Init(var Bounds: TRect);
@@ -206,6 +243,20 @@ type
     TAdvMessageBox = object(TDialog)
       CanCancel: boolean;
       procedure HandleEvent(var Event: TEvent); virtual;
+    end;
+
+    PFPFileInputLine = ^TFPFileInputLine;
+    TFPFileInputLine = object(TFileInputLine)
+      constructor Init(var Bounds: TRect; AMaxLen: Sw_Integer);
+      procedure HandleEvent(var Event: TEvent); virtual;
+    end;
+
+    PFPFileDialog = ^TFPFileDialog;
+    TFPFileDialog = object(TFileDialog)
+      constructor Init(AWildCard: TWildStr; const ATitle,
+        InputName: String; AOptions: Word; HistoryId: Byte);
+      procedure ChangeBounds (Var Bounds: TRect); virtual;
+      procedure SizeLimits (Var Min, Max: TPoint); virtual;
     end;
 
 procedure InsertOK(ADialog: PDialog);
@@ -266,12 +317,12 @@ implementation
 uses Mouse,
 {     Resource,}
 {$ifdef WinClipSupported}
-     WinClip,
-     FpConst,
+     FvClip,
 {$endif WinClipSupported}
+     FpConst,
      FVConsts,
-     App,MsgBox,StdDlg,
-     WConsts,WUtils;
+     App,MsgBox,
+     WConsts,WUtils,WEditor;
 
 {$ifndef NOOBJREG}
 const
@@ -351,6 +402,8 @@ var
 {$ifdef WinClipSupported}
   PPW: PMenuItem;
   WinClipEmpty: boolean;
+  PasteFromWinClipEnabled: boolean;
+  CurClipSize: longint;
 {$endif WinClipSupported}
   Target: PMenuView;
   R: TRect;
@@ -454,8 +507,9 @@ begin
   PPW:=SearchMenuItem(Menu,cmPasteWin);
   if Assigned(PPW) then
     begin
-      WinClipEmpty:=GetTextWinClipboardSize=0;
-      SetCmdState(FromWinClipCmds,Not WinClipEmpty);
+      CurClipSize:=0;
+      PasteFromWinClipEnabled:=CommandEnabled (cmPasteWin);
+      WinClipEmpty:=(not PasteFromWinClipEnabled) or (GetTextWinClipboardSize=0);
       PPW^.disabled:=WinClipEmpty;
     end;
 {$endif WinClipSupported}
@@ -469,23 +523,25 @@ begin
   repeat
     Action := DoNothing;
 {$ifdef WinClipSupported}
+{$ifndef go32v2} { Exclude Dos target. DosBox-x slowdown when OS holds large clipboard data (+64kb). (M)}
     If Assigned(PPW) then
       begin
-        If WinClipEmpty and (GetTextWinClipboardSize>0) then
+        if PasteFromWinClipEnabled then
+          CurClipSize:=GetTextWinClipboardSize;
+        If WinClipEmpty and (CurClipSize>0) then
           begin
-            WinClipEmpty:=false;
-            SetCmdState(FromWinClipCmds,true);
+            WinClipEmpty:=(not PasteFromWinClipEnabled) or false;
             PPW^.disabled:=WinClipEmpty;
             DrawView;
           end
-        else if Not WinClipEmpty and (GetTextWinClipboardSize=0) then
+        else if Not WinClipEmpty and (CurClipSize=0) then
           begin
             WinClipEmpty:=true;
-            SetCmdState(FromWinClipCmds,false);
             PPW^.disabled:=WinClipEmpty;
             DrawView;
           end;
       end;
+{$endif go32v2}
 {$endif WinClipSupported}
     GetEvent(E);
     case E.What of
@@ -1211,13 +1267,15 @@ begin
 end;
 
 procedure TAdvancedListBox.HandleEvent(var Event: TEvent);
+var eEvent : TEvent;
 begin
   case Event.What of
     evMouseDown :
       if MouseInView(Event.Where) {and (Event.Double)} then
       begin
+        eEvent:=Event; {save for later use after inherited call}
         inherited HandleEvent(Event);
-        if Event.Double then
+        if eEvent.Double then
           if Range>Focused then
             SelectItem(Focused);
       end;
@@ -1227,10 +1285,6 @@ begin
           Message(Owner,evBroadcast,cmDefault,nil);
       end;
   end;
-  if assigned(VScrollBar) then
-    VScrollBar^.HandleEvent(Event);
-  if assigned(HScrollBar) then
-    HScrollBar^.HandleEvent(Event);
   inherited HandleEvent(Event);
 end;
 
@@ -1441,7 +1495,7 @@ begin
   Filename:='listbox.txt';
   DefExt:='*.txt';
   Title:='Save list box content';
-  Re:=Application^.ExecuteDialog(New(PFileDialog, Init(DefExt,
+  Re:=Application^.ExecuteDialog(New(PFPFileDialog, Init(DefExt,
           Title, label_name, fdOkButton, FileId)), @FileName);
   if Re <> cmCancel then
     SaveAs := SaveToFile(FileName);
@@ -1511,12 +1565,88 @@ var DontClear: boolean;
 begin
   case Event.What of
     evMouseDown :
-      if MouseInView(Event.Where) and (Event.Buttons=mbRightButton) then
+      if MouseInView(Event.Where) then
+      begin
+        if  (Event.Buttons=mbRightButton) then
         begin
           MakeLocal(Event.Where,P); Inc(P.X); Inc(P.Y);
           LocalMenu(P);
           ClearEvent(Event);
         end;
+      end;
+    evKeyDown :
+      begin
+        DontClear:=false;
+        case Event.KeyCode of
+          kbAltF10 : Message(@Self,evCommand,cmLocalMenu,@Self);
+        else DontClear:=true;
+        end;
+        if DontClear=false then ClearEvent(Event);
+      end;
+    evCommand :
+      begin
+        DontClear:=false;
+        case Event.Command of
+          cmLocalMenu :
+            begin
+              P:=Cursor; Inc(P.X); Inc(P.Y);
+              LocalMenu(P);
+            end;
+        else DontClear:=true;
+        end;
+        if not DontClear then ClearEvent(Event);
+      end;
+  end;
+  inherited HandleEvent(Event);
+end;
+
+procedure TLocalMenuOutlineViewer.LocalMenu(P: TPoint);
+var M: PMenu;
+    MV: PAdvancedMenuPopUp;
+    R: TRect;
+    Re: word;
+begin
+  M:=GetLocalMenu;
+  if M=nil then Exit;
+  if LastLocalCmd<>0 then
+     M^.Default:=SearchMenuItem(M,LastLocalCmd);
+  Desktop^.GetExtent(R);
+  MakeGlobal(P,R.A); {Desktop^.MakeLocal(R.A,R.A);}
+  New(MV, Init(R, M));
+  Re:=Application^.ExecView(MV);
+  if M^.Default=nil then LastLocalCmd:=0
+     else LastLocalCmd:=M^.Default^.Command;
+  Dispose(MV, Done);
+  if Re<>0 then
+    Message(GetCommandTarget,evCommand,Re,@Self);
+end;
+
+function TLocalMenuOutlineViewer.GetLocalMenu: PMenu;
+begin
+  GetLocalMenu:=nil;
+{  Abstract;}
+end;
+
+function TLocalMenuOutlineViewer.GetCommandTarget: PView;
+begin
+  GetCommandTarget:=@Self;
+end;
+
+procedure TLocalMenuOutlineViewer.HandleEvent(var Event: TEvent);
+var DontClear: boolean;
+    P: TPoint;
+begin
+  case Event.What of
+    evMouseDown :
+       if MouseInView(Event.Where) then
+      begin
+        if  (Event.Buttons=mbRightButton) then
+        begin
+          MakeLocal(Event.Where,P); Inc(P.X); Inc(P.Y);
+          LocalMenu(P);
+          ClearEvent(Event);
+        end;
+      end;
     evKeyDown :
       begin
         DontClear:=false;
@@ -1832,6 +1962,14 @@ begin
     end;
 end;
 
+procedure TDialogEmptyClick.HandleEvent(var Event: TEvent);
+begin
+  inherited HandleEvent (Event);
+  case Event.What of
+    evMouseDown :
+      Message(@Self,evBroadcast,cmMouseDownInEmptySpace,@Self);
+  end;
+end;
 
 constructor TDDHelperLB.Init(ALink: PDropDownListBox; var Bounds: TRect; ANumCols: Word; AScrollBar: PScrollBar);
 begin
@@ -1847,7 +1985,7 @@ begin
 {  OState:=State;}
   inherited SetState(AState,Enable);
 {  if (((State xor OState) and sfFocused)<>0) and (GetState(sfFocused)=false) then
-    Link^.DropList(false);}
+    CloseItSelf;}
 end;
 
 function TDDHelperLB.GetText(Item,MaxLen: Sw_Integer): String;
@@ -1884,6 +2022,8 @@ begin
   GoSelectItem:=-1;
   TView.HandleEvent(Event);
   case Event.What of
+    evMouseWheel :
+      Inherited HandleEvent(Event);
     evMouseDown :
       if MouseInView(Event.Where)=false then
         GoSelectItem:=-2
@@ -1940,27 +2080,21 @@ begin
         if Event.Double and (Range > Focused) then SelectItem(Focused);
         ClearEvent(Event);
         GoSelectItem:=Focused;
+        Link^.KeepSelect:=true;
       end;
-    evMouseMove,evMouseAuto:
-     if GetState(sfFocused) then
-      if MouseInView(Event.Where) then
-        begin
-          MakeLocal(Event.Where,Mouse);
-          FocusItemNum(TopItem+Mouse.Y);
-          ClearEvent(Event);
-        end;
     evKeyDown :
       begin
         if (Event.KeyCode=kbEsc) then
           begin
             GoSelectItem:=-2;
-            ClearEvent(Event);
+            Link^.KeepSelect:=true;
           end else
         if ((Event.KeyCode=kbEnter) or (Event.CharCode = ' ')) and
            (Focused < Range) then
           begin
             GoSelectItem:=Focused;
             NewItem := Focused;
+            Link^.KeepSelect:=true;
           end
         else
           case CtrlToArrow(Event.KeyCode) of
@@ -1983,6 +2117,12 @@ begin
       end;
     evBroadcast :
       case Event.Command of
+        cmMouseDownInEmptySpace:
+          if InClose=false then
+            begin
+              GoSelectItem:=-2;
+              Link^.KeepSelect:=true;
+            end;
         cmReceivedFocus :
           if (Event.InfoPtr<>@Self) and (InClose=false) then
             begin
@@ -1998,7 +2138,8 @@ begin
               begin
                 if (VScrollBar = Event.InfoPtr) then
                   begin
-                    FocusItemNum(VScrollBar^.Value);
+                    if VScrollBar^.Value <> TopItem then
+                      SetTopItem(VScrollBar^.Value);
                     DrawView;
                   end
                 else
@@ -2006,29 +2147,12 @@ begin
                     DrawView;
               end;
       end;
-    evIdle :
-      begin
-        MouseWhere.X:=MouseWhereX shr 3; MouseWhere.Y:=MouseWhereY shr 3;
-        if MouseInView(MouseWhere)=false then
-         if abs(GetDosTicks-LastTT)>=1 then
-          begin
-            LastTT:=GetDosTicks;
-            MakeLocal(MouseWhere,Mouse);
-            if ((Mouse.Y<-1) or (Mouse.Y>=Size.Y)) and
-               ((0<=Mouse.X) and (Mouse.X<Size.X)) then
-            if Range>0 then
-              if Mouse.Y<0 then
-                FocusItemNum(Focused-(0-Mouse.Y))
-              else
-                FocusItemNum(Focused+(Mouse.Y-(Size.Y-1)));
-          end;
-      end;
   end;
   if (Range>0) and (GoSelectItem<>-1) then
    begin
      InClose:=true;
      if GoSelectItem=-2 then
-       Link^.DropList(false)
+       CloseItSelf
      else
        SelectItem(GoSelectItem);
    end;
@@ -2038,7 +2162,18 @@ procedure TDDHelperLB.SelectItem(Item: Sw_Integer);
 begin
   inherited SelectItem(Item);
   Link^.FocusItem(Focused);
-  Link^.DropList(false);
+  CloseItSelf;
+end;
+
+procedure TDDHelperLB.CloseItSelf;
+var E : TEvent;
+begin
+  { Can not close from within itself }
+  { Send a message for owner to do it }
+  E.What:=evBroadcast;
+  E.Command:=cmDropDownDeleteListBox;
+  E.InfoPtr:=@self;
+  Application^.PutEvent(E);
 end;
 
 constructor TDropDownListBox.Init(var Bounds: TRect; ADropLineCount: Sw_integer; AList: PCollection);
@@ -2081,6 +2216,12 @@ begin
        end;
     evBroadcast :
       case Event.Command of
+        cmDropDownDeleteListBox :
+          if ListBox = Event.InfoPtr then
+            begin
+              DropList(false);
+              ClearEvent(Event);
+            end;
         cmReleasedFocus :
           if (ListBox<>nil) and (Event.InfoPtr=ListBox) then
             DropList(false);
@@ -2128,6 +2269,7 @@ end;
 procedure TDropDownListBox.DropList(Drop: boolean);
 var R: TRect;
     LB: PListBox;
+    InDel : boolean;
 begin
   if (ListDropped=Drop) then Exit;
 
@@ -2143,24 +2285,30 @@ begin
           ListBox^.NewList(List);
           ListBox^.FocusItem(Focused);
           Owner^.Insert(ListBox);
+          KeepSelect:=false; {assume we don't want to keep focus after DropBox will be closed}
         end;
       if Owner<>nil then Owner^.UnLock;
     end
   else
     begin
       if Owner<>nil then Owner^.Lock;
+      InDel:=false;
       if ListBox<>nil then
         begin
 {          ListBox^.List:=nil;}
+          InDel:=true;
           LB:=ListBox; ListBox:=nil; { this prevents GPFs while deleting }
+          Owner^.Delete(LB);  { GPFs have been resolved by not calling this routine from ListBox itself  M }
           Dispose(LB, Done);
         end;
       if SB<>nil then
         begin
+          Owner^.Delete(SB);
           Dispose(SB, Done);
           SB:=nil;
         end;
-      Select;
+      if InDel and KeepSelect then
+        Select;
       if Owner<>nil then Owner^.UnLock;
     end;
 
@@ -2255,23 +2403,23 @@ begin
   else
     LabelC:=GetColor(1)+GetColor(3) shl 8;
   { First Line }
-  MoveChar(B[0],'Ú',FrameC,1);
-  MoveChar(B[1],'Ä',FrameC,Size.X-2);
-  MoveChar(B[Size.X-1],'¿',FrameC,1);
+  MoveChar(B[0],''#$DA'',FrameC,1);
+  MoveChar(B[1],''#$C4'',FrameC,Size.X-2);
+  MoveChar(B[Size.X-1],''#$BF'',FrameC,1);
   if Text<>nil then
     begin
       MoveCStr(B[1],' '+Text^+' ',LabelC);
     end;
   WriteLine(0,0,Size.X,1,B);
   { Mid Lines }
-  MoveChar(B[0],'³',FrameC,1);
+  MoveChar(B[0],''#$B3'',FrameC,1);
   MoveChar(B[1],' ',FrameC,Size.X-2);
-  MoveChar(B[Size.X-1],'³',FrameC,1);
+  MoveChar(B[Size.X-1],''#$B3'',FrameC,1);
   WriteLine(0,1,Size.X,Size.Y-2,B);
   { Last Line }
-  MoveChar(B[0],'À',FrameC,1);
-  MoveChar(B[1],'Ä',FrameC,Size.X-2);
-  MoveChar(B[Size.X-1],'Ù',FrameC,1);
+  MoveChar(B[0],''#$C0'',FrameC,1);
+  MoveChar(B[1],''#$C4'',FrameC,Size.X-2);
+  MoveChar(B[Size.X-1],''#$D9'',FrameC,1);
   WriteLine(0,Size.Y-1,Size.X,1,B);
 end;
 
@@ -2285,6 +2433,192 @@ function TPlainRadioButtons.GetPalette: PPalette;
 const P: string[length(CPlainCluster)] = CPlainCluster;
 begin
   GetPalette:=@P;
+end;
+
+constructor TScrollerRadioButtons.Init (Var Bounds: TRect; AStrings: PSItem; aVScrollBar:PScrollBar);
+var Y : sw_word;
+begin
+  inherited init (Bounds, AStrings);
+  VScrollBar:=aVScrollBar;
+  EventMask := evMouseWheel + evMouseDown + evKeyDown + evCommand + evBroadcast;
+  Y:=Strings.count;
+  if (VScrollBar<> nil) and (Y>=size.Y) and (Size.Y>0) then
+    VScrollBar^.SetParams(0, 0,Y-Size.Y, Size.Y-1, VScrollBar^.ArStep);       { Set vert scrollbar }
+end;
+
+procedure TScrollerRadioButtons.HandleEvent (Var Event: TEvent);
+VAR I: Sw_Integer; Mouse: TPoint;
+   LinesScroll : sw_integer;
+begin
+   TView.HandleEvent(Event);                              { Call TView, skip TCluster }
+                                                          { Set focus to this view    }
+   If ((Options AND ofSelectable) <> 0) Then
+   begin
+     If (Event.What = evMouseWheel) Then Begin            { Mouse wheel event }
+       if (Event.Wheel=mwDown) then                       { Mouse scroll down }
+         begin
+           LinesScroll:=1;
+           if Event.Double then LinesScroll:=LinesScroll+4;
+           ScrollTo(Delta.X, Delta.Y + LinesScroll);
+           ClearEvent(Event);                             { Event was handled }
+         end else
+       if (Event.Wheel=mwUp) then                         { Mouse scroll up }
+         begin
+           LinesScroll:=-1;
+           if Event.Double then LinesScroll:=LinesScroll-4;
+           ScrollTo(Delta.X, Delta.Y + LinesScroll);
+           ClearEvent(Event);                             { Event was handled }
+         end;
+     end else
+     if (Event.What = evMouseDown) Then Begin             { Mouse down event }
+       if (VScrollBar<>nil) then begin       { mouse click if we have scrollbar}
+         MakeLocal(Event.Where, Mouse);                   { Make point local }
+         I := FindSel(Mouse);                             { Find selected item }
+         If (I <> -1) Then                                { Check in view }
+           If ButtonState(I) Then Sel := I;               { If enabled select }
+         DrawView;                                        { Now draw changes }
+         Repeat
+           MakeLocal(Event.Where, Mouse);                 { Make point local }
+         Until NOT MouseEvent(Event, evMouseMove);        { Wait for mouse up }
+         MakeLocal(Event.Where, Mouse);                   { Make point local }
+         If (FindSel(Mouse) = Sel) AND ButtonState(Sel)   { If valid/selected }
+         Then Begin
+           Press(Sel);                                    { Call pressed }
+           DrawView;                                      { Now draw changes }
+         End;
+         ClearEvent(Event);                               { Event was handled }
+       end;
+     end;
+     if (Event.What = evKeyDown) Then Begin         { KeyDown down event }
+       case CtrlToArrow(Event.KeyCode) of
+          kbLeft: Event.KeyCode:=kbUp;              { treat kbLeft as kbUp }
+          kbRight: Event.KeyCode:=kbDown;           { treat kbRight as kbDown }
+       end;
+     end;
+   end;
+
+   Inherited HandleEvent(Event);                      { Call ancestor }
+
+   If (Event.What = evBroadcast) AND
+     (Event.Command = cmScrollBarChanged) AND         { Scroll bar change }
+     ({(Event.InfoPtr = HScrollBar) OR}               { Our scrollbar? }
+      (Event.InfoPtr = VScrollBar)) Then
+   begin
+     ScrollDraw;
+     ClearEvent(Event);
+  end;
+end;
+
+procedure TScrollerRadioButtons.ScrollTo (X,Y: Sw_Integer);
+begin
+  if X>Size.X then X:=Size.X-1;
+  if X<0 then X:=0;
+  if (Y>(Strings.Count-Size.Y)) then Y:=(Strings.Count-Size.Y);
+  if Y<0 then Y:=0;
+  if Delta.Y<>Y then
+  begin
+    Delta.Y:=Y;
+    if (VScrollBar<>nil) then if VScrollBar^.Value<>Delta.Y then VScrollBar^.SetValue(Delta.Y);
+    DrawView;
+  end;
+end;
+
+function TScrollerRadioButtons.FindSel (P: TPoint): Sw_Integer;
+var I, S, Vh: Sw_Integer; R: TRect;
+begin
+   GetExtent(R);                                      { Get view extents }
+   If R.Contains(P) Then Begin                        { Point in view }
+     Vh := Size.Y;                            { View height }
+     I := 0;                                          { Preset zero value }
+     {While (P.X >= Column(I+Vh)) Do Inc(I, Vh);}       { Inc view size }
+     S := I + P.Y+ Delta.Y;                                { Line to select }
+     If ((S >= 0) AND (S < Strings.Count))            { Valid selection }
+       Then FindSel := S Else FindSel := -1;          { Return selected item }
+   End Else FindSel := -1;                            { Point outside view }
+end;
+
+procedure TScrollerRadioButtons.MovedTo (Item: Sw_Integer);
+begin
+  if (Item<Delta.Y) then begin Delta.Y:=Item; end;
+  if (Item>=(Size.Y+Delta.Y)) then begin Delta.Y:=Item-Size.Y+1; end;
+  if (VScrollBar<>nil) then if VScrollBar^.Value<>Delta.Y then VScrollBar^.SetValue(Delta.Y);
+  inherited MovedTo(Item);
+end;
+
+procedure TScrollerRadioButtons.ScrollDraw;
+begin
+  if (VScrollBar<> nil) then Delta.Y:=VScrollBar^.Value;
+  Drawview;
+end;
+
+procedure TScrollerRadioButtons.CentreSelected;
+var Y : Sw_Integer;
+begin
+  if (VScrollBar<> nil) then
+  begin
+    Y:=Sel-(Size.Y div 2);
+    if Y<0 then Y:=0;
+    if (Size.Y+Y) >= Strings.Count then Y:=Strings.Count-Size.Y;
+    if Y<0 then Y:=0;
+    if Delta.Y<>Y then
+    begin
+      Delta.Y:=Y;
+      VScrollBar^.SetValue(Y);
+      DrawView;
+    end;
+  end;
+end;
+
+procedure TScrollerRadioButtons.Draw;
+begin
+  if VScrollBar=nil then begin inherited draw; exit; end;
+  if Size.Y >= Strings.Count then begin inherited draw; exit; end;
+  DrawScrollMultiBox(' ( ) ',' *');
+end;
+
+procedure TScrollerRadioButtons.DrawScrollMultiBox (Const Icon, Marker: String);
+VAR I, J, Cur, Col: Sw_Integer;
+    CNorm, CSel, CDis, Color: Word; B: TDrawBuffer;
+begin
+   CNorm := GetColor($0301);                          { Normal colour }
+   CSel := GetColor($0402);                           { Selected colour }
+   CDis := GetColor($0505);                           { Disabled colour }
+   For I := 0 To Size.Y-1 Do Begin                { For each line }
+     MoveChar(B, ' ', Byte(CNorm), Size.X);       { Fill buffer }
+     {For J := 0 To (Strings.Count - 1) DIV Size.Y + 1
+     Do}
+     J:=0;
+     Begin
+       Cur := {J*Size.Y} Delta.Y + I;                { Current line }
+       If (Cur < Strings.Count) Then Begin
+         Col := {Column(Cur)}1;                          { Calc column }
+         If (Col + CStrLen(PString(Strings.At(Cur))^)+
+         5 < Sizeof(TDrawBuffer) DIV SizeOf(Word))
+         AND (Col < Size.X) Then Begin            { Text fits in column }
+           If NOT ButtonState(Cur) Then
+             Color := CDis Else If (Cur = Sel) AND    { Disabled colour }
+             (State and sfFocused <> 0) Then
+               Color := CSel Else                     { Selected colour }
+               Color := CNorm;                        { Normal colour }
+           MoveChar(B[Col], ' ', Byte(Color),
+             Size.X-Col);                         { Set this colour }
+           MoveStr(B[Col], Icon, Byte(Color));        { Transfer icon string }
+           WordRec(B[Col+2]).Lo := Byte(Marker[
+             MultiMark(Cur) + 1]);                    { Transfer marker }
+           MoveCStr(B[Col+5], PString(Strings.At(
+             Cur))^, Color);                          { Transfer item string }
+           If ShowMarkers AND (State AND sfFocused <> 0)
+           AND (Cur = Sel) Then Begin                 { Current is selected }
+             WordRec(B[Col]).Lo := Byte(SpecialChars[0]);
+              WordRec(B[{Column(Cur+Size.Y)}1-1]).Lo
+                := Byte(SpecialChars[1]);             { Set special character }
+           End;
+         End;
+       End;
+     End;
+     WriteBuf(0, I, Size.X, 1, B);              { Write buffer }
+   End;
+  SetCursor({Column(Sel)}1+2,{Row(Sel)}Sel-Delta.Y);
 end;
 
 constructor TAdvancedListBox.Load(var S: TStream);
@@ -2332,6 +2666,220 @@ begin
           end;
       end;
   end;
+end;
+
+constructor TFPFileInputLine.Init(var Bounds: TRect; AMaxLen: Sw_Integer);
+begin
+  inherited Init(Bounds, AMaxLen);
+end;
+
+procedure TFPFileInputLine.HandleEvent(var Event: TEvent);
+var s : sw_astring;
+    i : sw_integer;
+    st: string;
+
+procedure LocalInsertText(S:Sw_aString);
+var
+  i : Sw_Integer;
+  Event:TEvent;
+  st : string; {need to be shortstring for InputLine}
+begin
+  for i:=1 to length(s) do
+    begin
+      st:=Data^+s[i];
+      If not assigned(validator) or
+         Validator^.IsValidInput(st,False)  then
+        Begin
+          Event.What:=evKeyDown;
+          Event.CharCode:=s[i];
+          Event.Scancode:=0;
+          Event.KeyShift:=0;
+          Inherited HandleEvent(Event);
+        End;
+      if Length(Data^)=255 then
+        break; { at limit of shortstring }
+    end;
+end;
+
+procedure LocalPasteText(P:PAnsiChar;L:Sw_Integer);
+var L2: Sw_Integer;
+    S : Sw_AString;
+begin
+  l2:=L;
+  if l2<=0 then exit;
+  {$if sizeof(sw_astring)<>8}
+  if L2 > 255 then L2:=255;
+  {$endif}
+  SetLength(S,L2);
+  Move(P^,S[1],l2);
+  LocalInsertText(S);
+end;
+
+{$ifdef WinClipSupported}
+Procedure LocalPasteWinClip;
+var OK: boolean;
+  l : Sw_Integer;
+  P:PAnsiChar;
+  S : Sw_AString;
+begin
+  OK:=WinClipboardSupported;
+  if OK then
+    begin
+      l:=GetTextWinClipboardSize;
+      if l=0 then
+        OK:=false
+      else
+        OK:=GetTextWinClipBoardData(p,l);
+      if OK and assigned(p) then
+        begin
+          LocalPasteText(p,l);
+          freemem(p,l); { we must free the allocated memory }
+        end;
+    end;
+end;
+{$endif WinClipSupported}
+
+begin
+{$ifdef WinClipSupported}
+  if (Event.What=evKeyDown) then   { TODO  move in ConvertEvent }
+  begin
+    if ((Event.KeyShift and $4) <>0) and ((Event.KeyShift and $3) <>0) then
+      if Event.KeyCode = kbCtrlC then
+        begin
+          Event.What:=evCommand;
+          Event.Command:=cmCopyWin;
+        end
+      else if (Event.KeyCode = kbCtrlV) {and (IsReadOnly=false)} then
+        begin
+          Event.What:=evCommand;
+          Event.Command:=cmPasteWin;
+        end;
+  end;
+  if Event.What=evCommand then
+    case Event.Command of
+      cmCopyWin : begin
+          s:=GetStr(Data);
+          s:=copy(s,selstart+1,selend-selstart);
+          if WinClipboardSupported and (length(S)>0) then
+            SetTextWinClipBoardData(@S[1],length(S));
+          ClearEvent(Event);
+        end;
+      cmPasteText : begin
+          LocalPasteText(Event.InfoPtr,Event.Id);
+          ClearEvent(Event);
+        end;
+      cmPasteWin : begin
+          LocalPasteWinClip;
+          ClearEvent(Event);
+        end;
+    end;
+{$endif WinClipSupported}
+     If (Event.What=evKeyDown) then
+       begin
+           if ((Event.KeyCode=kbShiftIns) or (Event.KeyCode=paste_key))  and
+                 Assigned(weditor.Clipboard) and {(weditor.Clipboard^.ValidBlock)}
+                ( (weditor.Clipboard^.SelStart.X<>weditor.Clipboard^.SelEnd.X) or (weditor.Clipboard^.SelStart.Y<>weditor.Clipboard^.SelEnd.Y)) then
+           { paste from clipboard }
+           begin
+             i:=Clipboard^.SelStart.Y;
+             s:=Clipboard^.GetDisplayText(i);
+             i:=Clipboard^.SelStart.X;
+             if i>0 then
+              s:=copy(s,i+1,length(s));
+             if (Clipboard^.SelStart.Y=Clipboard^.SelEnd.Y) then
+               begin
+                 i:=Clipboard^.SelEnd.X-i;
+                 s:=copy(s,1,i);
+               end;
+             LocalInsertText(s);
+             ClearEvent(Event);
+           end
+         else if ((Event.KeyCode=kbCtrlIns) or (Event.KeyCode=copy_key))  and
+                 Assigned(Clipboard) then
+           { Copy to clipboard }
+           begin
+             s:=GetStr(Data);
+             s:=copy(s,selstart+1,selend-selstart);
+             Clipboard^.SelStart:=Clipboard^.CurPos;
+             Clipboard^.InsertText(s);
+             Clipboard^.SelEnd:=Clipboard^.CurPos;
+             ClearEvent(Event);
+           end
+         else if ((Event.KeyCode=kbShiftDel) or (Event.KeyCode=cut_key))  and
+                 Assigned(Clipboard) then
+           { Cut to clipboard }
+           begin
+             s:=GetStr(Data);
+             s:=copy(s,selstart+1,selend-selstart);
+             Clipboard^.SelStart:=Clipboard^.CurPos;
+             Clipboard^.InsertText(s);
+             Clipboard^.SelEnd:=Clipboard^.CurPos;
+             { now remove the selected part }
+             Event.keyCode:=kbDel;
+             inherited HandleEvent(Event);
+             ClearEvent(Event);
+           end
+         else if ((Event.KeyCode=kbCtrlDel)) then
+           { Cut & discard }
+           begin
+             { now remove the selected part }
+             Event.keyCode:=kbDel;
+             inherited HandleEvent(Event);
+             ClearEvent(Event);
+           end
+         else
+           Inherited HandleEvent(Event);
+       End
+     else
+       Inherited HandleEvent(Event);
+  //st:=getstr(data);
+  //Message(Owner,evBroadCast,cmInputLineLen,pointer(Length(st)));
+end;
+
+constructor TFPFileDialog.Init(AWildCard: TWildStr; const ATitle,
+        InputName: String; AOptions: Word; HistoryId: Byte);
+var R: TRect;
+  DInput  : PFPFileInputLine;
+  Control : PView;
+  History : PHistory;
+  S : String;
+begin
+  inherited init(AWildCard,ATitle,InputName,AOptions,HistoryId);
+  GrowMode:=gfGrowAll+gfGrowRel;
+  FileName^.getData(S);
+  FileName^.GetBounds(R);
+  DInput := New(PFPFileInputLine, Init(R, 79{FileNameLen+4}));
+  DInput^.SetData(S);
+  DInput^.GrowMode:=FileName^.GrowMode;
+  InsertBefore(DInput,FileName); {insert before to preserve order as it was}
+  Delete(FileName);
+  Dispose(FileName,done);
+  FileName:=DInput;
+  FileHistory^.Link:=DInput;
+  {resize}
+  if Desktop^.Size.Y > 26 then
+    GrowTo(Size.X,Desktop^.Size.Y-6);
+  if Desktop^.Size.X > 70 then
+    GrowTo(Min(Desktop^.Size.X-(70-Size.X),102),Size.Y);
+  {set focus on the new input line}
+  DInput^.Focus;
+end;
+
+procedure TFPFileDialog.ChangeBounds (Var Bounds: TRect);
+begin
+  inherited ChangeBounds(Bounds);
+  { calculate number of columns }
+  FileList^.NumCols:=Min(5, Max((FileList^.Size.X-(FileList^.Size.X div 14)) div 14,2));
+  { Adjust scrollbar step and page step }
+  FileList^.SetRange(FileList^.Range); {set again for scrollbar min max values}
+end;
+
+procedure TFPFileDialog.SizeLimits (Var Min, Max: TPoint);
+begin
+  Min.X:=60;
+  Min.Y:=16;
+  Max.X:=WUtils.Max(60,ScreenWidth);
+  Max.Y:=WUtils.Max(16,ScreenHeight-2);
 end;
 
 procedure ClearFormatParams;

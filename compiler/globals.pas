@@ -56,7 +56,7 @@ interface
           m_out,m_default_para,m_duplicate_names,m_hintdirective,
           m_property,m_default_inline,m_except,m_advanced_records,
           m_array_operators,m_prefixed_attributes,m_underscoreisseparator,
-          m_function_references,m_anonymous_functions];
+          m_function_references,m_anonymous_functions,m_multiline_strings];
        delphiunicodemodeswitches = delphimodeswitches + [m_systemcodepage,m_default_unicodestring];
        fpcmodeswitches =
          [m_fpc,m_string_pchar,m_nested_comment,m_repeat_forward,
@@ -65,7 +65,7 @@ interface
        objfpcmodeswitches =
          [m_objfpc,m_fpc,m_class,m_objpas,m_result,m_string_pchar,m_nested_comment,
           m_repeat_forward,m_cvar_support,m_initfinal,m_out,m_default_para,m_hintdirective,
-          m_property,m_default_inline,m_except];
+          m_property,m_default_inline,m_except,m_multiline_strings];
        tpmodeswitches =
          [m_tp7,m_tp_procvar,m_duplicate_names];
 {$ifdef gpc_mode}
@@ -119,9 +119,11 @@ interface
        CP_UTF16BE = 1201;
        CP_NONE  = 65535;
 
+    var
        { by default no local variable trashing }
        localvartrashing: longint = -1;
 
+    const
        nroftrashvalues = 4;
        trashintvalues: array[0..nroftrashvalues-1] of int64 = ($5555555555555555,$AAAAAAAAAAAAAAAA,$EFEFEFEFEFEFEFEF,0);
 
@@ -179,6 +181,8 @@ Const
          packrecords     : shortint;
          maxfpuregisters : shortint;
 
+         verbosity       : longint;
+
          cputype,
          optimizecputype,
          asmcputype      : tcputype;
@@ -197,8 +201,17 @@ Const
         { CPU targets with microcontroller support can add a controller specific unit }
          controllertype   : tcontrollertype;
 
-         { WARNING: this pointer cannot be written as such in record token }
+         { WARNING: pmessage cannot be written as such in record token
+              pmessage is the top of a stack of message/verbosity changes
+              RestoreLocalVerbosity applies the current stack. }
          pmessage : pmessagestaterecord;
+
+         lineendingtype : tlineendingtype;
+
+         whitespacetrimcount : word;
+
+         whitespacetrimauto : boolean;
+
 {$if defined(generic_cpu)}
          case byte of
 {$endif}
@@ -223,6 +236,15 @@ Const
 
     const
       LinkMapWeightDefault = 1000;
+{$ifdef CPU_BC_HAS_SIZE_LIMIT}
+    {$if defined(POWERPC) or defined(POWERPC64)}
+      { instructions are 4-byte long and relative jump distance
+        a signed 16-bit signed integer, code as
+        reduced by a small amount to avoid troubles
+        as distance can be modified by optimizations. }
+      BC_max_distance = ($8000 div 4) - $100;
+    {$endif}
+{$endif CPU_BC_HAS_SIZE_LIMIT}
 
     type
       TLinkRec = record
@@ -258,7 +280,9 @@ Const
         psf_local_switches_changed,
         psf_packenum_changed,
         psf_packrecords_changed,
-        psf_setalloc_changed
+        psf_setalloc_changed,
+        psf_asmmode_changed,
+        psf_optimizerswitches_changed
       );
       tpendingstateflags = set of tpendingstateflag;
 
@@ -272,6 +296,8 @@ Const
         nextpackenum : shortint;
         nextpackrecords : shortint;
         nextsetalloc : shortint;
+        nextasmmode : tasmmode;
+        nextoptimizerswitches : toptimizerswitches;
         flags : tpendingstateflags;
       end;
 
@@ -293,12 +319,12 @@ Const
        { specified with -FW and -Fw }
        wpofeedbackinput,
        wpofeedbackoutput : TPathStr;
-{$if defined(XTENSA) or defined(RISCV32)}
+{$if defined(XTENSA) or defined(RISCV32) or defined(ARM)}
        { specified with -Ff }
        idfpath           : TPathStr;
        { specified with }
        idf_version       : longint;
-{$endif defined(XTENSA) or defined(RISCV32)}
+{$endif defined(XTENSA) or defined(RISCV32) or defined(ARM)}
        { external assembler extra option }
        asmextraopt       : string;
 
@@ -417,7 +443,7 @@ Const
        pendingstate       : tpendingstate;
      { Memory sizes }
        heapsize,
-       maxheapsize,
+       maxheapsize : int64;
        stacksize   : longint;
 
 {$Ifdef EXTDEBUG}
@@ -439,7 +465,6 @@ Const
 
        cgbackend: tcgbackend;
 
-    const
        Inside_asm_statement : boolean = false;
 
        global_unit_count : word = 0;
@@ -462,16 +487,20 @@ Const
        sinclairql_vlink_experimental: boolean = true; { temporary }
 {$endif defined(m68k)}
 
+    const
        { default name of the C-style "main" procedure of the library/program }
        { (this will be prefixed with the target_info.cprefix)                }
        defaultmainaliasname = 'main';
+
+    var
        mainaliasname : string = defaultmainaliasname;
 
+    const
        custom_attribute_suffix = 'ATTRIBUTE';
 
+    var
       LTOExt: TCmdStr = '';
 
-    const
       default_settings : TSettings = (
         alignment : (
           procalign : 0;
@@ -513,6 +542,8 @@ Const
         packrecords     : 0;
 {$endif i8086}
         maxfpuregisters : 0;
+
+        verbosity : V_Default;
 
 { Note: GENERIC_CPU is used together with generic subdirectory to
   be able to compile some of the units without any real CPU.
@@ -616,11 +647,11 @@ Const
         cputype : cpu_rv32ima;
         optimizecputype : cpu_rv32ima;
         asmcputype : cpu_none;
-        fputype : fpu_fd;
+        fputype : fpu_soft;
   {$endif riscv32}
   {$ifdef riscv64}
-        cputype : cpu_rv64imac;
-        optimizecputype : cpu_rv64imac;
+        cputype : cpu_rv64imafdc;
+        optimizecputype : cpu_rv64imafdc;
         asmcputype : cpu_none;
         fputype : fpu_fd;
   {$endif riscv64}
@@ -668,6 +699,9 @@ Const
         tlsmodel : tlsm_none;
         controllertype : ct_none;
         pmessage : nil;
+        lineendingtype : le_platform;
+        whitespacetrimcount : 0;
+        whitespacetrimauto : false;
 {$if defined(i8086) or defined(GENERIC_CPU)}
         x86memorymodel : mm_small;
 {$endif defined(i8086) or defined(GENERIC_CPU)}
@@ -679,7 +713,6 @@ Const
 {$endif defined(LLVM) and not defined(GENERIC_CPU)}
       );
 
-    var
       starttime  : real;
       startsystime : TSystemTime;
 
@@ -986,6 +1019,22 @@ implementation
        result:=getrealtime(st);
      end;
 
+   function idfversionstring(version : longint):string;
+   {
+     Convert back the numerical idf_version for esp32 to string
+   }
+     begin
+       result := '';
+       if version > 0 then
+         begin
+           result := inttostr(version div 10000)+'.';
+           version := version - (version div 10000)*10000;
+           result := result + inttostr(version div 100)+'.';
+           version := version - (version div 100)*100;
+           result := result + inttostr(version);
+         end;
+     end;
+
 {****************************************************************************
                           Default Macro Handling
 ****************************************************************************}
@@ -1065,6 +1114,19 @@ implementation
          Replace(s,'$OPENBSD_LOCALBASE',GetOpenBSDLocalBase);
          Replace(s,'$OPENBSD_X11BASE',GetOpenBSDX11Base);
 {$endif openbsd}
+{$ifdef xtensa}
+         if idf_version > 0 then
+           Replace(s,'$IDF_VERSION',idfversionstring(idf_version));
+         if idfpath <> '' then
+           Replace(s,'$IDFPATH',idfpath);
+{$endif xtensa}
+{$ifdef riscv32}
+         if idf_version > 0 then
+           Replace(s,'$IDF_VERSION',idfversionstring(idf_version));
+         if idfpath <> '' then
+           Replace(s,'$IDFPATH',idfpath);
+{$endif riscv32}
+
          if not substitute_env_variables then
            exit;
          { Replace environment variables between dollar signs }
@@ -1243,7 +1305,7 @@ implementation
            ishexstr(copy(s,16,4)) and ishexstr(copy(s,21,4)) and
            ishexstr(copy(s,26,12)) then begin
           GUID.D1:=dword(hexstr2longint(copy(s,2,8)));
-          { these values are arealdy in the correct range (4 chars = word) }
+          { these values are already in the correct range (4 chars = word) }
           GUID.D2:=word(hexstr2longint(copy(s,11,4)));
           GUID.D3:=word(hexstr2longint(copy(s,16,4)));
           for i:=0 to 1 do
@@ -1606,17 +1668,8 @@ implementation
      pinitdoneentry=^tinitdoneentry;
 
 
-   const
+   var
      initdoneprocs : TFPList = nil;
-
-
-   procedure allocinitdoneprocs;
-     begin
-       { Avoid double initialization }
-       if assigned(initdoneprocs) then
-         exit;
-       initdoneprocs:=tfplist.create;
-     end;
 
 
    procedure register_initdone_proc(init,done:tprocedure);
@@ -1626,14 +1679,7 @@ implementation
        new(entry);
        entry^.init:=init;
        entry^.done:=done;
-       { Do not rely on the fact that
-         globals unit initialization code
-         has already been executed.
-         Unit initialization order is too
-         uncertian for that. PM }
-       if not assigned(initdoneprocs) then
-         allocinitdoneprocs;
-       initdoneprocs.add(entry);
+       TFPList.AddOnDemand(initdoneprocs,entry);
      end;
 
 
@@ -1663,33 +1709,29 @@ implementation
      end;
 
 
-   procedure freeinitdoneprocs;
-     var
-       i : longint;
-     begin
-       if not assigned(initdoneprocs) then
-         exit;
-       for i:=0 to initdoneprocs.count-1 do
-         dispose(pinitdoneentry(initdoneprocs[i]));
-       initdoneprocs.free;
-       { Reset variable, to be on the safe side }
-       initdoneprocs:=nil;
-     end;
-
-
    procedure DoneGlobals;
      begin
        calldoneprocs;
        librarysearchpath.Free;
+       librarysearchpath := nil;
        unitsearchpath.Free;
+       unitsearchpath := nil;
        objectsearchpath.Free;
+       objectsearchpath := nil;
        includesearchpath.Free;
+       includesearchpath := nil;
        frameworksearchpath.Free;
+       frameworksearchpath := nil;
        LinkLibraryAliases.Free;
+       LinkLibraryAliases := nil;
        LinkLibraryOrder.Free;
+       LinkLibraryOrder := nil;
        packagesearchpath.Free;
+       packagesearchpath := nil;
        namespacelist.Free;
+       namespacelist := nil;
        premodule_namespacelist.Free;
+       premodule_namespacelist := nil;
        current_namespacelist:=Nil;
      end;
 
@@ -1702,6 +1744,7 @@ implementation
         do_release:=false;
         do_make:=true;
         codegenerror:=false;
+        global_unit_count:=0;
 
         { Output }
         OutputFileName:='';
@@ -1781,12 +1824,11 @@ implementation
      end;
 
 initialization
-  allocinitdoneprocs;
 {$ifdef LLVM}
   cgbackend:=cg_llvm;
 {$else}
   cgbackend:=cg_fpc;
 {$endif}
 finalization
-  freeinitdoneprocs;
+  tfplist.FreeAndNilDisposing(initdoneprocs,TypeInfo(tinitdoneentry));
 end.

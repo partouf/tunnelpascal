@@ -89,7 +89,7 @@ interface
           ait_llvmdecl, { llvm symbol declaration (global/external variable, external procdef) }
           ait_llvmmetadatanode, (* llvm metadata node: !id = !{type value, ...} *)
           ait_llvmmetadatareftypedconst, { reference to metadata inside a metadata constant }
-          ait_llvmmetadatarefoperand, { llvm metadata referece: !metadataname !id }
+          ait_llvmmetadatarefoperand, { llvm metadata reference: !metadataname !id }
 {$endif}
 {$ifdef wasm}
           ait_export_name,
@@ -105,8 +105,11 @@ interface
           ait_seh_directive,
           { Dwarf CFI directive }
           ait_cfi,
-          ait_eabi_attribute
+          ait_eabi_attribute,
+          ait_attribute
           );
+
+        taitypes = set of taitype;
 
         taiconst_type = (
           aitconst_128bit,
@@ -255,7 +258,8 @@ interface
 {$endif}
           'cfi',
           'seh_directive',
-          'eabi_attribute'
+          'eabi_attribute',
+          'attribute'
           );
 
     type
@@ -304,10 +308,11 @@ interface
        ,top_asmlist
        ,top_callingconvention
 {$endif llvm}
-{$if defined(riscv32) or defined(riscv64)}
+{$if defined(riscv)}
        ,top_fenceflags
        ,top_roundingmode
-{$endif defined(riscv32) or defined(riscv64)}
+       ,top_realconst
+{$endif defined(riscv)}
 {$ifdef wasm}
        ,top_functype
        ,top_single
@@ -378,7 +383,8 @@ interface
 {$endif wasm}
                      ait_seh_directive,
                      ait_cfi,
-                     ait_eabi_attribute
+                     ait_eabi_attribute,
+                     ait_attribute
                     ];
 
 
@@ -539,7 +545,7 @@ interface
             top_single : (sval:single);
             top_double : (dval:double);
             top_string : (pcvallen: aint; pcval: pchar);
-            top_wstring : (pwstrval: pcompilerwidestring);
+            top_wstring : (pwstrval: tcompilerwidestring);
         {$endif jvm}
         {$ifdef llvm}
             top_single : (sval:single);
@@ -559,6 +565,7 @@ interface
         {$if defined(riscv32) or defined(riscv64)}
             top_fenceflags : (fenceflags : TFenceFlags);
             top_roundingmode : (roundingmode : TRoundingMode);
+            top_realconst : (val_real:bestreal;special_value : TAsmRealSpecialValue);
         {$endif defined(riscv32) or defined(riscv64)}
         {$ifdef wasm}
             top_functype : (functype: TWasmFuncType);
@@ -599,17 +606,23 @@ interface
        taiclassarray = array[taitype] of taiclass;
 
        { Generates an assembler string }
+
+       { tai_string }
+
        tai_string = class(tailineinfo)
-          str : pchar;
-          { extra len so the string can contain an \0 }
-          len : longint;
+          str : TAnsiCharDynArray;
           constructor Create(const _str : string);
           constructor Create(const _str : ansistring);
-          constructor Create_pchar(_str : pchar;length : longint);
+          { data: not guaranteed to #0-terminated
+            length: length of the data without #0 terminator (unless the #0
+              terminator itself must be included)
+            add0: add a terminating zero as part of the data after data  }
+          constructor Create_Data(data : pchar;length : longint; add0: boolean);
           destructor Destroy;override;
           constructor ppuload(t:taitype;ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
           function getcopy:tlinkedlistitem;override;
+          function len : integer; inline;
        end;
 
        { Generates a common label }
@@ -699,7 +712,7 @@ interface
        end;
 
 
-       { Generates an uninitializised data block }
+       { Generates an uninitialized data block }
        tai_datablock = class(tailineinfo)
           is_global : boolean;
           sym       : tasmsymbol;
@@ -765,6 +778,7 @@ interface
           constructor Createname(const name:string;_symtyp:Tasmsymtype;ofs:asizeint);
           constructor Create_type_name(_typ:taiconst_type;const name:string;ofs:asizeint);
           constructor Create_type_name(_typ:taiconst_type;const name:string;_symtyp:Tasmsymtype;ofs:asizeint);
+          constructor Create_type_name(_typ:taiconst_type;const name:string;symclass: TAsmSymbolClass;_symtyp:Tasmsymtype;ofs:asizeint);
           constructor Create_nil_codeptr;
           constructor Create_nil_codeptr_unaligned;
           constructor Create_nil_dataptr;
@@ -1050,12 +1064,12 @@ interface
         end;
 
         teattrtyp = (eattrtype_none,eattrtype_dword,eattrtype_ntbs);
-        tai_eabi_attribute = class(tai)
+        tai_attribute = class(tai)
           eattr_typ : teattrtyp;
           tag,value : dword;
           valuestr : pstring;
-          constructor create(atag,avalue : dword);
-          constructor create(atag : dword;const avalue : string);
+          constructor create(atyp: taitype; atag,avalue : dword);
+          constructor create(atyp: taitype; atag : dword;const avalue : string);
           destructor destroy;override;
           constructor ppuload(t:taitype;ppufile:tcompilerppufile);override;
           procedure ppuwrite(ppufile:tcompilerppufile);override;
@@ -1417,7 +1431,7 @@ implementation
             is_global:=true;
           end
         else
-          Create(_name,_size,def,_typ);
+          Create_global(_name,_size,def,_typ);
       end;
 
 
@@ -1532,7 +1546,7 @@ implementation
             is_global:=true;
           end
         else
-          Createname(_name, _symtyp, siz, def);
+          Createname_global(_name, _symtyp, siz, def);
       end;
 
 
@@ -1994,6 +2008,13 @@ implementation
       end;
 
 
+    constructor tai_const.Create_type_name(_typ:taiconst_type;const name:string;symclass: TAsmSymbolClass;_symtyp:Tasmsymtype;ofs:asizeint);
+      begin
+        self.create_sym_offset(current_asmdata.RefAsmSymbolByClass(symclass,name,_symtyp),ofs);
+        consttype:=_typ;
+      end;
+
+
     constructor tai_const.Create_nil_codeptr;
       begin
         self.Create_int_codeptr(0);
@@ -2403,73 +2424,87 @@ implementation
  ****************************************************************************}
 
      constructor tai_string.Create(const _str : string);
+       var
+         lNewLen : Integer;
        begin
           inherited Create;
           typ:=ait_string;
-          len:=length(_str);
-          getmem(str,len+1);
-          if len>0 then
-            move(_str[1],str^,len);
-          str[len]:=#0;
+          lNewLen:=length(_str);
+          setlength(str,lNewLen);
+          if lNewLen>0 then
+            move(_str[1],str[0],lNewLen);
        end;
 
 
      constructor tai_string.Create(const _str: ansistring);
+       var
+         lNewLen : Integer;
        begin
          inherited Create;
          typ:=ait_string;
-         len:=length(_str);
-         getmem(str,len+1);
-         if len>0 then
-           move(_str[1],str^,len);
-         str[len]:=#0;
+         lNewLen:=length(_str);
+         setlength(str,lNewlen);
+         if lNewLen>0 then
+           move(_str[1],str[0],lNewLen);
        end;
 
 
-    constructor tai_string.Create_pchar(_str : pchar;length : longint);
+    constructor tai_string.Create_Data(data : pchar;length : longint; add0: boolean);
        begin
           inherited Create;
           typ:=ait_string;
-          str:=_str;
-          len:=length;
+          setlength(str,length+ord(add0));
+          if length>0 then
+            move(data^,str[0],length);
+          if add0 then
+            str[length]:=#0;
        end;
 
 
-    destructor tai_string.destroy;
+        destructor tai_string.Destroy;
       begin
-         if str<>nil then
-           freemem(str);
          inherited Destroy;
       end;
 
 
     constructor tai_string.ppuload(t:taitype;ppufile:tcompilerppufile);
+      var
+        lNewLen : integer;
       begin
         inherited ppuload(t,ppufile);
-        len:=ppufile.getlongint;
-        getmem(str,len+1);
-        ppufile.getdata(str^,len);
-        str[len]:=#0
+        lNewLen:=ppufile.getlongint;
+        setlength(str,lNewLen);
+        ppufile.getdata(str[0],lnewlen);
       end;
 
 
     procedure tai_string.ppuwrite(ppufile:tcompilerppufile);
+      var
+        lWriteLen : integer;
       begin
         inherited ppuwrite(ppufile);
-        ppufile.putlongint(len);
-        ppufile.putdata(str^,len);
+        lWriteLen:=length(str);
+        ppufile.putlongint(lWriteLen);
+        ppufile.putdata(str[0],lWriteLen);
       end;
 
 
     function tai_string.getcopy : tlinkedlistitem;
       var
         p : tlinkedlistitem;
+        lWriteLen : integer;
       begin
         p:=inherited getcopy;
-        getmem(tai_string(p).str,len);
-        move(str^,tai_string(p).str^,len);
+        lWriteLen:=length(str);
+        setlength(tai_string(p).str,lWriteLen);
+        move(str[0],tai_string(p).str[0],lWriteLen);
         getcopy:=p;
       end;
+
+    function tai_string.len: integer;
+    begin
+      Result:=Length(str);
+    end;
 
 
 {****************************************************************************
@@ -2977,6 +3012,12 @@ implementation
 {$ifdef aarch64}
               and not(r.refaddr in [addr_full,addr_gotpageoffset,addr_gotpage])
 {$endif aarch64}
+{$ifdef riscv}
+              and not(opcode=A_LA)
+              and not(opcode=A_FLD)
+              and not(opcode=A_FLQ)
+              and not(opcode=A_FLW)
+{$endif riscv}
               then
               internalerror(200502052);
 {$endif not llvm}
@@ -3596,41 +3637,41 @@ implementation
 
 
 {****************************************************************************
-                              tai_eabi_attribute
+                              tai_attribute
  ****************************************************************************}
 
-    constructor tai_eabi_attribute.create(atag,avalue : dword);
+    constructor tai_attribute.create(atyp : taitype; atag,avalue : dword);
       begin
         inherited Create;
-        typ:=ait_eabi_attribute;
+        typ:=atyp;
         eattr_typ:=eattrtype_dword;
         tag:=atag;
         value:=avalue;
       end;
 
 
-    constructor tai_eabi_attribute.create(atag: dword; const avalue: string);
+    constructor tai_attribute.create(atyp : taitype; atag: dword; const avalue: string);
       begin
         inherited Create;
-        typ:=ait_eabi_attribute;
+        typ:=atyp;
         eattr_typ:=eattrtype_ntbs;
         tag:=atag;
         valuestr:=NewStr(avalue);
       end;
 
 
-    destructor tai_eabi_attribute.destroy;
+    destructor tai_attribute.destroy;
       begin
         Inherited Destroy;
       end;
 
 
-    constructor tai_eabi_attribute.ppuload(t:taitype;ppufile:tcompilerppufile);
+    constructor tai_attribute.ppuload(t:taitype;ppufile:tcompilerppufile);
       begin
       end;
 
 
-    procedure tai_eabi_attribute.ppuwrite(ppufile:tcompilerppufile);
+    procedure tai_attribute.ppuwrite(ppufile:tcompilerppufile);
       begin
         inherited ppuwrite(ppufile);
         ppufile.putdword(tag);
@@ -3734,7 +3775,7 @@ implementation
 {$endif JVM}
 
 begin
-{$ifndef WASM}
+{$if not defined(WASM) and not defined(LLVM)}
 {$push}{$warnings off}
   { taitype should fit into a 4 byte set for speed reasons }
   if ord(high(taitype))>31 then

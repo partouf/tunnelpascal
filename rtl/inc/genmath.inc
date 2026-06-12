@@ -117,7 +117,7 @@ Begin
   pflags^:=pflags^ + i;
   unmasked_flags := pflags^ - softfloat_exception_mask;
   { before we raise the exception, we mark it as handled,
-    this behaviour is similiar to the hardware handler in SignalToRunerror }
+    this behaviour is similar to the hardware handler in SignalToRunerror }
   SysResetFPU;
   if (float_flag_invalid in unmasked_flags) then
      HandleError(207)
@@ -352,22 +352,44 @@ end;
     {*  frexp() extracts the exponent from x.  It returns an integer     *}
     {*  power of two to expnt and the significand between 0.5 and 1      *}
     {*  to y.  Thus  x = y * 2**expn.                                    *}
+  var
+    M: uint64;
+    E, ExtraE: int32;
+  begin
+    Mantissa := X;
+    E := {$ifndef jvm} TDoubleRec(X).Exp {$else} float64high(X) shr 20 and (1 shl 11 - 1) {$endif};
+    if (E > 0) and (E < 2 * TDoubleRec.Bias + 1) then
     begin
-      exponent:=0;
-      if (abs(x)<0.5) then
-       While (abs(x)<0.5) do
-       begin
-         x := x*2;
-         Dec(exponent);
-       end
-      else
-       While (abs(x)>1) do
-       begin
-         x := x/2;
-         Inc(exponent);
-       end;
-      Mantissa := x;
+      // Normal.
+    {$ifndef jvm}
+      TDoubleRec(Mantissa).Exp := TDoubleRec.Bias - 1;
+    {$else}
+      float64sethigh(Mantissa, float64high(Mantissa) and not ((1 shl 11 - 1) shl 20) + (TDoubleRec.Bias - 1) shl 20);
+    {$endif}
+      Exponent := E - (TDoubleRec.Bias - 1);
+      exit;
     end;
+    if E = 0 then
+    begin
+      M := {$ifndef jvm} TDoubleRec(X).Frac {$else} uint64(uint32(float64high(X)) and (1 shl 20 - 1)) shl 32 or uint32(float64low(X)) {$endif};
+      if M <> 0 then
+      begin
+        // Subnormal.
+        ExtraE := 52 - BsrQWord(M);
+      {$ifndef jvm}
+        TDoubleRec(Mantissa).Frac := M shl ExtraE; // "and (1 shl 52 - 1)" required to remove starting 1, but .SetFrac already does it.
+        TDoubleRec(Mantissa).Exp  := TDoubleRec.Bias - 1;
+      {$else}
+        float64sethigh(Mantissa, uint32(float64high(Mantissa)) and (1 shl 31) + (TDoubleRec.Bias - 1 - 1 {extra -1 removes starting 1 from M}) shl 20 + uint32(uint64(M shl ExtraE) shr 32));
+        float64setlow(Mantissa, uint32(M shl ExtraE));
+      {$endif}
+        Exponent := -TDoubleRec.Bias + 2 - ExtraE;
+        exit;
+      end;
+    end;
+    // ±0, ±Inf, NaN.
+    Exponent := 0;
+  end;
 {$endif not SYSTEM_HAS_FREXP}
 
 
@@ -439,79 +461,11 @@ end;
 {$endif not SYSTEM_HAS_LDEXP}
 
 
-    function polevl(x:Real; Coef:PReal; N:sizeint):Real;
-    {*****************************************************************}
-    { Evaluate polynomial                                             }
-    {*****************************************************************}
-    {                                                                 }
-    { SYNOPSIS:                                                       }
-    {                                                                 }
-    {  int N;                                                         }
-    {  double x, y, coef[N+1], polevl[];                              }
-    {                                                                 }
-    {  y = polevl( x, coef, N );                                      }
-    {                                                                 }
-    {  DESCRIPTION:                                                   }
-    {                                                                 }
-    {     Evaluates polynomial of degree N:                           }
-    {                                                                 }
-    {                       2          N                              }
-    {   y  =  C  + C x + C x  +...+ C x                               }
-    {          0    1     2          N                                }
-    {                                                                 }
-    {   Coefficients are stored in reverse order:                     }
-    {                                                                 }
-    {   coef[0] = C  , ..., coef[N] = C  .                            }
-    {              N                   0                              }
-    {                                                                 }
-    {   The function p1evl() assumes that coef[N] = 1.0 and is        }
-    {   omitted from the array.  Its calling arguments are            }
-    {   otherwise the same as polevl().                               }
-    {                                                                 }
-    {  SPEED:                                                         }
-    {                                                                 }
-    {   In the interest of speed, there are no checks for out         }
-    {   of bounds arithmetic.  This routine is used by most of        }
-    {   the functions in the library.  Depending on available         }
-    {   equipment features, the user may wish to rewrite the          }
-    {   program in microcode or assembly language.                    }
-    {*****************************************************************}
-    var ans : Real;
-        i   : sizeint;
-
+    function floord(x: double): double; inline;
     begin
-      ans := Coef[0];
-      for i:=1 to N do
-        ans := ans * x + Coef[i];
-      polevl:=ans;
-    end;
-
-
-    function p1evl(x:Real; Coef:PReal; N:sizeint):Real;
-    {                                                           }
-    { Evaluate polynomial when coefficient of x  is 1.0.        }
-    { Otherwise same as polevl.                                 }
-    {                                                           }
-    var
-        ans : Real;
-        i   : sizeint;
-    begin
-      ans := x + Coef[0];
-      for i:=1 to N-1 do
-        ans := ans * x + Coef[i];
-      p1evl := ans;
-    end;
-
-
-    function floord(x: double): double;
-    var
-      t: double;
-    begin
-      t := int(x);
-      if (x>=0.0) or (x=t) then
-        floord := t
-      else
-        floord := t - 1.0;
+      result := int(x);
+      if result>x then
+        result := result - 1.0;
     end;
 
    {*
@@ -560,7 +514,7 @@ end;
     *                      64-bit  precision       2
     *                      113-bit precision       3
     *              The actual value is the sum of them. Thus for 113-bit
-    *              precison, one may have to do something like:
+    *              precision, one may have to do something like:
     *
     *              long double t,w,r_head, r_tail;
     *              t = (long double)y[2] + (long double)y[1];
@@ -652,7 +606,8 @@ end;
     type
       TDA02 = array[0..2] of double; { 3 elements is enough for float128 }
 
-    function k_rem_pio2(const x: TDA02; out y: TDA02; e0, nx, prec: integer): sizeint;
+    { inline to make use of the fact prec is always 2. }
+    function k_rem_pio2(const x: TDA02; out y: TDA02; e0, nx, prec: integer): sizeint; inline;
     var
       i,ih,j,jz,jx,jv,jp,jk,carry,k,n,q0: longint;
       t: longint;
@@ -688,7 +643,7 @@ end;
       jz := jk;
 
       repeat
-        {distill q[] into iq[] reversingly}
+        {distill q[] into iq[] reversely}
         i := 0;
         z := q[jz];
         for j:=jz downto 1 do
@@ -892,23 +847,51 @@ end;
 
     { Argument reduction of x:  z = x - n*Pi/2, |z| <= Pi/4, result = n mod 8.}
     { Uses Payne/Hanek if |x| >= lossth, Cody/Waite otherwise}
+    function rem_pio2_unlikely(x: double; out z: double): sizeint;
+    var
+      e0,nx: longint;
+      tx,ty: TDA02;
+    begin
+      z := abs(x);
+      e0 := (float64high(z) shr 20)-1046;
+      if (e0 = ($7ff-1046)) then  { z is Inf or NaN }
+      begin
+{$push} {$optimization nofastmath}
+        z := x - x;
+{$pop}
+        exit(0);
+      end;
+      float64sethigh(z,float64high(z) - (e0 shl 20));
+      tx[0] := trunc(z);
+      z := (z-tx[0])*two24;
+      tx[1] := trunc(z);
+      tx[2] := (z-tx[1])*two24;
+      nx := 3;
+      while (tx[nx-1]=0.0) do dec(nx);  { skip zero terms }
+      result := k_rem_pio2(tx,ty,e0,nx,2);
+      z := ty[0] + ty[1];
+      if x<0 then
+      begin
+        result := (-result) and 7;
+        z := -z;
+      end;
+    end;
+
     function rem_pio2(x: double; out z: double): sizeint;
     const
-      tol: double = 2.384185791015625E-7;  {lossth*eps_d}
+      tol = double(2.384185791015625E-7);  {lossth*eps_d}
       DP1 = double(7.85398125648498535156E-1);
       DP2 = double(3.77489470793079817668E-8);
       DP3 = double(2.69515142907905952645E-15);
     var
-      i,e0,nx: longint;
+      i: longint;
       y: double;
-      tx,ty: TDA02;
     begin
       y := abs(x);
       if (y < PIO4) then
       begin
         z := x;
-        result := 0;
-        exit;
+        exit(0);
       end
       else if (y < lossth) then
       begin
@@ -920,36 +903,13 @@ end;
           y := y + 1.0;
         end;
         z := ((x - y * DP1) - y * DP2) - y * DP3;
-        result := (i shr 1) and 7;
 
         {If x is near a multiple of Pi/2, the C/W relative error may be large.}
         {In this case redo the calculation with the Payne/Hanek algorithm.    }
         if abs(z) > tol then
-          exit;
+          exit(i shr 1 and 7);
       end;
-      z := abs(x);
-      e0 := (float64high(z) shr 20)-1046;
-      if (e0 = ($7ff-1046)) then  { z is Inf or NaN }
-      begin
-        z := x - x;
-        result:=0;
-        exit;
-      end;
-      float64sethigh(z,float64high(z) - (e0 shl 20));
-      tx[0] := trunc(z);
-      z := (z-tx[0])*two24;
-      tx[1] := trunc(z);
-      tx[2] := (z-tx[1])*two24;
-      nx := 3;
-      while (tx[nx-1]=0.0) do dec(nx);  { skip zero terms }
-      result := k_rem_pio2(tx,ty,e0,nx,2);
-      if (x<0) then
-      begin
-        result := (-result) and 7;
-        z := -ty[0] - ty[1];
-      end
-      else
-        z := ty[0] + ty[1];
+      result := rem_pio2_unlikely(x, z);
     end;
 
 
@@ -989,7 +949,7 @@ end;
        if( d <= 0.0 ) then
        begin
            if d < 0.0 then
-             result:=(d-d)/zero
+             result:=zero/zero
            else
              result := 0.0;
        end
@@ -1281,10 +1241,9 @@ end;
       { of the fractional part: }
       { e**x - 1  =  2x P(x**2)/( Q(x**2) - P(x**2) )  }
         xx := d * d;
-        px := d * polevl( xx, P, 2 );
-        d  :=  px/( polevl( xx, Q, 3 ) - px );
-        d  := ldexp( d, 1 );
-        d  :=  d + 1.0;
+        px := d * ((P[0] * xx + P[1]) * xx + P[2]);
+        d  :=  px/( (((Q[0] * xx + Q[1]) * xx + Q[2]) * xx + Q[3]) - px );
+        d  := 2 * d + 1.0;
         d  := ldexp( d, n );
         result := d;
       end;
@@ -1429,8 +1388,6 @@ end;
       Lg6: double = 1.531383769920937332e-01;         { 3FC39A09 D078C69F }
       Lg7: double = 1.479819860511658591e-01;         { 3FC2F112 DF3E5244 }
 
-      zero: double = 0.0;
-
     var
       hfsq,f,s,z,R,w,t1,t2,dk: double;
       k,hx,i,j: longint;
@@ -1439,7 +1396,7 @@ end;
 { if we have to check manually fpu exceptions, then force the exit statements here to
   throw one }
 {$CHECKFPUEXCEPTIONS+}
-{ turn off fastmath as it converts (d-d)/zero into 0 and thus not raising an exception }
+{ turn off fastmath as it converts zero/zero into 1 and thus not raising an exception }
 {$OPTIMIZATION NOFASTMATH}
     begin
       hx := float64high(d);
@@ -1451,7 +1408,7 @@ end;
         if (((hx and $7fffffff) or longint(lx))=0) then
           exit(-two54/zero);                { log(+-0)=-inf }
         if (hx<0) then
-          exit((d-d)/zero);                 { log(-#) = NaN }
+          exit(zero/zero);                 { log(-#) = NaN }
         dec(k, 54); d := d * two54;         { subnormal number, scale up x }
         hx := float64high(d);
       end;
@@ -1538,27 +1495,23 @@ end;
     { Between pi/4 and pi/2 the cosine is represented as              }
     {      1  -  x**2 Q(x**2).                                        }
     {*****************************************************************}
-    var  y, z, zz : Real;
+    var  z, zz : Real;
          j : sizeint;
 
     begin
       { This seemingly useless condition ensures that sin(-0.0)=-0.0 }
       if (d=0.0) then
         exit(d);
-      j := rem_pio2(d,z) and 3;
+      j := rem_pio2(d,z);
 
       zz := z * z;
-
-      if( (j=1) or (j=3) ) then
-        y := 1.0 - ldexp(zz,-1) + zz * zz * polevl( zz, coscof, 5 )
+      if j and 1<>0 then { j and 3 = 1 or j and 3 = 3 }
+        result := 1.0 - zz * 0.5 + zz * zz * (((((coscof[0] * zz + coscof[1]) * zz + coscof[2]) * zz + coscof[3]) * zz + coscof[4]) * zz + coscof[5])
       else
-      { y = z  +  z * (zz * polevl( zz, sincof, 5 )); }
-        y := z  +  z * z * z * polevl( zz, sincof, 5 );
+        result := z + zz * z * (((((sincof[0] * zz + sincof[1]) * zz + sincof[2]) * zz + sincof[3]) * zz + sincof[4]) * zz + sincof[5]);
 
-      if (j > 1) then
-        result := -y
-      else
-        result := y;
+      if j and 2<>0 then { j and 3 = 2 or j and 3 = 3 }
+        result := -result;
     end;
 {$endif}
 
@@ -1593,20 +1546,16 @@ end;
     var  y, z, zz : Real;
          j : sizeint;
     begin
-      j := rem_pio2(d,z) and 3;
+      j := rem_pio2(d,z);
 
       zz := z * z;
-
-      if( (j=1) or (j=3) ) then
-      { y = z  +  z * (zz * polevl( zz, sincof, 5 )); }
-        y := z  +  z * z * z * polevl( zz, sincof, 5 )
+      if j and 1<>0 then { j and 3 = 1 or j and 3 = 3 }
+        result := z + zz * z * (((((sincof[0] * zz + sincof[1]) * zz + sincof[2]) * zz + sincof[3]) * zz + sincof[4]) * zz + sincof[5])
       else
-        y := 1.0 - ldexp(zz,-1) + zz * zz * polevl( zz, coscof, 5 );
+        result := 1.0 - zz * 0.5 + zz * zz * (((((coscof[0] * zz + coscof[1]) * zz + coscof[2]) * zz + coscof[3]) * zz + coscof[4]) * zz + coscof[5]);
 
-      if (j = 1) or (j = 2) then
-        result := -y
-      else
-        result := y ;
+      if (j+1) and 2<>0 then { j and 3 = 1 or j and 3 = 2 }
+        result := -result;
     end;
 {$endif}
 
@@ -1757,15 +1706,29 @@ end;
 
 
 {$ifndef FPC_SYSTEM_HAS_FRAC}
+{$push}
+{$ifndef VER3_2}
+{ if we have to check manually fpu exceptions, then force the result assignment statement here to
+  throw one }
+{$CHECKFPUEXCEPTIONS+}
+{ turn off fastmath as it converts zero/zero into 0 and thus not raising an exception }
+{$OPTIMIZATION NOFASTMATH}
+{$endif VER3_2}
 function fpc_frac_real(d : ValReal) : ValReal;compilerproc;
   begin
     { Nan or +/-Inf }
     if (float64high(d) and $7ff00000)=$7ff00000 then
       { return NaN }
-      result := (d-d)/0.0 
+{$ifdef VER3_2}
+      { fix bootstrapping with 3.2 on arm-linux }
+      result := (d-d)/0.0
+{$else VER3_2}
+      result := zero/zero
+{$endif VER3_2}
     else
       result := d - Int(d);
   end;
+{$pop}
 {$endif}
 
 

@@ -2,7 +2,7 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
 {$ifdef unix}
   cthreads,
 {$endif}
@@ -20,21 +20,21 @@ begin
     begin
     P:=AddPackage('utils-h2pas');
     P.ShortName:='h2pa';
-    { java and jvm-android do not support 
+    { java and jvm-android do not support
       fpc_get_output used in these sources }
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
     { palmos does not support command line parameters }
     P.OSes := P.OSes - [palmos];
     { Program does not fit in 16-bit memory constraints }
-    P.OSes := P.OSes - [msdos,win16,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
+    P.OSes := P.OSes - [msdos,win16,zxspectrum,msxdos,amstradcpc,sinclairql,human68k,ps1];
     { avr-embedded and i8086-embedded do not support all needed features by default }
     if Defaults.CPU in [avr,i8086,z80] then
       P.OSes := P.OSes - [embedded];
     { wasm32 CPU does not support
       goto used in these sources }
     if Defaults.CPU=wasm32 then
-      P.OSes := P.OSes - [wasi,embedded];
+      P.OSes := P.OSes - [wasip1,wasip1threads,wasip2,embedded];
 
     P.Author := '<various>';
     P.License := 'LGPL with modification';
@@ -56,7 +56,8 @@ begin
     T.Dependencies.AddUnit('h2plexlib');
     T.Dependencies.AddUnit('scan');
     T.Dependencies.AddUnit('h2pyacclib');
-    
+    T.Dependencies.AddUnit('h2pparse');
+
     T:=P.Targets.AddUnit('scan.pas');
     T.Install:=false;
     T.Dependencies.AddUnit('h2pbase');
@@ -73,8 +74,8 @@ begin
     T.Dependencies.AddUnit('h2ptypes');
     T.Dependencies.AddUnit('h2plexlib');
     T.Dependencies.AddUnit('h2pyacclib');
-    
-    
+
+
     T:=P.Targets.AddUnit('scanbase.pp');
     T.install:=false;
     T.Dependencies.AddUnit('h2pconst');
@@ -100,6 +101,18 @@ begin
     P.Targets.AddUnit('h2plexlib.pas').install:=false;
     P.Targets.AddUnit('h2pyacclib.pas').install:=false;
     P.Targets.AddUnit('h2pconst.pas').install:=false;
+
+    T:=P.Targets.AddUnit('h2pparse.pp');
+    T.install:=false;
+    T.Dependencies.AddUnit('scan');
+    T.Dependencies.AddUnit('h2pconst');
+    T.Dependencies.AddUnit('h2plexlib');
+    T.Dependencies.AddUnit('h2pyacclib');
+    T.Dependencies.AddUnit('scanbase');
+    T.Dependencies.AddUnit('h2pbase');
+    T.Dependencies.AddUnit('h2ptypes');
+    T.Dependencies.AddUnit('h2pout');
+
     end;
 end;
 

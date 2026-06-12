@@ -10,10 +10,10 @@ Used to not compile, now should compile
 {$endif}
 uses
   Classes;
-  
+
 type
   TMyStringList = type TStringlist;
-  
+
 var
   list : TMyStringList;
 
@@ -21,4 +21,4 @@ begin
   list:=TMyStringList.Create;
 end.
 
-    
+

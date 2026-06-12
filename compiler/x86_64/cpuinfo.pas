@@ -65,7 +65,8 @@ Type
        cpu_icelake_client,
        cpu_icelake_server,
        cpu_zen3,
-       cpu_zen4
+       cpu_zen4,
+       cpu_zen5
       );
 
    tfputype =
@@ -115,6 +116,7 @@ Const
       (controllertypestr:''; controllerunitstr:''; cputype:cpu_none; fputype:fpu_none; flashbase:0; flashsize:0; srambase:0; sramsize:0));
    {$POP}
 
+var
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
@@ -133,6 +135,7 @@ Const
      pocall_vectorcall
    ];
 
+const
    cputypestr : array[tcputype] of string[16] = ('',
      'ATHLON64',
      'X86-64',
@@ -154,7 +157,8 @@ Const
      'ICELAKE-CLIENT',
      'ICELAKE-SERVER',
      'ZEN3',
-     'ZEN4'
+     'ZEN4',
+     'ZEN5'
    );
 
    fputypestr : array[tfputype] of string[9] = (
@@ -207,7 +211,7 @@ Const
 				  cs_opt_tailrecursion,cs_opt_nodecse,cs_opt_reorder_fields,cs_opt_fastmath];
 
    level1optimizerswitches = genericlevel1optimizerswitches;
-   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches + 
+   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches +
      [{$ifndef llvm}cs_opt_regvar,{$endif}cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse,cs_opt_consts];
    level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches;
    level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [cs_userbp];
@@ -218,6 +222,8 @@ type
        CPUX86_HAS_CMOV,         { CMOVcc instructions are available }
        CPUX86_HAS_SSEUNIT,      { SSE instructions are available }
        CPUX86_HAS_SSE2,         { SSE2 instructions are available }
+       CPUX86_HAS_SSSE3,        { SSSE3 instructions are available }
+       CPUX86_HAS_SSE4_1,       { SSE 4.1 instructions are available }
        CPUX86_HAS_BMI1,         { BMI1 instructions are available }
        CPUX86_HAS_BMI2,         { BMI2 instructions are available }
        CPUX86_HAS_CMPXCHG16B,   { CMPXCHG16B is available }
@@ -249,35 +255,37 @@ type
 
    { Instruction optimisation hints }
    TCPUOptimizeFlags =
-      (CPUX86_HINT_FAST_BT_REG_IMM,    { BT instructions with register source and immediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BT_REG_REG,    { BT instructions with register source and register indices are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_BTX_REG_IMM,   { BTC/R/S instructions with register source and immediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BTX_REG_REG,   { BTC/R/S instructions with register source and register indices are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_BT_MEM_IMM,    { BT instructions with memory sources and inmediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BT_MEM_REG,    { BT instructions with memory sources and register indices and a register index are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_BTX_MEM_IMM,   { BTC/R/S instructions with memory sources and immediate indices are at least as fast as logical instructions }
-       CPUX86_HINT_FAST_BTX_MEM_REG,   { BTC/R/S instructions with memory sources and register indices are at least as fast as equivalent logical instructions }
-       CPUX86_HINT_FAST_XCHG,          { XCHG %reg,%reg executes in 2 cycles or fewer }
-       CPUX86_HINT_FAST_PDEP_PEXT,     { The BMI2 instructions PDEP and PEXT execute in a single cycle }
-       CPUX86_HINT_FAST_3COMP_ADDR,    { A 3-component address (base, index and offset) has the same latency as the 2-component version (most notable with LEA instructions) }
-       CPUX86_HINT_FAST_SHORT_REP_MOVS { short rep movs instruction }
+      (CPUX86_HINT_FAST_BT_REG_IMM,            { BT instructions with register source and immediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BT_REG_REG,            { BT instructions with register source and register indices are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_BTX_REG_IMM,           { BTC/R/S instructions with register source and immediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BTX_REG_REG,           { BTC/R/S instructions with register source and register indices are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_BT_MEM_IMM,            { BT instructions with memory sources and inmediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BT_MEM_REG,            { BT instructions with memory sources and register indices and a register index are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_BTX_MEM_IMM,           { BTC/R/S instructions with memory sources and immediate indices are at least as fast as logical instructions }
+       CPUX86_HINT_FAST_BTX_MEM_REG,           { BTC/R/S instructions with memory sources and register indices are at least as fast as equivalent logical instructions }
+       CPUX86_HINT_FAST_XCHG,                  { XCHG %reg,%reg executes in 2 cycles or fewer }
+       CPUX86_HINT_FAST_PDEP_PEXT,             { The BMI2 instructions PDEP and PEXT execute in a single cycle }
+       CPUX86_HINT_FAST_3COMP_ADDR,            { A 3-component address (base, index and offset) has the same latency as the 2-component version (most notable with LEA instructions) }
+       CPUX86_HINT_FAST_SHORT_REP_MOVS,        { short rep movs instruction }
+       CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1  { BSR/F does not change the destination if ZF is set }
       );
 
  const
    cpu_x86_64_v1_flags = [CPUX86_HAS_BSWAP,CPUX86_HAS_BTX,CPUX86_HAS_CMOV,CPUX86_HAS_SSEUNIT,CPUX86_HAS_SSE2];
-   cpu_x86_64_v2_flags = cpu_x86_64_v1_flags+[CPUX86_HAS_CMPXCHG16B,CPUX86_HAS_LAHF_SAHF,CPUX86_HAS_POPCNT];
+   cpu_x86_64_v2_flags = cpu_x86_64_v1_flags+[CPUX86_HAS_CMPXCHG16B,CPUX86_HAS_LAHF_SAHF,CPUX86_HAS_SSSE3,CPUX86_HAS_SSE4_1,CPUX86_HAS_POPCNT];
    cpu_x86_64_v3_flags = cpu_x86_64_v2_flags+[CPUX86_HAS_BMI1,CPUX86_HAS_BMI2,CPUX86_HAS_LZCNT,CPUX86_HAS_MOVBE,CPUX86_HAS_OSXSAVE]; { most is in the fpu flags here }
    cpu_x86_64_v4_flags = cpu_x86_64_v3_flags; { everything is in the fpu flags here }
 
+ var
    cpu_capabilities : array[tcputype] of set of tcpuflags = (
      { cpu_none      } [],
      { Athlon64      } cpu_x86_64_v1_flags,
      { cpu_x86_64    } cpu_x86_64_v1_flags,
      { cpu_x86_64_v1 } cpu_x86_64_v1_flags,
-     { cpu_core_i    } cpu_x86_64_v1_flags+[CPUX86_HAS_POPCNT],
+     { cpu_core_i    } cpu_x86_64_v1_flags+[CPUX86_HAS_SSSE3,CPUX86_HAS_SSE4_1,CPUX86_HAS_POPCNT],
      { cpu_x86_64_v2 } cpu_x86_64_v2_flags,
      { cpu_bobcat    } cpu_x86_64_v1_flags+[CPUX86_HAS_POPCNT,CPUX86_HAS_LZCNT],
-     { cpu_core_avx  } cpu_x86_64_v1_flags+[CPUX86_HAS_POPCNT],
+     { cpu_core_avx  } cpu_x86_64_v1_flags+[CPUX86_HAS_SSSE3,CPUX86_HAS_SSE4_1,CPUX86_HAS_POPCNT],
      { cpu_jaguar    } cpu_x86_64_v2_flags+[CPUX86_HAS_BMI1,CPUX86_HAS_LZCNT,CPUX86_HAS_MOVBE],
      { cpu_piledriver} cpu_x86_64_v2_flags+[CPUX86_HAS_BMI1,CPUX86_HAS_LZCNT,CPUX86_HAS_MOVBE],
      { cpu_excavator } cpu_x86_64_v3_flags,
@@ -291,9 +299,11 @@ type
      { cpu_icelake_client } cpu_x86_64_v4_flags,
      { cpu_icelake_server } cpu_x86_64_v4_flags,
      { cpu_zen3      } cpu_x86_64_v3_flags,
-     { cpu_zen4      } cpu_x86_64_v4_flags
+     { cpu_zen4      } cpu_x86_64_v4_flags,
+     { cpu_zen5      } cpu_x86_64_v4_flags
    );
 
+ const
    fpu_x86_64_v1_flags = [];
    fpu_x86_64_v2_flags = fpu_x86_64_v1_flags+[FPUX86_HAS_SSE3,FPUX86_HAS_SSE4_1,FPUX86_HAS_SSE4_2,FPUX86_HAS_SSSE3];
    fpu_x86_64_v3_flags = fpu_x86_64_v2_flags+[FPUX86_HAS_AVXUNIT,FPUX86_HAS_FMA,FPUX86_HAS_F16C,FPUX86_HAS_AVX2];
@@ -324,22 +334,23 @@ type
       { cpu_x86_64_v1 } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
       { cpu_core_i    } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
       { cpu_x86_64_v2 } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
-      { cpu_bobcat    } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
+      { cpu_bobcat    } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
       { cpu_core_avx  } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG], { From Sandy Bridge up to Ice Lake, complex LEA instructions are much slower }
-      { cpu_jaguar    } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
-      { cpu_piledriver} [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
-      { cpu_excavator } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
+      { cpu_jaguar    } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
+      { cpu_piledriver} [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
+      { cpu_excavator } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
       { cpu_core_avx2 } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT],
       { cpu_x86_64_v3 } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT],
-      { cpu_zen       } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
-      { cpu_zen2      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR],
+      { cpu_zen       } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
+      { cpu_zen2      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
       { cpu_x86_64_v4 } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR],
       { cpu_skylake-x } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR],
       { cpu_icelake   } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS],
       { cpu_icelake_client } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS],
       { cpu_icelake_server } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS],
-      { cpu_zen3      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS],
-      { cpu_zen4      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS]
+      { cpu_zen3      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
+      { cpu_zen4      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1],
+      { cpu_zen5      } [CPUX86_HINT_FAST_BT_REG_IMM,CPUX86_HINT_FAST_BTX_REG_IMM,CPUX86_HINT_FAST_BT_MEM_IMM,CPUX86_HINT_FAST_XCHG,CPUX86_HINT_FAST_PDEP_PEXT,CPUX86_HINT_FAST_3COMP_ADDR,CPUX86_HINT_FAST_SHORT_REP_MOVS,CPUX86_HINT_BSX_DEST_UNCHANGED_ON_ZF_1]
    );
 
 Implementation

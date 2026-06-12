@@ -88,7 +88,7 @@ implementation
         pd : pbestreal;
         pg : pguid;
         sp : pchar;
-        pw : pcompilerwidestring;
+        pw : tcompilerwidestring;
         storetokenpos : tfileposinfo;
       begin
         readconstant:=nil;
@@ -112,13 +112,15 @@ implementation
                if is_wide_or_unicode_string(p.resultdef) then
                  begin
                    initwidestring(pw);
-                   copywidestring(pcompilerwidestring(tstringconstnode(p).value_str),pw);
+                   copywidestring(tstringconstnode(p).valuews,pw);
                    hp:=cconstsym.create_wstring(orgname,constwstring,pw);
                  end
                else
                  begin
                    getmem(sp,tstringconstnode(p).len+1);
-                   move(tstringconstnode(p).value_str^,sp^,tstringconstnode(p).len+1);
+                   sp[tstringconstnode(p).len]:=#0;
+                   if tstringconstnode(p).len>0 then
+                     move(tstringconstnode(p).valueas[0],sp^,tstringconstnode(p).len+1);
                    { if a non-default ansistring code page has been specified,
                      keep it }
                    if is_ansistring(p.resultdef) and
@@ -174,7 +176,7 @@ implementation
                  information about the final type yet, we need to use safe
                  values (mostly 0, except for (Bit)SizeOf()) }
                if not parse_generic then
-                 Message(parser_e_illegal_expression);
+                 Message(parser_e_cannot_evaluate_expression_at_compile_time);
                case tinlinenode(p).inlinenumber of
                  in_sizeof_x:
                    begin
@@ -208,6 +210,7 @@ implementation
           end;
         current_tokenpos:=storetokenpos;
         p.free;
+        p := nil;
         readconstant:=hp;
       end;
 
@@ -240,11 +243,11 @@ implementation
          had_generic:=false;
          first:=true;
          repeat
-           orgname:=orgpattern;
+           orgname:=current_scanner.orgpattern;
            filepos:=current_tokenpos;
-           isgeneric:=not (m_delphi in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC);
+           isgeneric:=not (m_delphi in current_settings.modeswitches) and (current_scanner.token=_ID) and (current_scanner.idtoken=_GENERIC);
            consume(_ID);
-           case token of
+           case current_scanner.token of
 
              _EQ:
                 begin
@@ -358,7 +361,7 @@ implementation
                 end;
 
               else
-                if not first and isgeneric and (token in [_PROCEDURE,_FUNCTION,_CLASS]) then
+                if not first and isgeneric and (current_scanner.token in [_PROCEDURE,_FUNCTION,_CLASS]) then
                   begin
                     had_generic:=true;
                     break;
@@ -369,11 +372,11 @@ implementation
            end;
 
            first:=false;
-         until (token<>_ID) or
+         until (current_scanner.token<>_ID) or
                (in_structure and
-                ((idtoken in [_PRIVATE,_PROTECTED,_PUBLIC,_PUBLISHED,_STRICT]) or
+                ((current_scanner.idtoken in [_PRIVATE,_PROTECTED,_PUBLIC,_PUBLISHED,_STRICT]) or
                  ((m_final_fields in current_settings.modeswitches) and
-                  (idtoken=_FINAL))));
+                  (current_scanner.idtoken=_FINAL))));
          block_type:=old_block_type;
       end;
 
@@ -386,19 +389,19 @@ implementation
          if not(cs_support_goto in current_settings.moduleswitches) then
            Message(sym_e_goto_and_label_not_supported);
          repeat
-           if not(token in [_ID,_INTCONST]) then
+           if not(current_scanner.token in [_ID,_INTCONST]) then
              consume(_ID)
            else
              begin
-                if token=_ID then
-                  labelsym:=clabelsym.create(orgpattern)
+                if current_scanner.token=_ID then
+                  labelsym:=clabelsym.create(current_scanner.orgpattern)
                 else
                   begin
                     { strip leading 0's in iso mode }
                     if (([m_iso,m_extpas]*current_settings.modeswitches)<>[]) then
-                      while (length(pattern)>1) and (pattern[1]='0') do
-                        delete(pattern,1,1);
-                    labelsym:=clabelsym.create(pattern);
+                      while (length(current_scanner.pattern)>1) and (current_scanner.pattern[1]='0') do
+                        delete(current_scanner.pattern,1,1);
+                    labelsym:=clabelsym.create(current_scanner.pattern);
                   end;
 
                 symtablestack.top.insertsym(labelsym);
@@ -419,10 +422,10 @@ implementation
                     { the buffer will be setup later, but avoid a hint }
                     tabstractvarsym(labelsym.jumpbuf).varstate:=vs_written;
                   end;
-                consume(token);
+                consume(current_scanner.token);
              end;
-           if token<>_SEMICOLON then consume(_COMMA);
-         until not(token in [_ID,_INTCONST]);
+           if current_scanner.token<>_SEMICOLON then consume(_COMMA);
+         until not(current_scanner.token in [_ID,_INTCONST]);
          consume(_SEMICOLON);
       end;
 
@@ -482,7 +485,7 @@ implementation
               if not is_system_custom_attribute_descendant(od) then
                 begin
                   incompatibletypes(od,class_tcustomattribute);
-                  read_attr_paras.free;
+                  read_attr_paras.free; // no nil needed
                   continue;
                 end;
 
@@ -553,8 +556,9 @@ implementation
                     begin
                       { cleanup }
                       pcalln.free;
+                      pcalln := nil;
                       for i:=0 to high(paras) do
-                        paras[i].free;
+                        FreeAndNil(paras[i]);
                     end;
                 end
               else begin
@@ -562,16 +566,18 @@ implementation
                 if errorcount=ecnt then
                   message(parser_e_illegal_expression);
                 pcalln.free;
+                pcalln := nil;
               end;
             end
           else
             begin
               Message(type_e_type_id_expected);
               { try to recover by nevertheless reading the parameters (if any) }
-              read_attr_paras.free;
+              read_attr_paras.free; // no nil needed
             end;
 
           p.free;
+          p := nil;
         until not try_to_consume(_COMMA);
 
         consume(_RECKKLAMMER);
@@ -586,19 +592,19 @@ implementation
       begin
         newtype:=nil;
         wasforward:=false;
-        if ((token=_CLASS) or
-            (token=_INTERFACE) or
-            (token=_DISPINTERFACE) or
-            (token=_OBJCCLASS) or
-            (token=_OBJCPROTOCOL) or
-            (token=_OBJCCATEGORY)) and
+        if ((current_scanner.token=_CLASS) or
+            (current_scanner.token=_INTERFACE) or
+            (current_scanner.token=_DISPINTERFACE) or
+            (current_scanner.token=_OBJCCLASS) or
+            (current_scanner.token=_OBJCPROTOCOL) or
+            (current_scanner.token=_OBJCCATEGORY)) and
            (assigned(ttypesym(sym).typedef)) and
            is_implicit_pointer_object_type(ttypesym(sym).typedef) and
            (oo_is_forward in tobjectdef(ttypesym(sym).typedef).objectoptions) then
          begin
            wasforward:=true;
            objecttype:=odt_none;
-           case token of
+           case current_scanner.token of
              _CLASS :
                objecttype:=default_class_type;
              _INTERFACE :
@@ -620,7 +626,7 @@ implementation
              else
                internalerror(200811072);
            end;
-           consume(token);
+           consume(current_scanner.token);
            if assigned(genericdef) then
              gendef:=tstoreddef(genericdef)
            else
@@ -745,7 +751,7 @@ implementation
 
            { class attribute definitions? }
            if m_prefixed_attributes in current_settings.modeswitches then
-             while token=_LECKKLAMMER do
+             while current_scanner.token=_LECKKLAMMER do
                parse_rttiattributes(rtti_attrs_def);
 
            { fpc generic declaration? }
@@ -753,13 +759,13 @@ implementation
              had_generic:=not(m_delphi in current_settings.modeswitches) and try_to_consume(_GENERIC);
            isgeneric:=had_generic;
 
-           typename:=pattern;
-           orgtypename:=orgpattern;
+           typename:=current_scanner.pattern;
+           orgtypename:=current_scanner.orgpattern;
            consume(_ID);
 
            { delphi generic declaration? }
            if (m_delphi in current_settings.modeswitches) then
-             isgeneric:=token=_LSHARPBRACKET;
+             isgeneric:=current_scanner.token=_LSHARPBRACKET;
 
            { Generic type declaration? }
            if isgeneric then
@@ -789,8 +795,8 @@ implementation
            { MacPas object model is more like Delphi's than like TP's, but }
            { uses the object keyword instead of class                      }
            if (m_mac in current_settings.modeswitches) and
-              (token = _OBJECT) then
-             token := _CLASS;
+              (current_scanner.token = _OBJECT) then
+             current_scanner.token := _CLASS;
 
            { Start recording a generic template }
            if assigned(generictypelist) then
@@ -851,6 +857,8 @@ implementation
                       Include(sym.symoptions,sp_generic_dummy);
                       ttypesym(sym).typedef.typesym:=sym;
                       sym.visibility:=symtablestack.top.currentvisibility;
+                      { add as dummy symbol before adding it to the symtable stack }
+                      add_generic_dummysym(sym,typename);
                       symtablestack.top.insertsym(sym);
                       ttypesym(sym).typedef.owner:=sym.owner;
                     end
@@ -863,7 +871,7 @@ implementation
                         { we need to find this symbol even if it's a variable or
                           something else when doing an inline specialization }
                         Include(sym.symoptions,sp_generic_dummy);
-                        add_generic_dummysym(sym);
+                        add_generic_dummysym(sym,'');
                       end;
                 end
               else
@@ -945,6 +953,7 @@ implementation
                                   tstringdef(hdef).encoding:=int64(tordconstnode(p).value);
                                 end;
                               p.free;
+                              p := nil;
                             end;
                           if (hdef.typ in [pointerdef,classrefdef]) and
                              (tabstractpointerdef(hdef).pointeddef.typ=forwarddef) then
@@ -952,12 +961,16 @@ implementation
                         end;
 
                       include(hdef.defoptions,df_unique);
+
+                      { update object's real name for better error messages }
+                      if hdef is tabstractrecorddef then
+                        tabstractrecorddef(hdef).setobjrealname(newtype.RealName);
                     end;
                   if not assigned(hdef.typesym) then
                     begin
                       hdef.typesym:=newtype;
                       if sp_generic_dummy in newtype.symoptions then
-                        add_generic_dummysym(newtype);
+                        add_generic_dummysym(newtype,'');
                     end;
                 end;
               { in non-Delphi modes we need a reference to the generic def
@@ -1030,7 +1043,7 @@ implementation
                     else
                       if try_to_consume(_NEAR) then
                        begin
-                         if token <> _SEMICOLON then
+                         if current_scanner.token <> _SEMICOLON then
                            begin
                              segment_register:=get_stringconst;
                              case UpCase(segment_register) of
@@ -1134,7 +1147,11 @@ implementation
                     { Build VMT indexes, skip for type renaming and forward classes }
                     if not istyperenaming and
                        not(oo_is_forward in tobjectdef(hdef).objectoptions) then
-                      build_vmt(tobjectdef(hdef));
+                      if not (oo_inherits_not_specialized in tobjectdef(hdef).objectoptions) then
+                        build_vmt(tobjectdef(hdef))
+                      else
+                      { update the procdevs to add hidden self param }
+                      insert_struct_hidden_paras(tobjectdef(hdef));
 
                     { In case of an objcclass, verify that all methods have a message
                       name set. We only check this now, because message names can be set
@@ -1197,19 +1214,20 @@ implementation
                  begin
                    if (tstoredsym(generictypelist[i]).typ=typesym) and
                        not ttypesym(generictypelist[i]).typedef.is_registered then
-                     ttypesym(generictypelist[i]).typedef.free;
+                     FreeAndNil(ttypesym(generictypelist[i]).typedef);
                    if not tstoredsym(generictypelist[i]).is_registered then
-                     tstoredsym(generictypelist[i]).free;
+                     tstoredsym(generictypelist[i]).free; // no nil needed
                  end;
                generictypelist.free;
+               generictypelist := nil;
              end;
 
            if not (m_delphi in current_settings.modeswitches) and
-               (token=_ID) and (idtoken=_GENERIC) then
+               (current_scanner.token=_ID) and (current_scanner.idtoken=_GENERIC) then
              begin
                had_generic:=true;
                consume(_ID);
-               if token in [_PROCEDURE,_FUNCTION,_CLASS] then
+               if current_scanner.token in [_PROCEDURE,_FUNCTION,_CLASS] then
                  break;
              end
            else
@@ -1223,11 +1241,11 @@ implementation
             hdef.XMLPrintDef(newtype);
  {$endif DEBUG_NODE_XML}
 
-         until ((token<>_ID) and (token<>_LECKKLAMMER)) or
+         until ((current_scanner.token<>_ID) and (current_scanner.token<>_LECKKLAMMER)) or
                (in_structure and
-                ((idtoken in [_PRIVATE,_PROTECTED,_PUBLIC,_PUBLISHED,_STRICT]) or
+                ((current_scanner.idtoken in [_PRIVATE,_PROTECTED,_PUBLIC,_PUBLISHED,_STRICT]) or
                  ((m_final_fields in current_settings.modeswitches) and
-                  (idtoken=_FINAL))));
+                  (current_scanner.idtoken=_FINAL))));
          { resolve type block forward declarations and restore a unit
            container for them }
          resolve_forward_types;
@@ -1246,6 +1264,7 @@ implementation
         rtti_attrs_def := nil;
         types_dec(false,had_generic,rtti_attrs_def);
         rtti_attrs_def.free;
+        rtti_attrs_def := nil;
       end;
 
 
@@ -1271,7 +1290,7 @@ implementation
          repeat
            read_property_dec(false, nil);
            consume(_SEMICOLON);
-         until token<>_ID;
+         until current_scanner.token<>_ID;
          block_type:=old_block_type;
       end;
 
@@ -1305,7 +1324,7 @@ implementation
          sym : tsym;
          first,
          isgeneric : boolean;
-         pw : pcompilerwidestring;
+         pw : tcompilerwidestring;
 
       begin
          if target_info.system in systems_managed_vm then
@@ -1318,11 +1337,11 @@ implementation
          old_block_type:=block_type;
          block_type:=bt_const;
          repeat
-           orgname:=orgpattern;
+           orgname:=current_scanner.orgpattern;
            filepos:=current_tokenpos;
-           isgeneric:=not (m_delphi in current_settings.modeswitches) and (token=_ID) and (idtoken=_GENERIC);
+           isgeneric:=not (m_delphi in current_settings.modeswitches) and (current_scanner.token=_ID) and (current_scanner.idtoken=_GENERIC);
            consume(_ID);
-           case token of
+           case current_scanner.token of
              _EQ:
                 begin
                    consume(_EQ);
@@ -1335,10 +1354,20 @@ implementation
                         begin
                            if is_constcharnode(p) then
                              begin
-                                getmem(sp,2);
-                                sp[0]:=chr(tordconstnode(p).value.svalue);
-                                sp[1]:=#0;
-                                sym:=cconstsym.create_string(orgname,constresourcestring,sp,1,nil);
+                                if not is_systemunit_unicode then
+                                  begin
+                                  getmem(sp,2);
+                                  sp[0]:=chr(tordconstnode(p).value.svalue);
+                                  sp[1]:=#0;
+                                  sym:=cconstsym.create_string(orgname,constresourcestring,sp,1,nil);
+                                  end
+                                else
+                                  begin
+                                  initwidestring(pw);
+                                  setlengthwidestring(pw,1);
+                                  pw.data[0]:=tordconstnode(p).value.svalue;
+                                  sym:=cconstsym.create_wstring(orgname,constwresourcestring,pw);
+                                  end;
                              end
                            else
                              Message(parser_e_illegal_expression);
@@ -1351,7 +1380,9 @@ implementation
                                if cst_type in [cst_widestring,cst_unicodestring] then
                                  changestringtype(getansistringdef);
                                getmem(sp,len+1);
-                               move(value_str^,sp^,len+1);
+                               sp[len]:=#0;
+                               if len>0 then
+                                 move(valueas[0],sp^,len);
                                sym:=cconstsym.create_string(orgname,constresourcestring,sp,len,nil);
                                end
                              else
@@ -1360,7 +1391,7 @@ implementation
                                if cst_type in [cst_conststring,cst_longstring, cst_shortstring,cst_ansistring] then
                                  changestringtype(cunicodestringtype);
                                initwidestring(pw);
-                               copywidestring(pcompilerwidestring(value_str),pw);
+                               copywidestring(valuews,pw);
                                sym:=cconstsym.create_wstring(orgname,constwresourcestring,pw);
                                end;
                           end;
@@ -1382,10 +1413,11 @@ implementation
                      stringdispose(deprecatedmsg);
                    consume(_SEMICOLON);
                    p.free;
+                   p := nil;
                 end;
               else
                 if not first and isgeneric and
-                    (token in [_PROCEDURE, _FUNCTION, _CLASS]) then
+                    (current_scanner.token in [_PROCEDURE, _FUNCTION, _CLASS]) then
                   begin
                     had_generic:=true;
                     break;
@@ -1394,7 +1426,7 @@ implementation
                   consume(_EQ);
            end;
            first:=false;
-         until token<>_ID;
+         until current_scanner.token<>_ID;
          block_type:=old_block_type;
       end;
 

@@ -2,7 +2,9 @@
 Startup code for riscv32-esp32c3 using idf
 
 ******************************************************************************}
+{$IFNDEF FPC_DOTTEDUNITS}
 unit esp32c3;
+{$ENDIF FPC_DOTTEDUNITS}
 
 {$goto on}
 {$macro on}
@@ -11,8 +13,13 @@ unit esp32c3;
 
   implementation
 
+{$IFDEF FPC_DOTTEDUNITS}
+    uses
+      EmbeddedApi.ConsoleIO,EmbeddedApi.HeapMGR;
+{$ELSE FPC_DOTTEDUNITS}
     uses
       consoleio,heapmgr;
+{$ENDIF FPC_DOTTEDUNITS}
 
     var
       _stack_top: record end; public name '_stack_top';
@@ -21,7 +28,8 @@ unit esp32c3;
     procedure PASCALMAIN; external name 'PASCALMAIN';
 
     procedure esp_deep_sleep_start;external;
-    procedure putchar(c : char);external;
+    // deprecated since v5.3, consider moving this to SDK version dependent unit
+    procedure putchar(c : char);external name 'esp_rom_uart_tx_one_char';
     function getchar : char;external;
     function __getreent : pointer;external;
     procedure fflush(f : pointer);external;

@@ -40,6 +40,9 @@ interface
           procedure push_formal_para;virtual;
           procedure push_copyout_para;virtual;abstract;
           function maybe_push_unused_para:boolean;virtual;
+
+          procedure secondcallparan_do_secondpass;
+          procedure secondcallparan_after_secondpass;
        public
           tempcgpara : tcgpara;
 
@@ -317,9 +320,128 @@ implementation
       end;
 
 
-    procedure tcgcallparanode.secondcallparan;
+    procedure tcgcallparanode.secondcallparan_do_secondpass;
+      begin
+        if assigned(fparainit) then
+          secondpass(fparainit);
+        secondpass(left);
+      end;
+
+
+    procedure tcgcallparanode.secondcallparan_after_secondpass;
       var
-         pushaddr: boolean;
+        pushaddr: boolean;
+      begin
+        hlcg.maybe_change_load_node_reg(current_asmdata.CurrAsmList,left,true);
+
+        paramanager.createtempparaloc(current_asmdata.CurrAsmList,callnode.procdefinition.proccalloption,parasym,not followed_by_stack_tainting_call_cached,tempcgpara);
+
+        { handle varargs first, because parasym is not valid }
+        if (cpf_varargs_para in callparaflags) then
+          begin
+            if paramanager.push_addr_param(vs_value,left.resultdef,
+                   callnode.procdefinition.proccalloption) then
+              push_addr_para
+            else
+              push_value_para;
+          end
+        { hidden parameters }
+        else if (vo_is_hidden_para in parasym.varoptions) then
+          begin
+            { don't push a node that already generated a pointer type
+              by address for implicit hidden parameters }
+            pushaddr:=(vo_is_funcret in parasym.varoptions) or
+              { pass "this" in C++ classes explicitly as pointer
+                because push_addr_param might not be true for them }
+              (is_cppclass(parasym.vardef) and (vo_is_self in parasym.varoptions)) or
+               (
+                 (
+                   not(left.resultdef.typ in [pointerdef,classrefdef]) or
+                   (
+                     { allow pointerdefs (as self) to be passed as addr
+                       param if the method is part of a type helper which
+                       extends a pointer type }
+                     (vo_is_self in parasym.varoptions) and
+                     (callnode.procdefinition.owner.symtabletype=objectsymtable) and
+                     (is_objectpascal_helper(tdef(callnode.procdefinition.owner.defowner))) and
+                     (tobjectdef(callnode.procdefinition.owner.defowner).extendeddef.typ=pointerdef)
+                   )
+                 ) and
+                paramanager.push_addr_param(parasym.varspez,parasym.vardef,
+                    callnode.procdefinition.proccalloption));
+
+            if pushaddr then
+              begin
+                { objects or advanced records could be located in registers if they are the result of a type case, see e.g. webtbs\tw26075.pp }
+                if not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
+                  hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
+                push_addr_para
+              end
+            else
+              push_value_para;
+          end
+        { formal def }
+        else if (parasym.vardef.typ=formaldef) then
+          push_formal_para
+        { Normal parameter }
+        else if paramanager.push_copyout_param(parasym.varspez,parasym.vardef,
+                    callnode.procdefinition.proccalloption) then
+          push_copyout_para
+        else
+          begin
+            { don't push a node that already generated a pointer type
+              by address for implicit hidden parameters }
+            if (not(
+                    (vo_is_hidden_para in parasym.varoptions) and
+                    (left.resultdef.typ in [pointerdef,classrefdef])
+                   ) and
+                paramanager.push_addr_param(parasym.varspez,parasym.vardef,
+                    callnode.procdefinition.proccalloption)) and
+                { dyn. arrays passed to an array of const must be passed by value, see tests/webtbs/tw4219.pp }
+                not(
+                    is_array_of_const(parasym.vardef) and
+                    is_dynamic_array(left.resultdef)
+                   ) then
+              begin
+                 { Passing a var parameter to a var parameter, we can
+                   just push the address transparently }
+                 if (left.nodetype=loadn) and
+                    (tloadnode(left).is_addr_param_load) then
+                   begin
+                     if (left.location.reference.index<>NR_NO) or
+                        (left.location.reference.offset<>0) then
+                       internalerror(200410107);
+                     hlcg.a_load_reg_cgpara(current_asmdata.CurrAsmList,cpointerdef.getreusable(left.resultdef),left.location.reference.base,tempcgpara)
+                   end
+                 else
+                   begin
+                     { Force to be in memory }
+                     if not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
+                       hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
+                     push_addr_para;
+                   end;
+              end
+            else
+              push_value_para;
+          end;
+
+        { update return location in callnode when this is the function
+          result }
+        if assigned(parasym) and
+           (
+             { for type helper/record constructor check that it is self parameter }
+             (
+               (vo_is_self in parasym.varoptions) and
+               (callnode.procdefinition.proctypeoption=potype_constructor) and
+               (parasym.vardef.typ<>objectdef)
+             ) or
+             (vo_is_funcret in parasym.varoptions)
+           ) then
+          location_copy(callnode.location,left.location);
+      end;
+
+
+    procedure tcgcallparanode.secondcallparan;
       begin
          if not(assigned(parasym)) then
            internalerror(200304242);
@@ -328,116 +450,8 @@ implementation
            a parameter }
          if (left.nodetype<>nothingn) then
            begin
-             if assigned(fparainit) then
-               secondpass(fparainit);
-             secondpass(left);
-
-             hlcg.maybe_change_load_node_reg(current_asmdata.CurrAsmList,left,true);
-
-             paramanager.createtempparaloc(current_asmdata.CurrAsmList,aktcallnode.procdefinition.proccalloption,parasym,not followed_by_stack_tainting_call_cached,tempcgpara);
-
-             { handle varargs first, because parasym is not valid }
-             if (cpf_varargs_para in callparaflags) then
-               begin
-                 if paramanager.push_addr_param(vs_value,left.resultdef,
-                        aktcallnode.procdefinition.proccalloption) then
-                   push_addr_para
-                 else
-                   push_value_para;
-               end
-             { hidden parameters }
-             else if (vo_is_hidden_para in parasym.varoptions) then
-               begin
-                 { don't push a node that already generated a pointer type
-                   by address for implicit hidden parameters }
-                 pushaddr:=(vo_is_funcret in parasym.varoptions) or
-                   { pass "this" in C++ classes explicitly as pointer
-                     because push_addr_param might not be true for them }
-                   (is_cppclass(parasym.vardef) and (vo_is_self in parasym.varoptions)) or
-                    (
-                      (
-                        not(left.resultdef.typ in [pointerdef,classrefdef]) or
-                        (
-                          { allow pointerdefs (as self) to be passed as addr
-                            param if the method is part of a type helper which
-                            extends a pointer type }
-                          (vo_is_self in parasym.varoptions) and
-                          (aktcallnode.procdefinition.owner.symtabletype=objectsymtable) and
-                          (is_objectpascal_helper(tdef(aktcallnode.procdefinition.owner.defowner))) and
-                          (tobjectdef(aktcallnode.procdefinition.owner.defowner).extendeddef.typ=pointerdef)
-                        )
-                      ) and
-                     paramanager.push_addr_param(parasym.varspez,parasym.vardef,
-                         aktcallnode.procdefinition.proccalloption));
-
-                 if pushaddr then
-                   begin
-                     { objects or advanced records could be located in registers if they are the result of a type case, see e.g. webtbs\tw26075.pp }
-                     if not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
-                       hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
-                     push_addr_para
-                   end
-                 else
-                   push_value_para;
-               end
-             { formal def }
-             else if (parasym.vardef.typ=formaldef) then
-               push_formal_para
-             { Normal parameter }
-             else if paramanager.push_copyout_param(parasym.varspez,parasym.vardef,
-                         aktcallnode.procdefinition.proccalloption) then
-               push_copyout_para
-             else
-               begin
-                 { don't push a node that already generated a pointer type
-                   by address for implicit hidden parameters }
-                 if (not(
-                         (vo_is_hidden_para in parasym.varoptions) and
-                         (left.resultdef.typ in [pointerdef,classrefdef])
-                        ) and
-                     paramanager.push_addr_param(parasym.varspez,parasym.vardef,
-                         aktcallnode.procdefinition.proccalloption)) and
-                     { dyn. arrays passed to an array of const must be passed by value, see tests/webtbs/tw4219.pp }
-                     not(
-                         is_array_of_const(parasym.vardef) and
-                         is_dynamic_array(left.resultdef)
-                        ) then
-                   begin
-                      { Passing a var parameter to a var parameter, we can
-                        just push the address transparently }
-                      if (left.nodetype=loadn) and
-                         (tloadnode(left).is_addr_param_load) then
-                        begin
-                          if (left.location.reference.index<>NR_NO) or
-                             (left.location.reference.offset<>0) then
-                            internalerror(200410107);
-                          hlcg.a_load_reg_cgpara(current_asmdata.CurrAsmList,cpointerdef.getreusable(left.resultdef),left.location.reference.base,tempcgpara)
-                        end
-                      else
-                        begin
-                          { Force to be in memory }
-                          if not(left.location.loc in [LOC_CREFERENCE,LOC_REFERENCE]) then
-                            hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
-                          push_addr_para;
-                        end;
-                   end
-                 else
-                   push_value_para;
-               end;
-
-             { update return location in callnode when this is the function
-               result }
-             if assigned(parasym) and
-                (
-                  { for type helper/record constructor check that it is self parameter }
-                  (
-                    (vo_is_self in parasym.varoptions) and
-                    (aktcallnode.procdefinition.proctypeoption=potype_constructor) and
-                    (parasym.vardef.typ<>objectdef)
-                  ) or
-                  (vo_is_funcret in parasym.varoptions)
-                ) then
-               location_copy(aktcallnode.location,left.location);
+             secondcallparan_do_secondpass;
+             secondcallparan_after_secondpass;
            end;
 
          { next parameter }
@@ -669,13 +683,30 @@ implementation
                     hlcg.a_load_reg_loc(current_asmdata.CurrAsmList,resultdef,resultdef,location.register,funcretnode.location);
                   location_free(current_asmdata.CurrAsmList,location);
                 end;
+              LOC_MMREGISTER :
+                begin
+                  hlcg.a_loadmm_reg_loc(current_asmdata.CurrAsmList,resultdef,resultdef,location.register,funcretnode.location,nil);
+                  location_free(current_asmdata.CurrAsmList,location);
+                end;
+              LOC_FPUREGISTER:
+                begin
+                  hlcg.a_loadfpu_reg_loc(current_asmdata.CurrAsmList,resultdef,resultdef,location.register,funcretnode.location);
+                  location_free(current_asmdata.CurrAsmList,location);
+                end;
               LOC_REFERENCE:
                 begin
                   case funcretnode.location.loc of
+                    LOC_CREGISTER,
                     LOC_REGISTER:
                       hlcg.a_load_ref_reg(current_asmdata.CurrAsmList,resultdef,resultdef,location.reference,funcretnode.location.register);
+                    LOC_CFPUREGISTER,
+                    LOC_FPUREGISTER:
+                      hlcg.a_loadfpu_ref_reg(current_asmdata.CurrAsmList,resultdef,resultdef,location.reference,funcretnode.location.register);
                     LOC_REFERENCE:
                       hlcg.g_concatcopy(current_asmdata.CurrAsmList,resultdef,location.reference,funcretnode.location.reference);
+                    LOC_CMMREGISTER,
+                    LOC_MMREGISTER:
+                      hlcg.a_loadmm_reg_ref(current_asmdata.CurrAsmList,resultdef,resultdef,funcretnode.location.register,location.reference,nil);
                     else
                       internalerror(200802121);
                   end;
@@ -975,7 +1006,6 @@ implementation
         href : treference;
         pop_size : longint;
         pvreg : tregister;
-        oldaktcallnode : tcallnode;
         retlocitem: pcgparalocation;
         callpvdef: tabstractprocdef;
         pd : tprocdef;
@@ -1036,14 +1066,8 @@ implementation
               end;
           end;
 
-         { Process parameters, register parameters will be loaded
-           in imaginary registers. The actual load to the correct
-           register is done just before the call }
-         oldaktcallnode:=aktcallnode;
-         aktcallnode:=self;
          if assigned(left) then
            tcallparanode(left).secondcallparan;
-         aktcallnode:=oldaktcallnode;
 
          { procedure variable or normal function call ? }
          if (right=nil) then
@@ -1304,7 +1328,7 @@ implementation
            really adjusted because a ret xxx was done, depends on
            pop_parasize which uses pushedparasize to determine this
 
-           This does not apply to interrupt procedures, their ret statment never clears any stack parameters }
+           This does not apply to interrupt procedures, their ret statement never clears any stack parameters }
          else if paramanager.use_fixed_stack and
                  not(po_interrupt in procdefinition.procoptions) and
                  (target_info.abi=abi_i386_dynalignedstack) then

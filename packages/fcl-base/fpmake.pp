@@ -27,7 +27,7 @@ begin
     P.Email := '';
     P.Description := 'Base library of Free Component Libraries (FCL), FPC''s OOP library.';
     P.NeedLibC:= false;
-    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
+    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k,ps1,wasip2];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -116,7 +116,17 @@ begin
         begin
           AddUnit('wformat');
         end;
+    T:=P.Targets.AddUnit('wmarkdown.pp');
+      with T.Dependencies do
+        begin
+          AddUnit('wformat');
+        end;
     T:=P.Targets.AddUnit('wtex.pp');
+      with T.Dependencies do
+        begin
+          AddUnit('wformat');
+        end;
+    T:=P.Targets.AddUnit('wtext.pp');
       with T.Dependencies do
         begin
           AddUnit('wformat');
@@ -143,6 +153,11 @@ begin
     // Install windows resources
     P.InstallFiles.Add('src/win/fclel.res',AllWindowsOSes,'$(unitinstalldir)');
     T:=P.Targets.addUnit('basenenc.pp');
+
+    T:=P.Targets.addUnit('dirwatch.pp');
+
+    T:=P.Targets.addUnit('fppromise.pp',AllOSes-[go32v2,nativent,atari]);
+    T.Dependencies.AddUnit('syncobjs');
 
     // Examples
     P.ExamplePath.Add('examples');

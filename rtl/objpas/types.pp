@@ -47,6 +47,12 @@ type
   TDirection = (FromBeginning, FromEnd);
   TValueRelationship = -1..1;
 
+const
+  LessThanValue = Low(TValueRelationship);
+  EqualsValue = 0;
+  GreaterThanValue = High(TValueRelationship);
+
+type
   DWORD = LongWord;
 
   PLongint = System.PLongint;
@@ -62,6 +68,30 @@ type
   LARGE_UINT= LargeUInt;
   PLargeuInt = ^LargeuInt;
 
+  { Null dummy type, for compile time null passing }
+  TNullPtr = record
+    { Some operators to make it (more or less) nil compatible }
+    class operator :=(None: TNullPtr): Pointer; inline;
+    class operator :=(None: TNullPtr): TObject; inline;
+
+    class operator =(LHS: TNullPtr; RHS: Pointer): Boolean; inline;
+    class operator =(LHS: TNullPtr; RHS: TObject): Boolean; inline;
+    class operator =(LHS: Pointer; RHS: TNullPtr): Boolean; inline;
+    class operator =(LHS: TObject; RHS: TNullPtr): Boolean; inline;
+
+    class operator <>(LHS: TNullPtr; RHS: Pointer): Boolean; inline;
+    class operator <>(LHS: TNullPtr; RHS: TObject): Boolean; inline;
+    class operator <>(LHS: Pointer; RHS: TNullPtr): Boolean; inline;
+    class operator <>(LHS: TObject; RHS: TNullPtr): Boolean; inline;
+  end;
+
+  {$Push}
+  {$WriteableConst Off}
+const
+  NullPtr: TNullPtr = ();
+  {$Pop}
+
+type
   TBooleanDynArray = array of Boolean;
   TByteDynArray = array of Byte;
   TClassicByteDynArray = TByteDynArray;
@@ -167,6 +197,8 @@ type
           function AngleCosine(const b: TPointF): single;
           function CrossProduct(const apt: TPointF): Single;
           function Normalize: TPointF;
+          function ToString(aSize,aDecimals : Byte) : RTLString; overload;
+          function ToString : RTLString; overload; inline;
 
           class function Create(const ax, ay: Single): TPointF; overload; static; inline;
           class function Create(const apt: TPoint): TPointF; overload; static; inline;
@@ -206,9 +238,12 @@ type
           function  Floor   : TSize;
           function  Round   : TSize;
           function  Length  : Single;
+          function ToString(aSize,aDecimals : Byte) : RTLString; overload;
+          function ToString : RTLString; overload; inline;
 
           class function Create(const ax, ay: Single): TSizeF; overload; static; inline;
           class function Create(const asz: TSize): TSizeF; overload; static; inline;
+          class function Zero: TSizeF; static;
           class operator = (const asz1, asz2 : TSizeF) : Boolean;
           class operator <> (const asz1, asz2 : TSizeF): Boolean;
           class operator + (const asz1, asz2 : TSizeF): TSizeF;
@@ -280,11 +315,14 @@ type
     procedure Inflate(DL, DT, DR, DB: Single);
     procedure Inflate(DX, DY: Single);
     procedure Intersect(R: TRectF);
+    procedure Normalize;
     procedure NormalizeRect;
     procedure Offset (const dx,dy : Single); inline;
     procedure Offset (DP: TPointF); inline;
     procedure SetLocation(P: TPointF);
     procedure SetLocation(X, Y: Single);
+    function ToString(aSize,aDecimals : Byte; aUseSize : Boolean = False) : RTLString; overload;
+    function ToString(aUseSize : Boolean = False) : RTLString; overload; inline;
     procedure Union  (const r: TRectF); inline;
     property  Width  : Single read GetWidth write SetWidth;
     property  Height : Single read GetHeight write SetHeight;
@@ -308,6 +346,8 @@ type
      constructor Create(const ax,ay,az:single);
      procedure   Offset(const adeltax,adeltay,adeltaz:single); inline;
      procedure   Offset(const adelta:TPoint3D); inline;
+     function ToString(aSize,aDecimals : Byte) : RTLString; overload;
+     function ToString : RTLString; overload; inline;
    public
      case Integer of
       0: (data:TSingle3Array);
@@ -476,6 +516,20 @@ type
      function Clone(out stm : IStream) : HRESULT;stdcall;
   end;
 
+  { TScoped }
+  generic TScoped<T:class> = record
+  private
+    obj: T;
+  public
+    class operator Initialize(var hdl: TScoped);
+    class operator Finalize(var hdl: TScoped);
+    class operator :=(aObj : T) : TScoped;
+    class operator :=(const aObj : TScoped) : T;
+    procedure Assign(aObj : T); inline;
+    function Swap(AObj: T): T;
+    function Get : T;
+  end;
+
 function EqualRect(const r1,r2 : TRect) : Boolean;
 function EqualRect(const r1,r2 : TRectF) : Boolean;
 function NormalizeRectF(const Pts: array of TPointF): TRectF; overload;
@@ -521,7 +575,6 @@ function CenteredRect(const SourceRect: TRect; const aCenteredRect: TRect): TRec
 function IntersectRectF(out Rect: TRectF; const R1, R2: TRectF): Boolean;
 function UnionRectF(out Rect: TRectF; const R1, R2: TRectF): Boolean;
 
-{$ifndef VER3_0}
 type
   TBitConverter = class
     generic class procedure UnsafeFrom<T>(const ASrcValue: T; var ADestination: Array of Byte; AOffset: Integer = 0); static; {inline;}
@@ -529,7 +582,6 @@ type
     generic class function UnsafeInTo<T>(const ASource: Array of Byte; AOffset: Integer = 0): T; static; {inline;}
     generic class function InTo<T>(const ASource: Array of Byte; AOffset: Integer = 0): T; static;
   end;
-{$endif}
 
 Const
   cPI: Single = 3.141592654;
@@ -875,19 +927,26 @@ function UnionRect(var Rect : TRect;const R1,R2 : TRect) : Boolean;
 var
   lRect: TRect;
 begin
-  lRect:=R1;
-  if R2.Left<R1.Left then
-    lRect.Left:=R2.Left;
-  if R2.Top<R1.Top then
-    lRect.Top:=R2.Top;
-  if R2.Right>R1.Right then
-    lRect.Right:=R2.Right;
-  if R2.Bottom>R1.Bottom then
-    lRect.Bottom:=R2.Bottom;
+  if IsRectEmpty(R1) then
+    lRect:=R2
+  else if IsRectEmpty(R2) then
+    lRect:=R1
+  else
+    begin
+      lRect:=R1;
+      if R2.Left<R1.Left then
+        lRect.Left:=R2.Left;
+      if R2.Top<R1.Top then
+        lRect.Top:=R2.Top;
+      if R2.Right>R1.Right then
+        lRect.Right:=R2.Right;
+      if R2.Bottom>R1.Bottom then
+        lRect.Bottom:=R2.Bottom;
+    end;
 
   Result:=not IsRectEmpty(lRect);
   if Result then
-    Rect := lRect
+    Rect:=lRect
   else
     FillChar(Rect,SizeOf(Rect),0);
 end;
@@ -1005,7 +1064,93 @@ begin
 end;
 
 
+Function SingleToStr(aValue : Single; aSize,aDecimals : Byte) : ShortString; inline;
+
+var
+  S : ShortString;
+  Len,P : Byte;
+
+begin
+  Str(aValue:aSize:aDecimals,S);
+  Len:=Length(S);
+  P:=1;
+  While (P<=Len) and (S[P]=' ') do
+    Inc(P);
+  if P>1 then
+    Delete(S,1,P-1);
+  Result:=S;
+end;
+
+{ TNullPtr }
+
+class operator TNullPtr.:=(None: TNullPtr): Pointer;
+begin
+  Result := nil;
+end;
+
+class operator TNullPtr.:=(None: TNullPtr): TObject;
+begin
+  Result := nil;
+end;
+
+class operator TNullPtr.=(LHS: TNullPtr; RHS: Pointer): Boolean;
+begin
+  Result := not Assigned(RHS);
+end;
+
+class operator TNullPtr.=(LHS: TNullPtr; RHS: TObject): Boolean;
+begin
+  Result := not Assigned(RHS);
+end;
+
+class operator TNullPtr.=(LHS: Pointer; RHS: TNullPtr): Boolean;
+begin
+  Result := not Assigned(LHS);
+end;
+
+class operator TNullPtr.=(LHS: TObject; RHS: TNullPtr): Boolean;
+begin
+  Result := not Assigned(LHS);
+end;
+
+class operator TNullPtr.<>(LHS: TNullPtr; RHS: Pointer): Boolean;
+begin
+  Result := Assigned(RHS);
+end;
+
+class operator TNullPtr.<>(LHS: TNullPtr; RHS: TObject): Boolean;
+begin
+  Result := Assigned(RHS);
+end;
+
+class operator TNullPtr.<>(LHS: Pointer; RHS: TNullPtr): Boolean;
+begin
+  Result := Assigned(LHS);
+end;
+
+class operator TNullPtr.<>(LHS: TObject; RHS: TNullPtr): Boolean;
+begin
+  Result := Assigned(LHS);
+end;
+
 { TPointF}
+
+function TPointF.ToString : RTLString;
+
+begin
+  Result:=ToString(8,2);
+end;
+
+function TPointF.ToString(aSize,aDecimals : Byte) : RTLString;
+
+var
+  Sx,Sy : shortstring;
+
+begin
+  Sx:=SingleToStr(X,aSize,aDecimals);
+  Sy:=SingleToStr(Y,aSize,aDecimals);
+  Result:='('+Sx+','+Sy+')';
+end;
 
 function TPointF.Add(const apt: TPoint): TPointF;
 begin
@@ -1276,6 +1421,25 @@ end;
 
 { TSizeF }
 
+function TSizeF.ToString(aSize,aDecimals : Byte) : RTLString;
+
+var
+  Sx,Sy : shortstring;
+
+begin
+  Sx:=SingleToStr(cx,aSize,aDecimals);
+  Sy:=SingleToStr(cy,aSize,aDecimals);
+  Result:='('+Sx+'x'+Sy+')';
+end;
+
+function TSizeF.ToString : RTLString;
+
+begin
+  Result:=ToString(8,2);
+end;
+
+
+
 function TSizeF.Add(const asz: TSize): TSizeF;
 begin
   result.cx:=cx+asz.cx;
@@ -1407,6 +1571,12 @@ begin
   Result.y := asz.cy;
 end;
 
+class function TSizeF.Zero: TSizeF;
+begin
+  Result.cx := 0.0;
+  Result.cy := 0.0;
+end;
+
 class function TSizeF.Create(const ax, ay: Single): TSizeF;
 begin
   Result.cx := ax;
@@ -1420,6 +1590,25 @@ begin
 end;
 
 { TRectF }
+
+function TRectF.ToString(aSize,aDecimals : Byte; aUseSize : Boolean = False) : RTLString;
+
+var
+  S : RTLString;
+
+begin
+  if aUseSize then
+    S:=Size.ToString(aSize,aDecimals)
+  else
+    S:=BottomRight.ToString(aSize,aDecimals);
+  Result:='['+TopLeft.ToString(aSize,aDecimals)+' - '+S+']';
+end;
+
+function TRectF.ToString(aUseSize: Boolean = False) : RTLString;
+
+begin
+  Result:=ToString(8,2,aUseSize);
+end;
 
 class operator TRectF. * (L, R: TRectF): TRectF;
 begin
@@ -1523,19 +1712,37 @@ begin
 end;
 
 function TRectF.FitInto(const Dest: TRectF; out Ratio: Single): TRectF;
+var
+  dw, dh, w, h : Single;
 begin
-  if (Dest.Width<=0) or (Dest.Height<=0) then
+  dw := Dest.Width;
+  dh := Dest.Height;
+  if (dw <= 0) or (dh <= 0) then
   begin
-    Ratio:=1.0;
+    Ratio := 1.0;
     exit(Self);
   end;
-  Ratio:=Max(Self.Width / Dest.Width, Self.Height / Dest.Height);
-  if Ratio=0 then
+
+  w := Self.Width;
+  h := Self.Height;
+
+  if w * dh > h * dw  then
+    Ratio := w / dw
+  else
+    Ratio := h / dh;
+
+  if Ratio = 0 then
     exit(Self);
-  Result.Width:=Self.Width / Ratio;
-  Result.Height:=Self.Height / Ratio;
-  Result.Left:=Self.Left + (Self.Width - Result.Width) / 2;
-  Result.Top:=Self.Top + (Self.Height - Result.Height) / 2;
+
+  w := w / Ratio;
+  h := h / Ratio;
+
+  // Center the result within the Dest rectangle
+  Result.Left := (Dest.Left + Dest.Right - w) * 0.5;
+  Result.Right := Result.Left + w;
+
+  Result.Top := (Dest.Top + Dest.Bottom - h) * 0.5;
+  Result.Bottom := Result.Top + h;
 end;
 
 function TRectF.FitInto(const Dest: TRectF): TRectF;
@@ -1682,6 +1889,24 @@ begin
   Result := (CompareValue(Right,Left)<=0) or (CompareValue(Bottom,Top)<=0);
 end;
 
+procedure TRectF.Normalize;
+var
+  x: Single;
+begin
+  if Top>Bottom then
+  begin
+    x := Top;
+    Top := Bottom;
+    Bottom := x;
+  end;
+  if Left>Right then
+  begin
+    x := Left;
+    Left := Right;
+    Right := x;
+  end
+end;
+
 procedure TRectF.NormalizeRect;
 var
   x: Single;
@@ -1794,6 +2019,25 @@ end;
 
 { TPoint3D }
 
+function TPoint3D.ToString(aSize,aDecimals : Byte) : RTLString;
+
+var
+  Sx,Sy,Sz : shortstring;
+  P : integer;
+
+begin
+  Sx:=SingleToStr(X,aSize,aDecimals);
+  Sy:=SingleToStr(Y,aSize,aDecimals);
+  Sz:=SingleToStr(Z,aSize,aDecimals);
+  Result:='('+Sx+','+Sy+','+Sz+')';
+end;
+
+function TPoint3D.ToString : RTLString;
+
+begin
+  Result:=ToString(8,2);
+end;
+
 constructor TPoint3D.Create(const ax,ay,az:single);
 begin
   x:=ax; y:=ay; z:=az;
@@ -1810,7 +2054,6 @@ begin
 end;
 
 
-{$ifndef VER3_0}
 generic class procedure TBitConverter.UnsafeFrom<T>(const ASrcValue: T; var ADestination: Array of Byte; AOffset: Integer = 0);
 begin
   move(ASrcValue, ADestination[AOffset], SizeOf(T));
@@ -1848,6 +2091,49 @@ begin
 
   Result := TBitConverter.specialize UnsafeInTo<T>(ASource, AOffset);
 end;
-{$endif}
+
+{ TScoped }
+
+class operator TScoped.Initialize(var hdl: TScoped);
+begin
+  hdl.obj := nil;
+end;
+
+class operator TScoped.Finalize(var hdl: TScoped);
+begin
+  hdl.obj.free;
+  hdl.obj:=nil;
+end;
+
+procedure TScoped.Assign(aObj : T);
+begin
+  Self.Obj:=aObj;
+end;
+
+function TScoped.Swap(AObj:T):T;
+var
+  LCurrent:T;
+begin
+  LCurrent := self.obj;
+  Assign(AObj);
+  Result := LCurrent;
+end;
+
+function TScoped.Get() : T;
+begin
+  Result :=  self.obj;
+end;
+
+class operator TScoped.:=(aObj : T) : TScoped;
+
+begin
+  result.assign(aObj);
+end;
+
+class operator TScoped.:=(const aObj : TScoped) : T;
+
+begin
+  Result:=aObj.Get();
+end;
 
 end.

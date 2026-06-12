@@ -59,17 +59,17 @@ interface
        TPointerArray = PointerArray;
        PPointerArray = ^PointerArray;
 
-       // Delphi Berlin compatibility 
+       // Delphi Berlin compatibility
        FixedInt  = Int32;
        FixedUInt = UInt32;
        PFixedInt = ^FixedInt;
        PFixedUInt= ^FixedUInt;
-   
-       
+
+
 {$if FPC_FULLVERSION >= 20701}
 
-     
-      
+
+
       { Generic support for enumerator interfaces. These are added here, because
         mode (Obj)FPC does currently not allow the overloading of types with
         generic types (this will need a modeswitch...) }
@@ -138,7 +138,7 @@ Var
 {$endif FPC_HAS_FEATURE_TEXTIO}
 
 {$ifdef FPC_HAS_FEATURE_FILEIO}
-     { Typed file supoort }
+     { Typed file support }
      Procedure AssignFile(out f:TypedFile;p:PAnsiChar);
      Procedure AssignFile(out f:TypedFile;c:AnsiChar);
   {$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
@@ -365,7 +365,7 @@ Type
      Count : sizeint;
      Tables : Array[{$ifdef cpu16}Byte{$else cpu16}Word{$endif cpu16}] of record
        TableStart,
-       TableEnd   : {$ifdef ver3_0}PResourceStringRecord{$else}PPResourceStringRecord{$endif};
+       TableEnd   : PPResourceStringRecord;
      end;
    end;
    PResourceStringTableList = ^TResourceStringTableList;
@@ -402,6 +402,24 @@ begin
         end;
     end;
 end;
+
+procedure FinalizeResourceStringRefs;
+var
+  i: integer;
+  ptable: PResStrInitEntry;
+begin
+  for i:=1 to ResStrInitTable^.Count do
+    begin
+      ptable:=ResStrInitTable^.Tables[i];
+      while Assigned(ptable^.Addr) do
+        begin
+          AnsiString(ptable^.Addr^):='';
+          Inc(ptable);
+        end;
+    end;
+end;
+
+
 {$endif FPC_HAS_RESSTRINITS}
 
 Var
@@ -417,10 +435,10 @@ begin
     begin
       For i:=0 to Count-1 do
         begin
-          ResStr:=Tables[I].TableStart{$ifndef VER3_0}^{$endif};
+          ResStr:=Tables[I].TableStart^;
           { Skip first entry (name of the Unit) }
           inc(ResStr);
-          while ResStr<Tables[I].TableEnd{$ifndef VER3_0}^{$endif} do
+          while ResStr<Tables[I].TableEnd^ do
             begin
               s:=SetFunction(ResStr^.Name,ResStr^.DefaultValue,Longint(ResStr^.HashValue),arg);
               if s<>'' then
@@ -447,12 +465,12 @@ begin
       UpUnitName:=UpCase(UnitName);
       For i:=0 to Count-1 do
         begin
-          ResStr:=Tables[I].TableStart{$ifndef VER3_0}^{$endif};
+          ResStr:=Tables[I].TableStart^;
           { Check name of the Unit }
           if ResStr^.Name<>UpUnitName then
             continue;
           inc(ResStr);
-          while ResStr<Tables[I].TableEnd{$ifndef VER3_0}^{$endif} do
+          while ResStr<Tables[I].TableEnd^ do
             begin
               s:=SetFunction(ResStr^.Name,ResStr^.DefaultValue,Longint(ResStr^.HashValue),arg);
               if s<>'' then
@@ -478,10 +496,10 @@ begin
     begin
       For i:=0 to Count-1 do
         begin
-          ResStr:=Tables[I].TableStart{$ifndef VER3_0}^{$endif};
+          ResStr:=Tables[I].TableStart^;
           { Skip first entry (name of the Unit) }
           inc(ResStr);
-          while ResStr<Tables[I].TableEnd{$ifndef VER3_0}^{$endif} do
+          while ResStr<Tables[I].TableEnd^ do
             begin
               ResStr^.CurrentValue:=ResStr^.DefaultValue;
               inc(ResStr);
@@ -500,10 +518,10 @@ begin
     begin
       For i:=0 to Count-1 do
         begin
-          ResStr:=Tables[I].TableStart{$ifndef VER3_0}^{$endif};
+          ResStr:=Tables[I].TableStart^;
           { Skip first entry (name of the Unit) }
           inc(ResStr);
-          while ResStr<Tables[I].TableEnd{$ifndef VER3_0}^{$endif} do
+          while ResStr<Tables[I].TableEnd^ do
             begin
               ResStr^.CurrentValue:='';
               inc(ResStr);
@@ -524,6 +542,9 @@ end;
 Initialization
 {  ResetResourceTables;}
 finalization
+  {$ifdef FPC_HAS_RESSTRINITS}
+  FinalizeResourceStringRefs;
+  {$endif FPC_HAS_RESSTRINITS}
   FinalizeResourceTables;
 {$endif FPC_HAS_FEATURE_RESOURCES}
 end.

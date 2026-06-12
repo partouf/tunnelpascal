@@ -12,19 +12,22 @@
 
  **********************************************************************}
 {$mode objfpc}
+{$modeswitch advancedrecords}
+{$modeswitch functionreferences}
+{$modeswitch anonymousfunctions}
 {$h+}
 
 {$IF DEFINED(WINCE) or DEFINED(AIX)}
 {$DEFINE NO_SEMAPHORE_SUPPORT}
 {$ENDIF}
 
-{$IF DEFINED(WINCE)} 
+{$IF DEFINED(WINCE)}
 {$DEFINE NO_MUTEX_SUPPORT}
 {$ENDIF}
 
 
 {$IFNDEF FPC_DOTTEDUNITS}
-unit syncobjs;
+unit SyncObjs;
 {$ENDIF FPC_DOTTEDUNITS}
 
 interface
@@ -37,8 +40,13 @@ uses
   {$IFDEF UNIX}
   UnixApi.Types,
   {$ENDIF}
+  {$IFDEF CPUWASM32}
+  Wasm.Semaphore,
+  {$ENDIF}
+  System.DateUtils,
+  System.Classes,
   System.SysUtils;
-  
+
 {$ELSE FPC_DOTTEDUNITS}
   {$IFNDEF VER3_2}
   system.timespan,
@@ -46,6 +54,11 @@ uses
   {$IFDEF UNIX}
   unixtype,
   {$ENDIF}
+  {$IFDEF CPUWASM32}
+  WasmSem,
+  {$ENDIF}
+  DateUtils,
+  Classes, // TThread
   sysutils;
 {$ENDIF FPC_DOTTEDUNITS}
 
@@ -67,12 +80,20 @@ type
    ESyncObjectException = Class(Exception);
    ELockException = Class(ESyncObjectException);
    ELockRecursionException = Class(ESyncObjectException);
-   
+
    TWaitResult = (wrSignaled, wrTimeout, wrAbandoned, wrError);
 
    TSynchroObject = class(TObject)
       procedure Acquire;virtual;
       procedure Release;virtual;
+   end;
+
+   { TLockGuard }
+   generic TLockGuard<T:TSynchroObject> = record
+     obj: T;
+     class operator Initialize(var hdl: TLockGuard);
+     class operator Finalize(var hdl: TLockGuard);
+     procedure Init(AObj: T);
    end;
 
    TCriticalSection = class(TSynchroObject)
@@ -87,6 +108,8 @@ type
       constructor Create;
       destructor Destroy;override;
    end;
+   TCriticalSectionGuard = specialize TLockGuard<TCriticalSection>;
+
    THandleObject= class;
    THandleObjectArray = array of THandleObject;
 
@@ -132,8 +155,8 @@ type
    TSimpleEvent = class(TEventObject)
       constructor Create;
    end;
-   
-{$IFDEF CPU16}   
+
+{$IFDEF CPU16}
 {$DEFINE NOPOINTER}
 {$ENDIF}
 
@@ -172,10 +195,8 @@ type
     class function Exchange(var Target: TObject; Value: TObject): TObject; overload; static; inline;
     class function CompareExchange(var Target: Pointer; Value: Pointer; Comparand: Pointer): Pointer; overload; static; inline;
     class function CompareExchange(var Target: TObject; Value: TObject; Comparand: TObject): TObject; overload; static; inline;
-{$ifndef VER3_0}
     generic class function Exchange<T: class>(var Target: T; Value: T): T; overload; static; inline;
     generic class function CompareExchange<T: class>(var Target: T; Value: T; Comparand: T): T; overload; static; inline;
-{$endif VER3_0}
 {$ENDIF NOPOINTER}
   end;
 
@@ -183,6 +204,9 @@ type
   TSemaphore = class(THandleObject)
   {$IFDEF UNIX}
      Fsem: TPosixSemaphore;
+  {$ENDIF}
+  {$IFDEF CPUWASM32}
+     FSem : TWasmSemaphore;
   {$ENDIF}
    public
      constructor Create(aUseCOMWait: boolean = false); overload;
@@ -194,6 +218,7 @@ type
      function Release(aCount: Integer): Integer; reintroduce; overload;
      function WaitFor(aTimeout: Cardinal = INFINITE): TWaitResult; override;
    end;
+   TSemaphoreGuard = specialize TLockGuard<TSemaphore>;
 {$ENDIF}
 
 {$IFNDEF NO_MUTEX_SUPPORT}
@@ -202,6 +227,9 @@ type
 {$IFDEF UNIX}
     FMutex: pthread_mutex_t;
 {$ENDIF POSIX}
+{$IFDEF CPUWASM32}
+    FMutex: TRTLCriticalSection;
+{$ENDIF CPUWASM32}
   public
     constructor Create(aUseCOMWait: Boolean = False); overload;
     constructor Create(aAttributes: PSecurityAttributes; aInitialOwner: Boolean; const aName: string; aUseCOMWait: Boolean = False); overload;
@@ -211,9 +239,77 @@ type
     procedure Acquire; override;
     procedure Release; override;
   end;
+  TMutexGuard = specialize TLockGuard<TMutex>;
 {$ENDIF}
 
+  // Delphi compatible (hopefully) TSpinwait
+  // Uses exponential backoff for first 10 SpinCycles, uses sleep(1) every 20 and sleep(1) every 5 cycles afterwards.
+  TSpinFunction = reference to function : Boolean;
 
+  TSpinWait = record
+  private
+    FCount : Integer;
+    // Cache CPU count at program start, assuming it doesn't change
+    class var FCPUCount : LongWord;
+
+    class constructor Create;
+    function GetNextSpinCycleWillYield: Boolean;
+  public
+    procedure Reset;
+    procedure SpinCycle;
+
+    class procedure SpinUntil(const aCondition: TSpinFunction); overload; static;
+    class function SpinUntil(const aCondition: TSpinFunction; aTimeout: Cardinal): Boolean; overload; static;
+    class function SpinUntil(const aCondition: TSpinFunction; const aTimeout: TTimeSpan): Boolean; overload; static;
+    property Count: Integer read FCount;
+    property NextSpinCycleWillYield: Boolean read GetNextSpinCycleWillYield;
+  end;
+  
+  // Fast lock, to be used only when lock is held for short times: uses the spinner.
+Type
+  { TSpinLock }
+
+  TSpinLock = record
+  private
+    FLock: LongInt;
+    FOwningThread: TThreadID;
+    FRecursionCount: Integer;
+    FThreadTracking: Boolean;
+    function GetIsLocked: Boolean; inline;
+    function GetIsLockedByCurrentThread: Boolean;
+    function GetIsThreadTrackingEnabled: Boolean; inline;
+    function GetIsOwnedByCurrentThread: Boolean; inline;
+  public
+    constructor Create(EnableThreadTracking: Boolean);
+    procedure Enter; inline;
+    procedure Exit(PublishNow: Boolean = True); inline;
+    function TryEnter: Boolean; overload; inline;
+    function TryEnter(Timeout: Cardinal): Boolean; overload; inline;
+    function TryEnter(const Timeout: TTimeSpan): Boolean; overload; inline;
+
+    property IsLocked: Boolean read GetIsLocked;
+    property IsOwnedByCurrentThread: Boolean read GetIsOwnedByCurrentThread;
+    property IsLockedByCurrentThread: Boolean read GetIsLockedByCurrentThread;
+    property IsThreadTrackingEnabled: Boolean read GetIsThreadTrackingEnabled;
+  end;
+
+
+  // Guardian pattern. Use to see if an object was freed or not by adding a guardian instance to it.
+
+  IGuardian = interface
+    function GetIsDismantled: Boolean;
+    procedure Dismantle;
+    property IsDismantled: Boolean read GetIsDismantled;
+  end;
+
+  TGuardian = class(TInterfacedObject, IGuardian)
+  private
+    FIsDismantled: Boolean;
+    function GetIsDismantled: Boolean;
+  public
+    procedure Dismantle;
+    property IsDismantled: Boolean read GetIsDismantled;
+  end;
 
 implementation
 
@@ -241,8 +337,9 @@ Resourcestring
   SErrNamesNotSupported   = 'Named semaphores are not supported on this platform';
   SErrNoSemaphoreSupport  = 'Semaphores are not supported on this platform';
   SErrInvalidReleaseCount = '%d is not a valid release count, count must be >0';
+  SErrFailedToSignalSemaphore = 'Failed to signal semaphore at count %d';
   SErrMutexNotSupported   = 'Mutexes are not supported on this platform';
-  
+
 { ---------------------------------------------------------------------
     Real syncobjs implementation
   ---------------------------------------------------------------------}
@@ -302,12 +399,13 @@ destructor TCriticalSection.Destroy;
 
 begin
   DoneCriticalSection(CriticalSection);
+  Inherited;
 end;
 
 { THandleObject }
 
 constructor THandleObject.Create(UseComWait : Boolean=false);
-// cmompatibility shortcut constructor, Com waiting not implemented yet
+// compatibility shortcut constructor, Com waiting not implemented yet
 begin
   FHandle := BasicEventCreate(nil, True,False,'');
   if (FHandle=Nil) then
@@ -592,7 +690,7 @@ end;
 { ---------------------------------------------------------------------
   Pointer versions
   ---------------------------------------------------------------------}
-  
+
 {$IFNDEF NOPOINTER}
 class function TInterlocked.CompareExchange(var Target: Pointer; Value: Pointer; Comparand: Pointer): Pointer; overload; static; inline;
 begin
@@ -614,7 +712,6 @@ begin
   Result := TObject(InterLockedExchange(Pointer(Target), Pointer(Value)));
 end;
 
-{$ifndef VER3_0}
 generic class function TInterlocked.CompareExchange<T>(var Target: T; Value: T; Comparand: T): T; overload; static; inline;
 begin
   Result := T(InterlockedCompareExchange(Pointer(Target), Pointer(Value), Pointer(Comparand)));
@@ -624,7 +721,6 @@ generic class function TInterlocked.Exchange<T>(var Target: T; Value: T): T; ove
 begin
   Result := T(InterLockedExchange(Pointer(Target), Pointer(Value)));
 end;
-{$endif VER3_0}
 
 {$ENDIF NOPOINTER}
 
@@ -642,14 +738,14 @@ end;
 {$IFDEF WAITLOOP}
 Const
   WaitloopMsecsInterval = 10;
-  
+
 function MsecsBetween(tnow,tthen : Timeval) : Int64;
 
 
 begin
   Result:=(tnow.tv_sec-tthen.tv_sec)*1000;
   Result:=Result+((tnow.tv_usec-tthen.tv_usec) div 1000);
-end; 
+end;
 {$ENDIF WAITLOOP}
 
 procedure MSecsFromNow (tNow : Timeval; aTimeout : Integer; out tfuture: TTimespec);
@@ -669,18 +765,18 @@ end;
   TSemaphore
   ---------------------------------------------------------------------}
 {$IFNDEF NO_SEMAPHORE_SUPPORT}
-constructor TSemaphore.Create(aUseCOMWait: boolean = false); 
- 
+constructor TSemaphore.Create(aUseCOMWait: boolean = false);
+
 begin
-  Create(Nil,1,1,'',aUseComWait); 
+  Create(Nil,1,1,'',aUseComWait);
 end;
- 
-constructor TSemaphore.Create(aAttributes: PSecurityAttributes; aInitial, aMaximum: Integer; const aName: string; aUseCOMWait: boolean = false); 
+
+constructor TSemaphore.Create(aAttributes: PSecurityAttributes; aInitial, aMaximum: Integer; const aName: string; aUseCOMWait: boolean = false);
 
 {$IFDEF WINDOWS}
 var
   PN : PChar;
-{$ENDIF}  
+{$ENDIF}
 begin
 {$IFDEF WINDOWS}
   inherited Create(aUseCOMWait);
@@ -688,7 +784,7 @@ begin
 {$IF SIZEOF(CHAR)=1}
   FHandle:=TEventHandle(CreateSemaphoreA(aAttributes,aInitial,aMaximum,PN));
 {$ELSE}
-  FHandle:=TEventHandle(CreateSemaphoreW(aAttributes,aInitial,aMaximum,PN));  
+  FHandle:=TEventHandle(CreateSemaphoreW(aAttributes,aInitial,aMaximum,PN));
 {$ENDIF}
   if (FHandle=TEventHandle(0)) then
     RaiseLastOSError;
@@ -698,9 +794,13 @@ begin
     raise ESyncObjectException.Create(SErrNamesNotSupported);
   if sem_init(@FSem,0,aInitial)<>0 then
     RaiseLastOSError;
-{$ELSE}
+{$ELSE UNIX}
+{$IFDEF CPUWASM32}
+  semaphore_init(FSEM,aInitial,aMaximum);
+{$ELSE CPUWASM32}
   Raise ESyncObjectException.Create(SErrNoSemaphoreSupport);
-{$ENDIF}    
+{$ENDIF CPUWASM32}
+{$ENDIF UNIX}
 {$ENDIF WINDOWS}
 end;
 
@@ -714,33 +814,41 @@ var
 begin
 {$IFNDEF WINDOWS}
   Create(Nil,1,1,aName,aUseCOMWait);
-{$ELSE WINDOWS}  
+{$ELSE WINDOWS}
   inherited Create(aUseCOMWait);
   PN:=PChar(Pointer(aName));
-{$IF SIZEOF(CHAR)=1}    
+{$IF SIZEOF(CHAR)=1}
   FHandle:=TEventHandle(OpenSemaphoreA(aAccess,aInherit,PN));
-{$ELSE}  
+{$ELSE}
   FHandle:=TEventHandle(OpenSemaphoreW(aAccess,aInherit,PN));
-{$ENDIF}  
+{$ENDIF}
   if (FHandle=TEventHandle(0)) then
     RaiseLastOSError;
 {$ENDIF WINDOWS}
 end;
 
 
-destructor TSemaphore.Destroy; 
+destructor TSemaphore.Destroy;
 
 begin
 {$IFDEF UNIX}
   sem_destroy(@FSem);
-{$ENDIF}  
+{$ENDIF}
+{$IFDEF CPUWASM32}
+  // If someone is waiting, (s)he'll be notified...
+  semaphore_signal(FSEM);
+{$ENDIF}
   inherited Destroy;
 end;
 
 
 
-function TSemaphore.WaitFor(aTimeout: Cardinal = INFINITE): TWaitResult; 
+function TSemaphore.WaitFor(aTimeout: Cardinal = INFINITE): TWaitResult;
 
+{$IFDEF CPUWASM32}
+var
+  Res : Boolean;
+{$ENDIF}
 
 {$IFDEF UNIX}
 var
@@ -750,7 +858,7 @@ var
   {$ENDIF}
   tnow : timeval;
   Tmp: ttimespec;
-{$ENDIF}  
+{$ENDIF}
 begin
 {$IFDEF UNIX}
   Result:=wrError;
@@ -768,12 +876,12 @@ begin
     MsecsFromNow(tnow,aTimeOut,tmp);
     errno:=sem_timedwait(@FSem,@tmp);
     {$ELSE USE_SEM_TRYWAIT}
-    Repeat  
-      ErrNo:=sem_trywait(@FSem); 
+    Repeat
+      ErrNo:=sem_trywait(@FSem);
       if ErrNo=ESysEAGAIN then
         begin
         Sleep(10);
-        fpgettimeofday(@tnew,Nil);  
+        fpgettimeofday(@tnew,Nil);
         if MSecsBetween(tnew,tnow)>aTimeOut then
           errNo:=ESysETIMEDOUT;
         end
@@ -785,47 +893,69 @@ begin
       Result:=wrSignaled
     else if errno=ESysETIMEDOUT then
       Result:=wrTimeout;
-    end 
-  else 
+    end
+  else
     begin
     if (sem_wait(@FSem)=0) then
       Result:=wrSignaled
     end;
 {$ELSE UNIX}
+{$IFDEF CPUWASM32}
+  if aTimeout=INFINITE then
+    Res:=semaphore_wait_infinite(FSEM)
+  else
+    Res:=semaphore_wait(FSEM,aTimeOut);
+  if Res then
+    Result:=wrSignaled
+  else
+    Result:=wrTimeout;
+{$ELSE}
   Result:=Inherited WaitFor(aTimeOut);
+{$ENDIF}
 {$ENDIF UNIX}
+
 end;
 
 
-procedure TSemaphore.Acquire; 
+procedure TSemaphore.Acquire;
 
 begin
   if WaitFor(INFINITE)=wrError then
     RaiseLastOSError;
 end;
 
-procedure TSemaphore.Release; 
+procedure TSemaphore.Release;
 
 begin
   Release(1);
 end;
 
 
-function TSemaphore.Release(aCount: Integer): Integer; 
+function TSemaphore.Release(aCount: Integer): Integer;
 
 begin
   if (aCount<1) then
     raise ESyncObjectException.CreateFmt(SErrInvalidReleaseCount, [aCount]);
 {$IFDEF WINDOWS}
   if not ReleaseSemaphore(PtrUint(FHandle),aCount,@Result) then
-    RaiseLastOSError;  
+    RaiseLastOSError;
 {$ENDIF}
-{$IFDEF UNIX} 
+{$IFDEF UNIX}
   Result:=0;
   While aCount>0 do
     begin
     if (sem_post(@FSem)<>0) then
       RaiseLastOSError;
+    Inc(Result);
+    Dec(aCount);
+    end;
+{$ENDIF}
+{$IFDEF CPUWASM32}
+  Result:=0;
+  While aCount>0 do
+    begin
+    if not semaphore_signal(FSem) then
+          raise ESyncObjectException.CreateFmt(SErrFailedToSignalSemaphore, [aCount]);
     Inc(Result);
     Dec(aCount);
     end;
@@ -855,7 +985,7 @@ var
 {$IFDEF WINDOWS}
 var
   PN : PChar;
-{$ENDIF}  
+{$ENDIF}
 
 begin
 {$IFDEF UNIX}
@@ -866,12 +996,12 @@ begin
   try
     CheckOSError(pthread_mutexattr_settype(@Mattr,Ord(PTHREAD_MUTEX_RECURSIVE)));
     CheckOSError(pthread_mutex_init(@FMutex,@Mattr));
-  finally  
+  finally
     pthread_mutexattr_destroy(@Mattr); // don't raise second error, it would hide the first
-  end;  
+  end;
   if aInitialOwner then
     Acquire;
-{$ELSE}    
+{$ELSE}
 {$IFDEF WINDOWS}
   inherited Create(aUseCOMWait);
   PN:=PChar(Pointer(aName));
@@ -883,12 +1013,23 @@ begin
   if (FHandle=TEventHandle(0)) then
     RaiseLastOSError;
 {$ELSE}
+{$IFDEF CPUWASM}
+  inherited Create;
+  if (aName <> '') then
+    raise ESyncObjectException.Create(SErrNamesNotSupported);
+  // InitCriticalSection creates a recursive mutex (mkRecursive),
+  // matching the UNIX behavior (PTHREAD_MUTEX_RECURSIVE)
+  InitCriticalSection(FMutex);
+  if aInitialOwner then
+    Acquire;
+{$ELSE}
   raise ESyncObjectException.Create(SErrMutexNotSupported);
-{$ENDIF WINDOWS}  
+{$ENDIF CPUWASM}
+{$ENDIF WINDOWS}
 {$ENDIF UNIX}
 end;
 
-constructor TMutex.Create(aAccess: Cardinal; aInherit: Boolean; const aName: string; aUseCOMWait: Boolean = False); 
+constructor TMutex.Create(aAccess: Cardinal; aInherit: Boolean; const aName: string; aUseCOMWait: Boolean = False);
 
 {$IFDEF WINDOWS}
 var
@@ -898,7 +1039,7 @@ var
 begin
 {$IFDEF UNIX}
   Create(nil,false,aName,aUseCOMWait);
-{$ELSE}  
+{$ELSE}
 {$IFDEF WINDOWS}
   inherited Create(aUseCOMWait);
   PN:=PChar(Pointer(aName));
@@ -910,18 +1051,25 @@ begin
   if FHandle=TEventHandle(0) then
     RaiseLastOSError;
 {$ELSE}
+{$IFDEF CPUWASM}
+  Create(nil, false, aName, aUseCOMWait);
+{$ELSE}
   raise ESyncObjectException.Create(SErrMutexNotSupported);
+{$ENDIF CPUWASM}
 {$ENDIF WINDOWS}
 {$ENDIF UNIX}
 end;
 
-destructor TMutex.Destroy; 
+destructor TMutex.Destroy;
 
 begin
 {$IFDEF UNIX}
    pthread_mutex_destroy(@FMutex);
-{$ENDIF}   
-   Inherited;
+{$ENDIF}
+{$IFDEF CPUWASM}
+  DoneCriticalSection(FMutex);
+{$ENDIF}
+  Inherited;
 end;
 
 
@@ -932,14 +1080,52 @@ var
   td,tm,Errno: Integer;
   {$IFDEF USE_pthread_mutex_trylock}
   tnew : timeval;
-  {$ENDIF}  
+  {$ENDIF}
   tnow: ttimeval;
   Tmp: timespec;
-{$ENDIF}  
+{$ENDIF}
+{$IFDEF CPUWASM32}
+var
+  EndTime : Int64;
+{$ENDIF}
 begin
+{$IFDEF CPUWASM32}
+    // TRTLCriticalSection only supports blocking acquire (no timeout).
+    // For INFINITE, use EnterCriticalSection directly.
+    // For timeout=0 (try-lock), use TryEnterCriticalSection.
+    // Other timeouts: spin with TryEnterCriticalSection.
+    if aTimeout = INFINITE then
+    begin
+      EnterCriticalSection(FMutex);
+      Result := wrSignaled;
+    end
+    else if aTimeout = 0 then
+    begin
+      if TryEnterCriticalSection(FMutex) <> 0 then
+        Result := wrSignaled
+      else
+        Result := wrTimeout;
+    end
+    else
+    begin
+      // Spin-wait with timeout (no native timed lock in WASM RTL)
+      Result := wrTimeout;
+      // LockMutexTimeout from wasmmutex.inc supports timed waits,
+      // but it's not exported. Use a simple spin loop:
+      EndTime := GetTickCount64 + aTimeout;
+      repeat
+        if TryEnterCriticalSection(FMutex) <> 0 then
+        begin
+          Result := wrSignaled;
+          Break;
+        end;
+        ThreadSwitch; // yield to other web workers
+      until GetTickCount64 >= EndTime;
+    end;
+{$ELSE}
 {$IFNDEF UNIX}
   Result:=Inherited WaitFor(aTimeOut);
-{$ELSE}  
+{$ELSE}
   Result:=wrError;
   if (aTimeout=0) then
     begin
@@ -957,12 +1143,12 @@ begin
     MsecsFromNow(tnow,aTimeOut,tmp);
     ErrNo:=pthread_mutex_timedlock(@FMutex,@tmp);
     {$ELSE}
-    Repeat  
-      ErrNo:=pthread_mutex_trylock(@FMutex); 
+    Repeat
+      ErrNo:=pthread_mutex_trylock(@FMutex);
       if ErrNo=ESysEAGAIN then
         begin
         Sleep(10);
-        fpgettimeofday(@tnew,Nil);  
+        fpgettimeofday(@tnew,Nil);
         if MSecsBetween(tnew,tnow)>aTimeOut then
           errNo:=ESysETIMEDOUT;
         end
@@ -974,23 +1160,24 @@ begin
       Result:=wrSignaled
     else if (Errno=ESysEBUSY) or (errNo=ESysETIMEDOUT) then
       Result:=wrTimeout
-    end 
-  else 
+    end
+  else
     begin
     if (pthread_mutex_lock(@FMutex)=0) then
       Result:=wrSignaled
     end;
-{$ENDIF}    
+{$ENDIF}
+{$ENDIF}
 end;
 
-procedure TMutex.Acquire; 
+procedure TMutex.Acquire;
 
 begin
   if WaitFor(INFINITE)=wrError then
     RaiseLastOSError;
 end;
 
-procedure TMutex.Release; 
+procedure TMutex.Release;
 
 begin
 {$IFDEF WINDOWS}
@@ -1000,7 +1187,288 @@ begin
 {$IFDEF UNIX}
   CheckOSError(pthread_mutex_unlock(@FMutex));
 {$ENDIF UNIX}
+{$IFDEF CPUWASM32}
+  LeaveCriticalSection(FMutex);
+{$ENDIF CPUWASM32}
 end;
 {$ENDIF NO_MUTEX_SUPPORT}
+
+{ TLockGuard }
+
+class operator TLockGuard.Initialize(var hdl: TLockGuard);
+begin
+  hdl.obj := nil;
+end;
+
+class operator TLockGuard.Finalize(var hdl: TLockGuard);
+begin
+  if (hdl.obj=nil) then
+    exit;
+  hdl.obj.Release();
+end;
+
+procedure TLockGuard.Init(AObj:T);
+begin
+  self.obj := AObj;
+  self.obj.Acquire();
+end;
+
+{ ---------------------------------------------------------------------
+  TSpinWait
+  ---------------------------------------------------------------------}
+
+class constructor TSpinWait.Create;
+begin
+  // Get the number of cores on the system once
+  FCPUCount := GetCPUCount; // Available in the System unit
+end;
+
+procedure TSpinWait.Reset;
+begin
+  FCount := 0;
+end;
+
+procedure TSpinWait.SpinCycle;
+var
+  i: Integer;
+  SpinCount: Integer;
+begin
+  // Increment cycle count
+  Inc(FCount);
+  if (FCPUCount > 1) and (FCount <= 10) then
+    begin
+    // Exponential backoff for first 10 cycles
+    // Base 2 exponentially increasing spin count starting at 4
+    SpinCount := 2 shl FCount;
+    TThread.SpinWait(SpinCount);
+    // Do not fallback to Single-CPU yet
+    exit;
+    end;
+  // Single-CPU behaviour, or large spin cycle counts:
+  // Sleep 1ms every 20 cycles
+  if (FCount mod 20) = 0 then
+    Sleep(1)
+  // Sleep 0ms every 5 cycles
+  else if (FCount mod 5) = 0 then
+    Sleep(0)
+  // All other cycles simply yield
+  else
+    TThread.Yield; // Yield execution to other threads
+end;
+
+
+function TSpinWait.GetNextSpinCycleWillYield: Boolean;
+begin
+  // If CPUCount > 1, the first 10 cycles are pure spin (no yield/sleep), so it will not yield.
+  if (FCPUCount > 1) and (FCount < 10) then
+    Exit(False);
+  // Single-CPU logic check (for FCPUCount = 1, or FCPUCount > 1 and FCount >= 10)
+  // The *next* count will be FCount + 1.
+  Result := (((FCount + 1) mod 20) <> 0) // Not a Sleep(1) cycle
+            and (((FCount + 1) mod 5) <> 0);  // Not a Sleep(0) cycle
+end;
+
+
+class procedure TSpinWait.SpinUntil(const aCondition: TSpinFunction); overload; static;
+var
+  lWait : TSpinWait;
+begin
+  // Spin indefinitely until aCondition returns True
+  lWait.Reset;
+  while not aCondition() do
+    lWait.SpinCycle;
+end;
+
+
+class function TSpinWait.SpinUntil(const aCondition: TSpinFunction; aTimeout: Cardinal): Boolean; overload;
+static;
+begin
+  SpinUntil(aCondition, TTimeSpan.FromMilliseconds(aTimeout));
+end;
+
+
+class function TSpinWait.SpinUntil(const aCondition: TSpinFunction; const aTimeout: TTimeSpan): Boolean; overload; static;
+var
+  lStartTime: TDateTime;
+  lWaitTime,lElapsedTime: Int64;
+  lWait: TSpinWait;
+begin
+  Result:=False;
+  if aCondition() then
+    Exit(True);
+  lWaitTime:=Round(aTimeout.TotalMilliseconds);
+  lWait.Reset;
+  lStartTime:=Now;
+  repeat
+    lWait.SpinCycle;
+    if aCondition() then
+      Exit(True);
+    lElapsedTime:=MilliSecondsBetween(Now,lStartTime);
+  until (lElapsedTime >= lWaitTime) or lWait.NextSpinCycleWillYield;
+end;
+
+{ ---------------------------------------------------------------------
+  TSpinLock
+  ---------------------------------------------------------------------}
+
+
+function TSpinLock.GetIsLocked: Boolean;
+
+begin
+  Result:=FLock <> 0;
+end;
+
+
+function TSpinLock.GetIsThreadTrackingEnabled: Boolean; 
+
+begin
+  Result:=FThreadTracking;
+end;
+
+
+function TSpinLock.GetIsOwnedByCurrentThread: Boolean;
+
+begin
+  Result:=(FOwningThread = GetCurrentThreadId);
+end;
+
+
+function TSpinLock.GetIsLockedByCurrentThread: Boolean;
+
+begin
+  Result:=GetIsThreadTrackingEnabled and GetIsLocked and GetIsOwnedByCurrentThread
+end;
+
+
+constructor TSpinLock.Create(EnableThreadTracking: Boolean);
+ 
+begin
+  FLock:=0;
+  FOwningThread:=TThreadID(0);
+  FRecursionCount:=0;
+  FThreadTracking:=EnableThreadTracking;
+end;
+
+
+procedure TSpinLock.Enter;
+
+var
+  Spinner: TSpinWait;
+  CT: TThreadID;
+  
+begin
+  if FThreadTracking then
+    begin
+    CT:=GetCurrentThreadId;
+    if (FOwningThread=CT) then
+      begin
+      Inc(FRecursionCount);
+      System.Exit;
+      end;
+    end;
+
+  Spinner.Reset;
+  while TInterlocked.CompareExchange(FLock,1,0)<>0 do
+    Spinner.SpinCycle;
+
+  if FThreadTracking then
+    begin
+    FOwningThread:=GetCurrentThreadId;
+    FRecursionCount:=1;
+    end;
+end;
+
+
+procedure TSpinLock.Exit(PublishNow: Boolean);
+
+var
+  CT: TThreadID;
+
+begin
+  if FThreadTracking then
+    begin
+    CT:=GetCurrentThreadId;
+    if (FOwningThread<>CT) then
+      raise ELockException.Create('Thread does not own the lock');
+    
+    Dec(FRecursionCount);
+    if (FRecursionCount>0) then 
+      System.Exit;
+    FOwningThread:=TThreadID(0);
+    end;
+  
+  if PublishNow then
+    TInterlocked.Exchange(FLock, 0)
+  else
+    begin
+    // Not 100% sure about this one ?
+    ReadWriteBarrier;
+    FLock:=0;
+    end;
+end;
+
+
+function TSpinLock.TryEnter: Boolean;
+
+begin
+  if FThreadTracking and IsOwnedByCurrentThread then
+    begin
+    Inc(FRecursionCount);
+    System.Exit(True);
+    end;
+
+  Result:=TInterlocked.CompareExchange(FLock,1,0)=0;
+  
+  if Result and FThreadTracking then
+  begin
+    FOwningThread:=GetCurrentThreadId;
+    FRecursionCount:=1;
+  end;
+end;
+
+function TSpinLock.TryEnter(const Timeout: TTimeSpan): Boolean;
+var
+  LSpinner: TSpinWait;
+  LStart: QWord;
+  LTotalMs: QWord;
+begin
+  if TryEnter then 
+    System.Exit(True);
+
+  LTotalMs:=Round(Timeout.TotalMilliseconds);
+  LStart:=GetTickCount64;
+  LSpinner.Reset;
+
+  while (GetTickCount64-LStart)<LTotalMs do
+    begin
+    LSpinner.SpinCycle;
+    if TryEnter then 
+      System.Exit(True);
+    end;
+  Result:=False;
+end;
+
+
+function TSpinLock.TryEnter(Timeout: Cardinal): Boolean;
+
+begin
+  Result:=TryEnter(TTimeSpan.FromMilliseconds(Timeout));
+end;
+
+{ ---------------------------------------------------------------------
+  TGuardian
+  ---------------------------------------------------------------------}
+
+
+procedure TGuardian.Dismantle;
+begin
+  FIsDismantled := True;
+end;
+
+function TGuardian.GetIsDismantled: Boolean;
+begin
+  Result := FIsDismantled;
+end;
+
 
 end.

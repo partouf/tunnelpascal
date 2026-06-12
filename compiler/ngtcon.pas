@@ -188,6 +188,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
              inserttypeconv(n,def);
            tc_emit_orddef(def,n);
            n.free;
+           n := nil;
         end;
 
       procedure ttypedconstbuilder.parse_floatdef(def:tfloatdef);
@@ -197,6 +198,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           n:=comp_expr([ef_accept_equal]);
           tc_emit_floatdef(def,n);
           n.free;
+          n := nil;
         end;
 
       procedure ttypedconstbuilder.parse_classrefdef(def:tclassrefdef);
@@ -216,6 +218,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           end;
           tc_emit_classrefdef(def,n);
           n.free;
+          n := nil;
         end;
 
       procedure ttypedconstbuilder.parse_pointerdef(def:tpointerdef);
@@ -225,6 +228,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           p:=comp_expr([ef_accept_equal]);
           tc_emit_pointerdef(def,p);
           p.free;
+          p := nil;
         end;
 
       procedure ttypedconstbuilder.parse_setdef(def:tsetdef);
@@ -234,6 +238,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           p:=comp_expr([ef_accept_equal]);
           tc_emit_setdef(def,p);
           p.free;
+          p := nil;
         end;
 
       procedure ttypedconstbuilder.parse_enumdef(def:tenumdef);
@@ -243,6 +248,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           p:=comp_expr([ef_accept_equal]);
           tc_emit_enumdef(def,p);
           p.free;
+          p := nil;
         end;
 
       procedure ttypedconstbuilder.parse_stringdef(def:tstringdef);
@@ -252,6 +258,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           n:=comp_expr([ef_accept_equal]);
           tc_emit_stringdef(def,n);
           n.free;
+          n := nil;
         end;
 
     { ttypedconstbuilder }
@@ -291,7 +298,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           errordef:
             begin
                { try to consume something useful }
-               if token=_LKLAMMER then
+               if current_scanner.token=_LKLAMMER then
                  consume_all_until(_RKLAMMER)
                else
                  consume_all_until(_SEMICOLON);
@@ -479,19 +486,22 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
     destructor tasmlisttypedconstbuilder.Destroy;
       begin
         fdatalist.free;
+        fdatalist := nil;
         ftcb.free;
+        ftcb := nil;
         inherited Destroy;
       end;
 
 
     procedure tasmlisttypedconstbuilder.tc_emit_stringdef(def: tstringdef; var node: tnode);
       var
-        strlength : {$ifdef CPU8BITALU}smallint{$else}aint{$endif};
+        strlength,
+        defsize   : {$ifdef CPU8BITALU}smallint{$else}aint{$endif};
         strval    : pchar;
         ll        : tasmlabofs;
-        ca        : pchar;
         winlike   : boolean;
         hsym      : tconstsym;
+        paddedstrdata   : shortstring;
       begin
         strval:='';
         { load strval and strlength of the constant tree }
@@ -500,13 +510,17 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           is_constcharnode(node) then
           begin
             { convert to the expected string type so that
-              for widestrings strval is a pcompilerwidestring }
+              for widestrings strval is a tcompilerwidestring }
             inserttypeconv(node,def);
             if (not codegenerror) and
                (node.nodetype=stringconstn) then
               begin
                 strlength:=tstringconstnode(node).len;
-                strval:=tstringconstnode(node).value_str;
+                if (tstringconstnode(node).cst_type in [cst_unicodestring,cst_widestring]) then
+                  { further on, tstringconstnode(node).valuews is used directly for this case }
+                  strval:=nil
+                else
+                  strval:=tstringconstnode(node).asconstpchar;
                 { the def may have changed from e.g. RawByteString to
                   AnsiString(CP_ACP) }
                 if node.resultdef.typ=stringdef then
@@ -558,20 +572,18 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
               st_shortstring:
                 begin
                   ftcb.maybe_begin_aggregate(def);
-                  if strlength>=def.size then
+                  defsize:=def.size;
+                  if strlength>=defsize then
                    begin
-                     message2(parser_w_string_too_long,strpas(strval),tostr(def.size-1));
-                     strlength:=def.size-1;
+                     message2(parser_w_string_too_long,strval,tostr(defsize-1));
+                     strlength:=defsize-1;
                    end;
-                  ftcb.emit_tai(Tai_const.Create_8bit(strlength),cansichartype);
-                  { room for the string data + terminating #0 }
-                  getmem(ca,def.size);
-                  move(strval^,ca^,strlength);
-                  { zero-terminate and fill with spaces if size is shorter }
-                  fillchar(ca[strlength],def.size-strlength-1,' ');
-                  ca[strlength]:=#0;
-                  ca[def.size-1]:=#0;
-                  ftcb.emit_tai(Tai_string.Create_pchar(ca,def.size-1),carraydef.getreusable(cansichartype,def.size-1));
+                  paddedstrdata[0]:=chr(strlength);
+                  move(strval^,paddedstrdata[1],strlength);
+                  { fill with spaces if size is shorter }
+                  fillchar(paddedstrdata[strlength+1],defsize-strlength-1,' ');
+                  paddedstrdata[strlength+1]:=#0;
+                  ftcb.emit_tai(Tai_string.Create_Data(@paddedstrdata[0],defsize,false),carraydef.getreusable(cansichartype,defsize+1));
                   ftcb.maybe_end_aggregate(def);
                 end;
               st_ansistring:
@@ -600,7 +612,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                      begin
                        winlike:=(def.stringtype=st_widestring) and (tf_winlikewidestring in target_info.flags);
                        ll:=ftcb.emit_unicodestring_const(fdatalist,
-                              strval,
+                              tstringconstnode(node).valuews,
                               def.encoding,
                               winlike);
 
@@ -779,8 +791,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         hp        : tnode;
         srsym     : tsym;
         pd        : tprocdef;
-        ca        : pchar;
-        pw        : pcompilerwidestring;
+        pw        : tcompilerwidestring;
         i,len     : longint;
         ll        : tasmlabel;
         varalign  : shortint;
@@ -869,15 +880,16 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
               if node.nodetype=stringconstn then
                 begin
                   len:=tstringconstnode(node).len;
-                  { For tp7 the maximum lentgh can be 255 }
+                  { For tp7 the maximum length can be 255 }
                   if (m_tp7 in current_settings.modeswitches) and
                      (len>255) then
-                   len:=255;
-                  getmem(ca,len+1);
-                  move(tstringconstnode(node).value_str^,ca^,len+1);
+                    len:=255;
                   datadef:=carraydef.getreusable(cansichartype,len+1);
                   datatcb.maybe_begin_aggregate(datadef);
-                  datatcb.emit_tai(Tai_string.Create_pchar(ca,len+1),datadef);
+                  if len>0 then
+                    datatcb.emit_tai(Tai_string.Create_Data(@tstringconstnode(node).valueas[0],len,true),datadef)
+                  else
+                    datatcb.emit_tai(Tai_string.Create_Data(nil,0,true),datadef);
                   datatcb.maybe_end_aggregate(datadef);
                 end
               else if is_constcharnode(node) then
@@ -917,12 +929,12 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                        asmlist) }
                      ftcb.start_internal_data_builder(fdatalist,sec_rodata,'',datatcb,ll);
                      datatcb:=ctai_typedconstbuilder.create([tcalo_is_lab,tcalo_make_dead_strippable,tcalo_apply_constalign]);
-                     pw:=pcompilerwidestring(tstringconstnode(node).value_str);
+                     pw:=tstringconstnode(node).valuews;
                      { include terminating #0 }
                      datadef:=carraydef.getreusable(cwidechartype,tstringconstnode(node).len+1);
                      datatcb.maybe_begin_aggregate(datadef);
                      for i:=0 to tstringconstnode(node).len-1 do
-                       datatcb.emit_tai(Tai_const.Create_16bit(pw^.data[i]),cwidechartype);
+                       datatcb.emit_tai(Tai_const.Create_16bit(pw.data[i]),cwidechartype);
                      { ending #0 }
                      datatcb.emit_tai(Tai_const.Create_16bit(0),cwidechartype);
                      datatcb.maybe_end_aggregate(datadef);
@@ -1177,6 +1189,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
           begin
             incompatibletypes(node.resultdef,def);
             node.free;
+            node := nil;
             consume_all_until(_SEMICOLON);
             result:=false;
             exit;
@@ -1188,6 +1201,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         if (bp.curbitoffset>=AIntBits) then
           flush_packed_value(bp);
         node.free;
+        node := nil;
       end;
 
     procedure tasmlisttypedconstbuilder.get_final_asmlists(out reslist, datalist: tasmlist);
@@ -1298,7 +1312,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                       end;
                     ftcb:=oldtcb;
 
-                    dynarrdef:=datatcb.end_dynarray_const(def,dyncount,dyncountloc);
+                    dynarrdef:=datatcb.end_dynarray_const(def,dyncount,dyncountloc,llofs);
 
                     ftcb.finish_internal_data_builder(datatcb,ll,dynarrdef,sizeof(pint));
 
@@ -1329,7 +1343,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                 while true do
                   begin
                     read_typed_const_data(def.elementdef);
-                    if token=_RKLAMMER then
+                    if current_scanner.token=_RKLAMMER then
                       begin
                         consume(_RKLAMMER);
                         break;
@@ -1344,7 +1358,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                   begin
                     read_typed_const_data(def.elementdef);
                     Inc(curoffset,def.elementdef.size);
-                    if token=_RKLAMMER then
+                    if current_scanner.token=_RKLAMMER then
                       begin
                         Message1(parser_e_more_array_elements_expected,tostr(def.highrange-i));
                         consume(_RKLAMMER);
@@ -1376,19 +1390,22 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                          inserttypeconv(n,getansistringdef);
                        if n.nodetype<>stringconstn then
                          internalerror(2010033003);
-                       ca:=pointer(tstringconstnode(n).value_str);
+                       ca:=pointer(tstringconstnode(n).valueas);
                      end;
                     2:
                       begin
                         inserttypeconv(n,cunicodestringtype);
                         if n.nodetype<>stringconstn then
                           internalerror(2010033009);
-                        ca:=pointer(pcompilerwidestring(tstringconstnode(n).value_str)^.data)
+                        if tstringconstnode(n).valuews.len>0 then
+                          ca:=pointer(@tstringconstnode(n).valuews.data[0])
+                        else
+                          ca:=nil;
                       end;
                     else
                       internalerror(2010033005);
                   end;
-                 { For tp7 the maximum lentgh can be 255 }
+                 { For tp7 the maximum length can be 255 }
                  if (m_tp7 in current_settings.modeswitches) and
                     (len>255) then
                   len:=255;
@@ -1460,6 +1477,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                end;
              ftcb.maybe_end_aggregate(def);
              n.free;
+             n := nil;
           end
         else
           begin
@@ -1499,6 +1517,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         if codegenerror then
           begin
             n.free;
+            n := nil;
             exit;
           end;
         { let type conversion check everything needed }
@@ -1506,6 +1525,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         if codegenerror then
           begin
             n.free;
+            n := nil;
             exit;
           end;
         { in case of a nested procdef initialised with a global routine }
@@ -1595,10 +1615,17 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
             if not def.is_addressonly then
               ftcb.emit_tai(Tai_const.Create_sym(nil),voidpointertype);
           end
+        else if n.nodetype=niln then
+          begin
+            ftcb.queue_emit_ordconst(0,procaddrdef);
+            if not def.is_addressonly then
+              ftcb.emit_tai(Tai_const.Create_sym(nil),voidpointertype);
+          end
         else
           Message(parser_e_illegal_expression);
         ftcb.maybe_end_aggregate(def);
         n.free;
+        n := nil;
       end;
 
 
@@ -1620,7 +1647,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
 
       procedure handle_stringconstn;
         begin
-          hs:=strpas(tstringconstnode(n).value_str);
+          if length(tstringconstnode(n).valueas)>0 then
+            hs:=strpas(@tstringconstnode(n).valueas[0])
+          else
+            hs:='';
           if string2guid(hs,tmpguid) then
             ftcb.emit_guid_const(tmpguid)
           else
@@ -1632,7 +1662,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         SymList:TFPHashObjectList;
       begin
         { GUID }
-        if (def=rec_tguid) and (token=_ID) then
+        if (def=rec_tguid) and (current_scanner.token=_ID) then
           begin
             n:=comp_expr([ef_accept_equal]);
             if n.nodetype=stringconstn then
@@ -1646,9 +1676,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                   Message(parser_e_illegal_expression);
               end;
             n.free;
+            n := nil;
             exit;
           end;
-        if (def=rec_tguid) and ((token=_CSTRING) or (token=_CCHAR)) then
+        if (def=rec_tguid) and ((current_scanner.token=_CSTRING) or (current_scanner.token=_CCHAR)) then
           begin
             n:=comp_expr([ef_accept_equal]);
             inserttypeconv(n,cshortstringtype);
@@ -1657,6 +1688,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
             else
               Message(parser_e_illegal_expression);
             n.free;
+            n := nil;
             exit;
           end;
         ftcb.maybe_begin_aggregate(def);
@@ -1675,14 +1707,14 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         recsym := nil;
         startoffset:=curoffset;
         error := false;
-        while token<>_RKLAMMER do
+        while current_scanner.token<>_RKLAMMER do
           begin
-            s:=pattern;
-            sorg:=orgpattern;
+            s:=current_scanner.pattern;
+            sorg:=current_scanner.orgpattern;
             consume(_ID);
             consume(_COLON);
             recsym := tsym(def.symtable.Find(s));
-            if not assigned(recsym) then
+            if not assigned(recsym) or (recsym.typ<>fieldvarsym) then
               begin
                 Message1(sym_e_illegal_field,sorg);
                 error := true;
@@ -1783,9 +1815,9 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                 { goto next field }
                 srsym:=get_next_varsym(def,SymList,symidx);
 
-                if token=_SEMICOLON then
+                if current_scanner.token=_SEMICOLON then
                   consume(_SEMICOLON)
-                else if (token=_COMMA) and (m_mac in current_settings.modeswitches) then
+                else if (current_scanner.token=_COMMA) and (m_mac in current_settings.modeswitches) then
                   consume(_COMMA)
                 else
                   break;
@@ -1852,6 +1884,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
             else
               ftcb.emit_tai(Tai_const.Create_sym(nil),def);
             n.free;
+            n := nil;
             exit;
           end;
 
@@ -1869,10 +1902,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         startoffset:=curoffset;
         objoffset:=0;
         vmtwritten:=false;
-        while token<>_RKLAMMER do
+        while current_scanner.token<>_RKLAMMER do
           begin
-            s:=pattern;
-            sorg:=orgpattern;
+            s:=current_scanner.pattern;
+            sorg:=current_scanner.orgpattern;
             consume(_ID);
             consume(_COLON);
             srsym:=nil;
@@ -1977,7 +2010,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
               begin
                 basenode:=cvecnode.create(orgbase.getcopy,ctypeconvnode.create_explicit(genintconstnode(i),tarraydef(def).rangedef));
                 read_typed_const_data(def.elementdef);
-                if token=_RKLAMMER then
+                if current_scanner.token=_RKLAMMER then
                   begin
                     Message1(parser_e_more_array_elements_expected,tostr(def.highrange-i));
                     consume(_RKLAMMER);
@@ -2034,7 +2067,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
 
       begin
         { GUID }
-        if (def=rec_tguid) and (token=_ID) then
+        if (def=rec_tguid) and (current_scanner.token=_ID) then
           begin
             n:=comp_expr([ef_accept_equal]);
             if n.nodetype=stringconstn then
@@ -2053,9 +2086,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                   Message(parser_e_illegal_expression);
               end;
             n.free;
+            n := nil;
             exit;
           end;
-        if (def=rec_tguid) and ((token=_CSTRING) or (token=_CCHAR)) then
+        if (def=rec_tguid) and ((current_scanner.token=_CSTRING) or (current_scanner.token=_CCHAR)) then
           begin
             n:=comp_expr([ef_accept_equal]);
             inserttypeconv(n,cshortstringtype);
@@ -2064,6 +2098,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
             else
               Message(parser_e_illegal_expression);
             n.free;
+            n := nil;
             exit;
           end;
         { bitpacked record? }
@@ -2078,10 +2113,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         recsym := nil;
         orgbasenode:=basenode;
         basenode:=nil;
-        while token<>_RKLAMMER do
+        while current_scanner.token<>_RKLAMMER do
           begin
-            s:=pattern;
-            sorg:=orgpattern;
+            s:=current_scanner.pattern;
+            sorg:=current_scanner.orgpattern;
             consume(_ID);
             consume(_COLON);
             error := false;
@@ -2159,9 +2194,9 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                 recsym := srsym;
                 { goto next field }
                 srsym:=get_next_varsym(def,SymList,symidx);
-                if token=_SEMICOLON then
+                if current_scanner.token=_SEMICOLON then
                   consume(_SEMICOLON)
-                else if (token=_COMMA) and (m_mac in current_settings.modeswitches) then
+                else if (current_scanner.token=_COMMA) and (m_mac in current_settings.modeswitches) then
                   consume(_COMMA)
                 else
                   break;
@@ -2177,6 +2212,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
            ) then
           Message1(parser_w_skipped_fields_after,sorg);
         orgbasenode.free;
+        orgbasenode := nil;
         basenode:=nil;
 
         consume(_RKLAMMER);
@@ -2216,6 +2252,7 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
                 basenode:=nil;
               end;
             n.free;
+            n := nil;
             exit;
           end;
 
@@ -2231,10 +2268,10 @@ function get_next_varsym(def: tabstractrecorddef; const SymList:TFPHashObjectLis
         objoffset:=0;
         orgbasenode:=basenode;
         basenode:=nil;
-        while token<>_RKLAMMER do
+        while current_scanner.token<>_RKLAMMER do
           begin
-            s:=pattern;
-            sorg:=orgpattern;
+            s:=current_scanner.pattern;
+            sorg:=current_scanner.orgpattern;
             consume(_ID);
             consume(_COLON);
             srsym:=nil;

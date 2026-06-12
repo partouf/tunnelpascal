@@ -31,7 +31,7 @@ uses
   {$ENDIF}
   System.Types,
   {$endif}
-  System.SysUtils, System.Classes;
+  System.SysUtils, System.Classes, System.Types;
 {$ELSE FPC_DOTTEDUNITS}
 uses
   {$ifdef pas2js}
@@ -39,9 +39,8 @@ uses
   {$IFDEF NODEJS}
   Node.FS,
   {$ENDIF}
-  Types,
   {$endif}
-  SysUtils, Classes;
+  SysUtils, Classes, Types;
 {$ENDIF FPC_DOTTEDUNITS}
 
 // message numbers
@@ -86,6 +85,7 @@ const
   nWarnIgnoringLinkLib = 1036;
   nErrInvalidIndent = 1037;
   nErrMultilineNonWhiteSpaceBeforeClosing = 1038;
+  nErrInvalidMultiLineTrimLeft = 1039;
 
 // resourcestring patterns of messages
 resourcestring
@@ -129,6 +129,7 @@ resourcestring
   SWarnIgnoringLinkLib = 'Ignoring LINKLIB directive %s -> %s (Options: %s)';
   SErrInvalidIndent = ' Inconsistent indent characters';
   SErrMultilineNonWhiteSpaceBeforeClosing = 'There should be no white-space characters before closing quotes of the text block';
+  SErrInvalidMultiLineTrimLeft = 'Invalid MultiLineStringTrimLeft value: "%s", use ALL/AUTO/NONE or 0..65535';
 
 type
   {$IFDEF PAS2JS}
@@ -305,7 +306,7 @@ type
     msTPProcVar,           { tp style procvars (no @ needed) }
     msMacProcVar,          { macpas style procvars }
     msRepeatForward,       { repeating forward declarations is needed }
-    msPointer2Procedure,   { allows the assignement of pointers to
+    msPointer2Procedure,   { allows the assignment of pointers to
                              procedure variables                     }
     msAutoDeref,           { does auto dereferencing of struct. vars }
     msInitFinal,           { initialization/finalization for units }
@@ -727,10 +728,12 @@ type
     po_ExtConstWithoutExpr,  // allow typed const without expression in external class and with external modifier
     po_StopOnUnitInterface,  // parse only a unit name and stop at interface keyword
     po_IgnoreUnknownResource,// Ignore resources for which no handler is registered.
-    po_AsyncProcs,            // allow async procedure modifier
-    po_DisableResources,      // Disable resources altogether
+    po_AsyncProcs,           // allow async procedure modifier
+    po_DisableResources,     // Disable resources altogether
     po_AsmPascalComments,    // Allow pascal comments/directives in asm blocks
-    po_AllowMem              // Allow use of meml, mem, memw arrays
+    po_AllowMem,             // Allow use of meml, mem, memw arrays
+    po_WarnResourceNotFound, // Do not raise error if resource not found.
+    po_CheckDirectiveRTTI    // parse $RTTI directive and error on invalid
     );
   TPOptions = set of TPOption;
 
@@ -766,6 +769,10 @@ type
       TResourceHandlerRecord = record
         Ext : TPasScannerString;
         Handler : TResourceHandler;
+      end;
+      TDirectiveHandlerRecord = record
+        Directive : TPasScannerString;
+        Handler : TPScannerDirectiveEvent;
       end;
       TWarnMsgNumberState = record
         Number: integer;
@@ -828,7 +835,8 @@ type
     FIncludeStack: TFPList;
     FFiles: TStrings;
     FWarnMsgStates: TWarnMsgNumberStateArr;
-    FResourceHandlers : Array of TResourceHandlerRecord;
+    FResourceHandlers: Array of TResourceHandlerRecord;
+    FDirectiveHandles: Array of TDirectiveHandlerRecord;
 
     // Preprocessor $IFxxx skipping data
     PPSkipMode: TPascalScannerPPSkipMode;
@@ -857,17 +865,18 @@ type
     // extension without initial dot (.)
     Function IndexOfResourceHandler(Const aExt : TPasScannerString) : Integer;
     Function FindResourceHandler(Const aExt : TPasScannerString) : TResourceHandler;
+    function IndexOfDirectiveHandle(const aDirective: TPasScannerString; ForInsert: boolean = false): Integer;
     function ReadIdentifier(const AParam: TPasScannerString): TPasScannerString;
     function FetchLine: boolean;
     procedure AddFile(aFilename: TPasScannerString); virtual;
     function GetMacroName(const Param: TPasScannerString): TPasScannerString;
     procedure SetCurMsg(MsgType: TMessageType; MsgNumber: integer; Const Fmt : TPasScannerString; Args : Array of const);
     procedure SetCurMsg(MsgType: TMessageType; MsgNumber: integer; Const Msg : TPasScannerString);
-    Procedure DoLog(MsgType: TMessageType; MsgNumber: integer; Const Msg : TPasScannerString; SkipSourceInfo : Boolean = False);overload;
-    Procedure DoLog(MsgType: TMessageType; MsgNumber: integer; Const Fmt : TPasScannerString; Args : Array of const;SkipSourceInfo : Boolean = False);overload;
-    procedure ErrorAt(MsgNumber: integer; const Msg: TPasScannerString; aRow,ACol : Integer);overload;
-    procedure Error(MsgNumber: integer; const Msg: TPasScannerString);overload;
-    procedure Error(MsgNumber: integer; const Fmt: TPasScannerString; Args: array of const);overload;
+    Procedure DoLog(MsgType: TMessageType; MsgNumber: integer; Const Msg : TPasScannerString; SkipSourceInfo : Boolean = False); overload;
+    Procedure DoLog(MsgType: TMessageType; MsgNumber: integer; Const Fmt : TPasScannerString; Args : Array of const;SkipSourceInfo : Boolean = False); overload;
+    procedure ErrorAt(MsgNumber: integer; const Msg: TPasScannerString; aRow,ACol : Integer); overload;
+    procedure Error(MsgNumber: integer; const Msg: TPasScannerString); overload;
+    procedure Error(MsgNumber: integer; const Fmt: TPasScannerString; Args: array of const); overload;
     procedure PushSkipMode;
     function GetMultiLineStringLineEnd(aReader: TLineReader): TPasScannerString;
     function MakeLibAlias(const LibFileName: TPasScannerString): TPasScannerString; virtual;
@@ -913,7 +922,7 @@ type
     procedure PushStackItem; virtual;
     procedure PopStackItem; virtual;
     function DoFetchTextToken: TToken; // including quotes
-    function DoFetchMultilineTextToken: TToken; // back ticks are converted to apostrophs, unindented
+    function DoFetchMultilineTextToken: TToken; // back ticks are converted to apostrophes, unindented
     function DoFetchDelphiMultiLineTextToken(QuoteLen: Integer): TToken;
     function DoFetchToken: TToken;
     procedure ClearFiles;
@@ -931,12 +940,16 @@ type
     constructor Create(AFileResolver: TBaseFileResolver);
     destructor Destroy; override;
     // extension without initial dot  (.), case insensitive
-    Procedure RegisterResourceHandler(aExtension : String; aHandler : TResourceHandler); overload;
-    Procedure RegisterResourceHandler(aExtensions : Array of String; aHandler : TResourceHandler); overload;
+    procedure RegisterResourceHandler(aExtension : String; const aHandler : TResourceHandler); overload;
+    procedure RegisterResourceHandler(const aExtensions : Array of String; const aHandler : TResourceHandler); overload;
+    procedure RegisterDirectiveHandler(const aDirective: String; const aHandler : TPScannerDirectiveEvent); overload;
+    procedure RegisterDirectiveHandler(const aDirectives : TStringDynArray; const aHandler : TPScannerDirectiveEvent); overload;
     procedure OpenFile(AFilename: TPasScannerString);
     procedure FinishedModule; virtual; // called by parser after end.
     function FormatPath(const aFilename: String): String; virtual;
-    Procedure DisablePackageTokens;
+    function FormatSrcPos(const p: TPasSourcePos): String;
+    function FormatCurrentSrcPos: String;
+    procedure DisablePackageTokens;
     procedure SetNonToken(aToken : TToken);
     procedure UnsetNonToken(aToken : TToken);
     procedure SetTokenOption(aOption : TTokenoption);
@@ -1298,7 +1311,7 @@ const
 
   OBJFPCModeSwitches =  [msObjfpc,msClass,msObjpas,msResult,msStringPchar,msNestedComment,
     msRepeatForward,msCVarSupport,msInitFinal,msOut,msDefaultPara,msHintDirective,
-    msProperty,msDefaultInline,msExcept];
+    msProperty,msDefaultInline,msExcept,msDelphiMultiLineStrings];
 
   TPModeSwitches = [msTP7,msTPProcVar,msDuplicateNames];
 
@@ -1324,7 +1337,7 @@ function FilenameIsWinAbsolute(const TheFilename: String): boolean;
 function FilenameIsUnixAbsolute(const TheFilename: String): boolean;
 function IsNamedToken(Const AToken : TPasScannerString; Out T : TToken) : Boolean;
 Function ExtractFilenameOnly(Const AFileName : String) : String;
-function ExtractFileUnitName(aFilename: String): String;
+function ExtractFileUnitName(const aFilename: String): String;
 
 procedure CreateMsgArgs(var MsgArgs: TMessageArgs; Args: array of const);
 function SafeFormat(const Fmt: String; Args: array of const): String;
@@ -1336,6 +1349,12 @@ procedure ReadNextPascalToken(var Position: PChar; out TokenStart: PChar;
 
 implementation
 
+uses
+  {$IFDEF FPC_DOTTEDUNITS}
+  System.StrUtils;
+  {$ELSE}
+  strutils;
+  {$ENDIF}
 const
   IdentChars = ['0'..'9', 'A'..'Z', 'a'..'z','_'];
   Digits = ['0'..'9'];
@@ -1353,21 +1372,16 @@ begin
   Result:=ChangeFileExt(ExtractFileName(aFileName),'');
 end;
 
-function ExtractFileUnitName(aFilename: String): String;
+function ExtractFileUnitName(const aFilename: String): String;
 var
   p: Integer;
 begin
   Result:=ExtractFileName(aFilename);
-  if Result='' then exit;
-  for p:=length(Result) downto 1 do
-    case Result[p] of
-    '/','\': exit;
-    '.':
-      begin
-      Delete(Result,p,length(Result));
-      exit;
-      end;
-    end;
+  if Result='' then
+    exit;
+  p:=rpos('.',Result);
+  if p>0 then
+    SetLength(Result, p-1);
 end;
 
 Procedure SortTokenInfo;
@@ -3391,7 +3405,8 @@ begin
   inherited Destroy;
 end;
 
-procedure TPascalScanner.RegisterResourceHandler(aExtension: String; aHandler: TResourceHandler);
+procedure TPascalScanner.RegisterResourceHandler(aExtension: String;
+  const aHandler: TResourceHandler);
 
 Var
   Idx: Integer;
@@ -3411,7 +3426,8 @@ begin
   FResourceHandlers[Idx].handler:=aHandler;
 end;
 
-procedure TPascalScanner.RegisterResourceHandler(aExtensions: array of String; aHandler: TResourceHandler);
+procedure TPascalScanner.RegisterResourceHandler(const aExtensions: array of String;
+  const aHandler: TResourceHandler);
 
 Var
   S : TPasScannerString;
@@ -3419,6 +3435,38 @@ Var
 begin
   For S in aExtensions do
     RegisterResourceHandler(S,aHandler);
+end;
+
+procedure TPascalScanner.RegisterDirectiveHandler(const aDirective: String;
+  const aHandler: TPScannerDirectiveEvent);
+var
+  i: Integer;
+  Item: TDirectiveHandlerRecord;
+begin
+  if aDirective='' then exit;
+  i:=IndexOfDirectiveHandle(aDirective,true);
+  if (i<length(FDirectiveHandles))
+      and (CompareText(aDirective,FDirectiveHandles[i].Directive)=0) then
+    begin
+    // replace
+    FDirectiveHandles[i].Directive:=aDirective;
+    FDirectiveHandles[i].Handler:=aHandler;
+    end
+  else
+    begin
+    Item.Directive:=aDirective;
+    Item.Handler:=aHandler;
+    Insert(Item,FDirectiveHandles,i);
+    end;
+end;
+
+procedure TPascalScanner.RegisterDirectiveHandler(const aDirectives: TStringDynArray;
+  const aHandler: TPScannerDirectiveEvent);
+var
+  S: String;
+begin
+  for S in aDirectives do
+    RegisterDirectiveHandler(S,aHandler);
 end;
 
 procedure TPascalScanner.ClearFiles;
@@ -3492,6 +3540,19 @@ begin
     Result:=OnFormatPath(aFilename)
   else
     Result:=aFilename;
+end;
+
+function TPascalScanner.FormatSrcPos(const p: TPasSourcePos): String;
+begin
+  Result:=FormatPath(p.FileName)+'('+IntToStr(p.Row);
+  if p.Column>0 then
+    Result:=Result+','+IntToStr(p.Column);
+  Result:=Result+')';
+end;
+
+function TPascalScanner.FormatCurrentSrcPos: String;
+begin
+  Result:=FormatSrcPos(CurSourcePos);
 end;
 
 procedure TPascalScanner.DisablePackageTokens;
@@ -3934,21 +3995,100 @@ begin
           else
             Result := tkString;
         end;
+      '`':
+        if (msMultiLineStrings in CurrentModeSwitches) then
+        begin
+          // Backtick string as continuation: #$41` text `#$42
+          // Flush raw segment before the backtick
+          SectionLength := FTokenPos - StartP;
+          {$ifdef UsePChar}
+          if SectionLength > 0 then
+          begin
+            SetLength(FCurTokenString, Length(FCurTokenString) + SectionLength);
+            Move(StartP^, FCurTokenString[Length(FCurTokenString) - SectionLength + 1], SectionLength);
+          end;
+          {$else}
+          if SectionLength > 0 then
+            FCurTokenString := FCurTokenString + copy(s, StartP, SectionLength);
+          {$endif}
+          // Convert backtick content to apostrophe-delimited form
+          FCurTokenString := FCurTokenString + '''';
+          Inc(FTokenPos); // skip opening backtick
+          {$ifndef UsePChar}
+          while FTokenPos <= l do
+          begin
+            case s[FTokenPos] of
+              '`':
+                if (FTokenPos < l) and (s[FTokenPos+1] = '`') then
+                begin
+                  // escaped backtick ``
+                  FCurTokenString := FCurTokenString + '`';
+                  Inc(FTokenPos, 2);
+                end
+                else
+                begin
+                  // closing backtick
+                  Inc(FTokenPos);
+                  break;
+                end;
+              '''':
+                begin
+                  // escape apostrophe inside backtick content
+                  FCurTokenString := FCurTokenString + '''''';
+                  Inc(FTokenPos);
+                end;
+            else
+              FCurTokenString := FCurTokenString + s[FTokenPos];
+              Inc(FTokenPos);
+            end;
+          end;
+          {$else}
+          while FTokenPos[0] <> #0 do
+          begin
+            case FTokenPos[0] of
+              '`':
+                if FTokenPos[1] = '`' then
+                begin
+                  FCurTokenString := FCurTokenString + '`';
+                  Inc(FTokenPos, 2);
+                end
+                else
+                begin
+                  Inc(FTokenPos);
+                  break;
+                end;
+              '''':
+                begin
+                  FCurTokenString := FCurTokenString + '''''';
+                  Inc(FTokenPos);
+                end;
+            else
+              FCurTokenString := FCurTokenString + FTokenPos[0];
+              Inc(FTokenPos);
+            end;
+          end;
+          {$endif}
+          FCurTokenString := FCurTokenString + '''';
+          // Reset StartP so subsequent segments are captured correctly
+          StartP := FTokenPos;
+          Result := tkString;
+        end
+        else
+          Break;
     else
       Break;
     end;
   until false;
   SectionLength := FTokenPos - StartP;
   {$ifdef UsePChar}
-  SetLength(FCurTokenString, SectionLength);
   if SectionLength > 0 then
-    Move(StartP^, FCurTokenString[1], SectionLength);
-  //Writeln('String: ',UTF8String(FCurTokenString),length(FCurTokenString));
-  //For I:=2 to Length(FCurTokenString)-1 do
-  //  Write(hexStr(Ord(FCurtokenString[I]),2));
-  //Writeln;
+  begin
+    SetLength(FCurTokenString, Length(FCurTokenString) + SectionLength);
+    Move(StartP^, FCurTokenString[Length(FCurTokenString) - SectionLength + 1], SectionLength);
+  end;
   {$else}
-  FCurTokenString:=FCurTokenString+copy(FCurLine,StartP,SectionLength);
+  if SectionLength > 0 then
+    FCurTokenString := FCurTokenString + copy(FCurLine, StartP, SectionLength);
   {$endif}
 end;
 
@@ -3966,69 +4106,61 @@ var
   {$endif}
   Apostroph, CurLF : TPasScannerString;
 
-  {$IFDEF UsePChar}
-  procedure Add(StartP: PAnsiChar; Cnt: integer);
-  begin
-    if Cnt=0 then exit;
-    if OldLength+Cnt>length(FCurTokenString) then
-      SetLength(FCurTokenString,length(FCurTokenString)*2+128);
-    Move(StartP^,FCurTokenString[OldLength+1],Cnt);
-    inc(OldLength,Cnt);
-  end;
-  {$ELSE}
   procedure Add(const S: TPasScannerString);
   begin
+    if S='' then exit;
     FCurTokenString:=FCurTokenString+S;
+    {$IFDEF UsePChar}
+    OldLength:=length(FCurTokenString);
+    {$ENDIF}
   end;
-  {$ENDIF}
 
   Procedure AddToCurString(addLF : Boolean);
   var
     i : Integer;
+    {$ifdef UsePChar}
+    TokenOffset, Cnt: Integer;
+    {$endif}
 
   begin
-    i:=MultilineStringsTrimLeft;
-    if I=-1 then
-      // auto unindent -> use line indent of first line
-      I:=StartPos+1;
-    if I>0 then
+    // Start of line, take indent into account
+    if ({$ifdef UsePChar}TokenStart=PAnsichar(FCurLine){$ELSE}Tokenstart=1{$ENDIF}) then
       begin
-      // fixed unindent -> remove up to I leading spaces
-      While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) and (I>0) do
+      i:=MultilineStringsTrimLeft;
+      if I=-1 then
+        // auto unindent -> use line indent of first line
+        I:=StartPos+1;
+      if I>0 then
         begin
-        Inc(TokenStart);
-        Dec(I);
+        // fixed unindent -> remove up to I leading spaces
+        While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) and (I>0) do
+          begin
+          Inc(TokenStart);
+          Dec(I);
+          end;
+        end
+      else if I=-2 then
+        begin
+        // no indent -> remove all leading spaces
+        While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) do
+          Inc(TokenStart);
         end;
-      end
-    else if I=-2 then
-      begin
-      // no indent -> remove all leading spaces
-      While ({$ifdef UsePChar} TokenStart^{$ELSE}FCurLine[TokenStart]{$ENDIF} in [' ',#9]) and (TokenStart<=FTokenPos) do
-        Inc(TokenStart);
       end;
-
     {$ifdef UsePChar}
-    Add(TokenStart,FTokenPos - TokenStart);
+    TokenOffset := TokenStart - PAnsiChar(FCurLine) + 1;
+    Cnt := FTokenPos - TokenStart;
+    if Cnt > 0 then
+      Add(copy(FCurLine, TokenOffset, Cnt));
     {$else}
     Add(copy(FCurLine,TokenStart,FTokenPos - TokenStart));
     {$ENDIF}
     if addLF then
-      begin
-      {$IFDEF UsePChar}
-      Add(@CurLF[1],length(CurLF));
-      {$ELSE}
       Add(CurLF);
-      {$endif}
-      end;
   end;
 
   procedure AddApostroph;
   begin
-    {$IFDEF UsePChar}
-    Add(@Apostroph[1],length(Apostroph));
-    {$ELSE}
     Add(Apostroph);
-    {$ENDIF}
   end;
 
 begin
@@ -4057,7 +4189,7 @@ begin
         if {$ifdef UsePChar}FTokenPos[0] in Letters{$else}(FTokenPos<l) and (s[FTokenPos] in Letters){$endif} then
           Inc(FTokenPos);
         {$IFDEF UsePChar}
-        Add(TokenStart,FTokenPos-TokenStart);
+        Add(copy(FCurLine, TokenStart - PAnsiChar(FCurLine) + 1, FTokenPos-TokenStart));
         {$ELSE}
         Add(copy(FCurLine,TokenStart,FTokenPos-TokenStart));
         {$ENDIF}
@@ -4081,7 +4213,7 @@ begin
             Inc(FTokenPos);
           until {$ifdef UsePChar}not (FTokenPos[0] in Digits){$else}(FTokenPos>l) or not (s[FTokenPos] in Digits){$endif};
         {$IFDEF UsePChar}
-        Add(TokenStart,FTokenPos-TokenStart);
+        Add(copy(FCurLine, TokenStart - PAnsiChar(FCurLine) + 1, FTokenPos-TokenStart));
         {$ELSE}
         Add(copy(FCurLine,TokenStart,FTokenPos-TokenStart));
         {$ENDIF}
@@ -4139,18 +4271,22 @@ begin
                   end;
               '''':
                 begin
-                // convert apostroph to two apostrophs
+                // convert apostroph to two apostrophes
                 Inc(FTokenPos);
                 AddToCurString(false);
                 AddApostroph;
                 TokenStart := FTokenPos;
+                // Re-enter loop without extra Inc(FTokenPos) so that
+                // the character after the apostrophe (possibly closing
+                // backtick or end-of-line) is processed correctly.
+                continue;
                 end;
               end;
               Inc(FTokenPos);
               end;
           end;
           Inc(FTokenPos);
-          Result := tkString;
+          Result := tkStringMultiLine;
         end;
     else
       {$IFDEF UsePChar}
@@ -4292,7 +4428,9 @@ begin
     end;
 
   // build final string
+  {$IFNDEF PAS2JS}
   SetLength(FCurTokenString,Cnt);
+  {$ENDIF}
   Cnt:=0;
   For I:=0 to CurLineCount-1 do
     begin
@@ -4300,14 +4438,22 @@ begin
     l:=length(s);
     if l>0 then
       begin
+      {$IFDEF PAS2JS}
+      FCurTokenString:=FCurTokenString+S;
+      {$ELSE}
       System.Move(s[1],FCurTokenString[Cnt+1],l);
       inc(Cnt,l);
+      {$ENDIF}
       end;
     if I<CurLineCount-1 then
       begin
+      {$IFDEF PAS2JS}
+      FCurTokenString:=FCurTokenString+CurLF;
+      {$ELSE}
       l:=length(CurLF);
       System.Move(CurLF[1],FCurTokenString[Cnt+1],l);
       inc(Cnt,l);
+      {$ENDIF}
       end;
     end;
   Result:=tkStringMultiLine;
@@ -4432,8 +4578,11 @@ begin
   If (ChangeFileExt(aFileName,RTLString(''))='*') then
     aFileName:=ChangeFileExt(ExtractFileName(CurFilename),Ext);
   aFullFileName:=FileResolver.FindResourceFileName(aFileName);
-  if aFullFileName='' then
-    Error(nResourceFileNotFound,SErrResourceFileNotFound,[aFileName]);
+  if (aFullFileName='') then
+    if (po_WarnResourceNotFound in Options) then
+      Self.DoLog(mtWarning,nResourceFileNotFound,SErrResourceFileNotFound,[aFileName])
+    else
+      Error(nResourceFileNotFound,SErrResourceFileNotFound,[aFileName]);
   // Check if we can find a handler.
   if Ext<>'' then
     Ext:=Copy(Ext,2,Length(Ext)-1);
@@ -5149,13 +5298,13 @@ begin
      HandleIFNDEF(Param);
   'IFOPT':
      HandleIFOPT(Param);
-  'IFC',   
+  'IFC',
   'IF':
      HandleIF(Param,UpperCase(Directive)='IFC');
   'ELIFC',
   'ELSEIF':
      HandleELSEIF(Param,UpperCase(Directive)='ELIFC');
-  'ELSEC',   
+  'ELSEC',
   'ELSE':
      HandleELSE(Param);
   'ENDC',
@@ -5316,7 +5465,7 @@ procedure TPascalScanner.HandleBoolDirective(bs: TBoolSwitch;
   const Param: TPasScannerString);
 var
   NewValue: Boolean;
-  
+
 begin
   if CompareText(Param,'on')=0 then
     NewValue:=true
@@ -5345,9 +5494,17 @@ end;
 
 procedure TPascalScanner.DoHandleDirective(Sender: TObject; Directive,
   Param: TPasScannerString; var Handled: boolean);
+var
+  i: Integer;
 begin
+  i:=IndexOfDirectiveHandle(Directive);
+  if i>=0 then
+    FDirectiveHandles[i].Handler(Sender,Directive,Param,Handled);
   if Assigned(OnDirective) then
+    begin
     OnDirective(Sender,Directive,Param,Handled);
+    if Handled then exit;
+    end;
 end;
 
 procedure TPascalScanner.HandleMultilineStringTrimLeft(const AParam: TPasScannerString);
@@ -5364,7 +5521,9 @@ begin
     'NONE' : I:=0;
   else
     If not TryStrToInt(S,I) then
-      I:=0;
+      Error(nErrInvalidMultiLineTrimLeft,SErrInvalidMultiLineTrimLeft,[aParam])
+    else if (I<0) or (I>65535) then
+      Error(nErrInvalidMultiLineTrimLeft,SErrInvalidMultiLineTrimLeft,[aParam]);
   end;
   MultilineStringsTrimLeft:=I;
 end;
@@ -5544,6 +5703,7 @@ begin
   l:=length(FCurLine);
   {$endif}
   NestingLevel := 0;
+
   repeat
     if {$ifdef UsePChar}FTokenPos[0] = #0{$else}FTokenPos>l{$endif} then
       begin
@@ -5561,7 +5721,7 @@ begin
           FCurTokenString[OldLength] := LE[i];
         end;
       {$else}
-      FCurTokenString:=FCurTokenString+copy(FCurLine,TokenStart,SectionLength)+LineEnding; // Corrected JC
+      FCurTokenString:=FCurTokenString+copy(S,TokenStart,SectionLength)+LineEnding; // Corrected JC
       {$endif}
       if not FetchLocalLine then
       begin
@@ -5871,7 +6031,7 @@ begin
           Inc(FTokenPos);
           Result:=tkDotDotDot;
           end
-        else  
+        else
           Result := tkDotDot;
         end
       else
@@ -6519,6 +6679,32 @@ begin
     Result:=Nil
   else
     Result:=FResourceHandlers[Idx].handler;
+end;
+
+function TPascalScanner.IndexOfDirectiveHandle(const aDirective: TPasScannerString;
+  ForInsert: boolean): Integer;
+var
+  l, r, m, cmp: Integer;
+begin
+  l:=0;
+  r:=length(FDirectiveHandles)-1;
+  m:=0;
+  while l<=r do begin
+    m:=(l+r) div 2;
+    cmp:=CompareText(aDirective,FDirectiveHandles[m].Directive);
+    if cmp>0 then
+      l:=m+1
+    else if cmp<0 then
+      r:=m-1
+    else
+      exit(m);
+  end;
+  if not ForInsert then exit(-1);
+  Result:=m;
+  if length(FDirectiveHandles)=0 then
+    exit;
+  if cmp>0 then
+    inc(Result);
 end;
 
 function TPascalScanner.ReadIdentifier(const AParam: TPasScannerString): TPasScannerString;

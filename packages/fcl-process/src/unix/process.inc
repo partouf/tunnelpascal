@@ -11,7 +11,7 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
- 
+
 {$DEFINE OS_HASEXITCODE}
 
 {$IFDEF FPC_DOTTEDUNITS}
@@ -168,13 +168,19 @@ begin
     if (XTermProgram='') then
       begin
       D:=LowerCase(GetEnvironmentVariable('DESKTOP_SESSION'));
-      If (Pos('kde',D)<>0) then
+      If (D='plasma') or (Pos('kde',D)<>0) then
         begin
         TestTerminal(konsole);
         end
       else if (D='gnome') then
         begin
         TestTerminal(gnometerm);
+        end
+      else if (D='fly') then
+        begin
+        // default `fly-term` has a bug!
+        If not TestTerminal(konsole) then
+          TestTerminal(xterm);
         end
       else if (D='windowmaker') then
         begin
@@ -202,13 +208,13 @@ Const
 Const
   TerminalApp = 'Terminal';
 {$endif}
-  
+
 Var
   Cmd : String;
   S  : TStringList;
   G : String;
   PA,PC : String;
-  
+
 begin
   PA:=P.ApplicationName;
   PC:=P.CommandLine;
@@ -379,7 +385,7 @@ begin
         { can't use vfork in case the child has to be
           suspended immediately, because with vfork the
           child borrows the execution thread of the parent
-          unit it either exits or execs -> potential 
+          unit it either exits or execs -> potential
           deadlock depending on how quickly the SIGSTOP
           signal is delivered
 
@@ -476,8 +482,8 @@ end;
 Function TProcess.WaitOnExit : Boolean;
 begin
   if FRunning then
-    fexitcode:=waitprocess(handle);
-  Result:=(fexitcode>=0);
+    fexitcode:=Cardinal(waitprocess(handle));
+  Result:=(longint(fexitcode)>=0);
   FRunning:=False;
 end;
 

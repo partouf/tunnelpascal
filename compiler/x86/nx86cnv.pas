@@ -374,7 +374,7 @@ implementation
               end
             else
               signtested:=false;
-    
+
             { We need to load from a reference }
             hlcg.location_force_mem(current_asmdata.CurrAsmList,left.location,left.resultdef);
             { don't change left.location.reference, because if it's a temp we
@@ -396,7 +396,7 @@ implementation
                 tcgx86(cg).make_simple_ref(current_asmdata.CurrAsmList,href);
                 leftref:=href;
               end;
-    
+
             { Load from reference to fpu reg }
             case torddef(left.resultdef).ordtype of
               u32bit,
@@ -412,7 +412,7 @@ implementation
                      if it is 1 then we add 2**64 as float.
                      Since 2**64 can be represented exactly, use a single-precision
                      constant to save space. }
-                   current_asmdata.getglobaldatalabel(l1);
+                   current_asmdata.getdatalabel(l1);
                    current_asmdata.getjumplabel(l2);
                    if not(signtested) then
                      begin
@@ -444,7 +444,7 @@ implementation
            {$endif i8086}
                          end;
                      end;
-    
+
                    current_asmdata.CurrAsmList.concat(taicpu.op_ref(A_FILD,S_IQ,leftref));
                    if use_bt then
                      cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NC,l2)

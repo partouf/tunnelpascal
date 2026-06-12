@@ -44,7 +44,7 @@ interface
          loadnf_inherited,
          { the loadnode is generated internally and a varspez=vs_const should be ignore,
            this requires that the parameter is actually passed by value
-           Be really carefull when using this flag! }
+           Be really careful when using this flag! }
          loadnf_isinternal_ignoreconst,
 
          loadnf_only_uninitialized_hint
@@ -746,7 +746,7 @@ implementation
           maybe_call_procvar(right,true);
 
         { assignments to formaldefs and open arrays aren't allowed }
-        if is_open_array(left.resultdef) then
+        if is_open_array(left.resultdef) or is_array_of_const(left.resultdef) then
           begin
             CGMessage(type_e_assignment_not_allowed);
             result:=cerrornode.create;
@@ -801,12 +801,12 @@ implementation
          end;
 
         { shortstring helpers can do the conversion directly,
-          so treat them separatly }
+          so treat them separately }
         if (is_shortstring(left.resultdef)) then
          begin
            { insert typeconv, except for chars that are handled in
              secondpass and except for ansi/wide string that can
-             be converted immediatly }
+             be converted immediately }
            if not direct_shortstring_assignment then
              inserttypeconv(right,left.resultdef);
            if right.resultdef.typ=stringdef then
@@ -854,7 +854,7 @@ implementation
 
 {$ifdef arm}
                 { the assignment node code can't convert a single in
-                  an interger register to a double in an mmregister or
+                  an integer register to a double in an mmregister or
                   vice versa }
                 and (use_vectorfpu(left.resultdef) and
                      use_vectorfpu(right.resultdef) and
@@ -920,6 +920,36 @@ implementation
 
 
     function tassignmentnode.pass_1 : tnode;
+
+      function tempreturnfromcall:boolean;
+        var
+          node:tnode;
+        begin
+          result:=false;
+          if not is_managed_type(right.resultdef) then
+            exit;
+          node:=right;
+          while assigned(node) do
+            begin
+              case node.nodetype of
+              blockn:
+                node:=tblocknode(node).left;
+              statementn:
+                if assigned(tstatementnode(node).right) then
+                  node:=tstatementnode(node).right
+                else
+                  node:=tstatementnode(node).left;
+              else
+                break;
+              end;
+            end;
+          if not assigned(node) then
+            internalerror(2024111101);
+          if (node.nodetype=calln) and assigned(tcallnode(node).funcretnode) then
+            node:=tcallnode(node).funcretnode;
+          result:=(node.nodetype=temprefn) and (nf_is_funcret in node.flags);
+        end;
+
       var
         hp: tnode;
         oldassignmentnode : tassignmentnode;
@@ -932,7 +962,7 @@ implementation
 
          firstpass(left);
 
-         { Optimize the reuse of the destination of the assingment in left.
+         { Optimize the reuse of the destination of the assignment in left.
            Allow the use of the left inside the tree generated on the right.
            This is especially useful for string routines where the destination
            is pushed as a parameter. Using the final destination of left directly
@@ -993,7 +1023,10 @@ implementation
                ccallparanode.create(ctypeconvnode.create_internal(
                  caddrnode.create_internal(right),voidpointertype),
                nil)));
-           result:=ccallnode.createintern('fpc_copy_proc',hp);
+           if tempreturnfromcall then
+             result:=ccallnode.createintern('fpc_copy_with_move_semantics_proc',hp)
+           else
+             result:=ccallnode.createintern('fpc_copy_proc',hp);
            firstpass(result);
            left:=nil;
            right:=nil;

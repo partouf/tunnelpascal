@@ -12,7 +12,7 @@
 
  **********************************************************************}
 {$IFNDEF FPC_DOTTEDUNITS}
-unit fphtml; 
+unit fphtml;
 {$ENDIF FPC_DOTTEDUNITS}
 
 {$mode objfpc}{$H+}
@@ -415,7 +415,7 @@ type
     Property OnWriteFooter;
     Property OnWriteRecord;
   end;
-  
+
   { THTMLSelectProducer }
 
   THTMLSelectProducer = class (THTMLContentProducer)
@@ -468,7 +468,7 @@ type
     property ControlName : string read FControlName write FControlName;
     property OnWriteHeader;
   end;
-  
+
   { THTMLDataModule }
   THTMLGetContentEvent = Procedure (Sender : TObject; ARequest : TRequest; HTMLPage : THTMLWriter; Var Handled : Boolean) of object;
   TCreateDocumentEvent = Procedure(Sender : TObject; var ADocument : THTMLDocument) of object;
@@ -484,7 +484,7 @@ type
   Published
     Property OnGetContent : THTMLGetContentEvent Read FOnGetContent Write FOnGetContent;
   end;
-  
+
   { THTMLContentActions }
 
   THTMLContentActions = Class(TCustomWebActions)
@@ -497,6 +497,7 @@ type
 
   TCustomHTMLModule = Class(TSessionHTTPModule)
   private
+    FDisableNoSniff: Boolean;
     FDocument : THTMLDocument;
     FActions: THTMLContentActions;
     FOnCreateDocument: TCreateDocumentEvent;
@@ -506,6 +507,7 @@ type
   Protected
     Function CreateWriter(ADocument : THTMLDocument) : THTMLWriter;
     Function CreateDocument : THTMLDocument;
+    Property DisableNoSniff : Boolean Read FDisableNoSniff Write FDisableNoSniff default false;
     Property OnGetContent : THTMLGetContentEvent Read FOnGetContent Write FOnGetContent;
     Property Actions : THTMLContentActions Read FActions Write SetActions;
     Property OnCreateDocument : TCreateDocumentEvent Read FOnCreateDocument Write FOnCreateDocument;
@@ -515,11 +517,12 @@ type
     Procedure HandleRequest(ARequest : TRequest; AResponse : TResponse); override;
     Property Document : THTMLDocument Read FDocument;
   end;
-  
+
   TFPHTMLModule=Class(TCustomHTMLModule)
   Published
     Property Actions;
     Property CreateSession;
+    Property DisableNoSniff;
     Property Session;
     Property Kind;
     Property AfterInitModule;
@@ -530,7 +533,7 @@ type
     Property OnSessionExpired;
     Property CORS;
   end;
-  
+
   EHTMLError = Class(EHTTP);
 
 const SimpleOkButton: array[0..0] of TWebButton = ((buttontype: btok;caption: 'Ok';onclick: ''));
@@ -640,8 +643,16 @@ begin
 end;
 
 procedure TJavaScriptStack.Redirect(const AUrl: string);
+
+  function EscapeQuotes(const s : string) : string;
+  begin
+    Result:=StringReplace(s,'"','\"',[rfReplaceAll]);
+    Result:=StringReplace(Result,#10,'\n',[rfReplaceAll]);
+    Result:=StringReplace(Result,#13,'\r',[rfReplaceAll]);
+  end;
+
 begin
-  AddScriptLine('window.location = "'+AUrl+'";');
+  AddScriptLine('window.location = "'+EscapeQuotes(AUrl)+'";');
 end;
 
 function TJavaScriptStack.ScriptIsEmpty: Boolean;
@@ -1138,7 +1149,7 @@ end;
 
 { TCustomHTMLDataModule }
 
-Function TCustomHTMLModule.CreateDocument : THTMLDocument;
+function TCustomHTMLModule.CreateDocument: THTMLDocument;
 
 begin
   Result:=Nil;
@@ -1159,7 +1170,7 @@ begin
   FActions.Assign(AValue);
 end;
 
-Function TCustomHTMLModule.CreateWriter(ADocument : THTMLDocument) : THTMLWriter;
+function TCustomHTMLModule.CreateWriter(ADocument: THTMLDocument): THTMLWriter;
 
 begin
   Result:=Nil;
@@ -1177,7 +1188,7 @@ Var
   B : Boolean;
   M : TMemoryStream;
 
-  
+
 begin
   FDocument := CreateDocument;
   Try
@@ -1185,27 +1196,31 @@ begin
     Try
       B:=False;
       if Not CORS.HandleRequest(aRequest,aResponse,[hcDetect,hcSend]) then
+        begin
+        if not DisableNoSniff then
+          aRequest.CustomHeaders.Values['X-Content-Type-Options']:='nosniff';
         If Assigned(OnGetContent) then
           OnGetContent(Self,ARequest,FWriter,B);
         If Not B then
           Actions.HandleRequest(ARequest,FWriter,B);
         If Not B then
           Raise EHTMLError.Create(SErrRequestNotHandled);
-        If (AResponse.ContentStream=Nil) then
-          begin
-          M:=TMemoryStream.Create;
-          AResponse.ContentStream:=M;
-          AResponse.FreeContentStream:=True;
-          end;
-        if not AResponse.ContentSent then
-          begin
-          FDocument.SaveToStream(AResponse.ContentStream);
-          AResponse.ContentStream.Position:=0;
-          if (AResponse.ContentType='') then
-             AResponse.ContentType:='text/html';
-          AResponse.ContentLength:=AResponse.ContentStream.Size;
-          AResponse.SendContent;
-          end;
+        end;
+      If (AResponse.ContentStream=Nil) then
+        begin
+        M:=TMemoryStream.Create;
+        AResponse.ContentStream:=M;
+        AResponse.FreeContentStream:=True;
+        end;
+      if not AResponse.ContentSent then
+        begin
+        FDocument.SaveToStream(AResponse.ContentStream);
+        AResponse.ContentStream.Position:=0;
+        if (AResponse.ContentType='') then
+           AResponse.ContentType:='text/html; charset=utf-8'; // charset to avoid sniffing for that too
+        AResponse.ContentLength:=AResponse.ContentStream.Size;
+        AResponse.SendContent;
+        end;
     Finally
       FreeAndNil(FWriter);
     end;
@@ -1218,7 +1233,7 @@ end;
 
 procedure THTMLContentActions.HandleRequest(ARequest: TRequest;
   HTMLPage: THTMLWriter; var Handled: Boolean);
-  
+
 Var
   A : TCustomWebAction;
 
@@ -1529,7 +1544,7 @@ end;
 constructor TWebController.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
-  { TODO : Do this prperly using a notification. And make the WebController property readonly }
+  { TODO : Do this properly using a notification. And make the WebController property readonly }
   if owner is TWebPage then TWebPage(Owner).WebController := self;
   FScriptStack := TFPObjectList.Create(true);
 end;

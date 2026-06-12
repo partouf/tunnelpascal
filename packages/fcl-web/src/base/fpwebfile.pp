@@ -23,9 +23,9 @@ unit fpwebfile;
 interface
 
 {$IFDEF FPC_DOTTEDUNITS}
-uses System.SysUtils, System.Classes, FpWeb.Http.Defs, FpWeb.Http.Base, FpWeb.Route;
+uses System.SysUtils, System.Classes, FpWeb.Http.Defs, FpWeb.Http.Base, FpWeb.Route, System.Types;
 {$ELSE FPC_DOTTEDUNITS}
-uses SysUtils, Classes, httpdefs, fphttp, httproute;
+uses SysUtils, Classes, httpdefs, fphttp, httproute, types;
 {$ENDIF FPC_DOTTEDUNITS}
 
 Type
@@ -36,6 +36,8 @@ Type
   { TFPCustomFileModule }
 
   TFPCustomFileModule = Class(TCustomHTTPModule)
+  private
+    class var _globalHeaders : TstringList;
   private
     FCacheControlMaxAge: Integer;
     FScriptName:string;
@@ -48,14 +50,23 @@ Type
     Function AllowFile(Const AFileName : String) : Boolean; virtual;
     // Actually Send file to client.
     Procedure SendFile(Const AFileName : String; AResponse : TResponse); virtual;
+    // Prepare response. This can be overridden to add headers
+    procedure PrepareResponse(aResponse: TResponse); virtual;
   Public
     Constructor CreateNew(AOwner: TComponent; CreateMode: Integer); override; overload;
     // Overrides TCustomHTTPModule to implement file serving.
     Procedure HandleRequest(ARequest : TRequest; AResponse : TResponse); override;
     Property CacheControlMaxAge : Integer Read FCacheControlMaxAge Write FCacheControlMaxAge;
-  Public Class Var
-    // If you want some logging, set this.
-    OnLog : TSimpleFileLog;
+  Public
+    Type
+      TPrepareFileResponseCallback = procedure(Sender : TObject; aResponse : TResponse) of object;
+    Class Var
+      // If you want some logging, set this.
+      OnLog : TSimpleFileLog;
+      // If you want to customize the response, call this.
+      OnPrepareResponse : TPrepareFileResponseCallback;
+      // You can add some global headers.
+    class procedure RegisterGlobalResponseHeader(const aName,aValue : String);
   Published
     Property CORS;
     property Kind;
@@ -76,14 +87,20 @@ Type
     FCors: TCORSSupport;
     procedure SetCors(AValue: TCORSSupport);
   Protected
+    function IsLocationAllowed(const aPath: String): boolean; virtual;
     procedure CreateLocation(ARequest: TRequest; AResponse: TResponse); virtual;
     procedure DeleteLocation(ARequest: TRequest; AResponse: TResponse); virtual;
     procedure GetLocations(ARequest: TRequest; AResponse: TResponse); virtual;
     procedure UpdateLocation(ARequest: TRequest; AResponse: TResponse); virtual;
-    Function IsRequestAuthenticated(aRequest : TRequest): Boolean; virtual;
+    Function IsRequestAuthenticated(aRequest : TRequest): Boolean; virtual; deprecated 'Use overload with isRead';
+    Function IsRequestAuthenticated(aRequest : TRequest; aIsRead : Boolean): Boolean; virtual;
     class procedure HandleFileLocationAPIModuleRequest(ARequest: TRequest; AResponse: TResponse); static;
   Public
     Class var LocationAPIModuleClass : TFPWebFileLocationAPIModuleClass;
+    class var AllowedBaseDirs : TStringDynArray;
+    // Excluded has priority over allowed.
+    class var ExcludedBaseDirs : TStringDynArray;
+    class var AllowKeyInQueryField : Boolean;
   Public
     Constructor CreateNew(aOwner : TComponent; CreateMode: Integer); override;
     Destructor Destroy; override;
@@ -153,7 +170,7 @@ Resourcestring
 Var
   Locations : TStrings;
   MimeLoaded : Boolean;
-  
+
 Procedure CheckMimeLoaded;
 begin
   If (Not MimeLoaded) and (MimeTypesFile<>'') then
@@ -173,16 +190,18 @@ Procedure RegisterFileLocation(Const ALocation,ADirectory : String);
 
 Var
   D,BaseDir : String;
+  C : TFPCustomFileModuleClass;
 
 begin
   if (ALocation='') then
-    Raise HTTPError.Create(SErrNoLocation); 
+    Raise HTTPError.Create(SErrNoLocation);
   if Pos('/',ALocation)<>0 then
     Raise HTTPError.CreateFmt(SErrInvalidLocation,[aLocation]);
   if (Locations=Nil) then
     Locations:=TStringList.Create;
-  if DefaultFileModuleClass=Nil then
-    DefaultFileModuleClass:=TFPCustomFileModule;
+  C:=DefaultFileModuleClass;
+  if C=Nil then
+    C:=TFPCustomFileModule;
   BaseDir:=ExtractFilePath(ParamStr(0));
   if (ADirectory='') then
     setFileLocationPath(aLocation,BaseDir)
@@ -195,7 +214,7 @@ begin
       Raise HTTPError.CreateFmt(SErrInvalidDirectory,[D]);
     SetFileLocationPath(ALocation,IncludeTrailingPathDelimiter(D));
     end;
-  RegisterHTTPModule(ALocation,DefaultFileModuleClass,true);
+  RegisterHTTPModule(ALocation,C,true);
   ModuleFactory.MoveModuleBeforeDefault(ALocation);
 end;
 
@@ -287,7 +306,7 @@ begin
   Result:=FPrivateRoute<>Nil;
 end;
 
-Function TFPCustomFileModule.GetRequestFileName(Const ARequest : TRequest) : String;
+function TFPCustomFileModule.GetRequestFileName(const ARequest: TRequest): String;
 
   procedure sb;
 
@@ -305,7 +324,7 @@ begin
   sb;
 end;
 
-Function TFPCustomFileModule.MapFileName(Const AFileName : String) : String; 
+function TFPCustomFileModule.MapFileName(const AFileName: String): String;
 
 Var
   D,localBaseURL : String;
@@ -333,7 +352,7 @@ begin
     end;
 end;
 
-Function TFPCustomFileModule.AllowFile(Const AFileName : String) : Boolean;
+function TFPCustomFileModule.AllowFile(const AFileName: String): Boolean;
 
 Var
   BaseDir,FN : String;
@@ -352,7 +371,7 @@ begin
   Result:=Pos('..'+PathDelim,FN)=0;
 end;
 
-procedure TFPCustomFileModule.SendFile(Const AFileName : String; AResponse : TResponse);
+procedure TFPCustomFileModule.SendFile(const AFileName: String; AResponse: TResponse);
 
 Var
   F : TFileStream;
@@ -376,14 +395,32 @@ begin
   end;
 end;
 
+procedure TFPCustomFileModule.PrepareResponse(aResponse: TResponse);
+
+var
+  I : Integer;
+  N,V : String;
+
+begin
+  if Assigned(_globalHeaders) then
+    For I:=0 to _GlobalHeaders.Count-1 do
+      begin
+      _GlobalHeaders.GetNameValue(I,N,V);
+      aResponse.CustomHeaders.Values[N]:=V;
+      end;
+  if Assigned(OnPrepareResponse) then
+     OnPrepareResponse(Self,aResponse);
+end;
+
 constructor TFPCustomFileModule.CreateNew(AOwner: TComponent; CreateMode: Integer);
 begin
   inherited CreateNew(aOwner,CreateMode);
   CacheControlMaxAge:=DefaultCacheControlMaxAge;
+  Kind:=wkOneShot;
 end;
 
 
-Procedure TFPCustomFileModule.HandleRequest(ARequest : TRequest; AResponse : TResponse);
+procedure TFPCustomFileModule.HandleRequest(ARequest: TRequest; AResponse: TResponse);
 
 Var
   RFN,FN : String;
@@ -399,22 +436,42 @@ begin
   if (RFN='') then
     begin
     AResponse.SetStatus(400,True);
+    if Assigned (OnLog) then
+      OnLog(etInfo,Format('%d serving "%s"',[AResponse.Code,aRequest.URL]));
     exit;
     end;
   FN:=MapFileName(RFN);
-  if (FN='') or not AllowFile(FN) then  
+  if (FN='') or not AllowFile(FN) then
     begin
     AResponse.SetStatus(403,True);
+    if Assigned (OnLog) then
+      OnLog(etInfo,Format('%d serving "%s"',[AResponse.Code,aRequest.URL]));
     exit;
     end;
   if  not FileExists(FN) then
     begin
     AResponse.SetStatus(404,True);
+    if Assigned (OnLog) then
+      OnLog(etInfo,Format('%d serving "%s"',[AResponse.Code,aRequest.URL]));
     exit;
     end;
-  SendFile(FN,AResponse);
+  PrepareResponse(aResponse);
+  if not aResponse.ContentSent then
+    SendFile(FN,AResponse)
+  else if Assigned (OnLog) then
+    OnLog(etInfo,Format('Skipping serving "%s", handled in user code',[aRequest.URL]));
   if Assigned (OnLog) then
     OnLog(etInfo,Format('%d serving "%s" -> "%s"',[AResponse.Code,RFN,FN]));
+end;
+
+class procedure TFPCustomFileModule.RegisterGlobalResponseHeader(const aName, aValue: String);
+begin
+  if not assigned(_GlobalHeaders) then
+    begin
+    _globalHeaders:=TStringList.Create;
+    _globalHeaders.NameValueSeparator:=':';
+    end;
+  _GlobalHeaders.Values[aName]:=aValue;
 end;
 
 procedure TFPWebFileLocationAPIModule.SetCors(AValue: TCORSSupport);
@@ -446,6 +503,7 @@ begin
   FCors:=TCORSSupport.Create;
   FCors.Enabled:=True;
   FCors.Options:=[coAllowCredentials];
+  FCors.AllowedOrigins:='localhost';
 end;
 
 destructor TFPWebFileLocationAPIModule.Destroy;
@@ -506,7 +564,44 @@ begin
   aJSON.Add('path',path);
 end;
 
-Procedure TFPWebFileLocationAPIModule.CreateLocation(ARequest: TRequest; AResponse: TResponse);
+function TFPWebFileLocationAPIModule.IsLocationAllowed(const aPath : String) : boolean;
+
+
+  Function IsBelow(const aParent,aChild : String) : boolean;
+  var
+    lParent : string;
+  begin
+    lParent:=IncludeTrailingPathDelimiter(aParent);
+    {$IFDEF UNIX}
+    Result:=StartsStr(lParent,aChild);
+    {$ELSE}
+    Result:=StartsText(lParent,aChild);
+    {$ENDIF}
+  end;
+
+var
+  lPath,S : String;
+
+begin
+  Result:=(Length(AllowedBaseDirs)=0) and (Length(ExcludedBaseDirs)=0);
+  lPath:=IncludeTrailingPathDelimiter(aPath);
+  if Result then
+    exit;
+  for S in ExcludedBaseDirs do
+    begin
+    Result:=Not IsBelow(S,lPath);
+    if Not Result then
+      Exit;
+    end;
+  for S in AllowedBaseDirs do
+    begin
+    Result:=IsBelow(S,lPath);
+    if Result then
+      Exit;
+    end;
+end;
+
+procedure TFPWebFileLocationAPIModule.CreateLocation(ARequest: TRequest; AResponse: TResponse);
 
 Var
   aJSON : TJSONObject;
@@ -517,17 +612,22 @@ begin
   try
     ALoc.FromJSON(aJSON);
     ALoc.Verify;
-    RegisterFileLocation(aLoc.Location,Aloc.Path);
-    aJSON.Clear;
-    aLoc.ToJSON(aJSON);
-    aResponse.ContentAsJSON:=aJSON;
-    aResponse.SetStatus(201,True);
+    if not isLocationAllowed(Aloc.Path) then
+      aResponse.SetStatus(400,True)
+    else
+      begin
+      RegisterFileLocation(aLoc.Location,Aloc.Path);
+      aJSON.Clear;
+      aLoc.ToJSON(aJSON);
+      aResponse.ContentAsJSON:=aJSON;
+      aResponse.SetStatus(201,True);
+      end;
   finally
     aJSON.Free;
   end;
 end;
 
-Procedure TFPWebFileLocationAPIModule.UpdateLocation(ARequest: TRequest; AResponse: TResponse);
+procedure TFPWebFileLocationAPIModule.UpdateLocation(ARequest: TRequest; AResponse: TResponse);
 
 Var
   aJSON : TJSONObject;
@@ -545,20 +645,25 @@ begin
     if aLoc.Location='' then // Only path in payload
       aLoc.Location:=aOldLoc;
     ALoc.Verify;
-    Idx:=IndexOfFileLocation(aOldLoc);
-    if Idx=-1 then
-      aResponse.SetStatus(404,True)
-    else  if not SameText(aOldLoc,aLoc.Location) then
-      begin
-      UnRegisterFileLocation(aOldLoc);
-      RegisterFileLocation(aLoc.Location,Aloc.Path);
-      end
+    if not isLocationAllowed(Aloc.Path) then
+      aResponse.SetStatus(400,True)
     else
-      SetFileLocationPath(aLoc.Location,aLoc.Path);
-    aJSON.Clear;
-    aLoc.ToJSON(aJSON);
-    aResponse.ContentAsJSON:=aJSON;
-    aResponse.SendContent;
+      begin
+      Idx:=IndexOfFileLocation(aOldLoc);
+      if Idx=-1 then
+        aResponse.SetStatus(404,True)
+      else  if not SameText(aOldLoc,aLoc.Location) then
+        begin
+        UnRegisterFileLocation(aOldLoc);
+        RegisterFileLocation(aLoc.Location,Aloc.Path);
+        end
+      else
+        SetFileLocationPath(aLoc.Location,aLoc.Path);
+      aJSON.Clear;
+      aLoc.ToJSON(aJSON);
+      aResponse.ContentAsJSON:=aJSON;
+      aResponse.SendContent;
+      end;
   finally
     aJSON.Free;
   end;
@@ -566,21 +671,28 @@ end;
 
 function TFPWebFileLocationAPIModule.IsRequestAuthenticated(aRequest: TRequest): Boolean;
 
+begin
+  IsRequestAuthenticated(aRequest,True); // Old behaviour
+end;
+
+function TFPWebFileLocationAPIModule.IsRequestAuthenticated(aRequest: TRequest; aIsRead: Boolean): Boolean;
 Var
   aAuth : String;
 
 begin
-  Result:=(APIPassword='');
-  if Result then exit;
+  Result:=(APIPassword='') and aIsRead;
+  if Result then
+    exit;
   aAuth:=aRequest.Authorization;
   if (aAuth<>'') and SameText(ExtractWord(1,aAuth,[' ']),'Bearer') then
     aAuth:=ExtractWord(2,aAuth,[' '])
-  else
+  else if AllowKeyInQueryField then
     aAuth:=aRequest.QueryFields.Values['APIKey'];
-  Result:=(aAuth=APIPassword);
+  Result:=SecureCompare(aAuth,APIPassword);
 end;
 
-Procedure TFPWebFileLocationAPIModule.DeleteLocation(ARequest: TRequest; AResponse: TResponse);
+
+procedure TFPWebFileLocationAPIModule.DeleteLocation(ARequest: TRequest; AResponse: TResponse);
 
 Var
   aOldLoc : String;
@@ -603,7 +715,7 @@ begin
     end;
 end;
 
-Procedure TFPWebFileLocationAPIModule.GetLocations(ARequest: TRequest; AResponse: TResponse);
+procedure TFPWebFileLocationAPIModule.GetLocations(ARequest: TRequest; AResponse: TResponse);
 
 Var
   Res,Loc : TJSONObject;
@@ -644,8 +756,12 @@ begin
 end;
 
 procedure TFPWebFileLocationAPIModule.HandleRequest(ARequest: TRequest; AResponse: TResponse);
+var
+  IsRead : Boolean;
+
 begin
-  if Not IsRequestAuthenticated(aRequest) then
+  isRead:=IndexText(aRequest.Method,['GET','HEAD','OPTIONS'])<>-1;
+  if Not IsRequestAuthenticated(aRequest,IsRead) then
     begin
     aResponse.SetStatus(401,True);
     exit;
@@ -689,4 +805,6 @@ initialization
 
 finalization
   FreeAndNil(Locations);
+  FreeAndNil(TFPCustomFileModule._globalHeaders);
+  TFPWebFileLocationAPIModule.AllowKeyInQueryField:=False;
 end.

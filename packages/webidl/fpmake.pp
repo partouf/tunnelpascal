@@ -25,7 +25,7 @@ begin
     P.Email := '';
     P.Description := 'WEB IDL parser and converter to Object Pascal classes';
     P.NeedLibC:= false;
-    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
+    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k,ps1,wasip2];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -54,7 +54,7 @@ begin
     T.Dependencies.addUnit('webidltopas');
     T:=P.Targets.AddUnit('webidltowasmstub.pp');
     T.Dependencies.addUnit('webidltowasmjob');
-    
+
     P.NamespaceMap:='namespaces.lst';
 
 {$ifndef ALLPACKAGES}

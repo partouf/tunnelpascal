@@ -176,9 +176,11 @@ type
      in_min_int64        = 146,
      in_max_qword        = 147,
      in_max_int64        = 148,
+     in_min_quad         = 149,
+     in_max_quad         = 150,
 
 { MMX functions }
-{ these contants are used by the mmx unit }
+{ these constants are used by the mmx unit }
 
      { MMX }
      in_mmx_pcmpeqb      = 200,
@@ -193,7 +195,13 @@ type
      { SSE }
 
 { More internal functions }
-     in_isconstvalue_x    = 1000
+     in_isconstvalue_x    = 1000,
+
+{ atomic intrinsics }
+     in_atomic_inc       = 1100,
+     in_atomic_dec       = 1101,
+     in_atomic_xchg      = 1102,
+     in_atomic_cmp_xchg  = 1103
 
 {$if defined(X86)}
      ,
@@ -210,6 +218,27 @@ type
 {$if defined(WASM32)}
      ,
      {$i ccpuinnr.inc}
+{$endif}
+{$if defined(ARM)}
+     ,
+     {$i ccpuinnr.inc}
+{$endif}
+{$if defined(AARCH64)}
+     ,
+     {$i ccpuinnr.inc}
+{$endif}
+{$if defined(RISCV)}
+     ,
+     {$i riscv/ccpuinnr.inc}
+{$endif}
+{$if defined(POWERPC) or defined(POWERPC64)}
+     ,
+     {$i ppcgen/ccpuinnr.inc}
+{$endif}
+
+{$if defined(MIPS)}    
+     ,
+     {$i mips/ccpuinnr.inc}
 {$endif}
    );
 

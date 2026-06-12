@@ -27,7 +27,7 @@ begin
     P.Email := '';
     P.Description := 'Json interfacing, part of Free Component Libraries (FCL), FPC''s OOP library.';
     P.NeedLibC:= false;
-    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
+    P.OSes:=AllOSes-[embedded,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k,ps1,wasip2];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 
@@ -43,13 +43,20 @@ begin
       AddUnit('fpjson');
       AddUnit('jsonparser');
      end;
+
+    T:=P.Targets.AddUnit('jsoncomparer.pp');
+    T.ResourceStrings:=true;
+    with T.Dependencies do
+      begin
+      AddUnit('fpjson');
+     end;
     T:=P.Targets.AddUnit('jsonfpcunit.pp');
     T.ResourceStrings:=true;
     with T.Dependencies do
       begin
       AddUnit('fpjson');
      end;
-        
+
     T:=P.Targets.AddUnit('jsonparser.pp');
     T.ResourceStrings:=true;
     with T.Dependencies do
@@ -65,10 +72,17 @@ begin
       AddUnit('fpjson');
       AddUnit('jsonscanner');
       end;
-        
+
+    T:=P.Targets.AddUnit('jsonwriter.pp');
+    T.ResourceStrings:=true;
+    with T.Dependencies do
+      begin
+      AddUnit('fpjson');
+      end;
+
     T:=P.Targets.AddUnit('jsonscanner.pp');
     T.ResourceStrings:=true;
-    
+
     T:=P.Targets.AddUnit('fpjsonrtti.pp');
     T.ResourceStrings:=true;
     with T.Dependencies do
@@ -76,7 +90,7 @@ begin
       AddUnit('fpjson');
       AddUnit('jsonparser');
       end;
-      
+
     T:=P.Targets.AddUnit('fpjsontopas.pp');
     T.ResourceStrings:=true;
     with T.Dependencies do

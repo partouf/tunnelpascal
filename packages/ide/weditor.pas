@@ -63,9 +63,15 @@ const
       cmExpandFold           = 51267;
       cmDelToEndOfWord       = 51268;
       cmInputLineLen         = 51269;
+      cmScrollOneUp          = 51270;
+      cmScrollOneDown        = 51271;
 
       EditorTextBufSize = 32768;
-      MaxLineLength     = 255;
+{$if sizeof(sw_astring)>8}
+      MaxLineLength     = 255; {Shortstring line length}
+{$else}
+      MaxLineLength     = 9997; {AnsiString max visible line}
+{$endif}
       MaxLineCount      = 2000000;
 
       CodeTemplateCursorChar = '|'; { AnsiChar to signal cursor pos in templates }
@@ -88,6 +94,9 @@ const
       efFolds               = $00008000;
       efNoIndent            = $00010000;
       efKeepLineAttr        = $00020000;
+      efOverwriteBlocks     = $00040000;
+      efShowIndent          = $00080000;
+      efEnhWordRightLeft    = $00100000;
       efStoreContent        = $80000000;
 
       attrAsm       = 1;
@@ -190,15 +199,18 @@ const
       eaUpperCase         = 19;
       eaLowerCase         = 20;
       eaToggleCase        = 21;
-      eaDummy             = 22;
+      eaCommentSel        = 22;
+      eaUnCommentSel      = 23;
+      eaDummy             = 24;
       LastAction          = eaDummy;
 
-      ActionString : array [0..LastAction-1] of string[13] =
+      ActionString : array [0..LastAction-1] of string[14] =
         ('','Move','InsLine','InsText','DelLine','DelText',
          'SelChange','Cut','Paste','PasteWin','DelChar','Clear',
          'CopyBlock','MoveBlock','DelBlock',
          'ReadBlock','IndentBlock','UnindentBlock','Overwrite',
-         'UpperCase','LowerCase','ToggleCase');
+         'UpperCase','LowerCase','ToggleCase',
+         'CommentBlock','UnCommentBlock');
 
       CIndicator    = #2#3#1;
       CEditor       = #33#34#35#36#37#38#39#40#41#42#43#44#45#46#47#48#49#50;
@@ -244,9 +256,28 @@ type
       function At(Index: sw_Integer): PFold;
     end;
 
+    PEditorBookMark = ^TEditorBookMark;
+    TEditorBookMark = packed record  {we save bookmarks in *.dsk file, so packed record it is}
+      Valid  : Boolean;
+      Pos    : TPoint;
+    end;
+
+    PEditorBookMarkCollection = ^TEditorBookMarkCollection;
+    TEditorBookMarkCollection = object(TCollection)
+      function At(Index: sw_Integer): PEditorBookMark;
+    end;
+
     TEditorLineInfo = object(TObject)
       Editor: PCustomCodeEditor;
+{$if sizeof(sw_astring)>8}
       Format : PString;
+{$else}
+      Format : Sw_AString;
+{$endif}
+      BeginsWithMultiLineStringSuffixLen,
+      EndsWithMultiLineStringSuffixLen : Sw_Word;
+      BeginsWithString,
+      EndsWithString : boolean;
       BeginsWithAsm,
       EndsWithAsm   : boolean;
       BeginsWithComment,
@@ -255,14 +286,22 @@ type
       BeginsWithDirective,
       EndsWithDirective : boolean;
       BeginCommentType,EndCommentType : byte;
+      BeginCommentDepth,EndCommentDepth : sw_integer;
+      BeginNestedComments,EndNestedComments : byte;
       Fold: PFold;
+      BookMarks: PEditorBookMarkCollection;
       constructor Init(AEditor: PCustomCodeEditor);
       destructor  Done; virtual;
-      function    GetFormat: string;
-      procedure   SetFormat(const AFormat: string);
+      function    GetFormat: sw_astring;
+      procedure   SetFormat(const AFormat: sw_astring);
       procedure   SetFold(AFold: PFold);
+      procedure   InsertMark(Mark:PEditorBookMark); virtual;
+      procedure   DeleteMark(Mark:PEditorBookMark); virtual;
+      function    MarkCount:Sw_integer; virtual;
+      function    GetMark(Index:Sw_integer):PEditorBookMark; virtual;
+      procedure   AdjustMark(APosX,Adjustment:Sw_integer); virtual;
       { Syntax information is now generated separately for each editor instance.
-        This is not neccessary for a one-language IDE, but this unit contains
+        This is not necessary for a one-language IDE, but this unit contains
         a _generic_ editor object, which should be (and is) as flexible as
         possible.
         The overhead caused by generating the same syntax info for ex.
@@ -276,14 +315,19 @@ type
 
     PCustomLine = ^TCustomLine;
     TCustomLine = object(TObject)
-      constructor Init(const AText: string; AFlags: longint);
-   {a}function    GetText: string; virtual;
-   {a}procedure   SetText(const AText: string); virtual;
+      constructor Init(const AText: sw_AString; AFlags: longint);
+   {a}function    GetText: sw_AString; virtual;
+   {a}procedure   SetText(const AText: sw_AString); virtual;
    {a}function    GetEditorInfo(Editor: PCustomCodeEditor): PEditorLineInfo; virtual;
    {a}function    GetFlags: longint; virtual;
    {a}procedure   SetFlags(AFlags: longint); virtual;
       function    IsFlagSet(AFlag: longint): boolean; {$ifdef USEINLINE}inline;{$endif}
       procedure   SetFlagState(AFlag: longint; ASet: boolean);
+      procedure   InsertMark(Editor: PCustomCodeEditor; Mark: PEditorBookMark); virtual;
+      procedure   DeleteMark(Editor: PCustomCodeEditor; Mark: PEditorBookMark); virtual;
+      function    MarkCount(Editor: PCustomCodeEditor):Sw_integer; virtual;
+      function    GetMark(Editor: PCustomCodeEditor; Index: Sw_integer):PEditorBookMark; virtual;
+      procedure   AdjustMark(Editor: PCustomCodeEditor; APosX,Adjustment: Sw_integer); virtual;
       destructor  Done; virtual;
     public { internal use only! }
    {a}procedure AddEditorInfo(Index: sw_integer; AEditor: PCustomCodeEditor); virtual;
@@ -299,7 +343,11 @@ type
     TEditorAction = object(TObject)
       StartPos  : TPoint;
       EndPos    : TPoint;
+{$if sizeof(sw_astring)>8}
       Text      : PString;
+{$else}
+      Text      : Sw_AString;
+{$endif}
       ActionCount : longint;
       Flags : longint;
       Action    : byte;
@@ -313,9 +361,11 @@ type
                              the (probably) changed line & position information,
                              so, we can still jump to the right position in the
                              editor even when it is heavily modified - Gabor }
-      constructor init(act:byte; StartP,EndP:TPoint;Txt:String;AFlags : longint);
+      constructor init(act:byte; StartP,EndP:TPoint;Txt:Sw_AString;AFlags : longint);
       constructor init_group(act:byte);
       function is_grouped_action : boolean;
+      function GetText : sw_astring;
+      procedure SetText(AText : sw_astring);
       destructor done; virtual;
     end;
 
@@ -328,12 +378,8 @@ type
 
     TSpecSymbolClass =
       (ssCommentPrefix,ssCommentSingleLinePrefix,ssCommentSuffix,ssStringPrefix,ssStringSuffix,
-       ssDirectivePrefix,ssDirectiveSuffix,ssAsmPrefix,ssAsmSuffix);
-
-    TEditorBookMark = record
-      Valid  : boolean;
-      Pos    : TPoint;
-    end;
+       ssStringMultiLinePrefix,ssStringMultiLineSuffix,
+       ssDirectivePrefix{,ssDirectiveSuffix},ssAsmPrefix,ssAsmSuffix);
 
     TCompleteState = (csInactive,csOffering,csDenied);
 
@@ -411,26 +457,26 @@ type
     protected
       { Text & info storage abstraction }
    {a}procedure   ISetLineFlagState(Binding: PEditorBinding; LineNo: sw_integer; Flag: longint; ASet: boolean); virtual;
-   {a}procedure   IGetDisplayTextFormat(Binding: PEditorBinding; LineNo: sw_integer;var DT,DF:string); virtual;
-   {a}function    IGetLineFormat(Binding: PEditorBinding; LineNo: sw_integer): string; virtual;
-   {a}procedure   ISetLineFormat(Binding: PEditorBinding; LineNo: sw_integer;const S: string); virtual;
+   {a}procedure   IGetDisplayTextFormat(Binding: PEditorBinding; LineNo: sw_integer;var DT,DF:sw_astring); virtual;
+   {a}function    IGetLineFormat(Binding: PEditorBinding; LineNo: sw_integer): sw_astring; virtual;
+   {a}procedure   ISetLineFormat(Binding: PEditorBinding; LineNo: sw_integer;const S: sw_astring); virtual;
     public
       { Text & info storage abstraction }
       function    CharIdxToLinePos(Line,CharIdx: sw_integer): sw_integer;
       function    LinePosToCharIdx(Line,X: sw_integer): sw_integer;
    {a}function    GetLineCount: sw_integer; virtual;
    {a}function    GetLine(LineNo: sw_integer): PCustomLine; virtual;
-   {a}function    GetLineText(LineNo: sw_integer): string; virtual;
-   {a}procedure   SetDisplayText(I: sw_integer;const S: string); virtual;
-   {a}function    GetDisplayText(I: sw_integer): string; virtual;
-   {a}procedure   SetLineText(I: sw_integer;const S: string); virtual;
-      procedure   GetDisplayTextFormat(Editor: PCustomCodeEditor; I: sw_integer;var DT,DF:string); virtual;
-      function    GetLineFormat(Editor: PCustomCodeEditor; I: sw_integer): string; virtual;
-      procedure   SetLineFormat(Editor: PCustomCodeEditor; I: sw_integer;const S: string); virtual;
+   {a}function    GetLineText(LineNo: sw_integer): sw_AString; virtual;
+   {a}procedure   SetDisplayText(I: sw_integer;const S: sw_astring); virtual;
+   {a}function    GetDisplayText(I: sw_integer): sw_astring; virtual;
+   {a}procedure   SetLineText(I: sw_integer;const S: sw_AString); virtual;
+      procedure   GetDisplayTextFormat(Editor: PCustomCodeEditor; I: sw_integer;var DT,DF:sw_astring); virtual;
+      function    GetLineFormat(Editor: PCustomCodeEditor; I: sw_integer): sw_astring; virtual;
+      procedure   SetLineFormat(Editor: PCustomCodeEditor; I: sw_integer;const S: sw_astring); virtual;
    {a}procedure   DeleteAllLines; virtual;
    {a}procedure   DeleteLine(I: sw_integer); virtual;
-   {a}function    InsertLine(LineNo: sw_integer; const S: string): PCustomLine; virtual;
-   {a}procedure   AddLine(const S: string); virtual;
+   {a}function    InsertLine(LineNo: sw_integer; const S: sw_AString): PCustomLine; virtual;
+   {a}procedure   AddLine(const S: sw_AString); virtual;
    {a}procedure   GetContent(ALines: PUnsortedStringCollection); virtual;
    {a}procedure   SetContent(ALines: PUnsortedStringCollection); virtual;
    public
@@ -446,7 +492,7 @@ type
                   Attrs: byte): sw_integer; virtual;
    public
      { Undo info storage }
-   {a}procedure   AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: string;AFlags : longint); virtual;
+   {a}procedure   AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: sw_astring;AFlags : longint); virtual;
    {a}procedure   AddGroupedAction(AAction : byte); virtual;
    {a}procedure   CloseGroupedAction(AAction : byte); virtual;
    {a}function    GetUndoActionCount: sw_integer; virtual;
@@ -493,6 +539,8 @@ type
    {a}procedure   SetSyntaxCompleted(SC: boolean); virtual;
    {a}function    GetLastSyntaxedLine: sw_integer; virtual;
    {a}procedure   SetLastSyntaxedLine(ALine: sw_integer); virtual;
+      function    IsNestedComments(X,Y : sw_integer): boolean; virtual;
+      function    NestedCommentsChangeCheck(CurLine : sw_integer):boolean; virtual;
       function    IsFlagSet(AFlag: longint): boolean;{$ifdef USEINLINE}inline;{$endif}
       function    GetReservedColCount: sw_integer; virtual;
    {a}function    GetTabSize: integer; virtual;
@@ -501,9 +549,12 @@ type
    {a}procedure   SetIndentSize(AIndentSize: integer); virtual;
    {a}function    IsReadOnly: boolean; virtual;
    {a}function    IsClipboard: Boolean; virtual;
+   {a}function    GetAutoBrackets: boolean; virtual;
+   {a}procedure   SetAutoBrackets(AutoBrackets: boolean); virtual;
    {a}function    GetInsertMode: boolean; virtual;
    {a}procedure   SetInsertMode(InsertMode: boolean); virtual;
       procedure   SetCurPtr(X,Y: sw_integer); virtual;
+      function    InSelectionArea:boolean; {CurPos in selection area}
       procedure   GetSelectionArea(var StartP,EndP: TPoint); virtual;
       procedure   SetSelection(A, B: TPoint); virtual;
       procedure   SetHighlight(A, B: TPoint); virtual;
@@ -517,21 +568,22 @@ type
       procedure   UnLock; virtual;
     public
       { Text & info storage abstraction }
+   {a}function    GetMaxDisplayLength: sw_integer; virtual; {Max display code points}
    {a}function    GetLineCount: sw_integer; virtual;
    {a}function    GetLine(LineNo: sw_integer): PCustomLine; virtual;
    {a}function    CharIdxToLinePos(Line,CharIdx: sw_integer): sw_integer; virtual;
    {a}function    LinePosToCharIdx(Line,X: sw_integer): sw_integer; virtual;
-   {a}function    GetLineText(I: sw_integer): string; virtual;
-   {a}procedure   SetDisplayText(I: sw_integer;const S: string); virtual;
-   {a}function    GetDisplayText(I: sw_integer): string; virtual;
-   {a}procedure   SetLineText(I: sw_integer;const S: string); virtual;
-   {a}procedure   GetDisplayTextFormat(I: sw_integer;var DT,DF:string); virtual;
-   {a}function    GetLineFormat(I: sw_integer): string; virtual;
-   {a}procedure   SetLineFormat(I: sw_integer;const S: string); virtual;
+   {a}function    GetLineText(I: sw_integer): sw_astring; virtual;
+   {a}procedure   SetDisplayText(I: sw_integer;const S: sw_astring); virtual;
+   {a}function    GetDisplayText(I: sw_integer): sw_astring; virtual;
+   {a}procedure   SetLineText(I: sw_integer;const S: sw_AString); virtual;
+   {a}procedure   GetDisplayTextFormat(I: sw_integer;var DT,DF:sw_astring); virtual;
+   {a}function    GetLineFormat(I: sw_integer): sw_astring; virtual;
+   {a}procedure   SetLineFormat(I: sw_integer;const S: sw_astring); virtual;
    {a}procedure   DeleteAllLines; virtual;
    {a}procedure   DeleteLine(I: sw_integer); virtual;
-   {a}function    InsertLine(LineNo: sw_integer; const S: string): PCustomLine; virtual;
-   {a}procedure   AddLine(const S: string); virtual;
+   {a}function    InsertLine(LineNo: sw_integer; const S: sw_astring): PCustomLine; virtual;
+   {a}procedure   AddLine(const S: sw_astring); virtual;
    {a}function    GetErrorMessage: string; virtual;
    {a}procedure   SetErrorMessage(const S: string); virtual;
    {a}procedure   AdjustSelection(DeltaX, DeltaY: sw_integer);
@@ -544,9 +596,13 @@ type
    {a}function    SaveAreaToStream(Stream: PStream; StartP,EndP: TPoint): boolean;virtual;
       function    LoadFromFile(const AFileName: string): boolean; virtual;
       function    SaveToFile(const AFileName: string): boolean; virtual;
+      function    GetBookmark(MarkIdx: sw_integer):TEditorBookMark; virtual;
+      procedure   SetBookmark(MarkIdx: sw_integer; ABookmark: TEditorBookMark); virtual;
+      function    FindMarkLineNr(MarkIdx: sw_integer):sw_integer; virtual;
+      procedure   AdjustBookMark(X, NewX, Y, NewY: sw_integer); virtual;
     public
-   {a}function    InsertFrom(Editor: PCustomCodeEditor): Boolean; virtual;
-   {a}function    InsertText(const S: string): Boolean; virtual;
+      function    InsertFrom(Editor: PCustomCodeEditor): Boolean; virtual;
+   {a}function    InsertText(const S: sw_astring): Boolean; virtual;
     public
       procedure   FlagsChanged(OldFlags: longint); virtual;
    {a}procedure   BindingsChanged; virtual;
@@ -557,6 +613,7 @@ type
       procedure   TabSizeChanged; virtual;
       procedure   SyntaxStateChanged; virtual;
       procedure   StoreUndoChanged; virtual;
+      procedure   ChangeCommands; virtual;
       procedure   SelectionChanged; virtual;
       procedure   HighlightChanged; virtual;
    {a}procedure   DoLimitsChanged; virtual;
@@ -601,7 +658,7 @@ type
    {a}function    UpdateAttrsRange(FromLine, ToLine: sw_integer; Attrs: byte): sw_integer; virtual;
     public
      { Undo info storage }
-   {a}procedure   AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: string;AFlags : longint); virtual;
+   {a}procedure   AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: sw_astring;AFlags : longint); virtual;
    {a}procedure   AddGroupedAction(AAction : byte); virtual;
    {a}procedure   CloseGroupedAction(AAction : byte); virtual;
    {a}function    GetUndoActionCount: sw_integer; virtual;
@@ -632,6 +689,8 @@ type
     public
       { Editor primitives }
       procedure   SelectAll(Enable: boolean); virtual;
+      procedure   CommentSel; virtual;
+      procedure   UnCommentSel; virtual;
     public
       { Editor commands }
       SearchRunCount: integer;
@@ -647,6 +706,8 @@ type
       procedure LineDown; virtual;
       procedure PageUp; virtual;
       procedure PageDown; virtual;
+      procedure ScrollOneUp; virtual;
+      procedure ScrollOneDown; virtual;
       procedure TextStart; virtual;
       procedure TextEnd; virtual;
       procedure WindowStart; virtual;
@@ -692,6 +753,7 @@ type
       procedure PrintBlock; virtual;
       procedure ExpandCodeTemplate; virtual;
       procedure AddChar(C: AnsiChar); virtual;
+      procedure PasteText(P:PAnsiChar; ASize:sw_integer); virtual;
 {$ifdef WinClipSupported}
       function  ClipCopyWin: Boolean; virtual;
       function  ClipPasteWin: Boolean; virtual;
@@ -728,19 +790,24 @@ const
        GetShiftState to be considered for extending
        selection (PM) }
      DontConsiderShiftState: boolean  = false;
+     cut_key:word=kbShiftDel;
+     copy_key:word=kbCtrlIns;
+     paste_key:word=kbShiftIns;
+     all_key:word=kbNoKey;
 
      CodeCompleteMinLen : byte = 4; { minimum length of text to try to complete }
 
-     ToClipCmds         : TCommandSet = ([cmCut,cmCopy,cmCopyWin,
+     ToClipCmds         : TCommandSet = ([cmCopy,cmCopyWin,
        { cmUnselect should because like cut, copy, copywin:
          if there is a selection, it is active, else it isn't }
        cmUnselect]);
      FromClipCmds       : TCommandSet = ([cmPaste]);
-     NulClipCmds        : TCommandSet = ([cmClear]);
+     NulClipCmds        : TCommandSet = ([cmClear,cmCut,cmCommentSel,cmUnCommentSel]);
      UndoCmd            : TCommandSet = ([cmUndo]);
      RedoCmd            : TCommandSet = ([cmRedo]);
 
 function ExtractTabs(S: string; TabSize: Sw_integer): string;
+function ExtractTabs(S: AnsiString; TabSize: Sw_integer): AnsiString;
 
 function StdEditorDialog(Dialog: Integer; Info: Pointer): word;
 
@@ -770,9 +837,9 @@ procedure RegisterWEditor;
 implementation
 
 uses
-  Strings,Video,MsgBox,App,StdDlg,Validate,
+  Strings,Video,MsgBox,App,Validate,Stddlg,
 {$ifdef WinClipSupported}
-  WinClip,
+  FvClip,
 {$endif WinClipSupported}
 {$ifdef TEST_REGEXP}
   {$ifdef USE_OLD_REGEXP}
@@ -816,7 +883,7 @@ const
      kbShift = kbLeftShift+kbRightShift;
 
 const
-  FirstKeyCount = 46;
+  FirstKeyCount = 48;
   FirstKeys: array[0..FirstKeyCount * 2] of Word = (FirstKeyCount,
     Ord(^A), cmWordLeft, Ord(^B), cmJumpLine, Ord(^C), cmPageDown,
     Ord(^D), cmCharRight, Ord(^E), cmLineUp,
@@ -829,7 +896,8 @@ const
     Ord(^R), cmPageUp, Ord(^S), cmCharLeft,
     Ord(^T), cmDelToEndOfWord, Ord(^U), cmUndo,
     Ord(^V), cmInsMode, Ord(^X), cmLineDown,
-    Ord(^Y), cmDelLine, kbLeft, cmCharLeft,
+    Ord(^Y), cmDelLine, Ord(^W), cmScrollOneUp,
+    Ord(^Z), cmScrollOneDown, kbLeft, cmCharLeft,
     kbRight, cmCharRight, kbCtrlLeft, cmWordLeft,
     kbCtrlRight, cmWordRight, kbHome, cmLineStart,
     kbCtrlHome, cmWindowStart, kbCtrlEnd, cmWindowEnd,
@@ -910,7 +978,7 @@ function IsWordSeparator(C: AnsiChar): boolean;
 begin
   IsWordSeparator:=C in
       [' ',#0,#255,':','=','''','"',
-      '.',',','/',';','$','#',
+      '.',',','/',';','$','#',  { In Lazarus "$", "#"  are not word separators }
       '(',')','<','>','^','*',
       '+','-','?','&','[',']',
       '{','}','@','~','%','\',
@@ -940,6 +1008,28 @@ begin
 end;
 
 function Trim(S: string): string;
+begin
+  Trim:=RTrim(LTrim(S),true);
+end;
+
+function LTrim(S: AnsiString): AnsiString;
+begin
+  while (length(S)>0) and (S[1] in [#0,TAB,#32]) do
+    Delete(S,1,1);
+  LTrim:=S;
+end;
+
+{ TAB are not same as spaces if UseTabs is set PM }
+function RTrim(S: AnsiString;cut_tabs : boolean): AnsiString;
+begin
+  while (length(S)>0) and
+    ((S[length(S)] in [#0,#32]) or
+    ((S[Length(S)]=TAB) and cut_tabs)) do
+    Delete(S,length(S),1);
+  RTrim:=S;
+end;
+
+function Trim(S: AnsiString): AnsiString;
 begin
   Trim:=RTrim(LTrim(S),true);
 end;
@@ -974,27 +1064,6 @@ begin
   StrToInt:=L;
 end;
 
-function RExpand(const S: string; MinLen: byte): string;
-begin
-  if length(S)<MinLen then
-   RExpand:=S+CharStr(' ',MinLen-length(S))
-  else
-   RExpand:=S;
-end;
-
-{
-function upper(const s : string) : string;
-var
-  i  : Sw_word;
-begin
-  for i:=1 to length(s) do
-   if s[i] in ['a'..'z'] then
-    upper[i]:=AnsiChar(byte(s[i])-32)
-   else
-    upper[i]:=s[i];
-  upper[0]:=s[0];
-end;
-}
 type TPosOfs = int64;
 
 function PosToOfs(const X,Y: sw_integer): TPosOfs;
@@ -1024,12 +1093,31 @@ begin
      if s[p]=TAB then
       begin
         PAdd:=TabSize-((p-1) mod TabSize);
-        s:=copy(S,1,P-1)+CharStr(' ',PAdd)+copy(S,P+1,High(s));
+        s:=copy(S,1,P-1)+CharStr(' ',PAdd)+copy(S,P+1,Length(s));
         inc(P,PAdd-1);
       end;
    end;
   ExtractTabs:=S;
 end;
+
+function ExtractTabs(S: AnsiString; TabSize: Sw_integer): AnsiString;
+var
+  P,PAdd: Sw_integer;
+begin
+  p:=0;
+  while p<length(s) do
+   begin
+     inc(p);
+     if s[p]=TAB then
+      begin
+        PAdd:=TabSize-((p-1) mod TabSize);
+        s:=copy(S,1,P-1)+CharStr(' ',PAdd)+copy(S,P+1,Length(s));
+        inc(P,PAdd-1);
+      end;
+   end;
+  ExtractTabs:=S;
+end;
+
 
 {function CompressUsingTabs(S: string; TabSize: byte): string;
 var TabS: string;
@@ -1277,18 +1365,18 @@ end;
                             PLine,TLineCollection
 *****************************************************************************}
 
-constructor TCustomLine.Init(const AText: string; AFlags: longint);
+constructor TCustomLine.Init(const AText: sw_AString; AFlags: longint);
 begin
   inherited Init;
   SetText(AText);
 end;
 
-function TCustomLine.GetText: string;
+function TCustomLine.GetText: sw_AString;
 begin
   Abstract;GetText:='';
 end;
 
-procedure TCustomLine.SetText(const AText: string);
+procedure TCustomLine.SetText(const AText: sw_AString);
 begin
   Abstract;
 end;
@@ -1327,6 +1415,41 @@ begin
     SetFlags(N);
 end;
 
+procedure TCustomLine.InsertMark(Editor: PCustomCodeEditor; Mark: PEditorBookMark);
+var LI : PEditorLineInfo;
+begin
+  LI:=GetEditorInfo(@Editor);
+  if Assigned(LI) then LI^.InsertMark(Mark);
+end;
+
+procedure TCustomLine.DeleteMark(Editor: PCustomCodeEditor; Mark: PEditorBookMark);
+var LI : PEditorLineInfo;
+begin
+  LI:=GetEditorInfo(@Editor);
+  if Assigned(LI) then LI^.DeleteMark(Mark);
+end;
+
+function  TCustomLine.MarkCount(Editor: PCustomCodeEditor):Sw_integer;
+var LI : PEditorLineInfo;
+begin
+  LI:=GetEditorInfo(@Editor);
+  if Assigned(LI) then MarkCount:=LI^.MarkCount else MarkCount:=0;
+end;
+
+function  TCustomLine.GetMark(Editor: PCustomCodeEditor; Index: Sw_integer):PEditorBookMark;
+var LI : PEditorLineInfo;
+begin
+  LI:=GetEditorInfo(@Editor);
+  if Assigned(LI) then GetMark:=LI^.GetMark(Index) else GetMark:=nil;
+end;
+
+procedure TCustomLine.AdjustMark(Editor: PCustomCodeEditor; APosX,Adjustment: Sw_integer);
+var LI : PEditorLineInfo;
+begin
+  LI:=GetEditorInfo(@Editor);
+  if Assigned(LI) then LI^.AdjustMark(APosX,Adjustment);
+end;
+
 procedure TCustomLine.AddEditorInfo(Index: sw_integer; AEditor: PCustomCodeEditor);
 begin
   { Abstract }
@@ -1343,6 +1466,11 @@ begin
 end;
 
 function TLineCollection.At(Index: sw_Integer): PCustomLine;
+begin
+  At:=inherited At(Index);
+end;
+
+function TEditorBookMarkCollection.At(Index: sw_Integer): PEditorBookMark;
 begin
   At:=inherited At(Index);
 end;
@@ -1476,14 +1604,22 @@ begin
   Editor:=AEditor;
 end;
 
-function TEditorLineInfo.GetFormat: string;
+function TEditorLineInfo.GetFormat: sw_astring;
 begin
+{$if sizeof(sw_astring)>8}
   GetFormat:=GetStr(Format);
+{$else}
+  GetFormat:=Format;
+{$endif}
 end;
 
-procedure TEditorLineInfo.SetFormat(const AFormat: string);
+procedure TEditorLineInfo.SetFormat(const AFormat: sw_astring);
 begin
+{$if sizeof(sw_astring)>8}
   SetStr(Format,AFormat);
+{$else}
+  Format:=AFormat;
+{$endif}
 end;
 
 procedure TEditorLineInfo.SetFold(AFold: PFold);
@@ -1495,12 +1631,64 @@ begin
     Fold^.AddLineReference(@Self);
 end;
 
+procedure TEditorLineInfo.InsertMark(Mark:PEditorBookMark);
+begin
+  if not assigned(BookMarks) then
+    New(BookMarks, Init(2,2));
+  BookMarks^.Insert(Mark);
+end;
+
+procedure TEditorLineInfo.DeleteMark(Mark:PEditorBookMark);
+begin
+  if assigned(BookMarks) then BookMarks^.Delete(Mark);
+end;
+
+function TEditorLineInfo.MarkCount:Sw_integer;
+begin
+  if assigned(BookMarks) then
+    MarkCount:=BookMarks^.Count
+  else MarkCount:=0;
+end;
+
+function TEditorLineInfo.GetMark(Index:Sw_integer):PEditorBookMark;
+begin
+  if assigned(BookMarks) then
+    GetMark:=BookMarks^.at(Index)
+  else GetMark:=nil;
+end;
+
+procedure TEditorLineInfo.AdjustMark(APosX,Adjustment:Sw_integer);
+var Index : sw_integer;
+    Mark:PEditorBookMark;
+begin
+  if not assigned(BookMarks) then exit;
+  for Index:=1 to BookMarks^.Count do
+  begin
+    Mark:=BookMarks^.at(Index-1);
+    if Mark^.Pos.X >=APosX then
+       Mark^.Pos.X:=Mark^.Pos.X+Adjustment
+    else
+      if (Adjustment < 0) and (Mark^.Pos.X>(APosX+Adjustment)) then
+        Mark^.Pos.X:=APosX+Adjustment;
+  end;
+end;
+
 destructor TEditorLineInfo.Done;
 begin
+{$if sizeof(sw_astring)>8}
   if Format<>nil then
     DisposeStr(Format);
   Format:=nil;
+{$else}
+  Format:='';
+{$endif}
   SetFold(nil);
+  if assigned(BookMarks) then
+  begin
+    BookMarks^.DeleteAll;
+    Dispose(BookMarks,Done);
+    BookMarks:=nil;
+  end;
   inherited Done;
 end;
 
@@ -1826,24 +2014,24 @@ begin
   Abstract;
 end;
 
-procedure TCustomCodeEditorCore.IGetDisplayTextFormat(Binding: PEditorBinding; LineNo: sw_integer;var DT,DF:string);
+procedure TCustomCodeEditorCore.IGetDisplayTextFormat(Binding: PEditorBinding; LineNo: sw_integer;var DT,DF:sw_astring);
 begin
   Abstract;
 end;
 
-function TCustomCodeEditorCore.IGetLineFormat(Binding: PEditorBinding; LineNo: sw_integer): string;
+function TCustomCodeEditorCore.IGetLineFormat(Binding: PEditorBinding; LineNo: sw_integer): sw_astring;
 begin
   Abstract;
   IGetLineFormat:='';
 end;
 
-procedure TCustomCodeEditorCore.ISetLineFormat(Binding: PEditorBinding; LineNo: sw_integer;const S: string);
+procedure TCustomCodeEditorCore.ISetLineFormat(Binding: PEditorBinding; LineNo: sw_integer;const S: sw_astring);
 begin
   Abstract;
 end;
 
 function TCustomCodeEditorCore.CharIdxToLinePos(Line,CharIdx: sw_integer): sw_integer;
-var S: string;
+var S: sw_astring;
     TabSize,CP,RX,NextInc: sw_integer;
 begin
   S:=GetLineText(Line);
@@ -1877,7 +2065,7 @@ begin
 end;
 
 function TCustomCodeEditorCore.LinePosToCharIdx(Line,X: sw_integer): sw_integer;
-var S: string;
+var S: sw_astring;
     TabSize,CP,RX: sw_integer;
 begin
   TabSize:=GetTabSize;
@@ -1894,11 +2082,11 @@ begin
       exit;
     end; *)
   if S='' then
-    CP:=0
+    CP:=X+1
   else
     begin
      CP:=0; RX:=0;
-     while (RX<=X) and (CP<=length(S)) do
+     while (RX<=X) {and (CP<=length(S))} do
       begin
         Inc(CP);
         if (CP<=length(S)) and
@@ -1923,39 +2111,39 @@ begin
   GetLine:=nil;
 end;
 
-function TCustomCodeEditorCore.GetLineText(LineNo: sw_integer): string;
+function TCustomCodeEditorCore.GetLineText(LineNo: sw_integer): sw_astring;
 begin
   Abstract;
   GetLineText:='';
 end;
 
-procedure TCustomCodeEditorCore.SetDisplayText(I: sw_integer;const S: string);
+procedure TCustomCodeEditorCore.SetDisplayText(I: sw_integer;const S: sw_astring);
 begin
   Abstract;
 end;
 
-function TCustomCodeEditorCore.GetDisplayText(I: sw_integer): string;
+function TCustomCodeEditorCore.GetDisplayText(I: sw_integer): sw_astring;
 begin
   Abstract;
   GetDisplayText:='';
 end;
 
-procedure TCustomCodeEditorCore.SetLineText(I: sw_integer;const S: string);
+procedure TCustomCodeEditorCore.SetLineText(I: sw_integer;const S: sw_AString);
 begin
   Abstract;
 end;
 
-procedure TCustomCodeEditorCore.GetDisplayTextFormat(Editor: PCustomCodeEditor; I: sw_integer;var DT,DF:string);
+procedure TCustomCodeEditorCore.GetDisplayTextFormat(Editor: PCustomCodeEditor; I: sw_integer;var DT,DF:sw_astring);
 begin
   IGetDisplayTextFormat(SearchBinding(Editor),I,DT,DF);
 end;
 
-function TCustomCodeEditorCore.GetLineFormat(Editor: PCustomCodeEditor; I: sw_integer): string;
+function TCustomCodeEditorCore.GetLineFormat(Editor: PCustomCodeEditor; I: sw_integer): sw_astring;
 begin
   GetLineFormat:=IGetLineFormat(SearchBinding(Editor),I);
 end;
 
-procedure TCustomCodeEditorCore.SetLineFormat(Editor: PCustomCodeEditor; I: sw_integer; const S: string);
+procedure TCustomCodeEditorCore.SetLineFormat(Editor: PCustomCodeEditor; I: sw_integer; const S: sw_astring);
 begin
   ISetLineFormat(SearchBinding(Editor),I,S);
 end;
@@ -1970,13 +2158,13 @@ begin
   Abstract;
 end;
 
-function TCustomCodeEditorCore.InsertLine(LineNo: sw_integer; const S: string): PCustomLine;
+function TCustomCodeEditorCore.InsertLine(LineNo: sw_integer; const S: sw_AString): PCustomLine;
 begin
   Abstract;
   InsertLine:=nil; { eliminate compiler warning }
 end;
 
-procedure TCustomCodeEditorCore.AddLine(const S: string);
+procedure TCustomCodeEditorCore.AddLine(const S: sw_AString);
 begin
   Abstract;
 end;
@@ -2048,8 +2236,12 @@ function TCustomCodeEditorCore.UpdateAttrs(FromLine: sw_integer; Attrs: byte): s
 var MinLine: sw_integer;
 procedure CallIt(P: PEditorBinding);
 var I: sw_integer;
+    AAttrs:byte;
 begin
-  I:=DoUpdateAttrs(P^.Editor,FromLine,Attrs);
+  AAttrs:=Attrs;
+  if P^.Editor^.NestedCommentsChangeCheck(FromLine) then
+    AAttrs:=Attrs or attrForceFull;
+  I:=DoUpdateAttrs(P^.Editor,FromLine,AAttrs);
   if (I<MinLine) or (MinLine=-1) then MinLine:=I;
 end;
 begin
@@ -2062,8 +2254,12 @@ function TCustomCodeEditorCore.UpdateAttrsRange(FromLine, ToLine: sw_integer; At
 var MinLine: sw_integer;
 procedure CallIt(P: PEditorBinding);
 var I: sw_integer;
+    AAttrs:byte;
 begin
-  I:=DoUpdateAttrsRange(P^.Editor,FromLine,ToLine,Attrs);
+  AAttrs:=Attrs;
+  if P^.Editor^.NestedCommentsChangeCheck(FromLine) then
+    AAttrs:=Attrs or attrForceFull;
+  I:=DoUpdateAttrsRange(P^.Editor,FromLine,ToLine,AAttrs);
   if (I<MinLine) or (MinLine=-1) then MinLine:=I;
 end;
 begin
@@ -2079,14 +2275,21 @@ type
       ccHash,ccSymbol);
 var
   SymbolIndex: Sw_integer;
+  CurLineNr: Sw_integer;
   CurrentCommentType : Byte;
-  FirstCC,LastCC: TCharClass;
-  InAsm,InComment,InSingleLineComment,InDirective,InString: boolean;
+  CurrentCommentDepth : sw_integer;
+  NestedComments,LookForNestedComments : boolean;
+  CommentStartX,CommentStartY : sw_integer;
+  FirstCC,LastCC,PrevNumCC: TCharClass;
+  InAsm,InComment,InSingleLineComment,InDirective,InString,InStringMultiLine: boolean;
+  WhiteSpaceLine,OnlyStringSuffix,StringSuffixEnded : boolean;
   X,ClassStart: Sw_integer;
-  SymbolConcat: string;
-  LineText,Format: string;
+  SymbolConcat: string;  {this can be shortstring after all}
+  SymbolWord: string;  { shortstring }
+  MultiLineStringSuffixLen:Sw_Word;
+  LineText,Format: sw_astring;
 
-  function MatchSymbol(const What, S: string): boolean;
+  function MatchSymbol(const What, S: sw_astring): boolean;
   var Match: boolean;
   begin
     Match:=false;
@@ -2097,7 +2300,7 @@ var
   end;
 
   var MatchedSymbol: boolean;
-      MatchingSymbol: string;
+      MatchingSymbol: sw_astring;
   type TPartialType = (pmNone,pmLeft,pmRight,pmAny);
 
   function MatchesAnySpecSymbol(SClass: TSpecSymbolClass; PartialMatch: TPartialType): boolean;
@@ -2175,6 +2378,18 @@ var
   begin
     IsCommentPrefix:=MatchesAnySpecSymbol(ssCommentPrefix,pmLeft);
   end;
+
+  function IsMatchingCommentPrefix: boolean;
+  var tmpIs : boolean;
+  begin  {looking for nested comments with matching prefix}
+    tmpIs:=(MatchesAnySpecSymbol(ssCommentPrefix,pmLeft));
+    if tmpIs
+      and (CurrentCommentType=2) {bad, we are making assumption that this is comment opener (* }
+      and (LineText[X+1]=')') { looking into next char is bad approach but it is working }
+      then
+        tmpIs:=false;  { in comment this "(*)" is not start of new nested comment but end }
+    IsMatchingCommentPrefix:= tmpIs and (CurrentCommentType=SymbolIndex);
+  end;
                               {** **}
   function IsSingleLineCommentPrefix: boolean;
   begin
@@ -2182,9 +2397,13 @@ var
   end;
 
   function IsCommentSuffix: boolean;
+  var tmpIs : boolean;
   begin
-    IsCommentSuffix:=(MatchesAnySpecSymbol(ssCommentSuffix,pmRight))
+    tmpIs:=(MatchesAnySpecSymbol(ssCommentSuffix,pmRight))
       and (CurrentCommentType=SymbolIndex);
+    if tmpIs then
+      tmpIs:=(CurLineNr<>CommentStartY) or ((CurLineNr=CommentStartY) and ((X-length(MatchingSymbol))-CommentStartX>=0));
+    IsCommentSuffix:=tmpIs;
   end;
 
   function IsStringPrefix: boolean;
@@ -2197,15 +2416,27 @@ var
     IsStringSuffix:=MatchesAnySpecSymbol(ssStringSuffix,pmRight);
   end;
 
-  function IsDirectivePrefix: boolean;
+  function IsStringMultiLinePrefix: boolean;
   begin
-    IsDirectivePrefix:=MatchesAnySpecSymbol(ssDirectivePrefix,pmLeft);
+    IsStringMultiLinePrefix:=MatchesAnySpecSymbol(ssStringMultiLinePrefix,pmLeft);
   end;
 
+  function IsStringMultiLineSuffix: boolean;
+  begin
+    IsStringMultiLineSuffix:=MatchesAnySpecSymbol(ssStringMultiLineSuffix,pmRight);
+  end;
+
+  function IsDirectivePrefix: boolean;
+  begin
+    IsDirectivePrefix:=MatchesAnySpecSymbol(ssDirectivePrefix,pmLeft)
+      and (CurrentCommentType=SymbolIndex); {yes - matching comment type}
+  end;
+
+  { Directive is treated as comment. Comment suffix will close directive.
   function IsDirectiveSuffix: boolean;
   begin
     IsDirectiveSuffix:=MatchesAnySpecSymbol(ssDirectiveSuffix,pmRight);
-  end;
+  end;}
 
   function IsAsmPrefix(const WordS: string): boolean;
   { var
@@ -2223,6 +2454,30 @@ var
     {StoredMatchedSymbol:=MatchedSymbol;}
     IsAsmSuffix:=MatchesAsmSpecSymbol(WordS,ssAsmSuffix);
     {MatchedSymbol:=StoredMatchedSymbol;}
+  end;
+
+  function GetMultiLineStringSuffixLen:Sw_Word;
+  var k,i: longword;
+  begin
+    {get rid of white space at the end of string}
+    i:=0;
+    for k:=Length(SymbolWord) downto 1 do
+    begin
+      if not (SymbolWord[k] in [' ',#9,#0,#255]) then
+        break;
+      inc(i);
+    end;
+    if i>0 then
+      SetLength(SymbolWord,Length(SymbolWord)-i);
+    {length of "'" symbols}
+    I:=0;
+    for k:=Length(SymbolWord) downto 1 do
+    begin
+      if SymbolWord[k]<>'''' then
+        break;
+      inc(I);
+    end;
+    GetMultiLineStringSuffixLen:=I;
   end;
 
   function GetCharClass(C: AnsiChar): TCharClass;
@@ -2246,7 +2501,10 @@ var
     else if (LastCC=ccHexNumber) and (C in {$ifdef USE_UNTYPEDSET}['0'..'9','A'..'F','a'..'f']{$else}HexNumberChars{$endif}) then
       CC:=ccHexNumber
     else if C in {$ifdef USE_UNTYPEDSET}['0'..'9']{$else}NumberChars{$endif} then
-      CC:=ccNumber
+      begin
+        PrevNumCC:=ccNumber;
+        CC:=ccNumber;
+      end
     else if (LastCC=ccNumber) and (C in {$ifdef USE_UNTYPEDSET}['E','e','.']{$else}RealNumberChars{$endif}) then
       begin
         if (C='.') then
@@ -2265,6 +2523,21 @@ var
             else
               cc:=ccAlpha
           end;
+        PrevNumCC:=cc;
+      end
+    else if (C in ['-','+']) and ((LastCC=ccNumber)and (PrevNumCC=ccRealNumber)) then
+      begin
+        if (X>1) and (LineText[X-1]='.') then
+          CC:=ccSymbol
+        else
+          CC:=ccNumber; { real number scientific notation exponent sign is part of the number itself }
+      end
+    else if (C = '_') and ((LastCC=ccHexNumber) or (LastCC=ccNumber)) then
+      begin
+        if (X>1) and (LineText[X-1]='.') then
+          CC:=ccAlpha
+        else
+          CC:=LastCC;  { allow number to have "_" as visual separation marker }
       end
     else if C in {$ifdef USE_UNTYPEDSET}['A'..'Z','a'..'z','_']{$else}AlphaChars{$endif} then CC:=ccAlpha else
       CC:=ccSymbol;
@@ -2274,7 +2547,7 @@ var
   procedure FormatWord(SClass: TCharClass; StartX:Sw_integer;EndX: Sw_integer);
   var
       C: byte;
-      WordS: string;
+      WordS: string; {Note: leave for now as ShortString}
   begin
     C:=0;
     WordS:=copy(LineText,StartX,EndX-StartX+1);
@@ -2341,6 +2614,21 @@ var
       begin
         MatchedSymbol:=false;
         EX:=X-1;
+
+        if length(SymbolWord)>=High(SymbolWord) then
+          Delete(SymbolWord,1,1);
+        SymbolWord:=SymbolWord+C; { for variable length multi line string end detection }
+        if OnlyStringSuffix then
+        begin
+          OnlyStringSuffix:=(C='''');
+          if not OnlyStringSuffix then
+          begin
+            SetLength(SymbolWord,Length(SymbolWord)-1);
+            if (GetMultiLineStringSuffixLen>=MultiLineStringSuffixLen) then
+              StringSuffixEnded:=true;
+          end;
+        end;
+
         if (CC=ccSymbol) then
          begin
            if length(SymbolConcat)>=High(SymbolConcat) then
@@ -2348,10 +2636,26 @@ var
            SymbolConcat:=SymbolConcat+C;
            if  InComment and IsCommentSuffix then
               Inc(EX) else
-           if InString and IsStringSuffix  then
+           if InString and IsStringSuffix then
               Inc(EX) else
+           if InString and (InStringMultiLine=true) and IsStringMultiLineSuffix then
+              Inc(EX) {else
            if InDirective and IsDirectiveSuffix then
-              Inc(EX);
+              Inc(EX)};
+         end;
+        if StringSuffixEnded then
+        begin
+          MultiLineStringSuffixLen:=0;
+          StringSuffixEnded:=false;
+          if (GetMultiLineStringSuffixLen and 1)= 1 then
+            InString:=false;
+          InStringMultiLine:=false;
+        end;
+        if (CC<>ccSymbol) then
+         begin
+           if (CC<>ccWhiteSpace) and (CC<>ccTab) then
+             SymbolWord:='';
+           OnlyStringSuffix:=false;
          end;
         if CC=ccRealNumber then
           Inc(EX);
@@ -2367,52 +2671,99 @@ var
           ccNumber :
             if (LastCC<>ccAlpha) then;
           ccSymbol :
-              if (InComment=true) and (CurrentCommentType=1) and
+              if (InComment=true) and (CurrentCommentDepth=1) and
                  (InDirective=false)  and IsDirectivePrefix then
                 begin
                   InDirective:=true;
-                  InComment:=false;
+                  {InComment:=false;} { treat compiler directive as comment }
+                  {CurrentCommentType:=0;}
                   Dec(ClassStart,length(MatchingSymbol)-1);
                 end
-              else if (InComment=false) and
+              else {if (InComment=false) and
                  (InDirective=true) and IsDirectiveSuffix then
                  InDirective:=false
-              else if (InComment=false) and
+              else }if (InComment=false) and
                  (InString=false) and (InDirective=false) and IsCommentPrefix then
                 begin
                   InComment:=true;
+                  LookForNestedComments:=true;
                   CurrentCommentType:=SymbolIndex;
+                  CurrentCommentDepth:=1;
                   InSingleLineComment:=IsSingleLineCommentPrefix;
+                  CommentStartX:=X;
+                  CommentStartY:=CurLineNr;
                   {InString:=false; }
                   Dec(ClassStart,length(MatchingSymbol)-1);
                   { Remove (* from SymbolConcat to avoid problem with (*) PM }
                   { fixes part of bug 1617 }
                   { but removed proper directive prefix detection ... }
+                  { Well. Added false positive end suffix detection. Do not remove. M
                   EndComment:=Editor^.GetSpecSymbol(ssCommentSuffix,SymbolIndex);
                   if MatchingSymbol[length(MatchingSymbol)]=EndComment^[1] then
-                    Delete(SymbolConcat,1,length(MatchingSymbol));
+                    Delete(SymbolConcat,1,length(MatchingSymbol));}
+                end
+              else if InComment and IsMatchingCommentPrefix then
+                begin
+                  inc(CurrentCommentDepth);
+                  if LookForNestedComments then
+                  begin  { once per every nested comment test IsNestedComments }
+                    LookForNestedComments:=false;
+                    NestedComments:=Editor^.IsNestedComments(X,CurLineNr);
+                  end;
                 end
               else if InComment and IsCommentSuffix then
                 begin
-                  InComment:=false;
-                  InString:=false;
+                  dec(CurrentCommentDepth);
+                  if not NestedComments then
+                    CurrentCommentDepth:=0;
+                  if CurrentCommentDepth=0 then
+                  begin
+                    InComment:=false;
+                    CurrentCommentType:=0;
+                    InDirective:=false; {not in comment then not in Directive}
+                    InString:=false;
+                    InStringMultiLine:=false;
+                  end;
                 end
               else if (InComment=false) and (InString=false) and IsStringPrefix then
                 begin
                   InString:=true;
                   Dec(ClassStart,length(MatchingSymbol)-1);
                 end
-              else if (InComment=false) and (InString=true) and IsStringSuffix then
-               InString:=false;
+              else if (InComment=false) and (InString=false) and IsStringMultiLinePrefix then
+                begin
+                  InString:=true;
+                  InStringMultiLine:=true;
+                  Dec(ClassStart,length(MatchingSymbol)-1);
+                end
+              else if (InComment=false) and (InString=true) and (InStringMultiLine=false) and IsStringSuffix then
+                begin
+                  InString:=false;
+                end
+              else if (InComment=false) and (InString=true) and (InStringMultiLine=true) then
+                begin
+                  if MultiLineStringSuffixLen>2 then
+                  begin
+                    if WhiteSpaceLine and IsStringSuffix then
+                      OnlyStringSuffix:=true;
+                  end else
+                  if IsStringMultiLineSuffix then
+                  begin
+                    InString:=false;
+                    InStringMultiLine:=false;
+                  end;
+                end
+              else if (InAsm) and (C='@') then
+                CC:=ccAlpha;  { local labels in asm block will be normal words }
         end;
         if MatchedSymbol and (InComment=false) then
           SymbolConcat:='';
         LastCC:=CC;
+        WhiteSpaceLine:=WhiteSpaceLine and ((CC=ccWhiteSpace) or (CC=ccTab));
       end;
   end;
 
-var CurLineNr: Sw_integer;
-    Line,NextLine,PrevLine{,OldLine}: PCustomLine;
+var Line,NextLine,PrevLine{,OldLine}: PCustomLine;
     PrevLI,LI,nextLI: PEditorLineInfo;
 begin
   if (not Editor^.IsFlagSet(efSyntaxHighlight)) or (FromLine>=GetLineCount) then
@@ -2443,6 +2794,7 @@ begin
     PrevLine:=GetLine(CurLineNr-1)
   else
     PrevLine:=nil;
+  CommentStartY:=CurLineNr-1; { use in detection for false positive comment: (*) }
   repeat
     Line:=GetLine(CurLineNr);
     if Assigned(PrevLine) then PrevLI:=PrevLine^.GetEditorInfo(Editor) else PrevLI:=nil;
@@ -2450,50 +2802,87 @@ begin
     InSingleLineComment:=false;
     if PrevLI<>nil then
      begin
+       InString:=PrevLI^.EndsWithString;
+       MultiLineStringSuffixLen:=PrevLI^.EndsWithMultiLineStringSuffixLen;
        InAsm:=PrevLI^.EndsWithAsm;
        InComment:=PrevLI^.EndsWithComment and not PrevLI^.EndsInSingleLineComment;
        CurrentCommentType:=PrevLI^.EndCommentType;
+       CurrentCommentDepth:=PrevLI^.EndCommentDepth;
+       NestedComments:=(PrevLI^.EndNestedComments and 1)=1;
+       LookForNestedComments:=(PrevLI^.EndNestedComments and 2)=2;
        InDirective:=PrevLI^.EndsWithDirective;
      end
     else
      begin
+       InString:=false;
+       MultiLineStringSuffixLen:=0;
        InAsm:=false;
        InComment:=false;
        CurrentCommentType:=0;
+       CurrentCommentDepth:=0;
        InDirective:=false;
+       NestedComments:=false;
+       LookForNestedComments:=false;
      end;
 {    OldLine:=Line;}
     if (not Editor^.IsFlagSet(efKeepLineAttr)) then
       begin
+        LI^.BeginsWithString:=InString;
+        LI^.BeginsWithMultiLineStringSuffixLen:=MultiLineStringSuffixLen;
         LI^.BeginsWithAsm:=InAsm;
         LI^.BeginsWithComment:=InComment;
         LI^.BeginsWithDirective:=InDirective;
         LI^.BeginCommentType:=CurrentCommentType;
+        LI^.BeginCommentDepth:=CurrentCommentDepth;
+        LI^.BeginNestedComments:=byte(NestedComments) and 1;
+        LI^.BeginNestedComments:=LI^.BeginNestedComments or ((byte(LookForNestedComments)and 1) shl 1);
       end
     else
       begin
+        InString:=LI^.BeginsWithString;
+        MultiLineStringSuffixLen:=LI^.BeginsWithMultiLineStringSuffixLen;
         InAsm:=LI^.BeginsWithAsm;
         InComment:=LI^.BeginsWithComment;
         InDirective:=LI^.BeginsWithDirective;
         CurrentCommentType:=LI^.BeginCommentType;
+        CurrentCommentDepth:=LI^.BeginCommentDepth;
+        NestedComments:=(LI^.BeginNestedComments and 1)=1;
+        LookForNestedComments:=(LI^.BeginNestedComments and 2)=2;
       end;
     LineText:=GetLineText(CurLineNr);
     Format:=CharStr(chr(coTextColor),length(LineText));
     LastCC:=ccWhiteSpace;
     ClassStart:=1;
     SymbolConcat:='';
-    InString:=false;
+    SymbolWord:='';
+    OnlyStringSuffix:=false;
+    StringSuffixEnded:=false;
+    InStringMultiLine:=InString;
+    WhiteSpaceLine:=true;
     if LineText<>'' then
      begin
        for X:=1 to length(LineText) do
          ProcessChar(LineText[X]);
        Inc(X);
        ProcessChar(' ');
+       if (not InString) and (MultiLineStringSuffixLen>0) then
+         MultiLineStringSuffixLen:=0;
+       if InString and not InStringMultiLine  then
+       begin
+         MultiLineStringSuffixLen:=GetMultiLineStringSuffixLen;
+         if MultiLineStringSuffixLen>2 then
+           InStringMultiLine:=true;
+       end;
      end;
     SetLineFormat(Editor,CurLineNr,Format);
+    LI^.EndsWithMultiLineStringSuffixLen:=MultiLineStringSuffixLen;
+    LI^.EndsWithString:=InStringMultiLine;
     LI^.EndsWithAsm:=InAsm;
     LI^.EndsWithComment:=InComment;
     LI^.EndsInSingleLineComment:=InSingleLineComment;
+    LI^.EndNestedComments:=byte(NestedComments) and 1;
+    LI^.EndNestedComments:=LI^.EndNestedComments or ((byte(LookForNestedComments)and 1) shl 1);
+    LI^.EndCommentDepth:=CurrentCommentDepth;
     LI^.EndCommentType:=CurrentCommentType;
     LI^.EndsWithDirective:=InDirective;
     Inc(CurLineNr);
@@ -2513,11 +2902,15 @@ begin
 {$ifdef TEST_PARTIAL_SYNTAX}
          (CurLineNr>FromLine) and
 {$endif TEST_PARTIAL_SYNTAX}
+         (NextLI^.BeginsWithString=LI^.EndsWithString) and
+         (NextLI^.BeginsWithMultiLineStringSuffixLen=LI^.EndsWithMultiLineStringSuffixLen) and
          (NextLI^.BeginsWithAsm=LI^.EndsWithAsm) and
          (NextLI^.BeginsWithComment=LI^.EndsWithComment) and
          (NextLI^.BeginsWithDirective=LI^.EndsWithDirective) and
          (NextLI^.BeginCommentType=LI^.EndCommentType) and
-         (NextLI^.Format<>nil) then
+         (NextLI^.BeginNestedComments=LI^.EndNestedComments) and
+         (NextLI^.BeginCommentDepth=LI^.EndCommentDepth) and
+         (Length(NextLI^.GetFormat)>0) then
        Break;
 {$ifdef TEST_PARTIAL_SYNTAX}
     if (CurLineNr<GetLineCount) and
@@ -2561,7 +2954,7 @@ begin
   Unlock(Editor);
 end;
 
-procedure TCustomCodeEditorCore.AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: string;AFlags : longint);
+procedure TCustomCodeEditorCore.AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: sw_astring;AFlags : longint);
 begin
   Abstract;
 end;
@@ -2736,6 +3129,16 @@ begin
   Abstract;
 end;
 
+function TCustomCodeEditor.IsNestedComments(X,Y : sw_integer): boolean;
+begin
+  IsNestedComments:=false; {default behavior is no nested comments}
+end;
+
+function TCustomCodeEditor.NestedCommentsChangeCheck(CurLine : sw_integer):boolean;
+begin
+  NestedCommentsChangeCheck:=false;
+end;
+
 function TCustomCodeEditor.IsFlagSet(AFlag: longint): boolean;{$ifdef USEINLINE}inline;{$endif}
 begin
   IsFlagSet:=(GetFlags and AFlag)=AFlag;
@@ -2775,6 +3178,12 @@ begin
   IsClipboard:=false;
 end;
 
+function TCustomCodeEditor.GetMaxDisplayLength: sw_integer;
+begin
+  Abstract;
+  GetMaxDisplayLength:=0;
+end;
+
 function TCustomCodeEditor.GetLineCount: sw_integer;
 begin
   Abstract;
@@ -2799,40 +3208,40 @@ begin
   LinePosToCharIdx:=0;
 end;
 
-function TCustomCodeEditor.GetLineText(I: sw_integer): string;
+function TCustomCodeEditor.GetLineText(I: sw_integer): sw_astring;
 begin
   Abstract;
   GetLineText:='';
 end;
 
-procedure TCustomCodeEditor.SetDisplayText(I: sw_integer;const S: string);
+procedure TCustomCodeEditor.SetDisplayText(I: sw_integer;const S: sw_astring);
 begin
   Abstract;
 end;
 
-function TCustomCodeEditor.GetDisplayText(I: sw_integer): string;
+function TCustomCodeEditor.GetDisplayText(I: sw_integer): sw_astring;
 begin
   Abstract;
   GetDisplayText:='';
 end;
 
-procedure TCustomCodeEditor.SetLineText(I: sw_integer;const S: string);
+procedure TCustomCodeEditor.SetLineText(I: sw_integer;const S: sw_AString);
 begin
   Abstract;
 end;
 
-procedure TCustomCodeEditor.GetDisplayTextFormat(I: sw_integer;var DT,DF:string);
+procedure TCustomCodeEditor.GetDisplayTextFormat(I: sw_integer;var DT,DF:sw_astring);
 begin
   Abstract;
 end;
 
-function TCustomCodeEditor.GetLineFormat(I: sw_integer): string;
+function TCustomCodeEditor.GetLineFormat(I: sw_integer): sw_astring;
 begin
   { Abstract }
   GetLineFormat:='';
 end;
 
-procedure TCustomCodeEditor.SetLineFormat(I: sw_integer;const S: string);
+procedure TCustomCodeEditor.SetLineFormat(I: sw_integer;const S: sw_astring);
 begin
   { Abstract }
 end;
@@ -2847,13 +3256,13 @@ begin
   Abstract;
 end;
 
-function TCustomCodeEditor.InsertLine(LineNo: sw_integer; const S: string): PCustomLine;
+function TCustomCodeEditor.InsertLine(LineNo: sw_integer; const S: sw_astring): PCustomLine;
 begin
   Abstract;
   InsertLine:=nil; { eliminate compiler warning }
 end;
 
-procedure TCustomCodeEditor.AddLine(const S: string);
+procedure TCustomCodeEditor.AddLine(const S: sw_astring);
 begin
   Abstract;
 end;
@@ -2930,14 +3339,41 @@ begin
   SaveToFile:=OK;
 end;
 
+procedure TCustomCodeEditor.AdjustBookMark(X, NewX, Y, NewY: sw_integer);
+var P : PEditorBookMark;
+    Count,Index : sw_integer;
+    Line,NewLine : PCustomLine;
+begin
+  if NewY=Y then
+    GetLine(Y)^.AdjustMark(@Self,X,NewX-X)
+  else
+  begin
+    Line:=GetLine(Y);
+    Count:=Line^.MarkCount(@Self);
+    if Count > 0 then
+    begin
+      NewLine:=GetLine(NewY);
+      for Index:=Count-1 downto 0 do
+      begin
+        P:=Line^.GetMark(@Self,Index);
+        if P^.Pos.X>=X then
+        begin
+          P^.Pos.X:=Max(0,P^.Pos.X+(NewX-X));
+          Line^.DeleteMark(@Self,P);
+          NewLine^.InsertMark(@Self,P);
+        end;
+      end;
+    end;
+  end;
+end;
 
 function TCustomCodeEditor.InsertFrom(Editor: PCustomCodeEditor): Boolean;
 var OK: boolean;
-    CP,RX,RSX,LineDelta,LineCount: Sw_integer;
+    CP,CI,RX,RSX,LineDelta,LineCount: Sw_integer;
     StartPos,DestPos,BPos,EPos: TPoint;
     LineStartX,LineEndX: Sw_integer;
     TabSize,CharIdxStart,CharIdxEnd: Sw_integer;
-    S,DS,BeforeS,OrigS,AfterS: string;
+    S,DS,BeforeS,OrigS,AfterS: sw_astring;
     VerticalBlock: boolean;
     SEnd: TPoint;
 begin
@@ -2955,6 +3391,10 @@ begin
   OK:=(Editor^.SelStart.X<>Editor^.SelEnd.X) or (Editor^.SelStart.Y<>Editor^.SelEnd.Y);
   if OK then
   begin
+    if not (Clipboard=@Self) and IsFlagSet(efOverwriteBlocks) and InSelectionArea then
+      DelSelect; {delete selection before paste}
+    CI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
+    CurPos.X:=CharIdxToLinePos(CurPos.Y,CI); {tab space adjustment}
     StartPos:=CurPos; DestPos:=CurPos;
     EPos:=CurPos;
     VerticalBlock:=Editor^.IsFlagSet(efVerticalBlocks);
@@ -2975,10 +3415,11 @@ begin
         Inc(CP);
       end;
     BeforeS:=BeforeS+CharStr(' ',DestPos.X-RX);
-    AfterS:=Copy(OrigS,LinePosToCharIdx(DestPos.Y,DestPos.X),High(OrigS));
+    AfterS:=Copy(OrigS,LinePosToCharIdx(DestPos.Y,DestPos.X),Length(OrigS));
     BPos:=CurPos;
     while OK and (LineDelta<LineCount) do
     begin
+      S:=Editor^.GetLineText(Editor^.SelStart.Y+LineDelta);
       if (LineDelta>0) and (VerticalBlock=false) then
         begin
           InsertLine(DestPos.Y,'');
@@ -2995,19 +3436,25 @@ begin
         LineStartX:=0;
 
       if (LineDelta=LineCount-1) or VerticalBlock then
-        LineEndX:=Editor^.SelEnd.X-1
+        begin
+          LineEndX:=Editor^.SelEnd.X-1;
+          CharIdxEnd:=Editor^.LinePosToCharIdx(Editor^.SelStart.Y+LineDelta,LineEndX);
+        end
       else
-        LineEndX:=High(S);
+        begin
+          LineEndX:=Length(S);
+          CharIdxEnd:=LineEndX;
+        end;
 
       CharIdxStart:=Editor^.LinePosToCharIdx(Editor^.SelStart.Y+LineDelta,LineStartX);
-      CharIdxEnd:=Editor^.LinePosToCharIdx(Editor^.SelStart.Y+LineDelta,LineEndX);
       if LineEndX<LineStartX then
         S:=''
       else if VerticalBlock then
-        S:=RExpand(copy(Editor^.GetLineText(Editor^.SelStart.Y+LineDelta),CharIdxStart,CharIdxEnd-CharIdxStart+1),
-                   Min(CharIdxEnd-CharIdxStart+1,High(S)))
-      else
-        S:=copy(Editor^.GetLineText(Editor^.SelStart.Y+LineDelta),CharIdxStart,CharIdxEnd-CharIdxStart+1);
+      begin
+        S:=copy(S,CharIdxStart,CharIdxEnd-CharIdxStart+1);
+        S:=RExpand(S,Min(CharIdxEnd-CharIdxStart+1,Length(S)));
+      end else
+        S:=copy(S,CharIdxStart,CharIdxEnd-CharIdxStart+1);
       if VerticalBlock=false then
         begin
           DS:=BeforeS+S;
@@ -3078,18 +3525,24 @@ begin
   InsertFrom:=OK;
 end;
 
-function TCustomCodeEditor.InsertText(const S: string): Boolean;
-var I: sw_integer;
+function TCustomCodeEditor.InsertText(const S: sw_astring): Boolean;
+var I,CI: sw_integer;
     OldPos: TPoint;
     HoldUndo : boolean;
+    WasAutoBrackets : boolean;
 begin
   Lock;
+  CI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
+  CurPos.X:=CharIdxToLinePos(CurPos.Y,CI); {tab space adjustment}
   OldPos:=CurPos;
   HoldUndo:=GetStoreUndo;
+  WasAutoBrackets:=GetAutoBrackets;
+  SetAutoBrackets(false);
   SetStoreUndo(false);
   for I:=1 to length(S) do
     AddChar(S[I]);
   InsertText:=true;
+  SetAutoBrackets(WasAutoBrackets);
   SetStoreUndo(HoldUndo);
   AddAction(eaInsertText,OldPos,CurPos,S,GetFlags);
   UnLock;
@@ -3277,10 +3730,10 @@ end;
 
 procedure TCustomCodeEditor.ScrollTo(X, Y: sw_Integer);
 begin
-  inherited ScrollTo(X,Y);
-  if (HScrollBar=nil) or (VScrollBar=nil) then
-     begin Delta.X:=X; Delta.Y:=Y; end;
-  DrawView;
+   inherited ScrollTo(X,Y);
+   if (HScrollBar=nil) then Delta.X:=Max(X,0);
+   if (VScrollBar=nil) then Delta.Y:=Max(Min(Y,GetLineCount-1),0);
+   if (HScrollBar=nil) or (VScrollBar=nil) then DrawView;
 end;
 
 function TCustomCodeEditor.IsModal: boolean;
@@ -3316,8 +3769,11 @@ begin
 end;
 
 procedure TCustomCodeEditor.DoLimitsChanged;
+var DisplayLength : sw_integer;
 begin
-  SetLimit(MaxLineLength+1,EditorToViewLine(GetLineCount));
+  DisplayLength:=((GetMaxDisplayLength+128) shr 6) shl 6;
+  DisplayLength:=Min(DisplayLength,MaxLineLength+1);
+  SetLimit(DisplayLength,EditorToViewLine(GetLineCount));
 end;
 
 procedure TCustomCodeEditor.BindingsChanged;
@@ -3418,17 +3874,30 @@ var DontClear : boolean;
   end;
 type TCCAction = (ccCheck,ccClear,ccDontCare);
 var
-  StartP,P: TPoint;
+  StartP,P,PrevP: TPoint;
   E: TEvent;
   OldEvent : PEvent;
   CCAction: TCCAction;
-  LinesScroll : sw_integer;
 begin
   CCAction:=ccClear;
   E:=Event;
   OldEvent:=CurEvent;
   if (E.What and (evMouse or evKeyboard))<>0 then
     CurEvent:=@E;
+{$ifdef WinClipSupported}
+  if (Event.What=evKeyDown) then   { TODO  move in ConvertEvent }
+    if ((Event.KeyShift and $4) <>0) and ((Event.KeyShift and $3) <>0) then
+      if Event.KeyCode = kbCtrlC then
+        begin
+          Event.What:=evCommand;
+          Event.Command:=cmCopyWin;
+        end
+      else if (Event.KeyCode = kbCtrlV) and (IsReadOnly=false) then
+        begin
+          Event.What:=evCommand;
+          Event.Command:=cmPasteWin;
+        end;
+{$endif WinClipSupported}
   if (InASCIIMode=false) or (Event.What<>evKeyDown) then
    if (Event.What<>evKeyDown) or (Event.KeyCode<>kbEnter) or (IsReadOnly=false) then
    if (Event.What<>evKeyDown) or
@@ -3437,39 +3906,54 @@ begin
     ConvertEvent(Event);
   case Event.What of
     evMouseDown :
-      if MouseInView(Event.Where) then
-       if (Event.Buttons=mbScrollWheelUp) then { mouse scroll up}
-         begin
-           LinesScroll:=1;
-           if Event.Double then LinesScroll:=LinesScroll+4;
-           ScrollTo(Delta.X, Delta.Y + LinesScroll);
-         end else
-       if (Event.Buttons=mbScrollWheelDown) then  { mouse scroll down }
-         begin
-           LinesScroll:=-1;
-           if Event.Double then LinesScroll:=LinesScroll-4;
-           ScrollTo(Delta.X, Delta.Y + LinesScroll);
-         end else
        if (Event.Buttons=mbRightButton) then
          begin
            MakeLocal(Event.Where,P); Inc(P.X); Inc(P.Y);
            LocalMenu(P);
            ClearEvent(Event);
          end else
-       if Event.Buttons=mbLeftButton then
+       if (Event.Buttons=mbLeftButton) and not(Event.Double or Event.Triple) then
         begin
           GetMousePos(P);
           StartP:=P;
           SetCurPtr(P.X,P.Y);
+          PrevP.X:=-1; { first time previous point is different }
           repeat
             GetMousePos(P);
-            if PointOfs(P)<PointOfs(StartP)
-               then SetSelection(P,StartP)
-               else SetSelection(StartP,P);
-            SetCurPtr(P.X,P.Y);
-            DrawView;
-          until not MouseEvent(Event, evMouseMove+evMouseAuto);
+            if ((P.X<>PrevP.X) or (P.Y<>PrevP.Y)) or (Event.What = evMouseWheel) then
+            begin
+              Lock;
+              if Event.What = evMouseWheel then
+              begin
+                E:=Event;
+                HandleEvent(Event); { do scrolling }
+                Event:=E;
+                GetMousePos(P); { new mouse position after scroll up/down }
+              end;
+              SetCurPtr(P.X,P.Y);
+              PrevP:=P;
+              if PointOfs(P)<PointOfs(StartP)
+                 then SetSelection(P,StartP)
+              else if PointOfs(P)>PointOfs(StartP)
+                 then SetSelection(StartP,P)
+              else if PointOfs(SelStart)<>PointOfs(SelEnd) { if selected only then remove selection }
+                 then SetSelection(StartP,P);
+              DrawView;
+              UnLock;
+            end;
+          until not MouseEvent(Event, evMouseMove+evMouseAuto+evMouseWheel);
           DrawView;
+          ClearEvent(Event);
+        end else
+      if (Event.Buttons=mbLeftButton) and (Event.Double) then
+        begin
+          SelectWord;
+          ClearEvent(Event);
+        end else
+      if (Event.Buttons=mbLeftButton) and (Event.Triple) then
+        begin
+          SelectLine;
+          ClearEvent(Event);
         end;
     evKeyDown :
       begin
@@ -3546,6 +4030,8 @@ begin
           cmLineDown    : LineDown;
           cmPageUp      : PageUp;
           cmPageDown    : PageDown;
+          cmScrollOneUp : ScrollOneUp;
+          cmScrollOneDown:ScrollOneDown;
           cmTextStart   : TextStart;
           cmTextEnd     : TextEnd;
           cmWindowStart : WindowStart;
@@ -3603,9 +4089,12 @@ begin
           cmCut         : ClipCut;
           cmCopy        : ClipCopy;
           cmPaste       : ClipPaste;
+          cmPasteText   : PasteText(Event.InfoPtr,Event.Id);
 
           cmSelectAll   : SelectAll(true);
           cmUnselect    : SelectAll(false);
+          cmCommentSel  : CommentSel;
+          cmUnCommentSel: UnCommentSel;
 {$ifdef WinClipSupported}
           cmCopyWin     : ClipCopyWin;
           cmPasteWin    : ClipPasteWin;
@@ -3751,14 +4240,18 @@ var SelectColor,
     PX: TPoint;
     LineCount: sw_integer;
     Line: PCustomLine;
-    LineText,Format: string;
+    LineText,Format: sw_astring;
     isBreak : boolean;
     C: AnsiChar;
     FreeFormat: array[0..MaxLineLength] of boolean;
     Color: word;
     ColorTab: array[coFirstColor..coLastColor] of word;
     ErrorLine: integer;
+{$if MaxViewWidth < 256}
     ErrorMsg: string[MaxViewWidth];
+{$else}
+    ErrorMsg: string[255];
+{$endif}
 function CombineColors(Orig,Modifier: byte): byte;
 var Color: byte;
 begin
@@ -3772,7 +4265,7 @@ begin
     Color:=(Color and $F0) or $F;
   CombineColors:=Color;
 end;
-var
+var ShowIndent:boolean;
     FoldPrefix,FoldSuffix: string;
 {    SkipLine: boolean;}
 {    FoldStartLine: sw_integer;}
@@ -3808,6 +4301,7 @@ begin
   HighlightColColor:=GetColor(11);
   HighlightRowColor:=GetColor(12);
   ErrorMessageColor:=GetColor(16);
+  ShowIndent:=IsFlagSet(efShowIndent) and IsFlagSet(efSyntaxHighlight);
 {$ifdef TEST_PARTIAL_SYNTAX}
   If (not GetSyntaxCompleted) and (GetLastSyntaxedLine<Delta.Y+Size.Y) then
     UpdateAttrsRange(GetLastSyntaxedLine,Delta.Y+Size.Y,AttrAll);
@@ -3846,12 +4340,19 @@ begin
         begin
           Color:=ColorTab[coTextColor];
           FillChar(FreeFormat,SizeOf(FreeFormat),1);
-          MoveChar(B,' ',Color,Size.X);
+          { MoveChar(B,' ',Color,Size.X); redundant, following for loop covers it all }
           GetDisplayTextFormat(AY,LineText,Format);
+          if ShowIndent and (length(Format)=length(LineText)) then
+            for X:=1 to length(LineText) do
+            begin
+              if LineText[X] <> ' ' then break;
+              if (X>1 ) and (X and 1 = 1) then
+                if ord(Format[X]) in [coWhiteSpaceColor,coTabColor] then
+                  LineText[X]:=#179; { | show line indent }
+            end;
 
-      {    if FlagSet(efSyntaxHighlight) then MaxX:=length(LineText)+1
-             else }MaxX:=Size.X+Delta.X;
-          for X:=1 to Min(MaxX,High(LineText)) do
+          MaxX:=Min(Delta.X+1+Size.X,MaxLineLength);
+          for X:=(MaxX-Size.X) to MaxX+1 do
           begin
             AX:=Delta.X+X-1;
             if X<=length(LineText) then C:=LineText[X] else C:=' ';
@@ -3918,7 +4419,8 @@ begin
                 FreeFormat[X]:=false;
               end;
 
-            if (0<=LSX+X-1-Delta.X) and (LSX+X-1-Delta.X<MaxViewWidth) then
+            { redundant check, for loop condition is taking care of correct range
+            if (0<=LSX+X-1-Delta.X) and (LSX+X-1-Delta.X<MaxViewWidth) then  }
               MoveChar(B[LSX+X-1-Delta.X],C,Color,1);
           end; { for X:=1 to ... }
           if IsFlagSet(efFolds) then
@@ -3936,13 +4438,17 @@ begin
 end;
 
 procedure TCustomCodeEditor.DrawCursor;
+var InsertMode : boolean;
 begin
   if Elockflag>0 then
     DrawCursorCalled:=true
   else
     begin
       SetCursor(GetReservedColCount+CurPos.X-Delta.X,EditorToViewLine(CurPos.Y)-Delta.Y);
-      SetState(sfCursorIns,Overwrite);
+      InsertMode:=Overwrite;
+      if IsFlagSet (efBlockInsCursor) then
+         InsertMode:=not InsertMode; {reverse insert and overwrite mode cursor shapes}
+      SetState(sfCursorIns,InsertMode);
     end;
 end;
 
@@ -3999,7 +4505,7 @@ begin
   UpdateAttrsRange:=-1;
 end;
 
-procedure TCustomCodeEditor.AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: string;AFlags : longint);
+procedure TCustomCodeEditor.AddAction(AAction: byte; AStartPos, AEndPos: TPoint; AText: sw_astring;AFlags : longint);
 begin
   { Abstract }
 end;
@@ -4079,7 +4585,7 @@ begin
 end;
 
 procedure TCustomCodeEditor.Indent;
-var S, PreS: string;
+var S, PreS: sw_astring;
     Shift: integer;
 begin
   S:=GetLineText(CurPos.Y);
@@ -4095,7 +4601,7 @@ begin
       while (CurPos.X+Shift<length(PreS)) and (PreS[CurPos.X+Shift]<>' ') do
        Inc(Shift);
     end;
-  SetLineText(CurPos.Y,RExpand(copy(S,1,CurPos.X+1),CurPos.X+1)+CharStr(' ',Shift)+copy(S,CurPos.X+2,High(S)));
+  SetLineText(CurPos.Y,RExpand(copy(S,1,CurPos.X+1),CurPos.X+1)+CharStr(' ',Shift)+copy(S,CurPos.X+2,Length(S)));
   SetCurPtr(CurPos.X+Shift,CurPos.Y);
   UpdateAttrs(CurPos.Y,attrAll);
   DrawLines(CurPos.Y);
@@ -4118,33 +4624,66 @@ end;
 
 procedure TCustomCodeEditor.WordLeft;
 var X, Y: sw_integer;
-    Line: string;
+    Line: sw_astring;
     GotIt,FoundNonSeparator: boolean;
+    N,orgX : sw_integer;
+    WhiteSpaceLen : sw_word;
+    EnhancedStops : boolean;
 begin
+  EnhancedStops:=IsFlagSet(efEnhWordRightLeft);
   X:=CurPos.X;
   Y:=CurPos.Y;
+  orgX:=X;
   GotIt:=false;
   FoundNonSeparator:=false;
   while (Y>=0) do
    begin
+     X:=length(GetDisplayText(Y));
      if Y=CurPos.Y then
-      begin
-   X:=length(GetDisplayText(Y));
-   if CurPos.X<X then
-     X:=CurPos.X; Dec(X);
-   if (X=-1) then
+       if CurPos.X<X then
+         X:=CurPos.X;
+     Dec(X);
+     if (X=-1) then {at very beginning of line, go to prev line}
      begin
-       Dec(Y);
-       if Y>=0 then
-        X:=length(GetDisplayText(Y));
-       Break;
+       while true do  { skip all empyt lines }
+       begin
+         Dec(Y);
+         if Y>=0 then
+           X:=length(GetDisplayText(Y));
+         if (X >0) or (Y<=0) then
+           Break;
+         if not EnhancedStops then
+           break; {stop even at empty lines (TP compatibility)}
+       end;
+       break;
      end;
-      end
-     else
-      X:=length(GetDisplayText(Y))-1;
      Line:=GetDisplayText(Y);
+     if Y<>CurPos.Y then
+       orgX:=X;
+     WhiteSpaceLen:=0; {Count leading white spaces}
+     if (Length(Line)>=X+1) then
+       while (X>=WhiteSpaceLen) do
+         begin
+           if not (Line[WhiteSpaceLen+1] in [' ',#9]) then
+             break;
+           inc(WhiteSpaceLen);
+         end;
+     if WhiteSpaceLen>X then
+       X:=-1; { moving to next line }
+
      while (X>=0) and (GotIt=false) do
       begin
+        if EnhancedStops and (WhiteSpaceLen=0) and (X=0) and (orgX>0) then
+        begin
+          GotIt:=true; {stop at very beginning of line, if no white space}
+          break;
+        end;
+        if EnhancedStops and (WhiteSpaceLen = X+1) then
+        begin
+          GotIt:=true; {stop before leading white space}
+          inc(X);
+          break;
+        end;
    if FoundNonSeparator then
     begin
       if IsWordSeparator(Line[X+1]) then
@@ -4156,7 +4695,62 @@ begin
     end
    else
     if not IsWordSeparator(Line[X+1]) then
-     FoundNonSeparator:=true;
+     FoundNonSeparator:=true
+    else if EnhancedStops then
+      begin
+        { stop on comment start, comment end }
+        if Line[X+1] in ['(','*',')','/','{','}'] then
+        begin
+          (* comment  } at end of line *)
+          if (Length(line)=X+1) and (X<orgX-1) then
+             if  (Line[X+1] = '}') then
+               begin
+                 GotIt:=true;
+                 inc(X,2);
+               end;
+          (* comment  { at end of line or right in front of cursor *)
+          if (Length(line)=X+1) and (X<=orgX-1) then
+             if  (Line[X+1] = '{') and ((X=0) or ((X>1) and (Line[X]<>'{'))) then
+               begin
+                 GotIt:=true;
+                 inc(X,1);
+               end;
+          if X<orgX then
+            if Length(line)>=X+2 then
+              if ((Line[X+1] = '/') and (Line[X+2] = '/'))
+                 or ((Line[X+1] = '(') and (Line[X+2] = '*'))
+                 or ((Line[X+1] = '*') and (Line[X+2] = ')'))
+                 or ((Line[X+1] = '{') and (Line[X+2] <> '{') and ((X=0) or ((X>0) and (Line[X] <> '{') )))
+                 or ((Line[X+1] = '}') and (Line[X+2] <> '}'))
+                 or ((Line[X+1] = '{') and (X>0) and (Line[X] <> '{'))
+                then
+              begin
+                GotIt:=true;
+                (* comment  } *)
+                if GotIt and  (Line[X+1] = '}') then
+                  if (X<orgX-1) then
+                    Inc(X,1)
+                  else
+                    GotIt:=false;
+                { comment *) }
+                if GotIt and (Line[X+1] = '*') then
+                  if (X<orgX-2) then
+                    Inc(X,2)
+                  else
+                    GotIt:=false;
+                { comment // }
+                if Line[X+1] = '/' then
+                  for N:=1 to X do
+                    if (Line[N] = '/') and (Line[N+1] = '/') then
+                    begin
+                      GotIt:=false;
+                      break;
+                    end;
+                if GotIt then
+                  Inc(X);
+              end;
+        end; { of comment stop }
+      end;
    Dec(X);
    if (X=0) and (IsWordSeparator(Line[1])=false) then
     begin
@@ -4169,10 +4763,14 @@ begin
      X:=0;
      Dec(Y);
      if Y>=0 then
-      begin
-   X:=length(GetDisplayText(Y));
-   Break;
-      end;
+     begin
+       X:=length(GetDisplayText(Y));
+       if X>0 then
+         Break;
+       if not EnhancedStops then
+         break; {stop even at empty lines (TP compatibility)}
+     end;
+     orgX:=X;
    end;
   if Y<0 then Y:=0; if X<0 then X:=0;
   SetCurPtr(X,Y);
@@ -4180,47 +4778,129 @@ end;
 
 procedure TCustomCodeEditor.WordRight;
 var X, Y: sw_integer;
-    Line: string;
+    Line: sw_astring;
     GotIt: boolean;
+    N : sw_integer;
+    EnhancedStops : boolean;
 begin
+  EnhancedStops:=IsFlagSet(efEnhWordRightLeft);
   X:=CurPos.X; Y:=CurPos.Y; GotIt:=false;
   while (Y<GetLineCount) do
   begin
     if Y=CurPos.Y then
-       begin
-    X:=CurPos.X; Inc(X);
-    if (X>length(GetDisplayText(Y))-1) then
-       begin Inc(Y); X:=0; end;
-       end else X:=0;
-    Line:=GetDisplayText(Y);
-    while (X<=length(Line)+1) and (GotIt=false) and (Line<>'') do
-    begin
-      if X=length(Line)+1 then begin GotIt:=true; Dec(X); Break end;
-      if IsWordSeparator(Line[X]) then
-    begin
-      while (Y<GetLineCount) and
-       (X<=length(Line)) and (IsWordSeparator(Line[X])) do
-       begin
-         Inc(X);
-         if X>=length(Line) then
-            begin GotIt:=true; Dec(X); Break; end;
-       end;
-      if (GotIt=false) and (X<length(Line)) then
       begin
-        Dec(X);
-        GotIt:=true;
-        Break;
+        X:=CurPos.X; Inc(X);
+        if (X>length(GetDisplayText(Y))) then
+          begin
+            Inc(Y);
+            X:=0;
+          end;
+      end else X:=0;
+    Line:=GetDisplayText(Y);
+    N:=X;
+    if N<1 then N:=1;
+    if EnhancedStops and (N<=length(Line)) and (Line[N] = ' ') then {sepcial exception if line beginning contains only spaces then we stop at the beginning of word (not at end)}
+    begin
+      N:=1;
+      {count spaces in beginning of line}
+      while (Y<GetLineCount) and (N<=length(Line)) and (Line[N] = ' ') do
+      begin
+        if N>=length(Line) then
+          break;
+        inc(N);
+      end;
+      {if not IsWordSeparator(Line[N]) then }
+         if X<N then   {special case detected, stop at first non white space character}
+           begin X:=N; dec(X); GotIt:=true; break; end;
+    end;
+    if not EnhancedStops then { skip current word }
+    begin
+      if (X=0) and (Length(Line)>0) then
+        inc(X);
+      while (X<=length(Line)) and (GotIt=false) and (Line<>'') do
+      begin
+        if IsWordSeparator(Line[X]) then break;
+        Inc(X);
       end;
     end;
+    { find end of word (if EnhancedStops=false then beginning of word) }
+    while (X<=length(Line)+1) and (GotIt=false) and (Line<>'') do
+    begin
+      if X=length(Line)+1 then  {end of line found }
+        begin
+          GotIt:=true;
+          Dec(X);
+          Break
+        end;
+      if (X>0) and (not IsWordSeparator(Line[X])) then
+        begin
+          if not EnhancedStops then { stop at beginning of word }
+            begin GotIt:=true; Dec(X); Break; end;
+          while (Y<GetLineCount) and (X<=length(Line)) and not (IsWordSeparator(Line[X])) do
+          begin
+            Inc(X);
+            if X>length(Line) then
+              begin GotIt:=true; Dec(X); Break; end;
+          end;
+          if (GotIt=false) and (X<=length(Line)) then
+            begin Dec(X); GotIt:=true; Break; end;
+        end
+      else if EnhancedStops then
+        begin
+          { stop on comment start, comment end }
+          (* comment } *)
+          if (X>0) and (Line[X] = '}') then
+            if X<length(Line) then
+              if (Line[X+1] <> '}') then
+                GotIt:=true;
+          { comment  *)  cursor on ")"}
+          if ((X>1)and (Line[X-1] = '*') and (Line[X] = ')')) then
+            GotIt:=true;
+          if not GotIt and (Line[X+1] in ['(','*',')','/','{']) then
+          begin
+            (* comment "{" *)
+            if (Line[X+1] = '{') then
+            begin
+              if X>0 then
+                if (Line[X] <> '{') then
+                 GotIt:=true;
+              if X = 0 then
+                GotIt:=true;
+            end;
+            { comments  // (*  *) }
+            if (Length(Line)>=X+2) then
+              if ((Line[X+1] = '/') and (Line[X+2] = '/'))
+                or ((Line[X+1] = '(') and (Line[X+2] = '*'))
+                or ((Line[X+1] = '*') and (Line[X+2] = ')'))
+                or ((X>0)and (Line[X] = '*') and (Line[X+1] = ')')) then
+              begin
+                GotIt:=true;
+                if ((X>0)and (Line[X] = '*') and (Line[X+1] = ')')) then
+                  inc(X,1);
+                if ((Line[X+1] = '*') and (Line[X+2] = ')')) then
+                  inc(X,2);
+                if Line[X+1] = '/' then
+                  for N:=1 to X do
+                    if (Line[N] = '/') and (Line[N+1] = '/') then
+                      begin
+                        GotIt:=false; {there was line comment before }
+                        break;
+                      end;
+              end;
+          end; { of comment stop }
+        end;
+      if GotIt then Break;
       Inc(X);
     end;
     if GotIt then Break;
+    {next line}
     X:=0;
     Inc(Y);
     if (Y<GetLineCount) then
     begin
       Line:=GetDisplayText(Y);
-      if (Line<>'') and (IsWordSeparator(Line[1])=false) then Break;
+      if (Line<>'') and (IsWordSeparator(Line[1])=false) then
+        Break;
     end;
   end;
   if Y=GetLineCount then Y:=GetLineCount-1;
@@ -4234,7 +4914,7 @@ end;
 
 procedure TCustomCodeEditor.LineEnd;
 var
-  s : string;
+  s : sw_astring;
   i : longint;
 begin
   if CurPos.Y<GetLineCount then
@@ -4243,6 +4923,7 @@ begin
       i:=length(s);
       while (i>0) and (s[i]=' ') do
         dec(i);
+      i:=Min(i,MaxLineLength);
       SetCurPtr(i,CurPos.Y);
     end
   else
@@ -4310,30 +4991,65 @@ begin
     SetCurPtr(CurPos.X,Min(GetLineCount-1,NL));
 end;
 
+procedure TCustomCodeEditor.ScrollOneUp;
+var NL: sw_integer;
+    LinesScroll : sw_integer;
+    cursorInVisibleArea : boolean;
+begin
+  LinesScroll:=-1;
+  cursorInVisibleArea:= (CurPos.Y>=Delta.Y) and (CurPos.Y<(Delta.Y+Size.Y)); {ignore folds here}
+  NL:=NextVisibleLine(CurPos.Y-1,false);
+  ScrollTo(Delta.X, Delta.Y + LinesScroll);
+  if cursorInVisibleArea and (CurPos.Y>=(Delta.Y+Size.Y)) then {do not allow corsor leave visible area}
+  if NL<>-1 then
+    SetCurPtr(CurPos.X,NL); {cursor stick to window bottom line}
+end;
+
+procedure TCustomCodeEditor.ScrollOneDown;
+var NL: sw_integer;
+    LinesScroll : sw_integer;
+    cursorInVisibleArea : boolean;
+begin
+  LinesScroll:=1;
+  cursorInVisibleArea:= (CurPos.Y>=Delta.Y) and (CurPos.Y<(Delta.Y+Size.Y)); {ignore folds here}
+  NL:=NextVisibleLine(CurPos.Y+1,true);
+  ScrollTo(Delta.X, Delta.Y + LinesScroll);
+  if cursorInVisibleArea and (CurPos.Y<Delta.Y) then {do not allow corsor leave visible area}
+  if NL>=0 then
+    SetCurPtr(CurPos.X,Min(GetLineCount-1,NL));  {cursor stick to window top line}
+end;
+
 procedure TCustomCodeEditor.TextStart;
 begin
   SetCurPtr(0,0);
 end;
 
 procedure TCustomCodeEditor.TextEnd;
-var s : string;
+var s : sw_astring;
     i : longint;
 begin
   s:=GetDisplayText(GetLineCount-1);
   i:=length(s);
   while (i>0) and (s[i]=' ') do
     dec(i);
+  i:=Min(i,MaxLineLength);
   SetCurPtr(i,GetLineCount-1);
 end;
 
 procedure TCustomCodeEditor.WindowStart;
 begin
-  SetCurPtr(CurPos.X,Delta.Y);
-end;
+  if not NoSelect and ShouldExtend then
+    TextStart    {select to start}
+  else
+    SetCurPtr(CurPos.X,Delta.Y);
+ end;
 
-procedure TCustomCodeEditor.WindowEnd;
-begin
-  SetCurPtr(CurPos.X,Delta.Y+Size.Y-1);
+ procedure TCustomCodeEditor.WindowEnd;
+ begin
+  if not NoSelect and ShouldExtend then
+    TextEnd      {select to end}
+  else
+    SetCurPtr(CurPos.X,Delta.Y+Size.Y-1);
 end;
 
 procedure TCustomCodeEditor.JumpSelStart;
@@ -4348,9 +5064,73 @@ begin
   SetCurPtr(SelEnd.X,SelEnd.Y);
 end;
 
-procedure TCustomCodeEditor.JumpMark(MarkIdx: integer);
+function TCustomCodeEditor.GetBookmark(MarkIdx: sw_integer):TEditorBookMark;
+var LineNr : sw_integer;
 begin
-  DontConsiderShiftState:=true;
+  GetBookmark.Valid:=false;
+  if not (MarkIdx in [0..9]) then exit;
+  with Bookmarks[MarkIdx] do
+    if Valid=true then
+    begin
+      LineNr:=FindMarkLineNr(MarkIdx);
+      if LineNr>=0 then
+        Pos.Y:=LineNr
+      else
+        Valid:=false;
+    end;
+  GetBookmark:=Bookmarks[MarkIdx];
+end;
+
+procedure TCustomCodeEditor.SetBookmark(MarkIdx: sw_integer; ABookmark: TEditorBookMark);
+var Line : PCustomLine;
+begin
+  if not (MarkIdx in [0..9]) then exit;
+  Bookmarks[MarkIdx]:=ABookmark;
+  if ABookmark.Valid then
+  begin
+    {invalid Pos.Y will lead to crash check it beforehand }
+    if (ABookmark.Pos.X<0) or (ABookmark.Pos.X>MaxLineLength)
+       or (ABookmark.Pos.Y<0) or (ABookmark.Pos.Y>=GetLineCount) then
+    begin
+      Bookmarks[MarkIdx].Valid:=false;
+      exit;
+    end;
+    Line:=GetLine(ABookmark.Pos.Y);
+    if Assigned(Line) then
+      Line^.InsertMark(@Self,@Bookmarks[MarkIdx])
+    else
+      Bookmarks[MarkIdx].Valid:=false; {this should not be ever reached, but safety first}
+  end;
+end;
+
+function TCustomCodeEditor.FindMarkLineNr(MarkIdx: sw_integer):sw_integer;
+var Count, CurLineNr, CurMarkNr : sw_integer;
+    Line : PCustomLine;
+    LI : PEditorLineInfo;
+begin
+  Count:=GetLineCount;
+  FindMarkLineNr:=-1;
+  if Count>1 then
+    for CurLineNr:=0 to Count-1 do
+    begin
+      Line:=GetLine(CurLineNr);
+      if Assigned(Line) then LI:=Line^.GetEditorInfo(@Self) else LI:=nil;
+      if Assigned(LI) then
+        if Assigned(LI^.BookMarks) then
+        begin
+          CurMarkNr := LI^.BookMarks^.IndexOf(@Bookmarks[MarkIdx]);
+          if CurMarkNr>=0 then
+          begin
+            FindMarkLineNr:=CurLineNr;
+            break;
+          end;
+        end;
+    end;
+end;
+
+procedure TCustomCodeEditor.JumpMark(MarkIdx: integer);
+var LineNr : sw_integer;
+begin
   if (MarkIdx<Low(Bookmarks)) or (MarkIdx>High(Bookmarks)) then
     begin ErrorBox(FormatStrInt(msg_invalidmarkindex,MarkIdx),nil); Exit; end;
 
@@ -4358,17 +5138,38 @@ begin
   if Valid=false then
     InformationBox(FormatStrInt(msg_marknotset,MarkIdx),nil)
   else
-    SetCurPtr(Pos.X,Pos.Y);
-  DontConsiderShiftState:=false;
+    begin
+      DontConsiderShiftState:=true;
+      LineNr:=FindMarkLineNr(MarkIdx); {Find current marked line}
+      if LineNr>=0 then
+        SetCurPtr(Pos.X,LineNr)
+      else
+        InformationBox(FormatStrInt(msg_marknotset,MarkIdx),nil);
+      DontConsiderShiftState:=false;
+    end;
 end;
 
 procedure TCustomCodeEditor.DefineMark(MarkIdx: integer);
+var Line : PCustomLine;
+    LI : PEditorLineInfo;
+    LineNr : sw_integer;
 begin
   if (MarkIdx<Low(Bookmarks)) or (MarkIdx>High(Bookmarks)) then
     begin
       ErrorBox(FormatStrInt(msg_invalidmarkindex,MarkIdx),nil);
       Exit;
     end;
+  if Bookmarks[MarkIdx].Valid then
+  begin
+    LineNr:=FindMarkLineNr(MarkIdx); {find current marked line}
+    if LineNr>=0 then
+    begin
+      Line:=GetLine(LineNr);
+      Line^.DeleteMark(@Self,@Bookmarks[MarkIdx]);
+    end;
+  end;
+  Line:=GetLine(CurPos.Y);
+  Line^.InsertMark(@Self,@Bookmarks[MarkIdx]);
   with Bookmarks[MarkIdx] do
    begin
      Pos:=CurPos;
@@ -4470,7 +5271,7 @@ end;
 procedure TCustomCodeEditor.ChangeCaseArea(StartP,EndP: TPoint; CaseAction: TCaseAction);
 var Y,X: sw_integer;
     X1,X2: sw_integer;
-    S: string;
+    S: sw_astring;
     C: AnsiChar;
     StartPos : TPoint;
     HoldUndo : boolean;
@@ -4635,7 +5436,7 @@ procedure TCustomCodeEditor.FindMatchingDelimiter(ScanForward: boolean);
 const OpenSymbols  : string[6] = '[{(<''"';
       CloseSymbols : string[6] = ']})>''"';
 var SymIdx: integer;
-    LineText,LineAttr: string;
+    LineText,LineAttr: sw_astring;
     CurChar: AnsiChar;
     X,Y: sw_integer;
     LineCount: sw_integer;
@@ -4712,7 +5513,7 @@ end;
 
 function TCustomCodeEditor.InsertNewLine: Sw_integer;
 var i,Ind: Sw_integer;
-    S,IndentStr: string;
+    S,IndentStr: Sw_astring;
 procedure CalcIndent(LineOver: Sw_integer);
 begin
   if (LineOver<0) or (LineOver>GetLineCount) or ((GetFlags and efNoIndent)<>0) then
@@ -4761,9 +5562,9 @@ begin
 {      SelBack:=length(S)-SelEnd.X;}
       SetLineText(CurPos.Y,RTrim(S,not IsFlagSet(efUseTabCharacters)));
     end;
-    SetLineText(CurPos.Y,copy(S,1,CI-1));
     CalcIndent(CurPos.Y);
-    S:=copy(S,CI,High(S));
+    SetLineText(CurPos.Y,copy(S,1,CI-1));
+    S:=copy(S,CI,Length(S));
     i:=1;
     while (i<=length(s)) and (i<=length(IndentStr)) and (s[i]=' ') do
       inc(i);
@@ -4774,6 +5575,7 @@ begin
 (*    if PointOfs(SelStart)<>PointOfs(SelEnd) then { !!! check it - it's buggy !!! }
       begin SelEnd.Y:=CurPos.Y+1; SelEnd.X:=length(GetLineText(CurPos.Y+1))-SelBack; end;*)
     UpdateAttrs(CurPos.Y,attrAll);
+    AdjustBookMark(CurPos.X,Ind,CurPos.Y,CurPos.Y+1);
     SetCurPtr(Ind,CurPos.Y+1);
     NewEI:=NewL^.GetEditorInfo(@Self);
     if Assigned(EI) and Assigned(NewEI) then
@@ -4798,6 +5600,7 @@ begin
       LimitsChanged;
       SetStoreUndo(HoldUndo);
       UpdateAttrs(CurPos.Y,attrAll);
+      AdjustBookMark(CurPos.X,Ind,CurPos.Y,CurPos.Y+1);
       SetCurPtr(Ind,CurPos.Y+1);
       { obsolete IndentStr is taken care of by the Flags PM }
       Addaction(eaInsertLine,SCP,CurPos,''{IndentStr},GetFlags);
@@ -4807,6 +5610,7 @@ begin
     begin
       UpdateAttrs(CurPos.Y,attrAll);
       SetStoreUndo(HoldUndo);
+      AdjustBookMark(CurPos.X,Ind,CurPos.Y,CurPos.Y+1);
       SetCurPtr(Ind,CurPos.Y+1);
       AddAction(eaMoveCursor,SCP,CurPos,'',GetFlags);
       SetStoreUndo(false);
@@ -4829,7 +5633,7 @@ begin
 end;
 
 procedure TCustomCodeEditor.BackSpace;
-var S,PreS: string;
+var S,PreS: sw_astring;
     OI,CI,CP,Y,TX: Sw_integer;
     SCP,SC1 : TPoint;
     HoldUndo : Boolean;
@@ -4844,6 +5648,7 @@ begin
      if CurPos.Y>0 then
       begin
         CI:=Length(GetDisplayText(CurPos.Y-1));
+        AdjustBookMark(0,CI,CurPos.Y,CurPos.Y-1);
         S:=GetLineText(CurPos.Y-1);
         SetLineText(CurPos.Y-1,S+GetLineText(CurPos.Y));
         SC1.X:=Length(S);SC1.Y:=CurPOS.Y-1;
@@ -4861,8 +5666,9 @@ begin
      CP:=CurPos.X-1;
      S:=GetLineText(CurPos.Y);
      CI:=LinePosToCharIdx(CurPos.Y,CP);
-     if (s[ci]=TAB) and (CharIdxToLinePos(Curpos.y,ci)=cp) then
-      CP:=CharIdxToLinePos(CurPos.Y,CI-1)+1;
+     if (ci>0) and (ci<=length(S)) then
+       if (s[ci]=TAB) {and (CharIdxToLinePos(Curpos.y,ci)=cp)} then
+         CP:=CharIdxToLinePos(CurPos.Y,CI);
      if IsFlagSet(efBackspaceUnindents) then
       begin
         S:=GetDisplayText(CurPos.Y);
@@ -4885,7 +5691,7 @@ begin
      S:=GetLineText(CurPos.Y);
      OI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
      CI:=LinePosToCharIdx(CurPos.Y,CP);
-     SetLineText(CurPos.Y,copy(S,1,CI-1)+copy(S,OI,High(S)));
+     SetLineText(CurPos.Y,copy(S,1,CI-1)+copy(S,OI,Length(S)));
      SetCurPtr(CP,CurPos.Y);
      SetStoreUndo(HoldUndo);
      Addaction(eaDeleteText,SCP,CurPos,Copy(S,CI,OI-CI),GetFlags);
@@ -4900,7 +5706,7 @@ begin
 end;
 
 procedure TCustomCodeEditor.DelChar;
-var S: string;
+var S: sw_astring;
     SDX,SDY,CI : sw_integer;
     HoldUndo : boolean;
     SCP : TPoint;
@@ -4916,6 +5722,7 @@ begin
      if CurPos.Y<GetLineCount-1 then
       begin
         SetLineText(CurPos.Y,S+CharStr(' ',CurPOS.X-Length(S))+GetLineText(CurPos.Y+1));
+        AdjustBookMark(0,CurPos.X,CurPos.Y+1,CurPos.Y);
         SDX:=CurPos.X;
         SetStoreUndo(HoldUndo);
         SCP.X:=0;SCP.Y:=CurPos.Y+1;
@@ -4946,7 +5753,7 @@ begin
          if CharIdxToLinePos(Curpos.y,ci-1)=Curpos.x-1 then
             Delete(S,Ci,1)
          else
-          S:=Copy(S,1,CI-1)+CharStr(' ',GetTabSize-1)+Copy(S,CI+1,High(S));
+          S:=Copy(S,1,CI-1)+CharStr(' ',GetTabSize-1)+Copy(S,CI+1,Length(S));
          SetStoreUndo(HoldUndo);
          Addaction(eaDeleteText,CurPos,CurPos,#9,GetFlags);
          SDX:=-1;
@@ -5034,7 +5841,7 @@ begin
 end;
 
 procedure TCustomCodeEditor.DelStart;
-var S: string;
+var S: sw_astring;
     OI: Sw_integer;
     HoldUndo : Boolean;
     SCP : TPoint;
@@ -5048,7 +5855,7 @@ begin
   if (S<>'') and (CurPos.X<>0) then
   begin
     OI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
-    SetLineText(CurPos.Y,copy(S,OI,High(S)));
+    SetLineText(CurPos.Y,copy(S,OI,Length(S)));
     SetCurPtr(0,CurPos.Y);
     SetStoreUndo(HoldUndo);
     Addaction(eaDeleteText,SCP,CurPos,copy(S,1,OI-1),GetFlags);
@@ -5063,7 +5870,7 @@ begin
 end;
 
 procedure TCustomCodeEditor.DelEnd;
-var S: string;
+var S: sw_astring;
     OI: Sw_integer;
     HoldUndo : Boolean;
     SCP : TPoint;
@@ -5080,9 +5887,9 @@ begin
     SetLineText(CurPos.Y,copy(S,1,OI-1));
     SetCurPtr(CurPos.X,CurPos.Y);
     SetStoreUndo(HoldUndo);
-    Addaction(eaDeleteText,SCP,CurPos,copy(S,OI,High(S)),GetFlags);
+    Addaction(eaDeleteText,SCP,CurPos,copy(S,OI,Length(S)),GetFlags);
     SetStoreUndo(false);
-    AdjustSelectionPos(CurPos.X+1,CurPos.Y,-length(copy(S,OI,High(S)))+1,0);
+    AdjustSelectionPos(CurPos.X+1,CurPos.Y,-length(copy(S,OI,Length(S)))+1,0);
     UpdateAttrs(CurPos.Y,attrAll);
     DrawLines(CurPos.Y);
     SetModified(true);
@@ -5095,7 +5902,7 @@ procedure TCustomCodeEditor.DelLine;
 var
   HoldUndo : boolean;
   SP : TPoint;
-  S : String;
+  S : Sw_AString;
 begin
   if IsReadOnly then Exit;
   Lock;
@@ -5126,15 +5933,17 @@ end;
 function TCustomCodeEditor.GetCurrentWordArea(var StartP,EndP: TPoint): boolean;
 const WordChars = ['A'..'Z','a'..'z','0'..'9','_'];
 var P : TPoint;
-    S : String;
-    StartPos,EndPos : byte;
+    S : Sw_AString;
+    StartPos,EndPos : sw_integer;
     OK: boolean;
 begin
   P:=CurPos;
   S:=GetLineText(P.Y);
   StartPos:=P.X+1;
   EndPos:=StartPos;
-  OK:=(S[StartPos] in WordChars);
+  Ok:=false;
+  if Length(S)>=StartPos then
+    OK:=(S[StartPos] in WordChars);
   if OK then
     begin
        While (StartPos>1) and (S[StartPos-1] in WordChars) do
@@ -5148,7 +5957,7 @@ begin
 end;
 
 function  TCustomCodeEditor.GetCurrentWord : string;
-var S: string;
+var S: sw_astring;
     StartP,EndP: TPoint;
 begin
   if GetCurrentWordArea(StartP,EndP)=false then
@@ -5158,7 +5967,7 @@ begin
       S:=GetLineText(StartP.Y);
       S:=copy(S,StartP.X+1,EndP.X-StartP.X+1);
     end;
-  GetCurrentWord:=S;
+  GetCurrentWord:=S;  {Note: AnsiString to ShortString convertion}
 end;
 
 procedure TCustomCodeEditor.StartSelect;
@@ -5167,7 +5976,7 @@ begin
   if ValidBlock=false then
     begin
 {      SetSelection(SelStart,Limit);}
-      P1:=CurPos; P1.X:=0; P2:=CurPos; {P2.X:=length(GetLineText(P2.Y))+1;}
+      P1:=CurPos; P2:=CurPos; {P2.X:=length(GetLineText(P2.Y))+1;}
       SetSelection(P1,P2);
     end
   else
@@ -5180,21 +5989,21 @@ end;
 
 procedure TCustomCodeEditor.EndSelect;
 var P: TPoint;
-    LS: sw_integer;
+   { LS: sw_integer;}
 begin
   P:=CurPos;
-{  P.X:=Min(SelEnd.X,length(GetLineText(SelEnd.Y)));}
-  LS:=length(GetLineText(SelEnd.Y));
-  if LS<P.X then P.X:=LS;
-  CheckSels;
+  { don't try to jump to end of line, not for now
+  LS:=length(GetLineText(P.Y));
+  if LS<P.X then P.X:=LS; }
   SetSelection(SelStart,P);
+  CheckSels;
   DrawView;
 end;
 
 procedure TCustomCodeEditor.DelSelect;
 var LineDelta, LineCount, CurLine: Sw_integer;
     StartX,EndX,LastX: Sw_integer;
-    S: string;
+    S,Z: sw_astring;
     SPos : TPoint;
 begin
   if IsReadOnly or (ValidBlock=false) then Exit;
@@ -5211,7 +6020,7 @@ begin
       StartX:=SelStart.X;
       EndX:=SelEnd.X;
       SetDisplayText(CurLine,RExpand(copy(S,1,StartX),StartX)
-        +copy(S,EndX+1,High(S)));
+        +copy(S,EndX+1,Length(S)));
       if GetStoreUndo then
         begin
           SPos.X:=StartX;
@@ -5227,13 +6036,14 @@ begin
       S:=GetDisplayText(CurLine);
       StartX:=SelStart.X;
       EndX:=SelEnd.X;
+      Z:=GetDisplayText(CurLine+LineCount-1);
       SetDisplayText(CurLine,RExpand(copy(S,1,StartX),StartX)
-        +copy(GetDisplayText(CurLine+LineCount-1),EndX+1,High(S)));
+        +copy(Z,EndX+1,Length(Z)));
       if GetStoreUndo then
         begin
           SPos.X:=StartX;
           SPos.Y:=CurLine;
-          AddAction(eaDeleteText,SPos,SPos,Copy(S,StartX+1,High(S)),GetFlags);
+          AddAction(eaDeleteText,SPos,SPos,Copy(S,StartX+1,Length(S)),GetFlags);
           S:=GetDisplayText(CurLine+LineCount-1);
         end;
       Inc(CurLine);
@@ -5247,7 +6057,7 @@ begin
         end;
       if GetStoreUndo then
         begin
-          AddAction(eaInsertText,SPos,SPos,Copy(S,EndX+1,High(S)),GetFlags);
+          AddAction(eaInsertText,SPos,SPos,Copy(S,EndX+1,Length(S)),GetFlags);
         end;
     end;
   HideSelect;
@@ -5314,14 +6124,19 @@ end;
 
 procedure TCustomCodeEditor.IndentBlock;
 var
-  ey,i{,indlen} : Sw_integer;
-  S,Ind : String;
+  ey,i,Indlen : Sw_Integer;
+  S,Ind : Sw_AString;
   Pos : Tpoint;
+  {WasPersistentBlocks : boolean;}
 begin
   if IsReadOnly then Exit;
   if (SelStart.X=SelEnd.X) and (SelStart.Y=SelEnd.Y) then Exit;
   Lock;
   AddGroupedAction(eaIndentBlock);
+  { as SetCurPtr commented out, no need take care of Persistent Blocks
+  WasPersistentBlocks:=IsFlagSet(efPersistentBlocks);
+  if not WasPersistentBlocks then
+    SetFlags(GetFlags or efPersistentBlocks); }
   ey:=selend.y;
   if selend.x=0 then
    dec(ey);
@@ -5357,7 +6172,11 @@ begin
     end
   else
    Ind:=' ';}
-  Ind:=CharStr(' ',GetIndentSize);
+  Indlen:=GetIndentSize;
+  {selection Start and End move along}
+  if SelStart.X>0 then inc(SelStart.X,Indlen);
+  if SelEnd.X>0 then inc(SelEnd.X,Indlen);
+  Ind:=CharStr(' ',Indlen);
   for i:=selstart.y to ey do
    begin
      S:=GetLineText(i);
@@ -5365,7 +6184,12 @@ begin
      Pos.X:=0;Pos.Y:=i;
      AddAction(eaInsertText,Pos,Pos,Ind,GetFlags);
    end;
-  SetCurPtr(CurPos.X,CurPos.Y);
+  { this removes selection if Shift is pressed as well and we do not change cursor position anyway
+  SetCurPtr(CurPos.X,CurPos.Y); }
+  {after SetCurPtr return PersistentBlocks as it was before}
+  { as SetCurPtr commented out, no need take care of Persistent Blocks
+  if not WasPersistentBlocks then
+    SetFlags(GetFlags and (not longword(efPersistentBlocks))); }
   { must be added manually here PM }
   AddAction(eaMoveCursor,Pos,CurPos,'',GetFlags);
   UpdateAttrsRange(SelStart.Y,SelEnd.Y,attrAll);
@@ -5378,13 +6202,19 @@ end;
 procedure TCustomCodeEditor.UnindentBlock;
 var
   ey,i,j,k,indlen : Sw_integer;
-  S : String;
+  S : Sw_AString;
   Pos : TPoint;
+  {WasPersistentBlocks : boolean;}
 begin
   if IsReadOnly then Exit;
   if (SelStart.X=SelEnd.X) and (SelStart.Y=SelEnd.Y) then Exit;
   Lock;
   AddGroupedAction(eaUnindentBlock);
+  {  as SetCurPtr commented out, no need take care of Persistent Blocks
+  WasPersistentBlocks:=IsFlagSet(efPersistentBlocks);
+  if not WasPersistentBlocks then
+    SetFlags(GetFlags or efPersistentBlocks);
+  }
   ey:=selend.y;
   if selend.x=0 then
    dec(ey);
@@ -5423,6 +6253,12 @@ begin
   else
    Indlen:=1;}
   Indlen:=GetIndentSize;
+  {selection Start and End move along}
+  if SelStart.X>0 then dec(SelStart.X,Indlen);
+  if SelStart.X<0 then SelStart.X:=0;
+  if SelEnd.X>0 then dec(SelEnd.X,Indlen);
+  if SelEnd.X<0 then begin SelEnd.X:=0; inc(SelEnd.Y); end;
+  {do indent line by line}
   for i:=selstart.y to ey do
    begin
      S:=GetLineText(i);
@@ -5441,7 +6277,13 @@ begin
          AddAction(eaDeleteText,Pos,Pos,CharStr(' ',k),GetFlags);
        end;
    end;
-  SetCurPtr(CurPos.X,CurPos.Y);
+  { Removes selection if Shift is pressed as well and we do not change cursor position anyway
+  SetCurPtr(CurPos.X,CurPos.Y); }
+  {after SetCurPtr return PersistentBlocks as it was before}
+  { as SetCurPtr commented out, no need take care of Persistent Blocks
+  if not WasPersistentBlocks then
+    SetFlags(GetFlags and (not longword(efPersistentBlocks)));
+  }
   UpdateAttrsRange(SelStart.Y,SelEnd.Y,attrAll);
   DrawLines(CurPos.Y);
   SetModified(true);
@@ -5464,7 +6306,7 @@ begin
     exit
   else
     begin
-       While (StartPos>0) and (S[StartPos-1] in WordChars) do
+       While (StartPos>1) and (S[StartPos-1] in WordChars) do
          Dec(StartPos);
        While (EndPos<Length(S)) and (S[EndPos+1] in WordChars) do
          Inc(EndPos);
@@ -5552,7 +6394,8 @@ begin
 end;
 
 procedure TCustomCodeEditor.ExpandCodeTemplate;
-var Line,ShortCutInEditor,ShortCut: string;
+var Line : sw_astring;
+    ShortCutInEditor,ShortCut: string;
     X,Y,I,LineIndent: sw_integer;
     CodeLines: PUnsortedStringCollection;
     CanJump: boolean;
@@ -5564,8 +6407,6 @@ begin
     much easier... - Gabor
   }
   if IsReadOnly then Exit;
-
-  Lock;
 
   CP.X:=-1; CP.Y:=-1;
   Line:=GetDisplayText(CurPos.Y);
@@ -5583,6 +6424,7 @@ begin
    if SelectCodeTemplate(ShortCut) then
      TranslateCodeTemplate(ShortCut,CodeLines);
 
+  Lock;
   if CodeLines^.Count>0 then
   begin
     LineIndent:=X;
@@ -5646,15 +6488,16 @@ end;
 procedure TCustomCodeEditor.AddChar(C: AnsiChar);
 const OpenBrackets  : string[10] = '[({';
       CloseBrackets : string[10] = '])}';
-var S,SC,TabS: string;
+var S,SC,TabS: sw_astring;
     BI: byte;
     CI,TabStart,LocTabSize : Sw_integer;
     SP: TPoint;
     HoldUndo : boolean;
 begin
   if IsReadOnly then Exit;
-
   Lock;
+  if not (Clipboard=@Self) and IsFlagSet(efOverwriteBlocks) and InSelectionArea then
+      DelSelect; {delete selection before}
   SP:=CurPos;
   HoldUndo:=GetStoreUndo;
   SetStoreUndo(false);
@@ -5684,11 +6527,14 @@ begin
       SetLineText(CurPos.Y,S);
     end;
   CI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
+{$if sizeof(sw_astring)>8  only if ShortString}
   if CI>High(S) then
     begin
       Unlock;
       exit;
     end;
+{$endif}
+  SP.X:=CharIdxToLinePos(CurPos.Y,CI); {actual changes are going to be here (tab space adjustment)}
   if (CI>0) and (S[CI]=TAB) and not IsFlagSet(efUseTabCharacters) then
     begin
       if CI=1 then
@@ -5697,17 +6543,17 @@ begin
         TabStart:=CharIdxToLinePos(CurPos.Y,CI-1)+1;
       if SC=Tab then TabS:=Tab else
         TabS:=CharStr(' ',CurPos.X-TabStart);
-      SetLineText(CurPos.Y,copy(S,1,CI-1)+TabS+SC+copy(S,CI+1,High(S)));
+      SetLineText(CurPos.Y,copy(S,1,CI-1)+TabS+SC+copy(S,CI+1,Length(S)));
       SetCurPtr(CharIdxToLinePos(CurPos.Y,CI+length(TabS)+length(SC)),CurPos.Y);
     end
   else
     begin
       if Overwrite and (CI<=length(S)) then
         begin
-          SetLineText(CurPos.Y,copy(S,1,CI-1)+SC+copy(S,CI+length(SC),High(S)));
+          SetLineText(CurPos.Y,copy(S,1,CI-1)+SC+copy(S,CI+length(SC),Length(S)));
         end
       else
-        SetLineText(CurPos.Y,copy(S,1,CI-1)+SC+copy(S,CI,High(S)));
+        SetLineText(CurPos.Y,copy(S,1,CI-1)+SC+copy(S,CI,Length(S)));
       SetCurPtr(CharIdxToLinePos(CurPos.Y,CI+length(SC)),CurPos.Y);
     end;
  { must be before CloseBrackets !! }
@@ -5737,17 +6583,16 @@ begin
   UnLock;
 end;
 
-{$ifdef WinClipSupported}
-
 const
    linelimit = 200;
 
-function TCustomCodeEditor.ClipPasteWin: Boolean;
+procedure TCustomCodeEditor.PasteText(P:PAnsiChar; ASize:sw_integer);
 var
     StorePos : TPoint;
     first : boolean;
+    IsNewLine: boolean;
 
-procedure InsertStringWrap(const s: string; var i : Longint);
+procedure InsertStringWrap(const s: sw_astring; var i : Longint);
 var
     BPos,EPos: TPoint;
 begin
@@ -5755,7 +6600,8 @@ begin
     begin
       { we need to cut the line in two
       if not at end of line PM }
-      InsertNewLine;
+      if IsNewLine then
+        InsertNewLine;
       SetCurPtr(StorePos.X,StorePos.Y);
       InsertText(s);
       first:=false;
@@ -5763,37 +6609,34 @@ begin
   else
     begin
       Inc(i);
-      InsertLine(i,s);
-      BPos.X:=0;BPos.Y:=i;
-      EPOS.X:=Length(s);EPos.Y:=i;
-      AddAction(eaInsertLine,BPos,EPos,GetDisplayText(i),GetFlags);
+      if IsNewLine then
+      begin
+        InsertLine(i,s);
+        BPos.X:=0;BPos.Y:=i;
+        EPOS.X:=Length(s);EPos.Y:=i;
+        AddAction(eaInsertLine,BPos,EPos,GetDisplayText(i),GetFlags);
+      end else
+      begin
+        SetCurPtr(0,i);
+        InsertText(s);
+      end;
     end;
 end;
 
 var
-    OK: boolean;
     l,i,len,len10 : longint;
-    p,p10,p2,p13 : PAnsiChar;
-    s : string;
+    p10,p2,p13 : PAnsiChar;
+    s : sw_astring;
 begin
   Lock;
-  OK:=WinClipboardSupported;
-  if OK then
-    begin
-
-      first:=true;
-      StorePos:=CurPos;
-      i:=CurPos.Y;
-      l:=GetTextWinClipboardSize;
-      if l=0 then
-        OK:=false
-      else
-        OK:=GetTextWinClipBoardData(p,l);
-      if OK then
-        begin
-          if l>500 then
+  first:=true;
+  StorePos:=CurPos;
+  i:=CurPos.Y;
+          if ASize>500 then
             PushInfo(msg_readingwinclipboard);
           AddGroupedAction(eaPasteWin);
+          if not (Clipboard=@Self) and IsFlagSet(efOverwriteBlocks) and InSelectionArea then
+            DelSelect; {delete selection before paste}
           p2:=p;
           len:=strlen(p2);
           // issue lines ((#13)#10 terminated) of maximally "linelimit" chars.
@@ -5801,10 +6644,16 @@ begin
           repeat
             p13:=strpos(p2,#13);
             p10:=strpos(p2,#10);
+{$if sizeof(sw_astring)>8  only if ShortString lines}
             if len> linelimit then
               len:=linelimit;
+{$endif}
+            if not assigned(p10) and assigned(p13) then
+              p10:=p13;
+            IsNewLine:=false;
             if assigned(p10) then
               begin
+               IsNewLine:=true;
                len10:=p10-p2;
                if len10<len then
                  begin
@@ -5832,11 +6681,34 @@ begin
           UpdateAttrs(StorePos.Y,attrAll);
           CloseGroupedAction(eaPasteWin);
           Update;
-          if l>500 then
+          if ASize>500 then
             PopInfo;
+          DrawView;
+  UnLock;
+end;
+
+{$ifdef WinClipSupported}
+
+function TCustomCodeEditor.ClipPasteWin: Boolean;
+var
+    OK: boolean;
+    l : longint;
+    p : PAnsiChar;
+begin
+  Lock;
+  OK:=WinClipboardSupported;
+  if OK then
+    begin
+      l:=GetTextWinClipboardSize;
+      if l=0 then
+        OK:=false
+      else
+        OK:=GetTextWinClipBoardData(p,l);
+      if OK and assigned(p) then
+        begin
+          PasteText(p,l);
           { we must free the allocated memory }
           freemem(p,l);
-          DrawView;
         end;
     end;
   ClipPasteWin:=OK;
@@ -5846,7 +6718,7 @@ end;
 function TCustomCodeEditor.ClipCopyWin: Boolean;
 var OK,ShowInfo: boolean;
     p,p2 : PAnsiChar;
-    s : string;
+    s : sw_astring;
     i,str_begin,str_end,NumLines,PcLength : longint;
 begin
   NumLines:=SelEnd.Y-SelStart.Y;
@@ -5870,23 +6742,39 @@ begin
   s:=GetLineText(i);
   str_begin:=LinePosToCharIdx(i,SelStart.X);
   if SelEnd.Y>SelStart.Y then
-    str_end:=High(S)
+    str_end:=Length(S)
   else
     str_end:=LinePosToCharIdx(i,SelEnd.X)-1;
   s:=copy(s,str_begin,str_end-str_begin+1);
+{$if sizeof(sw_astring)>8}
   strpcopy(p,s);
+{$else}
+  s:=s+#0;
+  Move(S[1],P^,Length(S));
+{$endif}
   p2:=strend(p);
   inc(i);
   while i<SelEnd.Y do
     begin
-      strpcopy(p2,EOL+GetLineText(i));
+      s:=EOL+GetLineText(i);
+{$if sizeof(sw_astring)>8}
+      strpcopy(p2,s);
+{$else}
+      s:=s+#0;
+      Move(S[1],P2^,Length(S));
+{$endif}
       p2:=strend(p2);
       Inc(i);
     end;
   if SelEnd.Y>SelStart.Y then
     begin
       s:=copy(GetLineText(i),1,LinePosToCharIdx(i,SelEnd.X)-1);
+{$if sizeof(sw_astring)>8}
       strpcopy(p2,EOL+s);
+{$else}
+      s:=EOL+s+#0;
+      Move(S[1],P2^,Length(S));
+{$endif}
     end;
   OK:=WinClipboardSupported;
   if OK then
@@ -5923,6 +6811,7 @@ begin
       {Enable paste command.}
       CanPaste:=((Clipboard^.SelStart.X<>Clipboard^.SelEnd.X) or
                 (Clipboard^.SelStart.Y<>Clipboard^.SelEnd.Y));
+      CanPaste:=CanPaste and (not IsReadOnly);
       SetCmdState(FromClipCmds,CanPaste);
     end;
   UnLock;
@@ -5951,6 +6840,7 @@ begin
        PopInfo;
      CanPaste:=((Clipboard^.SelStart.X<>Clipboard^.SelEnd.X) or
                (Clipboard^.SelStart.Y<>Clipboard^.SelEnd.Y));
+     CanPaste:=CanPaste and (not IsReadOnly);
      SetCmdState(FromClipCmds,CanPaste);
    end;
   CloseGroupedAction(eaCut);
@@ -5998,7 +6888,7 @@ begin
   begin
     Lines:=GetLineCount;
     {Linecount can be 0, but in that case there still is a cursor blinking in top
-     of the window, which will become line 1 as soon as sometype hits a key.}
+     of the window, which will become line 1 as soon as someone hits a key.}
     if lines=0 then
       lines:=1;
     if EditorDialog(edGotoLine, @GotoRec) <> cmCancel then
@@ -6015,12 +6905,14 @@ procedure TCustomCodeEditor.Find;
 var
   FindRec: TFindDialogRec;
   DoConf: boolean;
+  CurrentWord : string;
 begin
   with FindRec do
   begin
     Find := FindStr;
-    if GetCurrentWord<>'' then
-      Find:=GetCurrentWord;
+    CurrentWord:=GetCurrentWord;
+    if CurrentWord<>'' then
+      Find:=CurrentWord;
 {$ifdef TEST_REGEXP}
     Options := ((FindFlags and ffmOptionsFind) shr ffsOptions) or
                ((FindFlags and ffUseRegExp) shr ffsUseRegExpFind);
@@ -6102,7 +6994,7 @@ begin
 end;
 
 procedure TCustomCodeEditor.DoSearchReplace;
-var S: string;
+var S: sw_astring;
     DX,DY,P,Y,X: sw_integer;
     Count: sw_integer;
     Found,CanExit: boolean;
@@ -6124,7 +7016,7 @@ var S: string;
     BT : BTable;
     Overwriting : boolean;
 
-  function ContainsText(const SubS:string;var S: string; Start: Sw_integer): Sw_integer;
+  function ContainsText(const SubS:string;var S: sw_astring; Start: Sw_integer): Sw_integer;
   var
     P: Sw_Integer;
   begin
@@ -6273,8 +7165,8 @@ begin
 {$ifdef TEST_REGEXP}
       if UseRegExp then
          begin
-           getmem(findstrpchar,length(Copy(S,X+1,high(S)))+1);
-           strpcopy(findstrpchar,Copy(S,X+1,high(S)));
+           getmem(findstrpchar,length(Copy(S,X+1,Length(S)))+1);
+           strpcopy(findstrpchar,Copy(S,X+1,Length(S)));
            { If start of line is required do check other positions PM }
            if (FindStr[1]='^') and (X<>0) then
              Found:=false
@@ -6445,6 +7337,19 @@ begin
     end;
 end;
 
+function TCustomCodeEditor.GetAutoBrackets: boolean;
+begin
+  GetAutoBrackets:=(GetFlags and efAutoBrackets)<>0;
+end;
+
+procedure TCustomCodeEditor.SetAutoBrackets(AutoBrackets: boolean);
+begin
+  if AutoBrackets then
+    SetFlags(GetFlags or efAutoBrackets)
+  else
+    SetFlags(GetFlags and (not efAutoBrackets));
+end;
+
 function TCustomCodeEditor.GetInsertMode: boolean;
 begin
   GetInsertMode:=(GetFlags and efInsertMode)<>0;
@@ -6565,7 +7470,7 @@ begin
   Lock;
 
   { here should be some kind or "mark" or "break" inserted in the Undo
-    information, so activating it "undoes" only the completition first and
+    information, so activating it "undoes" only the completion first and
     doesn't delete the complete word at once... - Gabor }
 
   FragLen:=Length(GetCodeCompleteFrag);
@@ -6634,6 +7539,22 @@ begin
   SetHighlight(CurPos,CurPos);
 end;
 
+function TCustomCodeEditor.InSelectionArea:boolean; {CurPos in selection area}
+begin
+  InSelectionArea:=false;
+  if ((SelStart.X<>SelEnd.X) or (SelStart.Y<>SelEnd.Y)) then    {there is selection}
+    begin
+      if (SelStart.Y = SelEnd.Y) and (CurPos.X>=min(SelStart.X,SelEnd.X)) and (CurPos.X<=max(SelStart.X,SelEnd.X)) then
+        InSelectionArea:=true {select in one line}
+      else if (CurPos.Y>min(SelStart.Y,SelEnd.Y)) and (CurPos.Y<max(SelStart.Y,SelEnd.Y)) then
+        InSelectionArea:=true {between first and last selected line}
+      else if (SelStart.Y < SelEnd.Y) and ( ((SelStart.Y=CurPos.Y) and (SelStart.X<=CurPos.X)) or ((SelEnd.Y=CurPos.Y) and (SelEnd.X>=CurPos.X))) then
+        InSelectionArea:=true  {in first line or last line}
+      else if (SelStart.Y > SelEnd.Y) and ( ((SelStart.Y=CurPos.Y) and (SelStart.X>=CurPos.X)) or ((SelEnd.Y=CurPos.Y) and (SelEnd.X<=CurPos.X))) then
+        InSelectionArea:=true; {in first line or last line (selection Start and End reverse)}
+    end;
+end;
+
 procedure TCustomCodeEditor.GetSelectionArea(var StartP,EndP: TPoint);
 begin
   StartP:=SelStart; EndP:=SelEnd;
@@ -6698,34 +7619,198 @@ begin
   DrawView;
 end;
 
-procedure TCustomCodeEditor.SelectionChanged;
+procedure TCustomCodeEditor.CommentSel;
+var
+  ey,i : Sw_Integer;
+  S,Ind : Sw_AString;
+  Pos : Tpoint;
+  WasPersistentBlocks : boolean;
+  WhiteLen, k : Sw_Integer;
+  LLen : Sw_Integer; { length of longest line }
+begin
+  if IsReadOnly then Exit;
+  if (SelStart.X=SelEnd.X) and (SelStart.Y=SelEnd.Y) then Exit;
+  Lock;
+  ey:=SelEnd.Y;
+  if SelEnd.X=0 then
+   dec(ey);
+  S:='';
+  { Find shortest white space of beginning of line from all lines
+    for simplicity reason Tab is not recognized as white space in this regard }
+  LLen:=0;
+  WhiteLen:=-1;
+  WhiteLen:= WhiteLen shr 1; { logical SHR to get max sw_integer }
+  for i:=SelStart.Y to ey do
+    begin
+      S:=GetDisplayText(i);
+      LLen:=Max(LLen,Length(S));
+      S:=GetLineText(i);
+      LLen:=Max(LLen,Length(S)); {whatever is longer displayed text or actual line text }
+      WhiteLen:=Min(WhiteLen,Length(S));
+      if WhiteLen = 0 then
+        break; {string length is zero, no lower where to go }
+      k:=1;
+      while (k<=WhiteLen) and (S[k]=' ') do { Tab do not count in }
+        inc(k);
+      WhiteLen:=k-1;
+      if WhiteLen = 0 then
+        break; { we have done enough, no white spaces at all }
+    end;
+  if WhiteLen=(sw_integer(-1) shr 1) then
+    WhiteLen:=0; { eee, never can happen, but if ever then we will be safe }
+{$if sizeof(sw_astring)>8}
+  if LLen > 252 then { if lines are shortstrings and there is no room to add 2 chars }
+  begin
+    UnLock;
+    MessageBox('Lines too long!', nil, mfOKButton);
+    exit;
+  end;
+{$endif}
+  AddGroupedAction(eaCommentSel);
+  WasPersistentBlocks:=IsFlagSet(efPersistentBlocks);
+  if not WasPersistentBlocks then
+    SetFlags(GetFlags or efPersistentBlocks);
+  {selection Start and End move along}
+  if SelStart.X>WhiteLen then inc(SelStart.X,2);
+  if SelEnd.X>WhiteLen then inc(SelEnd.X,2);
+  { put line comment in front of every selected line }
+  Ind:='//';
+  for i:=SelStart.Y to ey do
+   begin
+     S:=GetLineText(i);
+     S:=copy(S,1,WhiteLen)+Ind+copy(S,WhiteLen+1,Length(S));
+     SetLineText(i,S);
+     Pos.X:=WhiteLen;Pos.Y:=i;
+     AddAction(eaInsertText,Pos,Pos,Ind,GetFlags);
+   end;
+  Pos:=CurPos;
+  { this removes selection if Shift is pressed as well }
+  if (CurPos.X > WhiteLen) and (SelStart.Y<=CurPos.Y) and (CurPos.Y<=ey) then
+    SetCurPtr(CurPos.X+2,CurPos.Y);
+  {after SetCurPtr return PersistentBlocks as it was before}
+  if not WasPersistentBlocks then
+    SetFlags(GetFlags and (not longword(efPersistentBlocks)));
+  { must be added manually here PM }
+  AddAction(eaMoveCursor,Pos,CurPos,'',GetFlags);
+  UpdateAttrsRange(SelStart.Y,SelEnd.Y,attrAll);
+  DrawLines(CurPos.Y);
+  SetModified(true);
+  CloseGroupedAction(eaCommentSel);
+  UnLock;
+end;
+
+procedure TCustomCodeEditor.UnCommentSel;
+var
+  ey,i : Sw_Integer;
+  S,Ind : Sw_AString;
+  Pos : Tpoint;
+  WasPersistentBlocks : boolean;
+  WhiteLen, k : Sw_Integer;
+  WasGroupAction : boolean;
+  NeedToMoveCursor:boolean;
+begin
+  if IsReadOnly then Exit;
+  if (SelStart.X=SelEnd.X) and (SelStart.Y=SelEnd.Y) then Exit;
+  Lock;
+  ey:=SelEnd.Y;
+  if SelEnd.X=0 then
+   dec(ey);
+  WasGroupAction:=false;
+  NeedToMoveCursor:=false;
+  { remove line comment from beginning of every selected line ( if there is any) }
+  Ind:='//';
+  for i:=SelStart.Y to ey do
+   begin
+     S:=GetLineText(i);
+     if Length(S)<2 then continue;
+     WhiteLen:=0;
+     for k:=1 to Length(S)-1 do
+       if not (S[k] in [' ',#9]) then
+         break; { white space is over }
+     if (S[k]<>'/') or (S[k+1]<>'/') then continue;  { continue if comment not found }
+     WhiteLen:=k-1;
+     if not WasGroupAction then
+     begin
+       {add group action only if there is at least one action
+        because empty group action throw segment fault when do Undo }
+       WasGroupAction:=true;
+       AddGroupedAction(eaUnCommentSel);
+     end;
+     S:=copy(S,1,WhiteLen)+copy(S,WhiteLen+1+2,Length(S)); { delete line comment string '//' }
+     SetLineText(i,S);
+     Pos.X:=WhiteLen;Pos.Y:=i;
+     AddAction(eaDeleteText,Pos,Pos,Ind,GetFlags);
+     {selection Start and End move along}
+     if i=SelStart.Y then
+       if (SelStart.X>1) and (SelStart.X>WhiteLen+1) then dec(SelStart.X,2);
+     if i=SelEnd.Y then
+       if (SelEnd.X>1) and (SelEnd.X>WhiteLen+1) then dec(SelEnd.X,2);
+     if i=CurPos.Y then
+       if (CurPos.X>1) and (CurPos.X>WhiteLen+1) then NeedToMoveCursor:=true;
+   end;
+  if WasGroupAction then
+  begin
+    WasPersistentBlocks:=IsFlagSet(efPersistentBlocks);
+    if not WasPersistentBlocks then
+      SetFlags(GetFlags or efPersistentBlocks);
+    Pos:=CurPos;
+    { this removes selection if Shift is pressed as well }
+    if NeedToMoveCursor then
+      SetCurPtr(CurPos.X-2,CurPos.Y);
+    {after SetCurPtr return PersistentBlocks as it was before}
+    if not WasPersistentBlocks then
+      SetFlags(GetFlags and (not longword(efPersistentBlocks)));
+    { must be added manually here PM }
+    AddAction(eaMoveCursor,Pos,CurPos,'',GetFlags);
+    UpdateAttrsRange(SelStart.Y,SelEnd.Y,attrAll);
+    DrawLines(CurPos.Y);
+    SetModified(true);
+    CloseGroupedAction(eaUnCommentSel);
+  end;
+  UnLock;
+end;
+
+procedure TCustomCodeEditor.ChangeCommands;
 var Enable,CanPaste: boolean;
+begin
+  { we change the CurCommandSet, but only if we are top view }
+  if ((State and sfFocused)<>0) then
+    begin
+      Enable:=((SelStart.X<>SelEnd.X) or (SelStart.Y<>SelEnd.Y)) and (Clipboard<>nil);
+      SetCmdState(ToClipCmds,Enable and (Clipboard<>@Self));
+      SetCmdState(NulClipCmds,Enable and (not isReadOnly));
+      CanPaste:=(Clipboard<>nil) and ((Clipboard^.SelStart.X<>Clipboard^.SelEnd.X) or
+           (Clipboard^.SelStart.Y<>Clipboard^.SelEnd.Y));
+      SetCmdState(FromClipCmds,CanPaste  and (Clipboard<>@Self) and (not isReadOnly));
+      SetCmdState(UndoCmd,(GetUndoActionCount>0) and (not isReadOnly));
+      SetCmdState(RedoCmd,(GetRedoActionCount>0) and (not isReadOnly));
+      //Message(Application,evBroadcast,cmCommandSetChanged,nil);
+    end;
+end;
+
+procedure TCustomCodeEditor.SelectionChanged;
 begin
   if GetLineCount=0 then
     begin
       SelStart.X:=0; SelStart.Y:=0; SelEnd:=SelStart;
     end
   else
-    if SelEnd.Y>GetLineCount-1 then
-     if (SelEnd.Y<>GetLineCount) or (SelEnd.X<>0) then
-      begin
-        SelEnd.Y:=GetLineCount-1;
-        SelEnd.X:=length(GetDisplayText(SelEnd.Y));
-      end;
-
-  { we change the CurCommandSet, but only if we are top view }
-  if ((State and sfFocused)<>0) then
     begin
-      Enable:=((SelStart.X<>SelEnd.X) or (SelStart.Y<>SelEnd.Y)) and (Clipboard<>nil);
-      SetCmdState(ToClipCmds,Enable and (Clipboard<>@Self));
-      SetCmdState(NulClipCmds,Enable);
-      CanPaste:=(Clipboard<>nil) and ((Clipboard^.SelStart.X<>Clipboard^.SelEnd.X) or
-           (Clipboard^.SelStart.Y<>Clipboard^.SelEnd.Y));
-      SetCmdState(FromClipCmds,CanPaste  and (Clipboard<>@Self));
-      SetCmdState(UndoCmd,(GetUndoActionCount>0));
-      SetCmdState(RedoCmd,(GetRedoActionCount>0));
-      Message(Application,evBroadcast,cmCommandSetChanged,nil);
+      if SelStart.Y>GetLineCount-1 then
+       if (SelStart.Y<>GetLineCount) or (SelStart.X<>0) then
+        begin
+          SelStart.Y:=GetLineCount-1;
+          SelStart.X:=length(GetDisplayText(SelEnd.Y));
+          SelEnd:=SelStart;
+        end;
+      if SelEnd.Y>GetLineCount-1 then
+       if (SelEnd.Y<>GetLineCount) or (SelEnd.X<>0) then
+        begin
+          SelEnd.Y:=GetLineCount-1;
+          SelEnd.X:=length(GetDisplayText(SelEnd.Y));
+        end;
     end;
+  ChangeCommands;
   DrawView;
 end;
 
@@ -6764,7 +7849,7 @@ begin
 end;
 
 function TCustomCodeEditorCore.LoadFromStream(Editor: PCustomCodeEditor; Stream: PFastBufStream): boolean;
-var S: string;
+var S: sw_AString;
     AllLinesComplete,LineComplete,hasCR,OK: boolean;
 begin
   DeleteAllLines;
@@ -6800,7 +7885,7 @@ begin
 end;
 
 function TCustomCodeEditorCore.SaveAreaToStream(Editor: PCustomCodeEditor; Stream: PStream; StartP,EndP: TPoint): boolean;
-var S: string;
+var S: sw_astring;
     OK: boolean;
     Line: Sw_integer;
 begin
@@ -6819,14 +7904,14 @@ begin
   while OK and (Line<=EndP.Y) and (Line<GetLineCount) do
   begin
     S:=GetLineText(Line);
-    { Remove all traling spaces PM }
+    { Remove all trailing spaces PM }
     if not Editor^.IsFlagSet(efKeepTrailingSpaces) then
       s:=RTrim(S,False); // removes trailing #0 too
     { if FlagSet(efUseTabCharacters) then
       S:=CompressUsingTabs(S,TabSize);
       }
     if Line=EndP.Y then S:=copy(S,1,LinePosToCharIdx(Line,EndP.X));
-    if Line=StartP.Y then S:=copy(S,LinePosToCharIdx(Line,StartP.X),High(S));
+    if Line=StartP.Y then S:=copy(S,LinePosToCharIdx(Line,StartP.X),Length(S));
     Stream^.Write(S[1],length(S));
     if Line<EndP.Y then
       Stream^.Write(EOL[1],length(EOL));
@@ -6837,12 +7922,12 @@ begin
 end;
 
 
-constructor TEditorAction.init(act:byte; StartP,EndP:TPoint;Txt:String;AFlags : longint);
+constructor TEditorAction.init(act:byte; StartP,EndP:TPoint;Txt:Sw_AString;AFlags : longint);
 begin
   Action:=act;
   StartPos:=StartP;
   EndPos:=EndP;
-  Text:=NewStr(txt);
+  SetText(Txt);
   ActionCount:=0;
   Flags:=AFlags;
   TimeStamp:=Now;
@@ -6862,9 +7947,35 @@ begin
   Is_grouped_action:=IsGrouped;
 end;
 
+function TEditorAction.GetText : sw_astring;
+var st : string;
+begin
+{$if sizeof(sw_astring)>8}
+  GetText:=GetStr(Text);
+{$else}
+  GetText:=Text;
+{$endif}
+end;
+
+procedure TEditorAction.SetText(AText : sw_astring);
+var st : string;
+begin
+{$if sizeof(sw_astring)>8}
+  SetStr(Text,AText);
+{$else}
+  Text:=AText;
+{$endif}
+end;
+
 destructor TEditorAction.done;
 begin
-  DisposeStr(Text);
+{$if sizeof(sw_astring)>8}
+  if assigned(Text) then
+    DisposeStr(Text);
+  Text:=nil;
+{$else}
+  Text:='';
+{$endif}
   inherited done;
 end;
 
@@ -6876,9 +7987,104 @@ end;
 
 procedure TEditorInputLine.HandleEvent(var Event : TEvent);
 var
-  s,s2 : string;
+  s : sw_astring;
+  st : string; {need to be shortstring for InputLine}
   i : longint;
+
+procedure LocalInsertText(S:Sw_aString);
+var
+  i : Sw_Integer;
+  Event:TEvent;
+  st : string; {need to be shortstring for InputLine}
 begin
+  for i:=1 to length(s) do
+    begin
+      st:=Data^+s[i];
+      If not assigned(validator) or
+         Validator^.IsValidInput(st,False)  then
+        Begin
+          Event.What:=evKeyDown;
+          Event.CharCode:=s[i];
+          Event.Scancode:=0;
+          Event.KeyShift:=0;
+          Inherited HandleEvent(Event);
+        End;
+      if Length(Data^)=255 then
+        break; { at limit of shortstring }
+    end;
+end;
+
+procedure LocalPasteText(P:PAnsiChar;L:Sw_Integer);
+var L2: Sw_Integer;
+    S : Sw_AString;
+begin
+  l2:=L;
+  if l2<=0 then exit;
+  {$if sizeof(sw_astring)<>8}
+  if L2 > 255 then L2:=255;
+  {$endif}
+  SetLength(S,L2);
+  Move(P^,S[1],l2);
+  LocalInsertText(S);
+end;
+
+{$ifdef WinClipSupported}
+Procedure LocalPasteWinClip;
+var OK: boolean;
+  l : Sw_Integer;
+  P:PAnsiChar;
+  S : Sw_AString;
+begin
+  OK:=WinClipboardSupported;
+  if OK then
+    begin
+      l:=GetTextWinClipboardSize;
+      if l=0 then
+        OK:=false
+      else
+        OK:=GetTextWinClipBoardData(p,l);
+      if OK and assigned(p) then
+        begin
+          LocalPasteText(p,l);
+          freemem(p,l); { we must free the allocated memory }
+        end;
+    end;
+end;
+{$endif WinClipSupported}
+
+begin
+{$ifdef WinClipSupported}
+  if (Event.What=evKeyDown) then   { TODO  move in ConvertEvent }
+    if ((Event.KeyShift and $4) <>0) and ((Event.KeyShift and $3) <>0) then
+      if Event.KeyCode = kbCtrlC then
+        begin
+          Event.What:=evCommand;
+          Event.Command:=cmCopyWin;
+        end
+      else if (Event.KeyCode = kbCtrlV) {and (IsReadOnly=false)} then
+        begin
+          Event.What:=evCommand;
+          Event.Command:=cmPasteWin;
+        end;
+  if Event.What=evCommand then
+    case Event.Command of
+      cmCopyWin : begin
+          s:=GetStr(Data);
+          s:=copy(s,selstart+1,selend-selstart);
+          if WinClipboardSupported and (length(S)>0) then
+            SetTextWinClipBoardData(@S[1],length(S));
+          ClearEvent(Event);
+        end;
+      cmPasteText : begin
+          LocalPasteText(Event.InfoPtr,Event.Id);
+          ClearEvent(Event);
+        end;
+      cmPasteWin : begin
+          LocalPasteWinClip;
+          ClearEvent(Event);
+        end;
+    end;
+{$endif WinClipSupported}
      If (Event.What=evKeyDown) then
        begin
          if (Event.KeyCode=kbRight) and
@@ -6886,22 +8092,41 @@ begin
             Assigned(FindReplaceEditor) then
            Begin
              s:=FindReplaceEditor^.GetDisplayText(FindReplaceEditor^.CurPos.Y);
-             s:=Copy(s,FindReplaceEditor^.CurPos.X + 1 -length(Data^),high(s));
-             i:=pos(Data^,s);
-             if i>0 then
+             i:=Min(FindReplaceEditor^.CurPos.X+1,length(s));
+             {finds beginning of word}
+              if i>0 then
+             while s[i] in ['a'..'z','A'..'Z','0'..'9','_'] do
+             begin
+               dec(i);
+               if i=0 then break;
+             end;
+             inc(i);
+             {step out of white space}
+             if i<length(s) then
+             while (s[i] in [' ']) do
+             begin
+               inc(i);
+               if i=length(s) then break;
+             end;
+             st:=Copy(s,i-length(Data^),length(s)-(i-length(Data^))+1);
+             if length(Data^)=0 then
+               i:=1 {if input line is empty then start from first character of word if any}
+             else
+               i:=pos(Data^,st);
+             if (i>0) and (length(st)>=i+length(Data^)) then
                begin
-                 s:=Data^+s[i+length(Data^)];
+                 st:=Data^+st[i+length(Data^)];
                  If not assigned(validator) or
-                    Validator^.IsValidInput(s,False)  then
+                    Validator^.IsValidInput(st,False)  then
                    Begin
-                     Event.CharCode:=s[length(s)];
+                     Event.CharCode:=st[length(st)];
                      Event.Scancode:=0;
                      Inherited HandleEvent(Event);
                    End;
                end;
              ClearEvent(Event);
            End
-         else if (Event.KeyCode=kbShiftIns)  and
+         else if ((Event.KeyCode=kbShiftIns) or (Event.KeyCode=paste_key))  and
                  Assigned(Clipboard) and (Clipboard^.ValidBlock) then
            { paste from clipboard }
            begin
@@ -6909,27 +8134,16 @@ begin
              s:=Clipboard^.GetDisplayText(i);
              i:=Clipboard^.SelStart.X;
              if i>0 then
-              s:=copy(s,i+1,high(s));
+              s:=copy(s,i+1,length(s));
              if (Clipboard^.SelStart.Y=Clipboard^.SelEnd.Y) then
                begin
                  i:=Clipboard^.SelEnd.X-i;
                  s:=copy(s,1,i);
                end;
-             for i:=1 to length(s) do
-               begin
-                 s2:=Data^+s[i];
-                 If not assigned(validator) or
-                    Validator^.IsValidInput(s2,False)  then
-                   Begin
-                     Event.What:=evKeyDown;
-                     Event.CharCode:=s[i];
-                     Event.Scancode:=0;
-                     Inherited HandleEvent(Event);
-                   End;
-               end;
+             LocalInsertText(s);
              ClearEvent(Event);
            end
-         else if (Event.KeyCode=kbCtrlIns)  and
+         else if ((Event.KeyCode=kbCtrlIns) or (Event.KeyCode=copy_key))  and
                  Assigned(Clipboard) then
            { Copy to clipboard }
            begin
@@ -6940,7 +8154,7 @@ begin
              Clipboard^.SelEnd:=Clipboard^.CurPos;
              ClearEvent(Event);
            end
-         else if (Event.KeyCode=kbShiftDel)  and
+         else if ((Event.KeyCode=kbShiftDel) or (Event.KeyCode=cut_key))  and
                  Assigned(Clipboard) then
            { Cut to clipboard }
            begin
@@ -6949,7 +8163,14 @@ begin
              Clipboard^.SelStart:=Clipboard^.CurPos;
              Clipboard^.InsertText(s);
              Clipboard^.SelEnd:=Clipboard^.CurPos;
-             s2:=GetStr(Data);
+             { now remove the selected part }
+             Event.keyCode:=kbDel;
+             inherited HandleEvent(Event);
+             ClearEvent(Event);
+           end
+         else if ((Event.KeyCode=kbCtrlDel)) then
+           { Cut & discard }
+           begin
              { now remove the selected part }
              Event.keyCode:=kbDel;
              inherited HandleEvent(Event);
@@ -6960,9 +8181,10 @@ begin
        End
      else
        Inherited HandleEvent(Event);
-  s:=getstr(data);
-  Message(Owner,evBroadCast,cminputlinelen,pointer(length(s)));
+  st:=getstr(data);
+  Message(Owner,evBroadCast,cmInputLineLen,pointer(Length(st)));
 end;
+
 
 procedure TSearchHelperDialog.HandleEvent(var Event : TEvent);
 begin
@@ -7265,7 +8487,7 @@ begin
             end;
         else begin Title:='???'; DefExt:=''; end;
         end;
-        Re:=Application^.ExecuteDialog(New(PFileDialog, Init(DefExt,
+        Re:=Application^.ExecuteDialog(New(PFPFileDialog, Init(DefExt,
           Title, label_name, fdOkButton, FileId)), @Name);
         case Dialog of
           edSaveAs     :

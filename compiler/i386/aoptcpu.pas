@@ -185,8 +185,11 @@ unit aoptcpu;
                   Result:=OptPass1LEA(p);
                 A_MOV:
                   Result:=OptPass1MOV(p);
+                A_MOVD,
+                A_VMOVD:
+                  Result:=OptPass1MOVD(p);
                 A_MOVSX,
-                A_MOVZX :
+                A_MOVZX:
                   Result:=OptPass1Movx(p);
                 A_TEST:
                   Result:=OptPass1Test(p);
@@ -215,6 +218,8 @@ unit aoptcpu;
                   Result:=OptPass1Sub(p);
                 A_Jcc:
                   Result:=OptPass1Jcc(p);
+                A_NOT:
+                  Result:=OptPass1NOT(p);
                 A_MOVDQA,
                 A_MOVAPD,
                 A_MOVAPS,
@@ -276,9 +281,15 @@ unit aoptcpu;
             if not Result then
               begin
                 if (p.typ in SkipInstr) then
-                  UpdateUsedRegs(p);
-
-                p := tai(p.Next);
+                  begin
+                    UpdateUsedRegs(p);
+                    p := tai(p.Next);
+                  end
+                else
+                  begin
+                    p := tai(p.Next);
+                    UpdateUsedRegs(p);
+                  end;
                 Result := True;
               end;
           end;
@@ -340,9 +351,15 @@ unit aoptcpu;
             if not Result then
               begin
                 if (p.typ in SkipInstr) then
-                  UpdateUsedRegs(p);
-
-                p := tai(p.Next);
+                  begin
+                    UpdateUsedRegs(p);
+                    p := tai(p.Next);
+                  end
+                else
+                  begin
+                    p := tai(p.Next);
+                    UpdateUsedRegs(p);
+                  end;
                 Result := True;
               end;
           end;
@@ -434,8 +451,16 @@ unit aoptcpu;
                   Result:=PostPeepholeOptADDSUB(p);
                 A_XOR:
                   Result:=PostPeepholeOptXor(p);
+                A_RET:
+                  Result:=PostPeepholeOptRET(p);
                 A_VPXOR:
                   Result:=PostPeepholeOptVPXOR(p);
+                A_SARX,
+                A_SHLX,
+                A_SHRX:
+                  Result:=PostPeepholeOptSARXSHLXSHRX(p);
+                A_RORX:
+                  Result:=PostPeepholeOptRORX(p);
                 else
                   ;
               end;

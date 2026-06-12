@@ -33,7 +33,7 @@ const
   JOBResult_Symbol = 13;
   JOBResult_ArrayOfString = 14;
 
-  JOBResultLast = 14;
+  JOBResultLast = JOBResult_ArrayOfString;
 
   JOBResult_Names: array[0..JOBResultLast] of string = (
     'None',
@@ -64,9 +64,14 @@ const
   JOBFn_ReleaseStringResult = 'release_stringresult';
   JOBFn_InvokeObjectResult = 'invoke_objectresult';
   JOBFn_CreateObject = 'create_object';
+  JOBFn_CreateObjectAt = 'create_object_at';
   JOBFn_ReleaseObject = 'release_object';
   JOBFn_InvokeJSValueResult = 'invoke_jsvalueresult';
   JOBFn_CallbackHandler = 'JOBCallback';
+  JOBFn_SetMemFromArray = 'set_mem_from_object';
+  JOBFn_SetArrayFromMem = 'set_object_from_mem';
+  JOBFn_DebugObject = 'debug_object';
+  JOBFn_ShareObject = 'share_object';
 
   JOBArgUndefined = 0;
   JOBArgLongint = 1;
@@ -83,8 +88,10 @@ const
   JOBArgDictionary = 12; // followed by count and pairs
   JOBArgArrayOfJSValue = 13; // followed by count and values
   JOBArgArrayOfDouble = 14; // followed by count and pointer
+  JOBArgArrayOfByte = 15; // followed by count and pointer
+  JOBArgFunction = 12; // followed by Callback, Data, Code
 
-  JOBArgNames: array[0..14] of string = (
+  JOBArgNames: array[0..15] of string = (
     'Undefined',
     'Longint',
     'Double',
@@ -99,7 +106,8 @@ const
     'Method',
     'Dictionary',
     'ArrayOfJSValue',
-    'ArrayOfDouble'
+    'ArrayOfJSDouble',
+    'ArrayOfByte'
     );
 
   JOBInvokeCall = 0; // call function

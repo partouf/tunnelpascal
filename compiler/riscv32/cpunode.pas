@@ -31,6 +31,7 @@ unit cpunode;
        { generic nodes }
        ncgbas,ncgld,ncgflw,ncgcnv,ncgmem,ncgcon,ncgcal,ncgset,ncginl,ncgopt,
        ncgobjc,
+       nrv32util,
        { symtable }
        symcpu,
        aasmdef,
@@ -43,8 +44,8 @@ unit cpunode;
        nrvset,
        nrvinl,
        nrv32mat,
-       nrv32cnv
-//       ,nrvcon
+       nrv32cnv,
+       nrvcon
        ;
 
 end.

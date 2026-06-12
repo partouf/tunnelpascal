@@ -27,7 +27,7 @@ type
   ESourceFilesException = class(Exception);
   ECantOpenFileException = class(ESourceFilesException);
   EUnknownInputFormatException = class(ESourceFilesException);
-  
+
 type
 
   { TSourceFiles }
@@ -49,7 +49,7 @@ type
     property RCDefines: TStringList read fRCDefines;
     property RCMode: Boolean read fRCMode write fRCMode;
   end;
-  
+
 implementation
 
 uses msghandler, closablefilestream, rcreader;
@@ -114,7 +114,15 @@ begin
           TRCResourceReader(aReader).RCDefines.Assign(fRCDefines);
           SetCurrentDir(ExtractFilePath(ExpandFileName(fFileList[i])));
         end;
-        tmpres.LoadFromStream(aStream,aReader);
+        try
+          tmpres.LoadFromStream(aStream,aReader);
+        except
+           on e :EParserError do
+              begin
+                e.message:=fFileList[i]+': '+e.message;
+              raise;
+            end;
+        end;
         aResources.MoveFrom(tmpres);
         Messages.DoVerbose('Resource information read');
       finally

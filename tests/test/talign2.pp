@@ -1,4 +1,3 @@
-{ %VERSION=1.1 }
 {%OPT=-Og}
 { This verifies if the strings are
   correctly aligned, normally the generated assembler
@@ -9,7 +8,7 @@ program talign2;
 {$ifdef fpc}
 {$mode objfpc}
 {$define haswidestring}
-{$ifdef go32v2}
+{$if defined(go32v2) or defined(wasi)}
   {$define USE_INTERNAL_UNICODE}
 {$endif}
 

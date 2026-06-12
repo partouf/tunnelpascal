@@ -19,7 +19,8 @@ Unit CPUInfo;
 Interface
 
   uses
-    globtype;
+    globtype,
+    systems;
 
 Type
    bestreal = double;
@@ -45,22 +46,13 @@ Type
        cpu_pic32mx
       );
 
-   tfputype =(fpu_none,fpu_soft,fpu_mips2,fpu_mips3);
-
-   tabitype = 
-     (
-     abi_none,
-     abi_default,
-     abi_o32,
-     abi_n32,
-     abi_o64,
-     abi_n64,
-     abi_eabi
-     );
+   tfputype =(fpu_none,fpu_soft,fpu_libgcc,fpu_mips2,fpu_mips3);
 
 Const
    {# Size of native extended floating point type }
    extended_size = 8;
+
+var
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
@@ -72,8 +64,9 @@ Const
      pocall_cppdecl
    ];
 
-   { cpu strings as accepted by 
-     GNU assembler in -arch=XXX option 
+const
+   { cpu strings as accepted by
+     GNU assembler in -arch=XXX option
      this ilist needs to be uppercased }
    cputypestr : array[tcputype] of string[8] = ('',
      { cpu_mips1        } 'MIPS1',
@@ -89,22 +82,9 @@ Const
    fputypestr : array[tfputype] of string[9] = (
      'NONE',
      'SOFT',
+     'LIBGCC',
      'MIPS2','MIPS3'
    );
-
-   { abi strings as accepted by 
-     GNU assembler in -abi=XXX option }
-   abitypestr : array[tabitype] of string[4] =
-     ({ abi_none    } '',
-      { abi_default } '32',
-      { abi_o32     } '32',
-      { abi_n32     } 'n32',
-      { abi_o64     } 'o64',
-      { abi_n64     } '64',
-      { abi_eabi    } 'eabi'
-     );
-
-   mips_abi : tabitype = abi_default;
 
 type
    tcpuflags=(
@@ -248,26 +228,6 @@ const
    level3optimizerswitches = level2optimizerswitches;
    level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [];
 
-function SetMipsABIType(const s : string) : boolean;
-
 Implementation
 
-uses
-  cutils;
-
-function SetMipsABIType(const s : string) : boolean;
-
-  var
-    abi : tabitype;
-  begin
-    SetMipsABIType:=false;
-    for abi := low(tabitype) to high(tabitype) do
-      if (lower(s)=abitypestr[abi]) then
-        begin
-          mips_abi:=abi;
-          SetMipsABIType:=true;
-          break;
-        end;
-  end;
-           
 end.

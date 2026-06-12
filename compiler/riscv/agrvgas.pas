@@ -29,7 +29,7 @@ unit agrvgas;
 {$i fpcdefs.inc}
 
   interface
-  
+
     uses
        systems,aasmbase,
        aasmtai,aasmdata,
@@ -52,7 +52,7 @@ unit agrvgas;
 
     uses
        cutils,globals,verbose,
-       cgbase,
+       cgbase, comphook,
        itcpugas,cpuinfo,
        aasmcpu;
 
@@ -74,7 +74,7 @@ unit agrvgas;
             else
               begin
                 s :='';
-                if not(refaddr in [addr_no,addr_pic_no_got,addr_plt]) then
+                if not(refaddr in [addr_no,addr_pic_no_got,addr_plt,addr_full]) then
                   s := s+'(';
                 if assigned(symbol) then
                   begin
@@ -126,7 +126,7 @@ unit agrvgas;
                if (offset=0) then
                  s:=s+gas_regname(base)+','+gas_regname(index)
                else
-                 internalerror(2006052502);
+                 internalerror(2025011102);
              end
            else
              Internalerror(2021030602);
@@ -180,6 +180,17 @@ unit agrvgas;
           end;
         top_roundingmode:
           getopstr:=roundingmode2str[o.roundingmode];
+        top_realconst:
+          case o.special_value of
+            ARSV_None:
+              str(o.val_real,getopstr);
+            ARSV_Nan:
+              getopstr:='nan';
+            ARSV_Min:
+              getopstr:='min';
+            ARSV_Inf:
+              getopstr:='inf';
+          end;
         else
           internalerror(2002070604);
       end;
@@ -231,14 +242,14 @@ unit agrvgas;
 
     function TRVGNUAssembler.MakeCmdLine: TCmdStr;
       const
-        arch_str: array[boolean,tcputype] of string[10] = (
+        arch_str: array[boolean,tcputype] of string[26] = (
 {$ifdef RISCV32}
-          ('','rv32imac','rv32ima','rv32im','rv32i','rv32e','rv32imc','rv32ec'),
-          ('','rv32imafdc','rv32imafd','rv32imfd','rv32ifd','rv32efd','rv32imcfd','rv32ecfd')
+          ('','rv32imac','rv32imac_zicsr_zifencei','rv32ima','rv32im','rv32i','rv32e','rv32imc','rv32imc_zicsr_zifencei','rv32imafdc','rv32imaf','rv32imafc','rv32imafd','rv32ec','rv32gc','rv32gc_zba_zbb_zbs'),
+          ('','rv32imafdc','rv32imafdc_zicsr_zifencei','rv32imafd','rv32imfd','rv32ifd','rv32efd','rv32imcfd','rv32imcfd_zicsr_zifencei','rv32imafdc','rv32imafc','rv32imaf','rv32imafd','rv32ecfd','rv32gc','rv32gc_zba_zbb_zbs')
 {$endif RISCV32}
 {$ifdef RISCV64}
-          ('','rv64imac','rv64ima','rv64im','rv64i'),
-          ('','rv64imafdc','rv64imafd','rv64imfd','rv64ifd')
+          ('','rv64imac','rv64ima','rv64im','rv64i','rv64imafdc','rv64imafd','rv64gc','rv64gc_zba_zbb_zbs'),
+          ('','rv64imafdc','rv64imafd','rv64imfd','rv64ifd','rv64imafdc','rv64imafd','rv64gc','rv64gc_zba_zbb_zbs')
 {$endif RISCV64}
         );
       begin
@@ -248,20 +259,34 @@ unit agrvgas;
       case target_info.abi of
         abi_riscv_ilp32:
           Replace(result,'$ABI','ilp32');
+        abi_riscv_ilp32d:
+          Replace(result,'$ABI','ilp32d');
+        abi_riscv_ilp32e:
+          Replace(result,'$ABI','ilp32e');
         abi_riscv_ilp32f:
           Replace(result,'$ABI','ilp32f');
 	else
-          Replace(result,'$ABI','ilp32d');
+          begin
+            Do_Comment(V_Warning,'Unrecognized riscv32 abi: '+tostr(ord(target_info.abi)));
+            Replace(result,'$ABI','ilp32d');
+	  end;
       end;
 {$endif RISCV32}
 {$ifdef RISCV64}
       case target_info.abi of
         abi_riscv_lp64:
           Replace(result,'$ABI','lp64');
+        abi_riscv_lp64d:
+          Replace(result,'$ABI','lp64d');
         abi_riscv_lp64f:
           Replace(result,'$ABI','lp64f');
+        abi_riscv_lp64q:
+          Replace(result,'$ABI','lp64q');
 	else
-          Replace(result,'$ABI','lp64d');
+          begin
+            Do_Comment(V_Warning,'Unrecognized riscv64 abi: '+tostr(ord(target_info.abi)));
+            Replace(result,'$ABI','lp64d');
+	  end;
       end;
 {$endif RISCV64}
       end;

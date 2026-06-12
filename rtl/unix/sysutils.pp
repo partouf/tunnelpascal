@@ -43,6 +43,7 @@ interface
 {$DEFINE HAS_OSUSERDIR}
 {$DEFINE HAS_LOCALTIMEZONEOFFSET}
 {$DEFINE HAS_GETTICKCOUNT64}
+{$DEFINE HAS_INVALIDHANDLE}
 
 // this target has an fileflush implementation, don't include dummy
 {$DEFINE SYSUTILS_HAS_FILEFLUSH_IMPL}
@@ -64,6 +65,10 @@ uses
   baseunix, Unix,errors,sysconst,Unixtype;
 {$ENDIF FPC_DOTTEDUNITS}
 
+
+const
+  INVALID_HANDLE_VALUE = -1;
+
 {$IF defined(LINUX) or defined(FreeBSD)}
 {$DEFINE HAVECLOCKGETTIME}
 {$ENDIF}
@@ -83,13 +88,17 @@ uses
   {$DEFINE USE_FUTIMES}
 {$endif}
 
+{$if declared(fpfutimens)}
+  {$DEFINE USE_FUTIMES}
+{$endif}
+
 { Include platform independent interface part }
 {$i sysutilh.inc}
 
 Function AddDisk(const path:string) : Byte;
 
 { the following is Kylix compatibility stuff, it should be moved to a
-  special compatibilty unit (FK) }
+  special compatibility unit (FK) }
   const
     RTL_SIGINT     = 0;
     RTL_SIGFPE     = 1;
@@ -335,7 +344,7 @@ var
   {$IFDEF HAVECLOCKGETTIME}
   ts: TTimeSpec;
   {$ENDIF}
-  
+
 begin
  {$IFDEF HAVECLOCKGETTIME}
    if clock_gettime(CLOCK_MONOTONIC, @ts)=0 then
@@ -364,6 +373,7 @@ var
   lockres: cint;
   closeres: cint;
   lockerr: cint;
+  TryCount : integer;
 begin
   DoFileLocking:=Handle;
 {$ifdef beos}
@@ -374,7 +384,7 @@ begin
       { Solaris' & AIX' flock is based on top of fcntl, which does not allow
         exclusive locks for files only opened for reading nor shared locks
         for files opened only for writing.
-        
+
         If no locking is specified, we normally need an exclusive lock.
         So create an exclusive lock for fmOpenWrite and fmOpenReadWrite,
         but only a shared lock for fmOpenRead (since an exclusive lock
@@ -397,21 +407,31 @@ begin
           lockop:=LOCK_SH or LOCK_NB;
         else
           begin
-            { fmShareDenyRead does not exit under *nix, only shared access
+            { fmShareDenyRead does not exist under *nix, only shared access
               (similar to fmShareDenyWrite) and exclusive access (same as
               fmShareExclusive)
             }
             repeat
               closeres:=FpClose(Handle);
-            until (closeres<>-1) or (fpgeterrno<>ESysEINTR);
+            until (closeres<>-1) or (fpgeterrno<>ESysEAGAIN);
             DoFileLocking:=-1;
             exit;
           end;
       end;
+      TryCount:=0;
       repeat
         lockres:=fpflock(Handle,lockop);
+        // On EAGAIN, do not try indefinitely
+        if (lockres<>0) and (fpgeterrno=ESysEAGAIN) then
+          begin
+          Inc(TryCount);
+          if TryCount > 30 then
+            Break
+          else
+            Sleep(1);
+          end;
       until (lockres=0) or
-            (fpgeterrno<>ESysEIntr);
+            ((fpgeterrno<>ESysEIntr) and (fpgeterrno<>ESysEAGAIN));
       lockerr:=fpgeterrno;
       { Only return an error if locks are working and the file was already
         locked. Not if locks are simply unsupported (e.g., on Angstrom Linux
@@ -422,7 +442,7 @@ begin
         begin
           repeat
             closeres:=FpClose(Handle);
-          until (closeres<>-1) or (fpgeterrno<>ESysEINTR);
+          until (closeres<>-1) or (fpgeterrno<>ESysEAGAIN);
           DoFileLocking:=-1;
           exit;
         end;
@@ -456,14 +476,14 @@ begin
   until (fd<>-1) or (fpgeterrno<>ESysEINTR);
 
   { Do not allow to open directories with FileOpen.
-    This would cause weird behavior of TFileStream.Size, 
+    This would cause weird behavior of TFileStream.Size,
     TMemoryStream.LoadFromFile etc. }
   if (fd<>-1) and IsHandleDirectory(fd) then
     begin
     fpClose(fd);
     fd:=feInvalidHandle;
     end;
-  FileOpenNoLocking:=fd;  
+  FileOpenNoLocking:=fd;
 end;
 
 
@@ -517,10 +537,17 @@ begin
   if (fd>=0) then
     begin
       if ((ShareMode and fmShareNoLocking)=0) then
-        Result:=DoFileLocking(fd,ShareMode)
+        begin
+        Result:=DoFileLocking(fd,ShareMode);
+        // If lock succeeded, close. If lock failed, the file was already closed.
+        if Result<>-1 then 
+          FileClose(fd);
+        end
       else
+        begin
         Result:=0;
-      FileClose(fd);
+        FileClose(fd);
+        end;
      { Can't lock -> abort }
       if Result<0 then
         exit;
@@ -571,11 +598,11 @@ end;
 
 Procedure FileClose (Handle : Longint);
 var
-  res: cint;
+  closeres: cint;
 begin
   repeat
-    res:=fpclose(Handle);
-  until (res<>-1) or (fpgeterrno<>ESysEINTR);
+    closeres:=fpclose(Handle);
+  until (closeres<>-1) or (fpgeterrno<>ESysEAGAIN);
 end;
 
 Function FileTruncate (Handle: THandle; Size: Int64) : boolean;
@@ -617,7 +644,7 @@ begin
 
   If  (fpstat(PAnsiChar(SystemFileName),Info)<0) or fpS_ISDIR(info.st_mode) then
     exit(-1)
-  else 
+  else
     Result:=info.st_mtime;
 end;
 
@@ -892,7 +919,7 @@ Var
                 if (i<=LenPat) then
                   begin
                     repeat
-                      {find a letter (not only first !) which maches pattern[i]}
+                      {find a letter (not only first !) which matches pattern[i]}
                       if UTF8 then
                         begin
                           while (j<=LenName) and
@@ -1495,7 +1522,7 @@ Procedure GetDateTime(Var Year,Month,Day,hour,minute,second:Word);
 }
 Var
   usec,msec : word;
-  
+
 Begin
   DoGetLocalDateTime(year,month,day,hour,minute,second,msec,usec);
 End;
@@ -1812,7 +1839,7 @@ end;
 
 
 {****************************************************************************
-                              GetTempDir 
+                              GetTempDir
 ****************************************************************************}
 
 
@@ -1841,7 +1868,7 @@ begin
 end;
 
 {****************************************************************************
-                              GetUserDir 
+                              GetUserDir
 ****************************************************************************}
 
 Var
@@ -1862,7 +1889,7 @@ begin
     else
       TheUserDir:=GetTempDir(False);
     end;
-  Result:=TheUserDir;    
+  Result:=TheUserDir;
 end;
 
 Procedure SysBeep;
@@ -1883,10 +1910,11 @@ end;
 function GetLocalTimeOffset: Integer;
 
 begin
- Result := -Tzseconds div 60; 
+ Result := -Tzseconds div 60;
 end;
 
-function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean; out Offset: Integer): Boolean;
+
+function GetLocalTimeOffset(const DateTime: TDateTime; const InputIsUTC: Boolean; out Offset: Integer; out IsDST : Boolean): Boolean;
 
 var
   Year, Month, Day, Hour, Minute, Second, MilliSecond: word;
@@ -1896,9 +1924,9 @@ begin
   DecodeDate(DateTime, Year, Month, Day);
   DecodeTime(DateTime, Hour, Minute, Second, MilliSecond);
   UnixTime:=UniversalToEpoch(Year, Month, Day, Hour, Minute, Second);
-
   {$if declared(GetLocalTimezone)}
   GetLocalTimeOffset:=GetLocalTimezone(UnixTime,InputIsUTC,lTZInfo);
+  isDST:=lTZInfo.daylight;
   if GetLocalTimeOffset then
     Offset:=-lTZInfo.seconds div 60;
   {$else}

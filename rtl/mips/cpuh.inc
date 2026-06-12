@@ -14,5 +14,12 @@
 
  **********************************************************************}
 
+{$if defined(FPUNONE) or defined(FPUSOFT)}
+  {$define FPC_SYSTEM_FPUCW_IMMUTABLE}
+{$else}
 type
   TNativeFPUControlWord = dword;
+{$endif}
+
+const
+  {$I cpuinnr.inc}

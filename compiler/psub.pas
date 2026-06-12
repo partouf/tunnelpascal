@@ -51,7 +51,7 @@ interface
         procedure maybe_add_constructor_wrapper(var tocode: tnode; withexceptblock: boolean);
         procedure add_entry_exit_code;
         procedure setup_tempgen;
-        procedure OptimizeNodeTree;
+        procedure TransformNodeTree;
         procedure convert_captured_syms;
       protected
         procedure generate_code_exceptfilters;
@@ -128,7 +128,7 @@ implementation
     uses
        sysutils,
        { common }
-       cutils, cmsgs,
+       cutils, cmsgs, cdynset,
        { global }
        globtype,tokens,verbose,comphook,constexp,
        systems,cpubase,aasmbase,aasmtai,
@@ -156,12 +156,14 @@ implementation
        ncgutil,
 
        optbase,
+       opttree,
        opttail,
        optcse,
        optloop,
        optconstprop,
        optdeadstore,
        optloadmodifystore,
+       optcall,
        optutils
 {$if defined(arm) or defined(m68k)}
        ,cpuinfo
@@ -351,7 +353,7 @@ implementation
 
          { do we have an assembler block without the po_assembler?
            we should allow this for Delphi compatibility (PFV) }
-         if (token=_ASM) and (m_delphi in current_settings.modeswitches) then
+         if (current_scanner.token=_ASM) and (m_delphi in current_settings.modeswitches) then
            include(current_procinfo.procdef.procoptions,po_assembler);
 
          { Handle assembler block different }
@@ -368,7 +370,7 @@ implementation
              (current_module.is_unit or islibrary)
             ) then
            begin
-             if (token=_END) then
+             if (current_scanner.token=_END) then
                 begin
                    consume(_END);
                    { We need at least a node, else the entry/exit code is not
@@ -380,17 +382,17 @@ implementation
                 end
               else
                 begin
-                   if token=_INITIALIZATION then
+                   if current_scanner.token=_INITIALIZATION then
                      begin
                         { The library init code is already called and does not
                           need to be in the initfinal table (PFV) }
                         block:=statement_block(_INITIALIZATION);
                         init_main_block_syms(block);
                      end
-                   else if token=_FINALIZATION then
+                   else if current_scanner.token=_FINALIZATION then
                      begin
                        { when a unit has only a finalization section, we can come to this
-                         point when we try to read the nonh existing initalization section
+                         point when we try to read the nonh existing initialization section
                          so we've to check if we are really try to parse the finalization }
                        if current_procinfo.procdef.proctypeoption=potype_unitfinalize then
                          block:=statement_block(_FINALIZATION)
@@ -493,7 +495,7 @@ implementation
                             nil));
                       end
                     else
-                      internalerror(200305108);
+                      Message(parser_e_no_suitable_newinstance_method_found);
                   end
                 else
                   if is_object(current_structdef) then
@@ -684,16 +686,10 @@ implementation
 ****************************************************************************}
 
      destructor tcgprocinfo.destroy;
-       var
-         i : longint;
        begin
-         if assigned(tempinfo_flags_map) then
-           begin
-             for i:=0 to tempinfo_flags_map.count-1 do
-               dispose(ptempinfo_flags_entry(tempinfo_flags_map[i]));
-             tempinfo_flags_map.free;
-           end;
+         TFPList.FreeAndNilDisposing(tempinfo_flags_map,TypeInfo(ttempinfo_flags_entry));
          code.free;
+         code := nil;
          inherited destroy;
        end;
 
@@ -1175,13 +1171,16 @@ implementation
       end;
 
 
-    procedure tcgprocinfo.OptimizeNodeTree;
+    procedure tcgprocinfo.TransformNodeTree;
       var
         i : integer;
         UserCode : TNode;
-        RedoDFA, changed : Boolean;
-        {RedoDFA : boolean;}
+        updated,
+        RedoDFA : boolean;
       begin
+       { inlining is a heuristics, so we do this very early }
+       do_optinline(code,updated);
+
        { do this before adding the entry code else the tail recursion recognition won't work,
          if this causes troubles, it must be if'ed
        }
@@ -1191,10 +1190,9 @@ implementation
 
        if cs_opt_constant_propagate in current_settings.optimizerswitches then
          begin
-           changed:=false;
-           repeat
-             do_optconstpropagate(code,changed);
-           until not(changed);
+           do_optconstpropagate(code,RedoDFA);
+           { RedoDFA value not used here }
+           RedoDFA:=false;
          end;
 
        if (cs_opt_nodedfa in current_settings.optimizerswitches) and
@@ -1208,12 +1206,14 @@ implementation
 
            if cs_opt_constant_propagate in current_settings.optimizerswitches then
              begin
-               changed:=false;
-               repeat
-                 do_optconstpropagate(code,changed);
-                 if changed then
+               do_optconstpropagate(code,RedoDFA);
+               if RedoDFA then
+                 begin
                    dfabuilder.redodfainfo(code);
-               until not(changed);
+                   RedoDFA:=false; { Don't redo it again unless necessary }
+                 end;
+               { Don't re-run constant propagation as redoing DFA info didn't
+                 actually change any nodes }
              end;
 
            if (cs_opt_loopstrength in current_settings.optimizerswitches)
@@ -1225,12 +1225,18 @@ implementation
              end;
 
            if RedoDFA then
-             dfabuilder.redodfainfo(code);
+             begin
+               dfabuilder.redodfainfo(code);
+               RedoDFA:=false; { Don't redo it again unless necessary }
+             end;
 
            if cs_opt_forloop in current_settings.optimizerswitches then
              RedoDFA:=OptimizeForLoop(code);
 
            RedoDFA:=ConvertForLoops(code) or RedoDFA;
+
+           if cs_opt_forloop in current_settings.optimizerswitches then
+             RedoDFA:=optimize_record_writes(code) or RedoDFA;
 
            if RedoDFA then
              dfabuilder.redodfainfo(code);
@@ -1244,7 +1250,7 @@ implementation
              for i:=0 to dfabuilder.nodemap.count-1 do
                begin
                  UserCode:=GetUserCode();
-                 if DFASetIn(UserCode.optinfo^.life,i) then
+                 if DynSetIn(UserCode.optinfo^.life,i) then
                    begin
                      { do not warn for certain parameters: }
                      if not((tnode(dfabuilder.nodemap[i]).nodetype=loadn) and (tloadnode(dfabuilder.nodemap[i]).symtableentry.typ=paravarsym) and
@@ -1266,17 +1272,19 @@ implementation
 
            if cs_opt_dead_store_eliminate in current_settings.optimizerswitches then
              begin
-               changed:=false;
-               repeat
-                 do_optdeadstoreelim(code,changed);
-                 if changed then
-                   dfabuilder.redodfainfo(code);
-               until not(changed);
+               if normalize(code) then
+                 begin
+                   do_optdeadstoreelim(code,RedoDFA);
+                   if RedoDFA then
+                     dfabuilder.redodfainfo(code);
+                 end;
              end;
          end
        else
          begin
            ConvertForLoops(code);
+           if cs_opt_forloop in current_settings.optimizerswitches then
+             optimize_record_writes(code);
          end;
 
        if (cs_opt_remove_empty_proc in current_settings.optimizerswitches) and
@@ -1417,6 +1425,7 @@ implementation
         nodeset:=THashSet.Create(32,false,false);
         foreachnode(code,@store_node_tempflags,nodeset);
         nodeset.free;
+        nodeset := nil;
       end;
 
 
@@ -1631,7 +1640,8 @@ implementation
         hpi:=tcgprocinfo(get_first_nestedproc);
         while assigned(hpi) do
           begin
-            hpi.generate_code_tree;
+            if not (df_generic in hpi.procdef.defoptions) then
+              hpi.generate_code_tree;
             hpi:=tcgprocinfo(hpi.next);
           end;
         resetprocdef;
@@ -1836,6 +1846,23 @@ implementation
              end;
          end;
 
+       function heuristics_favors_autoinlining(code: tnode): boolean;
+         var
+           complexityAvail : integer;
+         begin
+           { rough approximation if we should auto inline:
+             - if the tree is simple enough
+             - if the tree is not too big
+             A bigger tree which is simpler might be autoinlined otoh
+             a smaller and complexer tree as well: so we use the sum of
+             both measures here }
+
+           { This is a shortcutted version of
+             "result:=node_count(code)+node_complexity(code)<=25". }
+           complexityAvail:=25-node_complexity(code);
+           result:=(complexityAvail>0) and (node_count(code,complexityAvail+1)<=dword(complexityAvail));
+         end;
+
       var
         old_current_procinfo : tprocinfo;
         oldmaxfpuregisters : longint;
@@ -1856,6 +1883,7 @@ implementation
                 begin
                   aktproccode.remove(ai);
                   ai.free;
+                  ai := nil;
                   anode.currenttai:=nil;
                 end;
             end;
@@ -1918,13 +1946,7 @@ implementation
                                            potype_destructor,potype_class_constructor,potype_class_destructor]) and
             ((procdef.procoptions*[po_exports,po_external,po_interrupt,po_virtualmethod,po_iocheck])=[]) and
             (not(procdef.proccalloption in [pocall_safecall])) and
-            { rough approximation if we should auto inline:
-              - if the tree is simple enough
-              - if the tree is not too big
-              A bigger tree which is simpler might be autoinlined otoh
-              a smaller and complexer tree as well: so we use the sum of
-              both measures here }
-            (node_count(code)+node_complexity(code)<=25) then
+            heuristics_favors_autoinlining(code) then
           begin
             { Can we inline this procedure? }
             if checknodeinlining(procdef) then
@@ -1971,6 +1993,7 @@ implementation
         { Print out nodes as they appear after the first pass }
         XMLPrintProc(True);
 {$endif DEBUG_NODE_XML}
+
         { firstpass everything }
         flowcontrol:=[];
         do_firstpass(code);
@@ -1984,7 +2007,7 @@ implementation
         if paraprintnodetree <> 0 then
           printproc( 'after the firstpass');
 
-        OptimizeNodeTree;
+        TransformNodeTree;
 
         { unit static/global symtables might contain threadvars which are not explicitly used but which might
           require a tls register, so check for such variables }
@@ -2091,7 +2114,7 @@ implementation
             else if not temps_finalized then
               begin
                 hlcg.gen_finalize_code(templist);
-                { the finalcode must be concated if there was no position available,
+                { the finalcode must be concatenated if there was no position available,
                   using insertlistafter will result in an insert at the start
                   when currentai=nil }
                 aktproccode.concatlist(templist);
@@ -2336,12 +2359,14 @@ implementation
           end;
 
         dfabuilder.free;
+        dfabuilder := nil;
 
         { restore symtablestack }
         remove_from_symtablestack;
 
         { restore }
         templist.free;
+        templist := nil;
         current_settings.maxfpuregisters:=oldmaxfpuregisters;
         current_filepos:=oldfilepos;
         current_structdef:=old_current_structdef;
@@ -2678,7 +2703,7 @@ implementation
 
         { When it's a nested procedure then defer the code generation,
           when back at normal function level then generate the code
-          for all defered nested procedures and the current procedure }
+          for all deferred nested procedures and the current procedure }
         if not isnestedproc then
           begin
             if not(df_generic in current_procinfo.procdef.defoptions) then
@@ -3090,7 +3115,7 @@ implementation
         repeat
            if not assigned(current_procinfo) then
              internalerror(200304251);
-           case token of
+           case current_scanner.token of
               _LABEL:
                 begin
                   handle_unexpected_had_generic;
@@ -3123,8 +3148,8 @@ implementation
                    begin
                      { class modifier is only allowed for procedures, functions, }
                      { constructors, destructors                                 }
-                     if not((token in [_FUNCTION,_PROCEDURE,_DESTRUCTOR,_OPERATOR]) or (token=_CONSTRUCTOR)) and
-                        not((token=_ID) and (idtoken=_OPERATOR)) then
+                     if not((current_scanner.token in [_FUNCTION,_PROCEDURE,_DESTRUCTOR,_OPERATOR]) or (current_scanner.token=_CONSTRUCTOR)) and
+                        not((current_scanner.token=_ID) and (current_scanner.idtoken=_OPERATOR)) then
                        Message(parser_e_procedure_or_function_expected);
 
                      if is_interface(current_structdef) then
@@ -3140,7 +3165,7 @@ implementation
               _PROCEDURE,
               _OPERATOR:
                 begin
-                  if hadgeneric and not (token in [_PROCEDURE,_FUNCTION]) then
+                  if hadgeneric and not (current_scanner.token in [_PROCEDURE,_FUNCTION]) then
                     begin
                       Message(parser_e_procedure_or_function_expected);
                       hadgeneric:=false;
@@ -3181,7 +3206,7 @@ implementation
                 end;
               else
                 begin
-                  case idtoken of
+                  case current_scanner.idtoken of
                     _RESOURCESTRING:
                       begin
                         handle_unexpected_had_generic;
@@ -3223,15 +3248,15 @@ implementation
 
          { add implementations for synthetic method declarations added by
            the compiler (not for unit/program init functions, their localst
-           is the staticst -> would duplicate the work done in pmodules) }
+           is the statistic -> would duplicate the work done in pmodules) }
          if (current_procinfo.procdef.localst.symtabletype=localsymtable) and
            { we cannot call add_synthetic_method_implementations as it throws an internalerror if
              the token is a string/char. As this is a syntax error and compilation will abort anyways,
              skipping the call does not matter
            }
-           (token<>_CSTRING) and
-           (token<>_CWCHAR) and
-           (token<>_CWSTRING) then
+           (current_scanner.token<>_CSTRING) and
+           (current_scanner.token<>_CWCHAR) and
+           (current_scanner.token<>_CWSTRING) then
            add_synthetic_method_implementations(current_procinfo.procdef.localst);
 
          { check for incomplete class definitions, this is only required
@@ -3259,7 +3284,7 @@ implementation
       begin
          hadgeneric:=false;
          repeat
-           case token of
+           case current_scanner.token of
              _CONST :
                begin
                  handle_unexpected_had_generic;
@@ -3284,7 +3309,7 @@ implementation
              _PROCEDURE,
              _OPERATOR :
                begin
-                 if hadgeneric and not (token in [_FUNCTION, _PROCEDURE]) then
+                 if hadgeneric and not (current_scanner.token in [_FUNCTION, _PROCEDURE]) then
                    begin
                      message(parser_e_procedure_or_function_expected);
                      hadgeneric:=false;
@@ -3297,7 +3322,7 @@ implementation
                end;
              else
                begin
-                 case idtoken of
+                 case current_scanner.idtoken of
                    _RESOURCESTRING :
                      begin
                        handle_unexpected_had_generic;

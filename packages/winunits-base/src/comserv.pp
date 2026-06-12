@@ -96,9 +96,10 @@ type
     procedure RegisterServer;
     procedure UnRegisterServer;
     property IsInprocServer: Boolean read FIsInproc write FIsInproc;
-    property IsInteractive: Boolean read fIsInteractive;
+    property IsInteractive: Boolean read fIsInteractive write fIsInteractive;
     property StartMode: TStartMode read FStartMode;
     property ServerObjects:integer read fCountObject;
+    property OnLastRelease: TLastReleaseEvent read FOnLastRelease write FOnLastRelease;
   end;
 
 var

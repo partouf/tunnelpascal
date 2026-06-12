@@ -32,7 +32,7 @@
         <IsPartOfProject Value="True"/>
       </Unit0>
       <Unit1>
-        <Filename Value="dirwatch.pp"/>
+        <Filename Value="dirw.pp"/>
         <IsPartOfProject Value="True"/>
       </Unit1>
       <Unit2>
@@ -48,7 +48,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="../../packages/fcl-js/src;../../packages/fcl-json/src;../../packages/fcl-passrc/src;../../packages/pastojs/src"/>
+      <OtherUnitFiles Value="../../packages/fcl-js/src;../../packages/fcl-json/src;../../packages/fcl-passrc/src;../../packages/pastojs/src;../../packages/fcl-web/src/base;../../packages/fcl-base/src"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
   </CompilerOptions>

@@ -27,7 +27,7 @@ interface
 
     uses
       { common }
-      cclasses,globtype,
+      sysutils,cclasses,globtype,
       { target }
       systems,cpubase,
       { assembler }
@@ -53,8 +53,8 @@ interface
 
       TWasmObjSymbolLinkingData = class
       public
-        ImportModule: string;
-        ImportName: string;
+        ImportModule: ansistring;
+        ImportName: ansistring;
 
         FuncType: TWasmFuncType;
         ExeFunctionIndex: Integer;
@@ -81,9 +81,11 @@ interface
         SymbolIndex: Integer;
         GlobalIndex: Integer;
         TagIndex: Integer;
-        AliasOf: string;
+        AliasOf: ansistring;
         ExtraData: TWasmObjSymbolExtraData;
         LinkingData: TWasmObjSymbolLinkingData;
+        TlsGlobalSym: TWasmObjSymbol;
+        TlsDataSym: TWasmObjSymbol;
         constructor create(AList:TFPHashObjectList;const AName:string);override;
         destructor Destroy;override;
         function IsAlias: Boolean;
@@ -104,6 +106,7 @@ interface
         constructor CreateTypeIndex(ADataOffset:TObjSectionOfs; ATypeIndex: Integer);
         constructor CreateFuncType(ADataOffset:TObjSectionOfs; AFuncType: TWasmFuncType);
         destructor Destroy;override;
+        function ToString:ansistring;override;
       end;
 
       { TWasmObjSymbolExtraData }
@@ -111,14 +114,16 @@ interface
       TWasmObjSymbolExtraData = class(TFPHashObject)
         TypeIdx: Integer;
         ExceptionTagTypeIdx: Integer;
-        ImportModule: string;
-        ImportName: string;
-        ExportName: string;
+        ImportModule: ansistring;
+        ImportName: ansistring;
+        ExportName: ansistring;
         GlobalType: TWasmBasicType;
         GlobalIsImmutable: Boolean;
         Locals: array of TWasmBasicType;
+        EncodedLocals: tdynamicarray;
         constructor Create(HashObjectList: TFPHashObjectList; const s: TSymStr);
-        procedure AddLocal(bastyp: TWasmBasicType);
+        destructor Destroy; override;
+        procedure AddLocals(alocals: TWasmLocalsDynArray);
       end;
 
       { TWasmObjSection }
@@ -130,6 +135,7 @@ interface
         SegOfs: qword;
         FileSectionOfs: qword;
         MainFuncSymbol: TWasmObjSymbol;
+        CustomSectionIdx: Integer;
         constructor create(AList:TFPHashObjectList;const Aname:string;Aalign:longint;Aoptions:TObjSectionOptions);override;
         function IsCode: Boolean;
         function IsData: Boolean;
@@ -171,12 +177,16 @@ interface
         function globalref(asmsym:TAsmSymbol):TObjSymbol;
         function ExceptionTagRef(asmsym:TAsmSymbol):TObjSymbol;
         procedure DeclareGlobalType(gt: tai_globaltype);
-        procedure DeclareFuncType(ft: tai_functype);
+        procedure DeclareFuncType_Pass0(ft: tai_functype);
+        procedure DeclareFuncType_Pass1(ft: tai_functype);
+        procedure DeclareFuncType_Pass2(ft: tai_functype);
         procedure DeclareTagType(tt: tai_tagtype);
         procedure DeclareExportName(en: tai_export_name);
         procedure DeclareImportModule(aim: tai_import_module);
         procedure DeclareImportName(ain: tai_import_name);
-        procedure DeclareLocal(al: tai_local);
+        procedure DeclareLocals_Pass0(al: tai_local);
+        procedure DeclareLocals_Pass1(al: tai_local);
+        procedure WriteLocals_Pass2(al: tai_local);
         procedure symbolpairdefine(akind: TSymbolPairKind;const asym, avalue: string);override;
         property FuncTypes: TWasmFuncTypeTable read FFuncTypes;
       end;
@@ -213,7 +223,6 @@ interface
         procedure WriteWasmCustomSection(wcst: TWasmCustomSectionType);
         function IsExternalFunction(sym: TObjSymbol): Boolean;
         function IsExportedFunction(sym: TWasmObjSymbol): Boolean;
-        procedure WriteFunctionLocals(dest: tdynamicarray; ed: TWasmObjSymbolExtraData);
         procedure WriteFunctionCode(dest: tdynamicarray; objsym: TObjSymbol);
         procedure WriteSymbolTable;
         procedure WriteRelocationCodeTable(CodeSectionIndex: Integer);
@@ -246,6 +255,20 @@ interface
 
       TWasmExeOutput = class(TExeOutput)
       private
+        const
+          DataSections: array [1..3] of string = (
+            '.rodata',
+            '.data',
+            'fpc.resources');
+        WasmPageSize = 65536;
+
+        type
+          TCustomSectionNameMapEntry = record
+            idx: UInt32;
+            name: string;
+          end;
+          TCustomSectionNameMap = array of TCustomSectionNameMapEntry;
+      private
         FImports: TFPHashObjectList;
         FFuncTypes: TWasmFuncTypeTable;
 
@@ -262,10 +285,35 @@ interface
           FuncIdx: Integer;
         end;
 
+        FImportedMemories: array of record
+          ModName: ansistring;
+          Name: ansistring;
+          MemType: TWasmMemoryType;
+        end;
+        FMemories: array of TWasmMemoryType;
+
+        FRelocationPass: Integer;
         FWasmSections: array [TWasmSectionID] of tdynamicarray;
         FWasmCustomSections: array [TWasmCustomSectionType] of tdynamicarray;
+        FWasmNameSubsections: array [TWasmNameSubsectionType] of tdynamicarray;
         FStackPointerSym: TWasmObjSymbol;
-        FMinMemoryPages: Integer;
+        FTlsBaseSym: TWasmObjSymbol;
+        FTlsSizeSym: TWasmObjSymbol;
+        FTlsAlignSym: TWasmObjSymbol;
+        FInitTlsFunctionSym: TWasmObjSymbol;
+        FInitSharedMemoryFunctionSym: TWasmObjSymbol;
+        FMinMemoryPages,
+        FMaxMemoryPages: Integer;
+        { use for the Name section }
+        FFunctionNameMap: TCustomSectionNameMap;
+        FGlobalNameMap: TCustomSectionNameMap;
+        FDataNameMap: TCustomSectionNameMap;
+        FTagNameMap: TCustomSectionNameMap;
+        procedure AddToNameMap(var nm: TCustomSectionNameMap; aidx: UInt32; const aname: string);
+        procedure AddToFunctionNameMap(aidx: UInt32; const aname: string);
+        procedure AddToGlobalNameMap(aidx: UInt32; const aname: string);
+        procedure AddToDataNameMap(aidx: UInt32; const aname: string);
+        procedure AddToTagNameMap(aidx: UInt32; const aname: string);
         procedure WriteWasmSection(wsid: TWasmSectionID);
         procedure WriteWasmSectionIfNotEmpty(wsid: TWasmSectionID);
         procedure WriteWasmCustomSection(wcst: TWasmCustomSectionType);
@@ -274,7 +322,16 @@ interface
         procedure PrepareTags;
         function AddOrGetIndirectFunctionTableIndex(FuncIdx: Integer): integer;
         procedure SetStackPointer;
+        procedure SetTlsSizeAlignAndBase;
+        procedure SetThreadVarGlobalsInitValues;
+        procedure GenerateCode_InitTls;
+        procedure GenerateCode_InitSharedMemory;
+        procedure GenerateCode_InvokeHelper;
         procedure WriteExeSectionToDynArray(exesec: TExeSection; dynarr: tdynamicarray);
+        procedure WriteMemoryTo(dest: tdynamicarray;const MemType:TWasmMemoryType);
+        function Memory2String(const MemType:TWasmMemoryType):string;
+        procedure WriteMap_TypeSection;
+        procedure WriteMap_IndirectFunctionTable;
       protected
         function writeData:boolean;override;
         procedure DoRelocationFixup(objsec:TObjSection);override;
@@ -296,7 +353,7 @@ interface
 implementation
 
     uses
-      cutils,verbose,version,globals,ogmap;
+      cutils,verbose,version,globals,fmodule,ogmap;
 
     const
       StackPointerSymStr='__stack_pointer';
@@ -373,6 +430,19 @@ implementation
         until v=0;
       end;
 
+    procedure WriteUleb(d: tobjsection; v: uint64);
+      var
+        b: byte;
+      begin
+        repeat
+          b:=byte(v) and 127;
+          v:=v shr 7;
+          if v<>0 then
+            b:=b or 128;
+          d.write(b,1);
+        until v=0;
+      end;
+
     procedure WriteUleb(w: TObjectWriter; v: uint64);
       var
         b: byte;
@@ -387,6 +457,22 @@ implementation
       end;
 
     procedure WriteSleb(d: tdynamicarray; v: int64);
+      var
+        b: byte;
+        Done: Boolean=false;
+      begin
+        repeat
+          b:=byte(v) and 127;
+          v:=SarInt64(v,7);
+          if ((v=0) and ((b and 64)=0)) or ((v=-1) and ((b and 64)<>0)) then
+            Done:=true
+          else
+            b:=b or 128;
+          d.write(b,1);
+        until Done;
+      end;
+
+    procedure WriteSleb(d: tobjsection; v: int64);
       var
         b: byte;
         Done: Boolean=false;
@@ -507,7 +593,7 @@ implementation
 {$define rangeon}
 {$R-}
 {$endif}
-        if (b and 64)<>0 then
+        if ((b and 64)<>0) and (Shift < 64) then
           result:=result or (high(uint64) shl shift);
       end;
 {$ifdef overflowon}
@@ -613,6 +699,7 @@ implementation
     destructor TWasmObjSymbolLinkingData.Destroy;
       begin
         FuncType.Free;
+        FuncType := nil;
         inherited Destroy;
       end;
 
@@ -649,7 +736,22 @@ implementation
     destructor TWasmObjRelocation.Destroy;
       begin
         FuncType.Free;
+        FuncType := nil;
         inherited Destroy;
+      end;
+
+    function TWasmObjRelocation.ToString: ansistring;
+      var
+        FuncTypeStr: ansistring;
+      begin
+        if Assigned(FuncType) then
+          FuncTypeStr:=FuncType.ToString
+        else
+          FuncTypeStr:='nil';
+        WriteStr(Result,'('+inherited+';TypeIndex:'+tostr(TypeIndex)+
+          ';Addend:'+tostr(Addend)+';FuncType:'+FuncTypeStr+
+          ';ExeTypeIndex:'+tostr(ExeTypeIndex)+
+          ';IsFunctionOffsetI32:',IsFunctionOffsetI32,')');
       end;
 
 {****************************************************************************
@@ -671,6 +773,7 @@ implementation
     destructor TWasmObjSymbol.Destroy;
       begin
         LinkingData.Free;
+        LinkingData := nil;
         inherited Destroy;
       end;
 
@@ -685,15 +788,56 @@ implementation
 
     constructor TWasmObjSymbolExtraData.Create(HashObjectList: TFPHashObjectList; const s: TSymStr);
       begin
+        EncodedLocals:=nil;
         inherited Create(HashObjectList,s);
         TypeIdx:=-1;
         ExceptionTagTypeIdx:=-1;
       end;
 
-    procedure TWasmObjSymbolExtraData.AddLocal(bastyp: TWasmBasicType);
+    destructor TWasmObjSymbolExtraData.Destroy;
       begin
-        SetLength(Locals,Length(Locals)+1);
-        Locals[High(Locals)]:=bastyp;
+        EncodedLocals.Free;
+        EncodedLocals := nil;
+        inherited Destroy;
+      end;
+
+    procedure TWasmObjSymbolExtraData.AddLocals(alocals: TWasmLocalsDynArray);
+      var
+        i,
+        rle_entries,
+        cnt: Integer;
+        lasttype: TWasmBasicType;
+      begin
+        Locals:=alocals;
+        if Assigned(EncodedLocals) then
+          internalerror(2024081502);
+        EncodedLocals:=tdynamicarray.Create(64);
+        if Length(Locals)=0 then
+          begin
+            WriteUleb(EncodedLocals,0);
+            exit;
+          end;
+
+        rle_entries:=1;
+        for i:=low(Locals)+1 to high(Locals) do
+          if Locals[i]<>Locals[i-1] then
+            inc(rle_entries);
+
+        WriteUleb(EncodedLocals,rle_entries);
+        lasttype:=Locals[Low(Locals)];
+        cnt:=1;
+        for i:=low(Locals)+1 to high(Locals) do
+          if Locals[i]=Locals[i-1] then
+            inc(cnt)
+          else
+            begin
+              WriteUleb(EncodedLocals,cnt);
+              WriteWasmBasicType(EncodedLocals,lasttype);
+              lasttype:=Locals[i];
+              cnt:=1;
+            end;
+        WriteUleb(EncodedLocals,cnt);
+        WriteWasmBasicType(EncodedLocals,lasttype);
       end;
 
 {****************************************************************************
@@ -705,6 +849,7 @@ implementation
         inherited create(AList, Aname, Aalign, Aoptions);
         SegIdx:=-1;
         SegSymIdx:=-1;
+        CustomSectionIdx:=-1;
         MainFuncSymbol:=nil;
       end;
 
@@ -814,11 +959,11 @@ implementation
 { vtable for a class called Window:                                       }
 { .section .data.rel.ro._ZTV6Window,"awG",@progbits,_ZTV6Window,comdat    }
 { TODO: .data.ro not yet working}
-{$if defined(arm) or defined(riscv64) or defined(powerpc)}
+{$if defined(support_rodata)}
           '.rodata',
-{$else defined(arm) or defined(riscv64) or defined(powerpc)}
+{$else defined(support_rodata)}
           '.data',
-{$endif defined(arm) or defined(riscv64) or defined(powerpc)}
+{$endif defined(support_rodata)}
           '.rodata',
           '.bss',
           '.tbss',
@@ -874,7 +1019,8 @@ implementation
           '.stack',
           '.heap',
           '.gcc_except_table',
-          '.ARM.attributes'
+          '.ARM.attributes',
+          '.note'
         );
       var
         sep     : string[3];
@@ -900,7 +1046,7 @@ implementation
           (target_info.system in systems_all_windows+systems_nativent-[system_i8086_win16]) then
           secname:='.rodata';
 
-        { section type user gives the user full controll on the section name }
+        { section type user gives the user full control on the section name }
         if atype=sec_user then
           secname:=aname;
 
@@ -934,7 +1080,9 @@ implementation
         i: Integer;
       begin
         FObjSymbolsExtraDataList.Free;
+        FObjSymbolsExtraDataList := nil;
         FFuncTypes.Free;
+        FFuncTypes := nil;
         inherited destroy;
       end;
 
@@ -1104,7 +1252,7 @@ implementation
         ObjSymExtraData.GlobalIsImmutable:=gt.immutable;
       end;
 
-    procedure TWasmObjData.DeclareFuncType(ft: tai_functype);
+    procedure TWasmObjData.DeclareFuncType_Pass0(ft: tai_functype);
       var
         i: Integer;
         ObjSymExtraData: TWasmObjSymbolExtraData;
@@ -1113,6 +1261,16 @@ implementation
         i:=FFuncTypes.AddOrGetFuncType(ft.functype);
         ObjSymExtraData:=AddOrCreateObjSymbolExtraData(ft.funcname);
         ObjSymExtraData.TypeIdx:=i;
+      end;
+
+    procedure TWasmObjData.DeclareFuncType_Pass1(ft: tai_functype);
+      begin
+        FLastFuncName:=ft.funcname;
+      end;
+
+    procedure TWasmObjData.DeclareFuncType_Pass2(ft: tai_functype);
+      begin
+        FLastFuncName:=ft.funcname;
       end;
 
     procedure TWasmObjData.DeclareTagType(tt: tai_tagtype);
@@ -1125,6 +1283,7 @@ implementation
         ft:=TWasmFuncType.Create([],tt.params);
         i:=FFuncTypes.AddOrGetFuncType(ft);
         ft.free;
+        ft := nil;
         ObjSymExtraData.ExceptionTagTypeIdx:=i;
       end;
 
@@ -1152,12 +1311,44 @@ implementation
         ObjSymExtraData.ImportName:=ain.importname;
       end;
 
-    procedure TWasmObjData.DeclareLocal(al: tai_local);
+    procedure TWasmObjData.DeclareLocals_Pass0(al: tai_local);
       var
         ObjSymExtraData: TWasmObjSymbolExtraData;
       begin
         ObjSymExtraData:=TWasmObjSymbolExtraData(FObjSymbolsExtraDataList.Find(FLastFuncName));
-        ObjSymExtraData.AddLocal(al.bastyp);
+        ObjSymExtraData.AddLocals(al.locals);
+        alloc(ObjSymExtraData.EncodedLocals.size);
+      end;
+
+    procedure TWasmObjData.DeclareLocals_Pass1(al: tai_local);
+      var
+        ObjSymExtraData: TWasmObjSymbolExtraData;
+      begin
+        ObjSymExtraData:=TWasmObjSymbolExtraData(FObjSymbolsExtraDataList.Find(FLastFuncName));
+        alloc(ObjSymExtraData.EncodedLocals.size);
+      end;
+
+    procedure TWasmObjData.WriteLocals_Pass2(al: tai_local);
+      var
+        ObjSymExtraData: TWasmObjSymbolExtraData;
+        d: tdynamicarray;
+        buf: array [0..4095] of byte;
+        bs,size: Integer;
+      begin
+        ObjSymExtraData:=TWasmObjSymbolExtraData(FObjSymbolsExtraDataList.Find(FLastFuncName));
+        d:=ObjSymExtraData.EncodedLocals;
+        d.seek(0);
+        size:=d.size;
+        while size>0 do
+          begin
+            if size<SizeOf(buf) then
+              bs:=Integer(size)
+            else
+              bs:=SizeOf(buf);
+            d.read(buf,bs);
+            writebytes(buf,bs);
+            dec(size,bs);
+          end;
       end;
 
     procedure TWasmObjData.symbolpairdefine(akind: TSymbolPairKind; const asym, avalue: string);
@@ -1221,64 +1412,20 @@ implementation
           result:=false;
       end;
 
-    procedure TWasmObjOutput.WriteFunctionLocals(dest: tdynamicarray; ed: TWasmObjSymbolExtraData);
-      var
-        i,
-        rle_entries,
-        cnt: Integer;
-        lasttype: TWasmBasicType;
-      begin
-        if Length(ed.Locals)=0 then
-          begin
-            WriteUleb(dest,0);
-            exit;
-          end;
-
-        rle_entries:=1;
-        for i:=low(ed.Locals)+1 to high(ed.Locals) do
-          if ed.Locals[i]<>ed.Locals[i-1] then
-            inc(rle_entries);
-
-        WriteUleb(dest,rle_entries);
-        lasttype:=ed.Locals[Low(ed.Locals)];
-        cnt:=1;
-        for i:=low(ed.Locals)+1 to high(ed.Locals) do
-          if ed.Locals[i]=ed.Locals[i-1] then
-            inc(cnt)
-          else
-            begin
-              WriteUleb(dest,cnt);
-              WriteWasmBasicType(dest,lasttype);
-              lasttype:=ed.Locals[i];
-              cnt:=1;
-            end;
-        WriteUleb(dest,cnt);
-        WriteWasmBasicType(dest,lasttype);
-      end;
-
     procedure TWasmObjOutput.WriteFunctionCode(dest: tdynamicarray; objsym: TObjSymbol);
       var
-        encoded_locals: tdynamicarray;
         ObjSymExtraData: TWasmObjSymbolExtraData;
-        codelen: LongWord;
         ObjSection: TWasmObjSection;
-        codeexprlen: QWord;
+        codelen: QWord;
       begin
         ObjSymExtraData:=TWasmObjSymbolExtraData(FData.FObjSymbolsExtraDataList.Find(objsym.Name));
         ObjSection:=TWasmObjSection(objsym.objsection);
         ObjSection.Data.seek(objsym.address);
-        codeexprlen:=objsym.size;
+        codelen:=objsym.size;
 
-        encoded_locals:=tdynamicarray.Create(64);
-        WriteFunctionLocals(encoded_locals,ObjSymExtraData);
-        codelen:=encoded_locals.size+codeexprlen+1;
         WriteUleb(dest,codelen);
-        encoded_locals.seek(0);
-        CopyDynamicArray(encoded_locals,dest,encoded_locals.size);
         ObjSection.FileSectionOfs:=dest.size-objsym.offset;
-        CopyDynamicArray(ObjSection.Data,dest,codeexprlen);
-        WriteByte(dest,$0B);
-        encoded_locals.Free;
+        CopyDynamicArray(ObjSection.Data,dest,codelen);
       end;
 
     procedure TWasmObjOutput.WriteSymbolTable;
@@ -1557,7 +1704,17 @@ implementation
                             message1(asmw_e_illegal_unset_index,FuncSym.Name)
                           else
                             WriteUleb(relout,FuncSym.SymbolIndex);
-                          WriteSleb(relout,objrel.Addend+objrel.symbol.address);  { addend to add to the address }
+                          WriteSleb(relout,objrel.Addend+objrel.symbol.address)  { addend to add to the address }
+                        end
+                      else if assigned(objrel.symbol) and (objrel.symbol.typ=AT_WASM_GLOBAL) then
+                        begin
+                          Inc(relcount^);
+                          WriteByte(relout,Ord(R_WASM_GLOBAL_INDEX_I32));
+                          WriteUleb(relout,objrel.DataOffset+objsec.FileSectionOfs);
+			  if (TWasmObjSymbol(objrel.symbol).SymbolIndex<0) then
+                            message1(asmw_e_illegal_unset_index,objrel.symbol.name)
+                          else
+                            WriteUleb(relout,TWasmObjSymbol(objrel.symbol).SymbolIndex);
                         end
                       else
                         begin
@@ -1631,6 +1788,7 @@ implementation
                 debug_section_nr:=section_nr;
                 Inc(section_nr);
                 objsec.SegSymIdx:=FWasmSymbolTableEntriesCount;
+                objsec.CustomSectionIdx:=debug_section_nr;
                 Inc(FWasmSymbolTableEntriesCount);
                 WriteByte(FWasmSymbolTable,Ord(SYMTAB_SECTION));
                 WriteUleb(FWasmSymbolTable,WASM_SYM_BINDING_LOCAL);
@@ -1936,6 +2094,96 @@ implementation
               end;
           end;
 
+        Writer.write(WasmModuleMagic,SizeOf(WasmModuleMagic));
+        Writer.write(WasmVersion,SizeOf(WasmVersion));
+
+        if ts_wasm_threads in current_settings.targetswitches then
+          begin
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],4);
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'atomics');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'bulk-memory');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'mutable-globals');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'sign-ext');
+          end
+        else
+          begin
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],3);
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'bulk-memory');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'mutable-globals');
+            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
+            WriteName(FWasmCustomSections[wcstTargetFeatures],'sign-ext');
+          end;
+
+        { Write the producers section:
+          https://github.com/WebAssembly/tool-conventions/blob/main/ProducersSection.md }
+        WriteUleb(FWasmCustomSections[wcstProducers],2);
+        WriteName(FWasmCustomSections[wcstProducers],'language');
+        WriteUleb(FWasmCustomSections[wcstProducers],1);
+        WriteName(FWasmCustomSections[wcstProducers],'Pascal');
+        WriteName(FWasmCustomSections[wcstProducers],'');
+        WriteName(FWasmCustomSections[wcstProducers],'processed-by');
+        WriteUleb(FWasmCustomSections[wcstProducers],1);
+        WriteName(FWasmCustomSections[wcstProducers],'Free Pascal Compiler (FPC)');
+        WriteName(FWasmCustomSections[wcstProducers],full_version_string+' ['+date_string+'] for '+target_cpu_string+' - '+target_info.shortname);
+
+        code_section_nr:=-1;
+        data_section_nr:=-1;
+        debug_abbrev_section_nr:=-1;
+        debug_info_section_nr:=-1;
+        debug_str_section_nr:=-1;
+        debug_line_section_nr:=-1;
+        debug_frame_section_nr:=-1;
+        debug_aranges_section_nr:=-1;
+        debug_ranges_section_nr:=-1;
+        section_nr:=0;
+
+        WriteWasmSection(wsiType);
+        Inc(section_nr);
+        WriteWasmSection(wsiImport);
+        Inc(section_nr);
+        WriteWasmSection(wsiFunction);
+        Inc(section_nr);
+        if exception_tags_count>0 then
+          begin
+            WriteWasmSection(wsiTag);
+            Inc(section_nr);
+          end;
+        if globals_count>0 then
+          begin
+            WriteWasmSection(wsiGlobal);
+            Inc(section_nr);
+          end;
+        if export_functions_count>0 then
+          begin
+            WriteWasmSection(wsiExport);
+            Inc(section_nr);
+          end;
+
+        { determine the section numbers for the datacount, code, data and debug sections ahead of time }
+        if segment_count>0 then
+          Inc(section_nr);  { the DataCount section }
+        code_section_nr:=section_nr;  { the Code section }
+        Inc(section_nr);
+        if segment_count>0 then
+          begin
+            data_section_nr:=section_nr; { the Data section }
+            Inc(section_nr);
+          end;
+        { the debug sections }
+        MaybeAddDebugSectionToSymbolTable(wcstDebugAbbrev,debug_abbrev_section_nr);
+        MaybeAddDebugSectionToSymbolTable(wcstDebugInfo,debug_info_section_nr);
+        MaybeAddDebugSectionToSymbolTable(wcstDebugStr,debug_str_section_nr);
+        MaybeAddDebugSectionToSymbolTable(wcstDebugLine,debug_line_section_nr);
+        MaybeAddDebugSectionToSymbolTable(wcstDebugFrame,debug_frame_section_nr);
+        MaybeAddDebugSectionToSymbolTable(wcstDebugAranges,debug_aranges_section_nr);
+        MaybeAddDebugSectionToSymbolTable(wcstDebugRanges,debug_ranges_section_nr);
+
         for i:=0 to Data.ObjSymbolList.Count-1 do
           begin
             objsym:=TWasmObjSymbol(Data.ObjSymbolList[i]);
@@ -2032,11 +2280,26 @@ implementation
                   end;
                 WriteName(FWasmSymbolTable,objsym.Name);
               end
-            else if (objsym.typ in [AT_DATA,AT_TLS]) or ((objsym.typ=AT_NONE) and (objsym.bind=AB_EXTERNAL)) then
+            else if (objsym.typ in [AT_DATA,AT_TLS,AT_METADATA]) or ((objsym.typ=AT_NONE) and (objsym.bind=AB_EXTERNAL)) then
               begin
                 if (objsym.bind<>AB_EXTERNAL) and TWasmObjSection(objsym.objsection).IsDebug then
                   begin
-                    {todo: debug symbols}
+                    objsym.SymbolIndex:=FWasmSymbolTableEntriesCount;
+                    Inc(FWasmSymbolTableEntriesCount);
+                    WriteByte(FWasmSymbolTable,Ord(SYMTAB_FPC_CUSTOM));
+                    if objsym.bind=AB_GLOBAL then
+                      SymbolFlags:=0
+                    else if objsym.bind=AB_LOCAL then
+                      SymbolFlags:=WASM_SYM_BINDING_LOCAL
+                    else if objsym.bind=AB_EXTERNAL then
+                      SymbolFlags:=WASM_SYM_UNDEFINED
+                    else
+                      internalerror(2024090701);
+                    WriteUleb(FWasmSymbolTable,SymbolFlags);
+                    WriteName(FWasmSymbolTable,objsym.Name);
+                    WriteUleb(FWasmSymbolTable,TWasmObjSection(objsym.objsection).CustomSectionIdx);
+                    WriteUleb(FWasmSymbolTable,objsym.offset);
+                    WriteUleb(FWasmSymbolTable,objsym.size);
                   end
                 else
                   begin
@@ -2064,96 +2327,6 @@ implementation
                   end;
               end;
           end;
-
-        Writer.write(WasmModuleMagic,SizeOf(WasmModuleMagic));
-        Writer.write(WasmVersion,SizeOf(WasmVersion));
-
-        if ts_wasm_threads in current_settings.targetswitches then
-          begin
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],4);
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'atomics');
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'bulk-memory');
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'mutable-globals');
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'sign-ext');
-          end
-        else
-          begin
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],3);
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'bulk-memory');
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'mutable-globals');
-            WriteUleb(FWasmCustomSections[wcstTargetFeatures],$2B);
-            WriteName(FWasmCustomSections[wcstTargetFeatures],'sign-ext');
-          end;
-
-        { Write the producers section:
-          https://github.com/WebAssembly/tool-conventions/blob/main/ProducersSection.md }
-        WriteUleb(FWasmCustomSections[wcstProducers],2);
-        WriteName(FWasmCustomSections[wcstProducers],'language');
-        WriteUleb(FWasmCustomSections[wcstProducers],1);
-        WriteName(FWasmCustomSections[wcstProducers],'Pascal');
-        WriteName(FWasmCustomSections[wcstProducers],'');
-        WriteName(FWasmCustomSections[wcstProducers],'processed-by');
-        WriteUleb(FWasmCustomSections[wcstProducers],1);
-        WriteName(FWasmCustomSections[wcstProducers],'Free Pascal Compiler (FPC)');
-        WriteName(FWasmCustomSections[wcstProducers],full_version_string+' ['+date_string+'] for '+target_cpu_string+' - '+target_info.shortname);
-
-        code_section_nr:=-1;
-        data_section_nr:=-1;
-        debug_abbrev_section_nr:=-1;
-        debug_info_section_nr:=-1;
-        debug_str_section_nr:=-1;
-        debug_line_section_nr:=-1;
-        debug_frame_section_nr:=-1;
-        debug_aranges_section_nr:=-1;
-        debug_ranges_section_nr:=-1;
-        section_nr:=0;
-
-        WriteWasmSection(wsiType);
-        Inc(section_nr);
-        WriteWasmSection(wsiImport);
-        Inc(section_nr);
-        WriteWasmSection(wsiFunction);
-        Inc(section_nr);
-        if exception_tags_count>0 then
-          begin
-            WriteWasmSection(wsiTag);
-            Inc(section_nr);
-          end;
-        if globals_count>0 then
-          begin
-            WriteWasmSection(wsiGlobal);
-            Inc(section_nr);
-          end;
-        if export_functions_count>0 then
-          begin
-            WriteWasmSection(wsiExport);
-            Inc(section_nr);
-          end;
-
-        { determine the section numbers for the datacount, code, data and debug sections ahead of time }
-        if segment_count>0 then
-          Inc(section_nr);  { the DataCount section }
-        code_section_nr:=section_nr;  { the Code section }
-        Inc(section_nr);
-        if segment_count>0 then
-          begin
-            data_section_nr:=section_nr; { the Data section }
-            Inc(section_nr);
-          end;
-        { the debug sections }
-        MaybeAddDebugSectionToSymbolTable(wcstDebugAbbrev,debug_abbrev_section_nr);
-        MaybeAddDebugSectionToSymbolTable(wcstDebugInfo,debug_info_section_nr);
-        MaybeAddDebugSectionToSymbolTable(wcstDebugStr,debug_str_section_nr);
-        MaybeAddDebugSectionToSymbolTable(wcstDebugLine,debug_line_section_nr);
-        MaybeAddDebugSectionToSymbolTable(wcstDebugFrame,debug_frame_section_nr);
-        MaybeAddDebugSectionToSymbolTable(wcstDebugAranges,debug_aranges_section_nr);
-        MaybeAddDebugSectionToSymbolTable(wcstDebugRanges,debug_ranges_section_nr);
 
         DoRelocations;
 
@@ -2294,21 +2467,31 @@ implementation
         k: TWasmLinkingSubsectionType;
       begin
         for i in TWasmSectionID do
-          FWasmSections[i].Free;
+          FreeAndNil(FWasmSections[i]);
         for j in TWasmCustomSectionType do
-          FWasmCustomSections[j].Free;
+          FreeAndNil(FWasmCustomSections[j]);
         for k:=low(TWasmLinkingSubsectionType) to high(TWasmLinkingSubsectionType) do
-          FWasmLinkingSubsections[k].Free;
+          FreeAndNil(FWasmLinkingSubsections[k]);
         FWasmSymbolTable.Free;
+        FWasmSymbolTable := nil;
         FWasmRelocationCodeTable.Free;
+        FWasmRelocationCodeTable := nil;
         FWasmRelocationDataTable.Free;
+        FWasmRelocationDataTable := nil;
         FWasmRelocationDebugFrameTable.Free;
+        FWasmRelocationDebugFrameTable := nil;
         FWasmRelocationDebugInfoTable.Free;
+        FWasmRelocationDebugInfoTable := nil;
         FWasmRelocationDebugLineTable.Free;
+        FWasmRelocationDebugLineTable := nil;
         FWasmRelocationDebugAbbrevTable.Free;
+        FWasmRelocationDebugAbbrevTable := nil;
         FWasmRelocationDebugArangesTable.Free;
+        FWasmRelocationDebugArangesTable := nil;
         FWasmRelocationDebugRangesTable.Free;
+        FWasmRelocationDebugRangesTable := nil;
         FWasmRelocationDebugStrTable.Free;
+        FWasmRelocationDebugStrTable := nil;
         inherited destroy;
       end;
 
@@ -2467,6 +2650,8 @@ implementation
           SymIndex: uint32;
           SymOffset: uint32;
           SymSize: uint32;
+          SymCustomSectionIndex: uint32;
+          SymCustomSectionType: TWasmCustomDebugSectionType;
           SymKind: TWasmSymbolType;
           SymName: ansistring;
           ObjSym: TWasmObjSymbol;
@@ -2482,6 +2667,21 @@ implementation
           RelocOffset: uint32;
           RelocIndex: uint32;
           RelocAddend: int32;
+        end;
+
+      function FindDebugSectionByIndex(SectionIndex: Integer; out res: TWasmCustomDebugSectionType): Boolean;
+        var
+          ds: TWasmCustomDebugSectionType;
+        begin
+          for ds in TWasmCustomDebugSectionType do
+            if DebugSectionIndex[ds]=SectionIndex then
+              begin
+                Res:=ds;
+                Result:=True;
+                exit;
+              end;
+          Res:=low(TWasmCustomDebugSectionType);
+          Result:=False;
         end;
 
       function ReadSection: Boolean;
@@ -2653,7 +2853,8 @@ implementation
                                           R_WASM_MEMORY_ADDR_I32,
                                           R_WASM_TYPE_INDEX_LEB,
                                           R_WASM_GLOBAL_INDEX_LEB,
-                                          R_WASM_TAG_INDEX_LEB]) then
+                                          R_WASM_TAG_INDEX_LEB,
+                                          R_WASM_GLOBAL_INDEX_I32]) then
                       begin
                         InputError('Unsupported relocation type: ' + tostr(Ord(RelocType)));
                         exit;
@@ -2685,7 +2886,8 @@ implementation
                           R_WASM_MEMORY_ADDR_SLEB,
                           R_WASM_MEMORY_ADDR_I32,
                           R_WASM_FUNCTION_OFFSET_I32,
-                          R_WASM_GLOBAL_INDEX_LEB]) and (RelocIndex>High(SymbolTable)) then
+                          R_WASM_GLOBAL_INDEX_LEB,
+                          R_WASM_GLOBAL_INDEX_I32]) and (RelocIndex>High(SymbolTable)) then
                       begin
                         InputError('Relocation index outside the bounds of the symbol table');
                         exit;
@@ -2700,9 +2902,16 @@ implementation
                         InputError('R_WASM_SECTION_OFFSET_I32 must point to a SYMTAB_SECTION symbol');
                         exit;
                       end;
-                    if (RelocType=R_WASM_GLOBAL_INDEX_LEB) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_GLOBAL) then
+                    if (RelocType in [R_WASM_GLOBAL_INDEX_LEB,R_WASM_GLOBAL_INDEX_I32]) and
+                       not ((SymbolTable[RelocIndex].SymKind=SYMTAB_GLOBAL) or
+                            ((ts_wasm_threads in current_settings.targetswitches) and
+                             (SymbolTable[RelocIndex].SymKind=SYMTAB_DATA) and
+                             ((SymbolTable[RelocIndex].SymFlags and WASM_SYM_TLS)<>0))) then
                       begin
-                        InputError('Relocation must point to a SYMTAB_GLOBAL symbol');
+                        if ts_wasm_threads in current_settings.targetswitches then
+                          InputError('Relocation must point to a SYMTAB_GLOBAL symbol or a SYMTAB_DATA symbol with the WASM_SYM_TLS flag set')
+                        else
+                          InputError('Relocation must point to a SYMTAB_GLOBAL symbol');
                         exit;
                       end;
                     if (RelocType=R_WASM_TAG_INDEX_LEB) and (SymbolTable[RelocIndex].SymKind<>SYMTAB_EVENT) then
@@ -2881,6 +3090,37 @@ implementation
                                 if not ReadUleb32(SymSize) then
                                   begin
                                     InputError('Error reading the size of a SYMTAB_DATA symbol');
+                                    exit;
+                                  end;
+                              end;
+                          end;
+                        SYMTAB_FPC_CUSTOM:
+                          begin
+                            if not ReadName(SymName) then
+                              begin
+                                InputError('Error reading symbol name of a SYMTAB_FPC_CUSTOM symbol');
+                                exit;
+                              end;
+                            if (SymFlags and WASM_SYM_UNDEFINED)=0 then
+                              begin
+                                if not ReadUleb32(SymCustomSectionIndex) then
+                                  begin
+                                    InputError('Error reading the custom section index of a SYMTAB_FPC_CUSTOM symbol');
+                                    exit;
+                                  end;
+                                if not FindDebugSectionByIndex(SymCustomSectionIndex,SymCustomSectionType) then
+                                  begin
+                                    InputError('Custom section index of SYMTAB_FPC_CUSTOM symbol not pointing to a debug section');
+                                    exit;
+                                  end;
+                                if not ReadUleb32(SymOffset) then
+                                  begin
+                                    InputError('Error reading the offset of a SYMTAB_FPC_CUSTOM symbol');
+                                    exit;
+                                  end;
+                                if not ReadUleb32(SymSize) then
+                                  begin
+                                    InputError('Error reading the size of a SYMTAB_FPC_CUSTOM symbol');
                                     exit;
                                   end;
                               end;
@@ -4200,7 +4440,7 @@ implementation
                   InputError('Code section ' + tostr(i) + ' does not have a main symbol defined in the symbol table');
                   exit;
                 end;
-              if SegIsExported then
+              if SegIsExported or not (cs_link_smart in current_settings.globalswitches) then
                 CurrSec:=ObjData.createsection(SegName,1,[oso_executable,oso_Data,oso_load,oso_keep],false)
               else
                 CurrSec:=ObjData.createsection(SegName,1,[oso_executable,oso_Data,oso_load],false);
@@ -4212,7 +4452,10 @@ implementation
           with DataSegments[i] do
             if Active then
               begin
-                CurrSec:=ObjData.createsection(SegName,1 shl SegAlignment,[oso_Data,oso_load,oso_write],false);
+                if not (cs_link_smart in current_settings.globalswitches) then
+                  CurrSec:=ObjData.createsection(SegName,1 shl SegAlignment,[oso_Data,oso_load,oso_write,oso_keep],false)
+                else
+                  CurrSec:=ObjData.createsection(SegName,1 shl SegAlignment,[oso_Data,oso_load,oso_write],false);
                 CurrSec.DataPos:=DataPos;
                 CurrSec.MemPos:=Offset;
                 CurrSec.Size:=Len;
@@ -4227,6 +4470,61 @@ implementation
                   begin
                     objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
                     objsym.bind:=AB_EXTERNAL;
+                    if (SymFlags and WASM_SYM_TLS)<>0 then
+                      begin
+                        objsym.typ:=AT_TLS;
+                        objsym.TlsGlobalSym:=TWasmObjSymbol(ObjData.CreateSymbol('GOT.mem.'+SymName));
+                        objsym.TlsGlobalSym.TlsDataSym:=objsym;
+                        objsym.TlsGlobalSym.bind:=AB_EXTERNAL;
+                        objsym.TlsGlobalSym.typ:=AT_WASM_GLOBAL;
+                        objsym.TlsGlobalSym.objsection:=nil;
+                        objsym.TlsGlobalSym.offset:=0;
+                        objsym.TlsGlobalSym.size:=1;
+                        objsym.TlsGlobalSym.LinkingData.GlobalType:=wbt_i32;
+                        objsym.TlsGlobalSym.LinkingData.GlobalIsMutable:=true;
+                      end
+                    else
+                      objsym.typ:=AT_DATA;
+                    objsym.objsection:=nil;
+                    objsym.offset:=0;
+                    objsym.size:=0;
+                  end
+                else
+                  begin
+                    objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                    if (SymFlags and WASM_SYM_BINDING_LOCAL)<> 0 then
+                      objsym.bind:=AB_LOCAL
+                    else
+                      objsym.bind:=AB_GLOBAL;
+                    if (SymFlags and WASM_SYM_TLS)<>0 then
+                      begin
+                        objsym.typ:=AT_TLS;
+                        objsym.TlsGlobalSym:=TWasmObjSymbol(ObjData.CreateSymbol('GOT.mem.'+SymName));
+                        objsym.TlsGlobalSym.TlsDataSym:=objsym;
+                        objsym.TlsGlobalSym.bind:=objsym.bind;
+                        objsym.TlsGlobalSym.typ:=AT_WASM_GLOBAL;
+                        objsym.TlsGlobalSym.objsection:=ObjData.createsection('.wasm_globals.n_'+objsym.TlsGlobalSym.Name,1,[oso_Data,oso_load],true);
+                        if objsym.TlsGlobalSym.objsection.Size=0 then
+                          objsym.TlsGlobalSym.objsection.WriteZeros(1);
+                        TWasmObjSection(objsym.TlsGlobalSym.objsection).MainFuncSymbol:=objsym.TlsGlobalSym;
+                        objsym.TlsGlobalSym.offset:=0;
+                        objsym.TlsGlobalSym.size:=1;
+                        objsym.TlsGlobalSym.LinkingData.GlobalType:=wbt_i32;
+                        objsym.TlsGlobalSym.LinkingData.GlobalIsMutable:=true;
+                      end
+                    else
+                      objsym.typ:=AT_DATA;
+                    objsym.objsection:=TObjSection(ObjData.ObjSectionList[FirstDataSegmentIdx+SymIndex]);
+                    objsym.offset:=SymOffset;
+                    objsym.size:=SymSize;
+                  end;
+              SYMTAB_FPC_CUSTOM:
+                if (SymFlags and WASM_SYM_UNDEFINED)<>0 then
+                  begin
+                    objsym:=TWasmObjSymbol(ObjData.CreateSymbol(SymName));
+                    objsym.bind:=AB_EXTERNAL;
+                    if (SymFlags and WASM_SYM_TLS)<>0 then
+                      internalerror(2024080702);
                     objsym.typ:=AT_DATA;
                     objsym.objsection:=nil;
                     objsym.offset:=0;
@@ -4239,8 +4537,10 @@ implementation
                       objsym.bind:=AB_LOCAL
                     else
                       objsym.bind:=AB_GLOBAL;
+                    if (SymFlags and WASM_SYM_TLS)<>0 then
+                      internalerror(2024080703);
                     objsym.typ:=AT_DATA;
-                    objsym.objsection:=TObjSection(ObjData.ObjSectionList[FirstDataSegmentIdx+SymIndex]);
+                    objsym.objsection:=TObjSection(ObjData.ObjSectionList.Find(WasmCustomSectionName[SymCustomSectionType]));
                     objsym.offset:=SymOffset;
                     objsym.size:=SymSize;
                   end;
@@ -4503,7 +4803,17 @@ implementation
                       ObjSec.ObjRelocations.Add(ObjReloc);
                     end;
                   R_WASM_GLOBAL_INDEX_LEB:
-                    ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_GLOBAL_INDEX_LEB));
+                    begin
+                      ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_GLOBAL_INDEX_LEB));
+                      if Assigned(SymbolTable[RelocIndex].ObjSym.TlsGlobalSym) then
+                        ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym.TlsGlobalSym,RELOC_GLOBAL_INDEX_LEB));
+                    end;
+                  R_WASM_GLOBAL_INDEX_I32:
+                    begin
+                      ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_ABSOLUTE));
+                      if Assigned(SymbolTable[RelocIndex].ObjSym.TlsGlobalSym) then
+                        ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym.TlsGlobalSym,RELOC_ABSOLUTE));
+                    end;
                   R_WASM_TAG_INDEX_LEB:
                     ObjSec.ObjRelocations.Add(TWasmObjRelocation.CreateSymbol(RelocOffset-BaseSectionOffset,SymbolTable[RelocIndex].ObjSym,RELOC_TAG_INDEX_LEB));
                   else
@@ -4517,6 +4827,36 @@ implementation
 {****************************************************************************
                                TWasmExeOutput
 ****************************************************************************}
+
+    procedure TWasmExeOutput.AddToNameMap(var nm: TCustomSectionNameMap; aidx: UInt32; const aname: string);
+      begin
+        SetLength(nm,Length(nm)+1);
+        with nm[High(nm)] do
+          begin
+            idx:=aidx;
+            name:=aname;
+          end;
+      end;
+
+    procedure TWasmExeOutput.AddToFunctionNameMap(aidx: UInt32; const aname: string);
+      begin
+        AddToNameMap(FFunctionNameMap,aidx,aname);
+      end;
+
+    procedure TWasmExeOutput.AddToGlobalNameMap(aidx: UInt32; const aname: string);
+      begin
+        AddToNameMap(FGlobalNameMap,aidx,aname);
+      end;
+
+    procedure TWasmExeOutput.AddToDataNameMap(aidx: UInt32; const aname: string);
+      begin
+        AddToNameMap(FDataNameMap,aidx,aname);
+      end;
+
+    procedure TWasmExeOutput.AddToTagNameMap(aidx: UInt32; const aname: string);
+      begin
+        AddToNameMap(FTagNameMap,aidx,aname);
+      end;
 
     procedure TWasmExeOutput.WriteWasmSection(wsid: TWasmSectionID);
       var
@@ -4548,18 +4888,32 @@ implementation
 
       procedure WriteImportSection;
         var
-          imports_count: SizeInt;
+          imports_count,
           i: Integer;
         begin
-          imports_count:=Length(FFunctionImports);
+          if assigned(exemap) then
+            exemap.AddHeader('Import section');
+          imports_count:=Length(FImportedMemories)+Length(FFunctionImports);
           WriteUleb(FWasmSections[wsiImport],imports_count);
+          for i:=0 to Length(FImportedMemories)-1 do
+            with FImportedMemories[i] do
+              begin
+                WriteName(FWasmSections[wsiImport],ModName);
+                WriteName(FWasmSections[wsiImport],Name);
+                WriteByte(FWasmSections[wsiImport],$02);  { mem }
+                WriteMemoryTo(FWasmSections[wsiImport],MemType);
+                if assigned(exemap) then
+                  exemap.Add('  Memory['+tostr(i)+'] '+Memory2String(MemType)+' <- '+ModName+'.'+Name);
+              end;
           for i:=0 to Length(FFunctionImports)-1 do
             with FFunctionImports[i] do
               begin
                 WriteName(FWasmSections[wsiImport],ModName);
                 WriteName(FWasmSections[wsiImport],Name);
-                WriteByte(FWasmSections[wsiImport],$00);
+                WriteByte(FWasmSections[wsiImport],$00);  { func }
                 WriteUleb(FWasmSections[wsiImport],TypeIdx);
+                if assigned(exemap) then
+                  exemap.Add('  Function['+tostr(i)+'] sig='+tostr(TypeIdx)+' <- '+ModName+'.'+Name);
               end;
         end;
 
@@ -4601,11 +4955,17 @@ implementation
             exesecdatapos: LongWord;
             dpos, pad: QWord;
           begin
-            WriteByte(FWasmSections[wsiData],0);
+            AddToDataNameMap(Length(FDataNameMap),exesec.Name);
+            if ts_wasm_threads in current_settings.targetswitches then
+              WriteByte(FWasmSections[wsiData],1)  { mode passive }
+            else
+              begin
+                WriteByte(FWasmSections[wsiData],0);  { mode active, memory 0, offset e }
 
-            WriteByte(FWasmSections[wsiData],$41);  { i32.const }
-            WriteSleb(FWasmSections[wsiData],longint(exesec.MemPos));
-            WriteByte(FWasmSections[wsiData],$0B);  { end }
+                WriteByte(FWasmSections[wsiData],$41);  { i32.const }
+                WriteSleb(FWasmSections[wsiData],longint(exesec.MemPos));
+                WriteByte(FWasmSections[wsiData],$0B);  { end }
+              end;
 
             WriteUleb(FWasmSections[wsiData],exesec.Size);
             exesecdatapos:=FWasmSections[wsiData].size;
@@ -4634,12 +4994,24 @@ implementation
 
         var
           DataCount: Integer;
+          DataSecName: string;
+          ExeSec: TExeSection;
         begin
-          DataCount:=2;
+          DataCount:=0;
+          for DataSecName in DataSections do
+            begin
+              ExeSec:=FindExeSection(DataSecName);
+              if Assigned(ExeSec) and (ExeSec.Size>0) then
+                Inc(DataCount);
+            end;
           WriteUleb(FWasmSections[wsiDataCount],DataCount);
           WriteUleb(FWasmSections[wsiData],DataCount);
-          WriteExeSection(FindExeSection('.rodata'));
-          WriteExeSection(FindExeSection('.data'));
+          for DataSecName in DataSections do
+            begin
+              ExeSec:=FindExeSection(DataSecName);
+              if Assigned(ExeSec) and (ExeSec.Size>0) then
+                WriteExeSection(ExeSec);
+            end;
         end;
 
       procedure WriteTableAndElemSections;
@@ -4679,7 +5051,10 @@ implementation
           exesec: TExeSection;
           globals_count, i: Integer;
           objsec: TWasmObjSection;
+          mapstr: string='';
         begin
+          if assigned(exemap) then
+            exemap.AddHeader('Global section');
           exesec:=FindExeSection('.wasm_globals');
           if not assigned(exesec) then
             internalerror(2024010112);
@@ -4695,6 +5070,8 @@ implementation
                 WriteByte(FWasmSections[wsiGlobal],1)
               else
                 WriteByte(FWasmSections[wsiGlobal],0);
+              if assigned(exemap) then
+                WriteStr(mapstr,'  Global[',i,'] ',wasm_basic_type_str[objsec.MainFuncSymbol.LinkingData.GlobalType],' mutable=',objsec.MainFuncSymbol.LinkingData.GlobalIsMutable,' <',objsec.MainFuncSymbol.Name,'> - init ');
               { initializer expr }
               with objsec.MainFuncSymbol.LinkingData.GlobalInitializer do
                 case typ of
@@ -4702,32 +5079,46 @@ implementation
                     begin
                       WriteByte(FWasmSections[wsiGlobal],$41);  { i32.const }
                       WriteSleb(FWasmSections[wsiGlobal],init_i32);
+                      if assigned(exemap) then
+                        mapstr:=mapstr+'i32='+tostr(init_i32);
                     end;
                   wbt_i64:
                     begin
                       WriteByte(FWasmSections[wsiGlobal],$42);  { i64.const }
                       WriteSleb(FWasmSections[wsiGlobal],init_i64);
+                      if assigned(exemap) then
+                        mapstr:=mapstr+'i64='+tostr(init_i64);
                     end;
                   wbt_f32:
                     begin
                       WriteByte(FWasmSections[wsiGlobal],$43);  { f32.const }
                       WriteF32LE(FWasmSections[wsiGlobal],init_f32);
+                      if assigned(exemap) then
+                        WriteStr(mapstr,mapstr+'f32=',init_f32);
                     end;
                   wbt_f64:
                     begin
                       WriteByte(FWasmSections[wsiGlobal],$44);  { f64.const }
                       WriteF64LE(FWasmSections[wsiGlobal],init_f64);
+                      if assigned(exemap) then
+                        WriteStr(mapstr,mapstr+'f64=',init_f64);
                     end;
                   wbt_funcref,
                   wbt_externref:
                     begin
                       WriteByte(FWasmSections[wsiGlobal],$D0);  { ref.null }
                       WriteByte(FWasmSections[wsiGlobal],encode_wasm_basic_type(typ));
+                      if assigned(exemap) then
+                        mapstr:=mapstr+'ref.null '+wasm_basic_type_str[typ];
                     end;
                   else
                     internalerror(2024010114);
                 end;
               WriteByte(FWasmSections[wsiGlobal],$0B);  { end }
+              { add entry for the name section }
+              AddToGlobalNameMap(i,objsec.MainFuncSymbol.Name);
+              if assigned(exemap) then
+                exemap.Add(mapstr);
             end;
         end;
 
@@ -4751,6 +5142,7 @@ implementation
               objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
               WriteByte(FWasmSections[wsiTag],0);
               WriteUleb(FWasmSections[wsiTag],objsec.MainFuncSymbol.LinkingData.ExeTypeIndex);
+              AddToTagNameMap(i,objsec.MainFuncSymbol.Name);
             end;
         end;
 
@@ -4764,6 +5156,8 @@ implementation
           i: Integer;
           objsec: TWasmObjSection;
         begin
+          if assigned(exemap) then
+            exemap.AddHeader('Export section');
           FunctionExportsCount:=0;
           textsec:=FindExeSection('.text');
           if not assigned(textsec) then
@@ -4782,6 +5176,8 @@ implementation
           WriteName(FWasmSections[wsiExport],'memory');
           WriteByte(FWasmSections[wsiExport],$02);  { mem }
           WriteUleb(FWasmSections[wsiExport],0);    { memidx = 0 }
+          if assigned(exemap) then
+            exemap.Add('  Memory[0] -> "memory"');
 
           for i:=0 to textsec.ObjSectionList.Count-1 do
             begin
@@ -4791,6 +5187,8 @@ implementation
                   WriteName(FWasmSections[wsiExport],objsec.MainFuncSymbol.LinkingData.ExportName);
                   WriteByte(FWasmSections[wsiExport],$00);  { func }
                   WriteUleb(FWasmSections[wsiExport],objsec.MainFuncSymbol.LinkingData.ExeFunctionIndex);    { funcidx }
+                  if assigned(exemap) then
+                    exemap.Add('  Function['+tostr(objsec.MainFuncSymbol.LinkingData.ExeFunctionIndex)+'] -> "'+objsec.MainFuncSymbol.LinkingData.ExportName+'"');
                 end;
             end;
         end;
@@ -4807,16 +5205,111 @@ implementation
             end;
         end;
 
+      procedure WriteNameMap(const nm: TCustomSectionNameMap; dest: tdynamicarray);
+        var
+          i: Integer;
+        begin
+          WriteUleb(dest,Length(nm));
+          for i:=low(nm) to high(nm) do
+            with nm[i] do
+              begin
+                WriteUleb(dest,idx);
+                WriteName(dest,name);
+              end;
+        end;
+
+      procedure WriteNameSubsection(wnst: TWasmNameSubsectionType);
+        begin
+          if FWasmNameSubsections[wnst].size>0 then
+            begin
+              WriteByte(FWasmCustomSections[wcstName],Ord(wnst));
+              WriteUleb(FWasmCustomSections[wcstName],FWasmNameSubsections[wnst].size);
+              FWasmNameSubsections[wnst].seek(0);
+              CopyDynamicArray(FWasmNameSubsections[wnst],FWasmCustomSections[wcstName],FWasmNameSubsections[wnst].size);
+            end;
+        end;
+
+      procedure WriteNameSection;
+        begin
+          WriteName(FWasmNameSubsections[wnstModuleName],current_module.exefilename);
+          WriteNameSubsection(wnstModuleName);
+
+          WriteNameMap(FFunctionNameMap,FWasmNameSubsections[wnstFunctionNames]);
+          WriteNameSubsection(wnstFunctionNames);
+
+          WriteNameMap(FGlobalNameMap,FWasmNameSubsections[wnstGlobalNames]);
+          WriteNameSubsection(wnstGlobalNames);
+
+          WriteNameMap(FDataNameMap,FWasmNameSubsections[wnstDataNames]);
+          WriteNameSubsection(wnstDataNames);
+
+          if Length(FTagNameMap)>0 then
+            begin
+              WriteNameMap(FTagNameMap,FWasmNameSubsections[wnstTagNames]);
+              WriteNameSubsection(wnstTagNames);
+            end;
+        end;
+
+      procedure WriteMemorySection;
+        var
+          i: Integer;
+        begin
+          if assigned(exemap) then
+            exemap.AddHeader('Memory section');
+          WriteUleb(FWasmSections[wsiMemory],Length(FMemories));
+          for i:=low(FMemories) to high(FMemories) do
+            begin
+              WriteMemoryTo(FWasmSections[wsiMemory],FMemories[i]);
+              if assigned(exemap) then
+                exemap.Add('  Memory['+tostr(i+Length(FImportedMemories))+'] '+Memory2String(FMemories[i]));
+            end;
+        end;
+
       var
         cust_sec: TWasmCustomSectionType;
       begin
         result:=false;
+        FMaxMemoryPages:=align(maxheapsize,WasmPageSize) div WasmPageSize;
 
         { each custom sections starts with its name }
         for cust_sec in TWasmCustomSectionType do
           WriteName(FWasmCustomSections[cust_sec],WasmCustomSectionName[cust_sec]);
 
         SetStackPointer;
+        SetTlsSizeAlignAndBase;
+        SetThreadVarGlobalsInitValues;
+        GenerateCode_InitTls;
+        GenerateCode_InitSharedMemory;
+
+        if ts_wasm_threads in current_settings.targetswitches then
+          begin
+            SetLength(FImportedMemories,1);
+            with FImportedMemories[0] do
+              begin
+                ModName:='env';
+                Name:='memory';
+                with MemType do
+                  begin
+                    Flags:=[wmfShared,wmfHasMaximumBound];
+                    MinPages:=FMinMemoryPages;
+                    MaxPages:=Max(FMinMemoryPages,FMaxMemoryPages);
+                  end;
+              end;
+          end
+        else
+          begin
+            SetLength(FMemories,1);
+            with FMemories[0] do
+              begin
+                Flags:=[];
+                MinPages:=FMinMemoryPages;
+                if FMaxMemoryPages>=FMinMemoryPages then
+                  begin
+                    Include(Flags,wmfHasMaximumBound);
+                    MaxPages:=FMaxMemoryPages;
+                  end;
+              end;
+          end;
 
         FFuncTypes.WriteTo(FWasmSections[wsiType]);
         WriteImportSection;
@@ -4825,13 +5318,16 @@ implementation
         WriteTableAndElemSections;
         WriteGlobalSection;
         WriteTagSection;
+
+        if Length(FMemories)>0 then
+          WriteMemorySection;
+
         WriteExportSection;
 
-        WriteUleb(FWasmSections[wsiMemory],1);
-        WriteByte(FWasmSections[wsiMemory],0);
-        WriteUleb(FWasmSections[wsiMemory],FMinMemoryPages);
+        if ts_wasm_threads in current_settings.targetswitches then
+          WriteUleb(FWasmSections[wsiStart],FInitSharedMemoryFunctionSym.LinkingData.ExeFunctionIndex);
 
-        {...}
+        WriteNameSection;
 
         Writer.write(WasmModuleMagic,SizeOf(WasmModuleMagic));
         Writer.write(WasmVersion,SizeOf(WasmVersion));
@@ -4839,10 +5335,13 @@ implementation
         WriteWasmSection(wsiImport);
         WriteWasmSection(wsiFunction);
         WriteWasmSection(wsiTable);
-        WriteWasmSection(wsiMemory);
+        if not (ts_wasm_threads in current_settings.targetswitches) then
+          WriteWasmSection(wsiMemory);
         WriteWasmSectionIfNotEmpty(wsiTag);
         WriteWasmSection(wsiGlobal);
         WriteWasmSection(wsiExport);
+        if ts_wasm_threads in current_settings.targetswitches then
+          WriteWasmSection(wsiStart);
         WriteWasmSection(wsiElement);
         WriteWasmSection(wsiDataCount);
         WriteWasmSection(wsiCode);
@@ -4855,6 +5354,8 @@ implementation
         MaybeWriteDebugSection(wcstDebugFrame);
         MaybeWriteDebugSection(wcstDebugAranges);
         MaybeWriteDebugSection(wcstDebugRanges);
+
+        WriteWasmCustomSection(wcstName);
 
         result := true;
       end;
@@ -4885,8 +5386,11 @@ implementation
                     begin
                       if objsym.LinkingData.ExeFunctionIndex=-1 then
                         internalerror(2024010103);
-                      objsec.Data.seek(objreloc.DataOffset);
-                      WriteUleb5(objsec.Data,objsym.LinkingData.ExeFunctionIndex);
+                      if FRelocationPass=2 then
+                        begin
+                          objsec.Data.seek(objreloc.DataOffset);
+                          WriteUleb5(objsec.Data,objsym.LinkingData.ExeFunctionIndex);
+                        end;
                     end;
                   RELOC_ABSOLUTE:
                     begin
@@ -4896,26 +5400,58 @@ implementation
                             if objreloc.IsFunctionOffsetI32 then
                               begin
                                 { R_WASM_FUNCTION_OFFSET_I32 }
-                                objsec.Data.seek(objreloc.DataOffset);
-                                writeUInt32LE(UInt32(objsym.objsection.MemPos+objreloc.Addend));
+                                if FRelocationPass=2 then
+                                  begin
+                                    objsec.Data.seek(objreloc.DataOffset);
+                                    writeUInt32LE(UInt32(objsym.objsection.MemPos+objreloc.Addend));
+                                  end;
                               end
                             else
                               begin
                                 { R_WASM_TABLE_INDEX_I32 }
                                 if objsym.LinkingData.ExeFunctionIndex=-1 then
                                   internalerror(2024010103);
-                                if objsym.LinkingData.ExeIndirectFunctionTableIndex=-1 then
-                                  objsym.LinkingData.ExeIndirectFunctionTableIndex:=AddOrGetIndirectFunctionTableIndex(objsym.LinkingData.ExeFunctionIndex);
-                                objsec.Data.seek(objreloc.DataOffset);
-                                writeUInt32LE(UInt32(objsym.LinkingData.ExeIndirectFunctionTableIndex));
+                                case FRelocationPass of
+                                  1:
+                                    if objsym.LinkingData.ExeIndirectFunctionTableIndex=-1 then
+                                      objsym.LinkingData.ExeIndirectFunctionTableIndex:=AddOrGetIndirectFunctionTableIndex(objsym.LinkingData.ExeFunctionIndex);
+                                  2:
+                                    begin
+                                      objsec.Data.seek(objreloc.DataOffset);
+                                      writeUInt32LE(UInt32(objsym.LinkingData.ExeIndirectFunctionTableIndex));
+                                    end;
+                                end;
                               end;
                           end;
                         AT_DATA:
                           begin
                             if objreloc.IsFunctionOffsetI32 then
                               internalerror(2024010602);
-                            objsec.Data.seek(objreloc.DataOffset);
-                            writeUInt32LE(UInt32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                            if FRelocationPass=2 then
+                              begin
+                                objsec.Data.seek(objreloc.DataOffset);
+                                writeUInt32LE(UInt32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                              end;
+                          end;
+                        AT_TLS:
+                          begin
+                            if objreloc.IsFunctionOffsetI32 then
+                              internalerror(2024010602);
+                            if FRelocationPass=2 then
+                              begin
+                                objsec.Data.seek(objreloc.DataOffset);
+                                writeUInt32LE(UInt32((objsym.offset+objsym.objsection.MemPos-objsym.objsection.ExeSection.MemPos)+objreloc.Addend));
+                              end;
+                          end;
+                        AT_WASM_GLOBAL:
+                          begin
+                            if objreloc.IsFunctionOffsetI32 then
+                              internalerror(2024010602);
+                            if FRelocationPass=2 then
+                              begin
+                                objsec.Data.seek(objreloc.DataOffset);
+                                writeUInt32LE(UInt32(objsym.offset+objsym.objsection.MemPos));
+                              end;
                           end;
                         else
                           internalerror(2024010108);
@@ -4925,8 +5461,11 @@ implementation
                     begin
                       if objsym.typ<>AT_DATA then
                         internalerror(2024010109);
-                      objsec.Data.seek(objreloc.DataOffset);
-                      WriteUleb5(objsec.Data,UInt32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                      if FRelocationPass=2 then
+                        begin
+                          objsec.Data.seek(objreloc.DataOffset);
+                          WriteUleb5(objsec.Data,UInt32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                        end;
                     end;
                   RELOC_MEMORY_ADDR_OR_TABLE_INDEX_SLEB:
                     begin
@@ -4935,33 +5474,56 @@ implementation
                           begin
                             if objsym.LinkingData.ExeFunctionIndex=-1 then
                               internalerror(2024010103);
-                            if objsym.LinkingData.ExeIndirectFunctionTableIndex=-1 then
-                              objsym.LinkingData.ExeIndirectFunctionTableIndex:=AddOrGetIndirectFunctionTableIndex(objsym.LinkingData.ExeFunctionIndex);
-                            objsec.Data.seek(objreloc.DataOffset);
-                            WriteSleb5(objsec.Data,Int32(objsym.LinkingData.ExeIndirectFunctionTableIndex));
+                            case FRelocationPass of
+                              1:
+                                if objsym.LinkingData.ExeIndirectFunctionTableIndex=-1 then
+                                  objsym.LinkingData.ExeIndirectFunctionTableIndex:=AddOrGetIndirectFunctionTableIndex(objsym.LinkingData.ExeFunctionIndex);
+                              2:
+                                begin
+                                  objsec.Data.seek(objreloc.DataOffset);
+                                  WriteSleb5(objsec.Data,Int32(objsym.LinkingData.ExeIndirectFunctionTableIndex));
+                                end;
+                            end;
                           end;
                         AT_DATA:
                           begin
-                            objsec.Data.seek(objreloc.DataOffset);
-                            WriteSleb5(objsec.Data,Int32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                            if FRelocationPass=2 then
+                              begin
+                                objsec.Data.seek(objreloc.DataOffset);
+                                WriteSleb5(objsec.Data,Int32((objsym.offset+objsym.objsection.MemPos)+objreloc.Addend));
+                              end;
                           end;
                         else
                           internalerror(2024010110);
                       end;
                     end;
                   RELOC_GLOBAL_INDEX_LEB:
-                    begin
-                      if objsym.typ<>AT_WASM_GLOBAL then
-                        internalerror(2024010111);
-                      objsec.Data.seek(objreloc.DataOffset);
-                      WriteUleb5(objsec.Data,UInt32(objsym.offset+objsym.objsection.MemPos));
-                    end;
+                    if objsym.typ=AT_WASM_GLOBAL then
+                      begin
+                        if FRelocationPass=2 then
+                          begin
+                            objsec.Data.seek(objreloc.DataOffset);
+                            WriteUleb5(objsec.Data,UInt32(objsym.offset+objsym.objsection.MemPos));
+                          end;
+                      end
+                    else if (ts_wasm_threads in current_settings.targetswitches) and
+                            (objsym.typ=AT_TLS) then
+                      begin
+                        { Nothing to do here. A second RELOC_GLOBAL_INDEX_LEB
+                          relocation, overlaid on top of this one, pointing to
+                          an AT_WASM_GLOBAL should have already done the job. }
+                      end
+                    else
+                      internalerror(2024010111);
                   RELOC_TAG_INDEX_LEB:
                     begin
                       if objsym.typ<>AT_WASM_EXCEPTION_TAG then
                         internalerror(2024010708);
-                      objsec.Data.seek(objreloc.DataOffset);
-                      WriteUleb5(objsec.Data,UInt32(objsym.offset+objsym.objsection.MemPos));
+                      if FRelocationPass=2 then
+                        begin
+                          objsec.Data.seek(objreloc.DataOffset);
+                          WriteUleb5(objsec.Data,UInt32(objsym.offset+objsym.objsection.MemPos));
+                        end;
                     end;
                   else
                     internalerror(2024010109);
@@ -4971,17 +5533,30 @@ implementation
               begin
                 if objreloc.typ<>RELOC_ABSOLUTE then
                   internalerror(2024010601);
-                objsec.Data.seek(objreloc.DataOffset);
-                writeUInt32LE(UInt32((objreloc.objsection.MemPos)+objreloc.Addend));
+                if FRelocationPass=2 then
+                  begin
+                    objsec.Data.seek(objreloc.DataOffset);
+                    writeUInt32LE(UInt32((objreloc.objsection.MemPos)+objreloc.Addend));
+                  end;
               end
             else if objreloc.typ=RELOC_TYPE_INDEX_LEB then
               begin
-                objreloc.ExeTypeIndex:=FFuncTypes.AddOrGetFuncType(objreloc.FuncType);
-                objsec.Data.seek(objreloc.DataOffset);
-                WriteUleb5(objsec.Data,objreloc.ExeTypeIndex);
+                case FRelocationPass of
+                  1:
+                    objreloc.ExeTypeIndex:=FFuncTypes.AddOrGetFuncType(objreloc.FuncType);
+                  2:
+                    begin
+                      objsec.Data.seek(objreloc.DataOffset);
+                      WriteUleb5(objsec.Data,objreloc.ExeTypeIndex);
+                    end;
+                end;
               end
             else
               internalerror(2024010110);
+{$ifdef EXTDEBUG_WASM}
+            if (FRelocationPass=2) and assigned(objsec.data) and (objsec.data.size<>objsec.size) then
+              internalerror(2025100101,'relocation increased section''s data size: '+objreloc.ToString);
+{$endif}
           end;
       end;
 
@@ -4989,15 +5564,19 @@ implementation
       var
         i: TWasmSectionID;
         j: TWasmCustomSectionType;
+        k: TWasmNameSubsectionType;
       begin
         inherited create;
         CObjData:=TWasmObjData;
+        SectionMemAlign:=16;
         MaxMemPos:=$FFFFFFFF;
         FFuncTypes:=TWasmFuncTypeTable.Create;
         for i in TWasmSectionID do
           FWasmSections[i] := tdynamicarray.create(SectionDataMaxGrow);
         for j in TWasmCustomSectionType do
           FWasmCustomSections[j] := tdynamicarray.create(SectionDataMaxGrow);
+        for k:=low(FWasmNameSubsections) to high(FWasmNameSubsections) do
+          FWasmNameSubsections[k] := tdynamicarray.create(SectionDataMaxGrow);
         SetLength(FIndirectFunctionTable,1);
         FIndirectFunctionTable[0].FuncIdx:=-1;
       end;
@@ -5006,12 +5585,16 @@ implementation
       var
         i: TWasmSectionID;
         j: TWasmCustomSectionType;
+        k: TWasmNameSubsectionType;
       begin
         for i in TWasmSectionID do
-          FWasmSections[i].Free;
+          FreeAndNil(FWasmSections[i]);
         for j in TWasmCustomSectionType do
-          FWasmCustomSections[j].Free;
+          FreeAndNil(FWasmCustomSections[j]);
+        for k:=low(FWasmNameSubsections) to high(FWasmNameSubsections) do
+          FreeAndNil(FWasmNameSubsections[k]);
         FFuncTypes.Free;
+        FFuncTypes := nil;
         inherited destroy;
       end;
 
@@ -5048,6 +5631,31 @@ implementation
         PrepareImports;
         PrepareFunctions;
         PrepareTags;
+
+        if Assigned(exemap) then
+          WriteMap_TypeSection;
+
+        { we do an extra preliminary relocation pass, in order to prepare the
+          indices for the Type section and the Table section. This is required
+          by GenerateCode_InvokeHelper. }
+        FRelocationPass:=1;
+        FixupRelocations;
+
+        { in pass 2, we do the actual relocation fixups. No need to call
+          FixupRelocations here, since it'll be called in
+          TInternalLinker.RunLinkScript, after this method finishes. We only
+          set the FRelocationPass variable here, so DoRelocationFixup knows
+          which pass it is. }
+        FRelocationPass:=2;
+
+        { This needs to be done before pass 2 of the relocation fixups, because
+          it'll generate code, thus it'll move the offsets of the functions that
+          follow it in the Code section, and we want our DWARF debug info to
+          contain correct code offsets. }
+        GenerateCode_InvokeHelper;
+
+        if Assigned(exemap) then
+          WriteMap_IndirectFunctionTable;
       end;
 
     procedure TWasmExeOutput.MemPos_ExeSection(const aname: string);
@@ -5057,12 +5665,17 @@ implementation
         ExeSec: TExeSection;
         i: Integer;
         objsec: TObjSection;
+        firstdatasec: string;
       begin
         { WebAssembly is a Harvard architecture.
           Data lives in a separate address space, so start addressing back from 0
           (the LLVM leaves the first 1024 bytes in the data segment empty, so we
           start at 1024). }
-        if aname='.rodata' then
+        if ts_wasm_threads in current_settings.targetswitches then
+          firstdatasec:='.tbss'
+        else
+          firstdatasec:='.rodata';
+        if aname=firstdatasec then
           begin
             CurrMemPos:=1024;
             inherited;
@@ -5112,6 +5725,57 @@ implementation
             FStackPointerSym.LinkingData.GlobalInitializer.typ:=wbt_i32;
             FStackPointerSym.LinkingData.GlobalInitializer.init_i32:=0;
           end
+        else if (ts_wasm_threads in current_settings.targetswitches) and (aname='__tls_base') then
+          begin
+            internalObjData.createsection('*'+aname,1,[oso_Data,oso_load]);
+            FTlsBaseSym:=TWasmObjSymbol(internalObjData.SymbolDefine(aname,AB_GLOBAL,AT_WASM_GLOBAL));
+            FTlsBaseSym.size:=1;
+            FTlsBaseSym.ObjSection.WriteZeros(1);
+            TWasmObjSection(FTlsBaseSym.ObjSection).MainFuncSymbol:=FTlsBaseSym;
+            FTlsBaseSym.LinkingData.GlobalType:=wbt_i32;
+            FTlsBaseSym.LinkingData.GlobalIsMutable:=True;
+            FTlsBaseSym.LinkingData.GlobalInitializer.typ:=wbt_i32;
+            FTlsBaseSym.LinkingData.GlobalInitializer.init_i32:=0;
+          end
+        else if (ts_wasm_threads in current_settings.targetswitches) and (aname='__tls_size') then
+          begin
+            internalObjData.createsection('*'+aname,1,[oso_Data,oso_load]);
+            FTlsSizeSym:=TWasmObjSymbol(internalObjData.SymbolDefine(aname,AB_GLOBAL,AT_WASM_GLOBAL));
+            FTlsSizeSym.size:=1;
+            FTlsSizeSym.ObjSection.WriteZeros(1);
+            TWasmObjSection(FTlsSizeSym.ObjSection).MainFuncSymbol:=FTlsSizeSym;
+            FTlsSizeSym.LinkingData.GlobalType:=wbt_i32;
+            FTlsSizeSym.LinkingData.GlobalIsMutable:=False;
+            FTlsSizeSym.LinkingData.GlobalInitializer.typ:=wbt_i32;
+            FTlsSizeSym.LinkingData.GlobalInitializer.init_i32:=0;
+          end
+        else if (ts_wasm_threads in current_settings.targetswitches) and (aname='__tls_align') then
+          begin
+            internalObjData.createsection('*'+aname,1,[oso_Data,oso_load]);
+            FTlsAlignSym:=TWasmObjSymbol(internalObjData.SymbolDefine(aname,AB_GLOBAL,AT_WASM_GLOBAL));
+            FTlsAlignSym.size:=1;
+            FTlsAlignSym.ObjSection.WriteZeros(1);
+            TWasmObjSection(FTlsAlignSym.ObjSection).MainFuncSymbol:=FTlsAlignSym;
+            FTlsAlignSym.LinkingData.GlobalType:=wbt_i32;
+            FTlsAlignSym.LinkingData.GlobalIsMutable:=False;
+            FTlsAlignSym.LinkingData.GlobalInitializer.typ:=wbt_i32;
+            FTlsAlignSym.LinkingData.GlobalInitializer.init_i32:=0;
+          end
+        else if (ts_wasm_threads in current_settings.targetswitches) and (aname='__wasm_init_tls') then
+          begin
+            internalObjData.createsection('*'+aname,0,[]);
+            FInitTlsFunctionSym:=TWasmObjSymbol(internalObjData.SymbolDefine(aname,AB_GLOBAL,AT_FUNCTION));
+            TWasmObjSection(FInitTlsFunctionSym.ObjSection).MainFuncSymbol:=FInitTlsFunctionSym;
+            FInitTlsFunctionSym.LinkingData.FuncType:=TWasmFuncType.Create([wbt_i32],[]);
+          end
+        else if (ts_wasm_threads in current_settings.targetswitches) and (aname='__fpc_wasm_init_shared_memory') then
+          begin
+            internalObjData.createsection('*'+aname,0,[]);
+            FInitSharedMemoryFunctionSym:=TWasmObjSymbol(internalObjData.SymbolDefine(aname,AB_GLOBAL,AT_FUNCTION));
+            TWasmObjSection(FInitSharedMemoryFunctionSym.ObjSection).MainFuncSymbol:=FInitSharedMemoryFunctionSym;
+            FInitSharedMemoryFunctionSym.ObjSection.SecOptions:=FInitSharedMemoryFunctionSym.ObjSection.SecOptions+[oso_keep];
+            FInitSharedMemoryFunctionSym.LinkingData.FuncType:=TWasmFuncType.Create([],[]);
+          end
         else
           inherited;
       end;
@@ -5160,6 +5824,7 @@ implementation
                     newdll:=True;
                     TWasmObjSymbol(exesym.ObjSymbol).LinkingData.ExeFunctionIndex:=
                       AddFunctionImport(ImportLibrary.Name,ImportSymbol.Name,TWasmObjSymbol(exesym.ObjSymbol).LinkingData.FuncType);
+                    AddToFunctionNameMap(TWasmObjSymbol(exesym.ObjSymbol).LinkingData.ExeFunctionIndex,ImportSymbol.MangledName);
                   end;
               end;
           end;
@@ -5211,6 +5876,7 @@ implementation
               begin
                 exemap.Add('  Function[' + tostr(fsym.LinkingData.ExeFunctionIndex) + '] ' + fsym.Name + fsym.LinkingData.FuncType.ToString);
               end;
+            AddToFunctionNameMap(fsym.LinkingData.ExeFunctionIndex,fsym.Name);
           end;
         { set ExeFunctionIndex to the alias symbols as well }
         for i:=0 to ObjDataList.Count-1 do
@@ -5303,8 +5969,473 @@ implementation
       begin
         BssSec:=FindExeSection('.bss');
         InitialStackPtrAddr := (BssSec.MemPos+BssSec.Size+stacksize+15) and (not 15);
-        FMinMemoryPages := (InitialStackPtrAddr+65535) shr 16;
+        FMinMemoryPages := Max(
+          QWord(Align(QWord(InitialStackPtrAddr),QWord(WasmPageSize)) div WasmPageSize),
+          QWord(Align(QWord(heapsize),QWord(WasmPageSize)) div WasmPageSize));
         FStackPointerSym.LinkingData.GlobalInitializer.init_i32:=Int32(InitialStackPtrAddr);
+      end;
+
+    procedure TWasmExeOutput.SetTlsSizeAlignAndBase;
+      var
+        TBssSec: TExeSection;
+      begin
+        if not (ts_wasm_threads in current_settings.targetswitches) then
+          exit;
+        TBssSec:=FindExeSection('.tbss');
+        FTlsSizeSym.LinkingData.GlobalInitializer.init_i32:=Int32(TBssSec.Size);
+        FTlsAlignSym.LinkingData.GlobalInitializer.init_i32:=Int32(TBssSec.SecAlign);
+        FTlsBaseSym.LinkingData.GlobalInitializer.init_i32:=Int32(TBssSec.MemPos);
+      end;
+
+    procedure TWasmExeOutput.SetThreadVarGlobalsInitValues;
+      var
+        exesec: TExeSection;
+        i: Integer;
+        objsec: TWasmObjSection;
+        objsym: TWasmObjSymbol;
+      begin
+        if not (ts_wasm_threads in current_settings.targetswitches) then
+          exit;
+        exesec:=FindExeSection('.wasm_globals');
+        if not assigned(exesec) then
+          internalerror(2024010112);
+        for i:=0 to exesec.ObjSectionList.Count-1 do
+          begin
+            objsec:=TWasmObjSection(exesec.ObjSectionList[i]);
+            objsym:=objsec.MainFuncSymbol;
+            if Assigned(objsym.TlsDataSym) then
+              begin
+                objsym.LinkingData.GlobalInitializer.typ:=wbt_i32;
+                objsym.LinkingData.GlobalInitializer.init_i32:=objsym.TlsDataSym.offset+objsym.TlsDataSym.objsection.MemPos;
+              end;
+          end;
+      end;
+
+    procedure TWasmExeOutput.GenerateCode_InitTls;
+      var
+        Sec: TObjSection;
+        globalexesec: TExeSection;
+        i: Integer;
+        globalobjsec: TWasmObjSection;
+        globalobjsym: TWasmObjSymbol;
+        OffsetInTls: QWord;
+      begin
+        if not (ts_wasm_threads in current_settings.targetswitches) then
+          exit;
+
+        globalexesec:=FindExeSection('.wasm_globals');
+        if not assigned(globalexesec) then
+          internalerror(2024010112);
+
+        Sec:=FInitTlsFunctionSym.objsection;
+        Sec.SecOptions:=Sec.SecOptions+[oso_Data];
+
+        { locals }
+        Sec.writeUInt8($00);
+
+        { local.get 0 }
+        Sec.writeUInt16BE($2000);
+        { global.set $__tls_base }
+        Sec.writeUInt8($24);
+        WriteUleb(sec,FTlsBaseSym.offset+FTlsBaseSym.objsection.MemPos);
+
+        for i:=0 to globalexesec.ObjSectionList.Count-1 do
+          begin
+            globalobjsec:=TWasmObjSection(globalexesec.ObjSectionList[i]);
+            globalobjsym:=globalobjsec.MainFuncSymbol;
+            if Assigned(globalobjsym.TlsDataSym) then
+              begin
+                OffsetInTls:=globalobjsym.TlsDataSym.offset+globalobjsym.TlsDataSym.objsection.MemPos-globalobjsym.TlsDataSym.objsection.ExeSection.MemPos;
+                { local.get 0 }
+                Sec.writeUInt16BE($2000);
+                if OffsetInTls<>0 then
+                  begin
+                    { i32.const $OffsetInTls }
+                    Sec.writeUInt8($41);
+                    WriteSleb(Sec,Int32(OffsetInTls));
+                    { i32.add }
+                    Sec.writeUInt8($6A);
+                  end;
+                { global.set y }
+                Sec.writeUInt8($24);
+                WriteUleb(sec,globalobjsym.offset+globalobjsym.objsection.MemPos);
+              end;
+          end;
+
+        Sec.writeUInt8($0B);  { end }
+      end;
+
+    procedure TWasmExeOutput.GenerateCode_InitSharedMemory;
+      const
+        InitFlagOfs=256;
+      var
+        Sec: TObjSection;
+        DataSecName: string;
+        DataSecIdx: Integer;
+        ExeSec: TExeSection;
+      begin
+        if not (ts_wasm_threads in current_settings.targetswitches) then
+          exit;
+        Sec:=FInitSharedMemoryFunctionSym.objsection;
+        Sec.SecOptions:=Sec.SecOptions+[oso_Data];
+
+        { locals }
+        Sec.writeUInt8($00);
+
+        { block }
+        Sec.writeUInt16BE($0240);
+        { block }
+        Sec.writeUInt16BE($0240);
+        { block }
+        Sec.writeUInt16BE($0240);
+
+        { i32.const $InitFlag }
+        Sec.writeUInt8($41);
+        WriteSleb(sec,InitFlagOfs);
+        { i32.const 0 }
+        Sec.writeUInt16BE($4100);
+        { i32.const 1 }
+        Sec.writeUInt16BE($4101);
+        { i32.atomic.rmw.cmpxchg 2 0 }
+        Sec.writeUInt32BE($fe480200);
+        { br_table 0 1 2 }
+        Sec.writebytes(#$0e#$02#$00#$01#$02);
+        { end }
+        Sec.writeUInt8($0B);
+
+        DataSecIdx:=-1;
+        for DataSecName in DataSections do
+          begin
+            ExeSec:=FindExeSection(DataSecName);
+            if Assigned(ExeSec) and (ExeSec.Size>0) then
+              begin
+                Inc(DataSecIdx);
+                { i32.const $memPos }
+                Sec.writeUInt8($41);
+                WriteSleb(sec,Int32(ExeSec.MemPos));
+                { i32.const 0 }
+                Sec.writeUInt16BE($4100);
+                { i32.const size }
+                Sec.writeUInt8($41);
+                WriteSleb(sec,Int32(ExeSec.Size));
+                { memory.init $DataSecIdx 0 }
+                Sec.writeUInt16BE($fc08);
+                WriteUleb(sec,DataSecIdx);
+                Sec.writeUInt8(0);
+              end;
+          end;
+
+        { i32.const $InitFlag }
+        Sec.writeUInt8($41);
+        WriteSleb(sec,InitFlagOfs);
+        { i32.const 2 }
+        Sec.writeUInt16BE($4102);
+        { i32.atomic.store 2 0 }
+        Sec.writeUInt32BE($fe170200);
+        { i32.const $InitFlag }
+        Sec.writeUInt8($41);
+        WriteSleb(sec,InitFlagOfs);
+        { i32.const 4294967295 }
+        Sec.writeUInt16BE($417f);
+        { memory.atomic.notify 2 0 }
+        Sec.writeUInt32BE($fe000200);
+        { drop }
+        Sec.writeUInt8($1A);
+        { br 1 }
+        Sec.writeUInt16BE($0C01);
+        { end }
+        Sec.writeUInt8($0B);
+        { i32.const $InitFlag }
+        Sec.writeUInt8($41);
+        WriteSleb(sec,InitFlagOfs);
+        { i32.const 1 }
+        Sec.writeUInt16BE($4101);
+        { i64.const -1 }
+        Sec.writeUInt16BE($427f);
+        { memory.atomic.wait32 2 0 }
+        Sec.writeUInt32BE($fe010200);
+        { drop }
+        Sec.writeUInt8($1A);
+        { end }
+        Sec.writeUInt8($0B);
+        DataSecIdx:=-1;
+        for DataSecName in DataSections do
+          begin
+            ExeSec:=FindExeSection(DataSecName);
+            if Assigned(ExeSec) and (ExeSec.Size>0) then
+              begin
+                Inc(DataSecIdx);
+                { data.drop $DataSecIdx }
+                Sec.writeUInt16BE($fc09);
+                WriteUleb(sec,DataSecIdx);
+              end;
+          end;
+        { end }
+        Sec.writeUInt8($0B);
+      end;
+
+    procedure TWasmExeOutput.GenerateCode_InvokeHelper;
+      var
+        Sec: TObjSection;
+        IndirectFunctionTableMap: array of Integer;
+
+      procedure InvokeFuncType(typidx: Integer; islast: Boolean);
+        var
+          ft: TWasmFuncType;
+          i, nextofs: Integer;
+        begin
+          ft:=FFuncTypes[typidx];
+          for i:=0 to Length(ft.results)-1 do
+            { local.get 2 }
+            Sec.writeUInt16BE($2002);
+          nextofs:=0;
+          for i:=0 to Length(ft.params)-1 do
+            begin
+              { local.get 1 }
+              Sec.writeUInt16BE($2001);
+              case ft.params[i] of
+                wbt_i32:
+                  begin
+                    { i32.load nextofs }
+                    Sec.writeUInt16BE($2802);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,4);
+                  end;
+                wbt_i64:
+                  begin
+                    { i64.load nextofs }
+                    Sec.writeUInt16BE($2902);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,8);
+                  end;
+                wbt_f32:
+                  begin
+                    { f32.load nextofs }
+                    Sec.writeUInt16BE($2A02);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,4);
+                  end;
+                wbt_f64:
+                  begin
+                    { f64.load nextofs }
+                    Sec.writeUInt16BE($2B02);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,8);
+                  end;
+                wbt_v128:
+                  begin
+                    { v128.load nextofs }
+                    Sec.writeUInt16BE($FD00);
+                    Sec.writeUInt8($02);  { align: 4 bytes }
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,16);
+                  end;
+                wbt_externref,
+                wbt_funcref:
+                  begin
+                    { unreachable }
+                    Sec.writeUInt8($00);
+                  end;
+                else
+                  internalerror(2025012501);
+              end;
+            end;
+          { local.get 0 }
+          Sec.writeUInt16BE($2000);
+          { call_indirect }
+          Sec.writeUInt8($11);
+          WriteUleb(Sec,typidx);
+          Sec.writeUInt8($0);  { table index 0 }
+          nextofs:=0;
+          for i:=0 to Length(ft.results)-1 do
+            begin
+              case ft.results[i] of
+                wbt_i32:
+                  begin
+                    { i32.store nextofs }
+                    Sec.writeUInt16BE($3602);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,4);
+                  end;
+                wbt_i64:
+                  begin
+                    { i64.store nextofs }
+                    Sec.writeUInt16BE($3702);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,8);
+                  end;
+                wbt_f32:
+                  begin
+                    { f32.store nextofs }
+                    Sec.writeUInt16BE($3802);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,4);
+                  end;
+                wbt_f64:
+                  begin
+                    { f64.store nextofs }
+                    Sec.writeUInt16BE($3902);
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,8);
+                  end;
+                wbt_v128:
+                  begin
+                    { v128.store nextofs }
+                    Sec.writeUInt16BE($FD0B);
+                    Sec.writeUInt8($02);  { align: 4 bytes }
+                    WriteUleb(Sec, nextofs);
+                    Inc(nextofs,16);
+                  end;
+                wbt_externref,
+                wbt_funcref:
+                  begin
+                    { unreachable }
+                    Sec.writeUInt8($00);
+                  end;
+                else
+                  internalerror(2025012501);
+              end;
+            end;
+          if not islast then
+            { return }
+            Sec.writeUInt8($0F);
+        end;
+
+      function FuncIdx2TypeIdx(fi: Integer): Integer;
+        var
+          exesec: TExeSection;
+          objsec: TWasmObjSection;
+          fsym: TWasmObjSymbol;
+        begin
+          if fi<Length(FFunctionImports) then
+            Result:=FFunctionImports[fi].TypeIdx
+          else
+            begin
+              exesec:=FindExeSection('.text');
+              if not assigned(exesec) then
+                internalerror(2023123106);
+              objsec:=TWasmObjSection(exesec.ObjSectionList[fi-Length(FFunctionImports)]);
+              fsym:=objsec.MainFuncSymbol;
+              Result:=fsym.LinkingData.ExeTypeIndex;
+            end;
+        end;
+
+      procedure WriteBrTable(l,h: Integer; addend: Integer=0);
+        const
+          { max len of br_table instruction }
+          MaxLen=1000;
+        var
+          i, len, m: Integer;
+        begin
+          { local.get 0 }
+          Sec.writeUInt16BE($2000);
+          len:=h-l+1;
+          if len<=MaxLen then
+            begin
+              if l>0 then
+                begin
+                  { i32.const l }
+                  Sec.writeUInt8($41);
+                  WriteSleb(sec,l);
+                  { i32.sub }
+                  Sec.writeUInt8($6B);
+                end;
+              { br_table }
+              Sec.writeUInt8($0E);
+              if h=high(IndirectFunctionTableMap) then
+                begin
+                  WriteUleb(Sec,len);
+                  for i:=l to h do
+                    WriteUleb(Sec,IndirectFunctionTableMap[i]+addend);
+                  WriteUleb(Sec,addend);
+                end
+              else
+                begin
+                  WriteUleb(Sec,len-1);
+                  for i:=l to h do
+                    WriteUleb(Sec,IndirectFunctionTableMap[i]+addend);
+                end;
+            end
+          else
+            begin
+              m:=(l+h) div 2;
+              { i32.const m }
+              Sec.writeUInt8($41);
+              WriteSleb(sec,m);
+              { i32.lt_u }
+              Sec.writeUInt8($49);
+              { if }
+              Sec.writeUInt16BE($0440);
+              WriteBrTable(l,m-1,addend+1);
+              { else }
+              Sec.writeUInt8($05);
+              WriteBrTable(m,h,addend+1);
+              { end }
+              Sec.writeUInt8($0B);
+            end;
+        end;
+
+      var
+        exesym: TExeSymbol;
+        objsym: TObjSymbol;
+        i, j, TypIdx: Integer;
+        InvokableTypeIndices: array of Integer;
+      begin
+        exesym:=TExeSymbol(ExeSymbolList.Find('fpc_wasm_invoke_helper'));
+        if not Assigned(exesym) then
+          exit;
+
+        SetLength(IndirectFunctionTableMap, Length(FIndirectFunctionTable));
+        SetLength(InvokableTypeIndices, 1);
+        InvokableTypeIndices[0] := -1;
+        for i:=1 to Length(FIndirectFunctionTable)-1 do
+          begin
+            IndirectFunctionTableMap[i]:=0;
+            TypIdx := FuncIdx2TypeIdx(FIndirectFunctionTable[i].FuncIdx);
+            for j := 1 to Length(InvokableTypeIndices)-1 do
+              if InvokableTypeIndices[j]=TypIdx then
+                begin
+                  IndirectFunctionTableMap[i]:=j;
+                  break;
+                end;
+            if IndirectFunctionTableMap[i]=0 then
+              begin
+                SetLength(InvokableTypeIndices,Length(InvokableTypeIndices)+1);
+                InvokableTypeIndices[High(InvokableTypeIndices)]:=TypIdx;
+                IndirectFunctionTableMap[i]:=High(InvokableTypeIndices);
+              end;
+          end;
+
+        objsym:=exesym.ObjSymbol;
+        Sec:=objsym.objsection;
+        Sec.Size:=0;
+        Sec.Data.reset;
+
+        { locals }
+        Sec.writeUInt8($00);
+
+        for i:=1 to Length(InvokableTypeIndices)-1 do
+          { block }
+          Sec.writeUInt16BE($0240);
+
+        { block }
+        Sec.writeUInt16BE($0240);
+        { local.get 0 + br_table }
+        WriteBrTable(low(IndirectFunctionTableMap),high(IndirectFunctionTableMap));
+        { end }
+        Sec.writeUInt8($0B);
+        { unreachable }
+        Sec.writeUInt8($00);
+
+        for i:=1 to Length(InvokableTypeIndices)-1 do
+          begin
+            { end }
+            Sec.writeUInt8($0B);
+            InvokeFuncType(InvokableTypeIndices[i],i=(Length(InvokableTypeIndices)-1));
+          end;
+
+        { end }
+        Sec.writeUInt8($0B);
       end;
 
     procedure TWasmExeOutput.WriteExeSectionToDynArray(exesec: TExeSection; dynarr: tdynamicarray);
@@ -5338,6 +6469,50 @@ implementation
           internalerror(2024010107);
       end;
 
+    procedure TWasmExeOutput.WriteMemoryTo(dest: tdynamicarray; const MemType: TWasmMemoryType);
+      begin
+        WriteByte(dest,Byte(MemType.Flags));
+        WriteUleb(dest,MemType.MinPages);
+        if wmfHasMaximumBound in MemType.Flags then
+          WriteUleb(dest,MemType.MaxPages);
+        { todo: wmfCustomPageSize }
+      end;
+
+    function TWasmExeOutput.Memory2String(const MemType: TWasmMemoryType): string;
+      begin
+        Result:='index type: ';
+        if wmfMemory64 in MemType.Flags then
+          Result:=Result+'i64'
+        else
+          Result:=Result+'i32';
+        Result:=Result+', pages: initial='+tostr(MemType.MinPages);
+        if wmfHasMaximumBound in MemType.Flags then
+          Result:=Result+' max='+tostr(MemType.MaxPages);
+        if wmfShared in MemType.Flags then
+          Result:=Result+', shared'
+        else
+          Result:=Result+', unshared';
+        { todo: wmfCustomPageSize }
+      end;
+
+    procedure TWasmExeOutput.WriteMap_TypeSection;
+      var
+        i: Integer;
+      begin
+        exemap.AddHeader('Type section');
+        for i:=0 to FFuncTypes.Count-1 do
+          exemap.Add('  Type[' + tostr(i) + '] ' + FFuncTypes.Items[i].ToString);
+      end;
+
+    procedure TWasmExeOutput.WriteMap_IndirectFunctionTable;
+      var
+        i: Integer;
+      begin
+        exemap.AddHeader('Indirect function table');
+        for i:=1 to High(FIndirectFunctionTable) do
+          exemap.Add('  Elem[' + tostr(i) + '] = Function[' + tostr(FIndirectFunctionTable[i].FuncIdx) + ']');
+      end;
+
 
 {****************************************************************************
                                TWasmAssembler
@@ -5360,7 +6535,8 @@ implementation
             idtxt  : 'WASM';
             asmbin : '';
             asmcmd : '';
-            supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
+            supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,
+                                 system_wasm32_wasip2];
             flags : [af_outputbinary,af_smartlink_sections];
             labelprefix : '..@';
             labelmaxlen : -1;
@@ -5373,4 +6549,5 @@ initialization
 {$ifdef wasm32}
   RegisterAssembler(as_wasm32_wasm_info,TWasmAssembler);
 {$endif wasm32}
+finalization
 end.

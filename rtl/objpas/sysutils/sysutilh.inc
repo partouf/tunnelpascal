@@ -81,17 +81,7 @@ type
         2 : (Bytes : Array[0..7] of Byte);
    end;
 
-   Int128Rec = packed record
-      case integer of
-{$ifdef FPC_LITTLE_ENDIAN}
-        0 : (Lo,Hi : QWord);
-{$else FPC_LITTLE_ENDIAN}
-        0 : (Hi,Lo : QWord);
-{$endif FPC_LITTLE_ENDIAN}
-        1 : (DWords : Array[0..3] of DWord);
-        2 : (Words : Array[0..7] of Word);
-        3 : (Bytes : Array[0..15] of Byte);
-   end;
+   Int128Rec = System.Int128Rec;
 
    OWordRec = packed record
       case integer of
@@ -171,10 +161,7 @@ type
    end;
 
    EHeapMemoryError = class(Exception)
-     protected
-       AllowFree : boolean;
-     public
-       procedure FreeInstance;override;
+     procedure FreeInstance;override;
    end;
 
    EHeapException = EHeapMemoryError;
@@ -227,10 +214,10 @@ type
    ENoDynLibsSupport = class(Exception);
 
    EProgrammerNotFound = class(Exception);
-   
+
    EMonitor = class(Exception);
    EMonitorLockException = class(EMonitor);
-   ENoMonitorSupportException = class(EMonitor);   
+   ENoMonitorSupportException = class(EMonitor);
 
    EObjectDisposed = class(Exception);
 
@@ -272,6 +259,9 @@ type
    procedure Abort;
    procedure OutOfMemoryError;
    procedure ListIndexError(aIndex,aMax: Integer; aObj: TObject);
+   function ListIndexErrorMsg(aIndex, aMaxIndex: SizeInt; const aListObjName: string): string; overload;
+   function ListIndexErrorMsg(aIndex, aMaxIndex: SizeInt; aListObj: TObject): string; overload;
+   procedure RangeIndexError(aIndex, aMaxIndex: SizeInt; aListObj: TObject);
 
 Type
    TBeepHandler = Procedure;
@@ -295,10 +285,10 @@ type
   procedure AddTerminateProc(TermProc: TTerminateProc);
   function CallTerminateProcs: Boolean;
 
-{$IFNDEF VER3_0}
 generic function IfThen<T>(val:boolean;const iftrue:T; const iffalse:T) :T; inline; overload;
 generic function Exchange<T>(var target:T; const newvalue:T) :T; inline;
-{$ENDIF}
+generic function Extract<T>(var from: T) :T;inline;overload;
+generic procedure Swap<T>(var lhs,rhs: T);inline;overload;
 
 Var
    OnShowException : Procedure (Msg : ShortString);
@@ -358,7 +348,12 @@ Type
   { Type Helpers}
   {$i syshelph.inc}
 
+  {$IFDEF CPULLVM}
+  // LLVM does not allow the constref use.
   procedure FreeAndNil(var obj);
+  {$else}
+  procedure FreeAndNil(constref obj : TObject);
+  {$ENDIF}
   procedure FreeMemAndNil(var p);
 
   { interface handling }
@@ -367,7 +362,7 @@ Type
 {$IFDEF FPC_HAS_FEATURE_UNICODESTRINGS}
   { strange Delphi thing }
   {$i sysmarshalh.inc}
-{$ENDIF}  
+{$ENDIF}
 
   function SafeLoadLibrary(const FileName: AnsiString;
     ErrorMode: DWord = {$ifdef windows}SEM_NOOPENFILEERRORBOX{$else windows}0{$endif windows}): HMODULE;
@@ -403,8 +398,8 @@ const
 Type
   TUTF8StringDynArray = Array of UTF8String;
 
-Function ArrayOfConstToStr(Args: array of const ; aSeparator : Char = ','; aQuoteBegin : Char = '"'; aQuoteEnd : Char = '"') : UTF8String;
-Function ArrayOfConstToStrArray(Args: array of const) : TUTF8StringDynArray;
+Function ArrayOfConstToStr(const Args: array of const ; aSeparator : Char = ','; aQuoteBegin : Char = '"'; aQuoteEnd : Char = '"') : UTF8String;
+Function ArrayOfConstToStrArray(const Args: array of const) : TUTF8StringDynArray;
 
 { Delphi compatibility }
 
@@ -417,7 +412,7 @@ Type
     TArchitecture = (arIntelX86, arIntelX64, arARM32, arARM64, arIntelX16, arXTensa, arAVR, arM68k, arPowerPC, arPower64,
                      arMips, arMipsel, arMips64, arMips64el, arJVM, arWasm32, arSparc, arSparc64, arRiscV32, arRiscV64, arZ80,
                      arLoongArch64, arOther);
-    
+
     TPlatform = (pfWindows, pfMacOS, pfiOS, pfAndroid, pfWinRT, pfLinux,
                  pfGo32v2, pfOS2, pfFreeBSD, pfBeos, pfNetBSD, pfAmiga,
                  pfAtari, pfSolaris, pfQNX, pfNetware, pfOpenBSD, pfWDosX,
@@ -427,7 +422,7 @@ Type
                  pfNativeNT, pfMSDos, pfWII, pfAROS, pfDragonFly, pfWin16,
                  pfFreeRTOS, pfZXSpectrum, pfMSXDOS, pfAmstradCPC,
                  pfSinclairQL, pfWasi, pfOther);
-    TDelphiPlatform = TPlatform.pfWindows..TPlatform.pfLinux;             
+    TDelphiPlatform = TPlatform.pfWindows..TPlatform.pfLinux;
   public const
     AllArchitectures = [Low(TArchitecture) .. High(TArchitecture)];
     AllPlatforms = [Low(TPlatform) .. High(TPlatform)];
@@ -475,6 +470,6 @@ Type
   Function GetCompiledPlatform : TOSVersion.TPlatform;
 
 {$IFNDEF HAS_INVALIDHANDLE}
-const 
+const
   INVALID_HANDLE_VALUE = DWORD(-1);
 {$ENDIF}

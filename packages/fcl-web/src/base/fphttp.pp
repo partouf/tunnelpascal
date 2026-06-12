@@ -14,7 +14,7 @@
 {$mode objfpc}
 {$H+}
 {$IFNDEF FPC_DOTTEDUNITS}
-unit fphttp;
+unit fpHTTP;
 {$ENDIF FPC_DOTTEDUNITS}
 
 Interface
@@ -24,6 +24,9 @@ uses System.SysUtils,System.Classes,FpWeb.Http.Defs, FpWeb.Route;
 {$ELSE FPC_DOTTEDUNITS}
 uses sysutils,classes,httpdefs, httproute;
 {$ENDIF FPC_DOTTEDUNITS}
+
+const
+  cCSRFVariable = '_CSRFToken_';
 
 Type
 { TODO : Implement wkSession }
@@ -57,7 +60,7 @@ Type
     Property Request : TRequest Read FRequest;
     Property Response : TResponse Read FResponse;
   end;
-  
+
   { TCustomWebAction }
   TCustomWebAction = Class(TCollectionItem)
   private
@@ -107,7 +110,7 @@ Type
     Property Actions[Index : Integer] : TCustomWebAction Read GetActions Write SetActions; Default;
     Property DefActionWhenUnknown : Boolean read FDefActionWhenUnknown write FDefActionWhenUnknown;
   end;
-  
+
   { TCustomHTTPModule }
 
   TInitModuleEvent = Procedure (Sender : TObject; ARequest : TRequest) of object;
@@ -170,6 +173,9 @@ Type
 
   TSessionFactory = Class(TComponent)
   private
+    FGenerateCSRFToken: Boolean;
+    FSameSitePolicy: TSameSite;
+    FSecureSession: Boolean;
     FSessionCookie: String;
     FSessionCookiePath: String;
     FTimeOut: Integer;
@@ -182,6 +188,7 @@ Type
     Procedure DoCleanupSessions; virtual; abstract;
     Property DoneCount : Integer Read FDoneCount;
   Public
+    constructor Create(aOwner : TComponent); override;
     Function CreateSession(ARequest : TRequest) : TCustomSession;
     Procedure DoneSession(Var ASession : TCustomSession);
     Procedure CleanupSessions;
@@ -196,6 +203,12 @@ Type
     property SessionCookie : String Read FSessionCookie Write FSessionCookie;
     // Default session cookie path
     Property SessionCookiePath : String Read FSessionCookiePath write FSessionCookiePath;
+    // Secure session ? If set, then the cookie will be marked 'secure', only usable in https.
+    Property SecureSession : Boolean Read FSecureSession Write FSecureSession default false;
+    // Same Site Policy: TSameSite
+    Property SameSitePolicy : TSameSite Read FSameSitePolicy Write FSameSitePolicy default ssLax;
+    // Generate CSRFToken when creating a new session. for SameSitePolicy ssLax and ssStrict, this should not be needed.
+    Property GenerateCSRFToken : Boolean Read FGenerateCSRFToken Write FGenerateCSRFToken default False;
   end;
   TSessionFactoryClass = Class of TSessionFactory;
 
@@ -360,7 +373,17 @@ end;
 
 { TSessionFactory }
 
+constructor TSessionFactory.Create(aOwner: TComponent);
+begin
+  inherited Create(aOwner);
+  FSameSitePolicy:=ssLax;
+  FSecureSession:=False;
+end;
+
 function TSessionFactory.CreateSession(ARequest: TRequest): TCustomSession;
+var
+  G :  TGUID;
+  S : String;
 begin
   Result:=DoCreateSession(ARequest);
   if Assigned(Result) then
@@ -369,6 +392,15 @@ begin
       Result.TimeoutMinutes:=FTimeOut;
     Result.SessionCookie:=Self.SessionCookie;
     Result.SessionCookiePath:=Self.SessionCookiePath;
+    Result.SameSitePolicy:=Self.SameSitePolicy;
+    Result.SecureSession:=Self.SecureSession;
+    if GenerateCSRFToken then
+      begin
+      if CreateGUID(G)<>0 then
+        Raise EHTTP.Create('Could not create a GUID');
+      S:=GuidToString(G);
+      Result.Variables[cCSRFVariable]:=Copy(S,2,Length(S)-2);
+      end;
     end;
 end;
 
@@ -490,7 +522,7 @@ end;
 
 procedure RegisterHTTPModule(const ModuleName: String;
   ModuleClass: TCustomHTTPModuleClass; SkipStreaming : Boolean = False);
-  
+
 begin
   ModuleFactory.RegisterHTTPModule(ModuleName,ModuleClass,SkipStreaming);
 end;
@@ -500,7 +532,7 @@ end;
 
 procedure THTTPContentProducer.HandleRequest(ARequest: TRequest;
   AResponse: TResponse; Var Handled : Boolean);
-  
+
 begin
   If Assigned(FBeforeRequest) then
     FBeforeRequest(Self,ARequest);
@@ -515,13 +547,13 @@ begin
     FBeforeRequest(Self,ARequest);
   DoGetContent(Arequest,Content,Handled);
 end;
-  
+
 procedure THTTPContentProducer.DoHandleRequest(ARequest: TRequest;
   AResponse: TResponse; Var Handled : Boolean);
 
 Var
   M : TMemoryStream;
-  
+
 begin
   FResponse:=AResponse;
   M:=TMemoryStream.Create;
@@ -680,7 +712,7 @@ begin
     Result := '';
   If Assigned(FOnGetAction) then
     FOnGetAction(Self,ARequest,Result);
-  // GetNextPathInfo is only used after OnGetAction, so that the call to 
+  // GetNextPathInfo is only used after OnGetAction, so that the call to
   // GetNextPathInfo can be avoided in the event.
   If (Result='') then
     Result:=ARequest.GetNextPathInfo;

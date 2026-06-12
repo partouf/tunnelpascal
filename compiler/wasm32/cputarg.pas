@@ -32,7 +32,7 @@ implementation
       systems { prevent a syntax error when nothing is included }
 
 {$ifndef NOOPT}
-//      ,aoptcpu
+      ,aoptcpu
 {$endif NOOPT}
 
 {**************************************
@@ -45,7 +45,7 @@ implementation
              Assemblers
 **************************************}
 
-      ,agwat
+      ,agwasa
       ,agbinaryen
       ,agllvmmc
       ,ogwasm
@@ -53,6 +53,7 @@ implementation
 {**************************************
         Assembler Readers
 **************************************}
+      ,rawasmtext
 
 {**************************************
              Debuginfo

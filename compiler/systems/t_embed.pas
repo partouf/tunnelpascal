@@ -106,10 +106,7 @@ begin
     platformopt:=' -b elf32-xtensa-le -m elf32xtensa'
   else
     platformopt:=' -b elf32-xtensa-be -m elf32xtensa';
-  if target_info.abi=abi_xtensa_call0 then
-    platformopt:=platformopt+' --abi-call0'
-  else if target_info.abi=abi_xtensa_windowed then
-    platformopt:=platformopt+' --abi-windowed';
+  platformopt:=platformopt+' $PLATFORMABI';
   {$else}
   platformopt:='';
   {$endif}
@@ -1010,7 +1007,6 @@ begin
           Add('  fuse      (rw!x) : ORIGIN = 0x820000, LENGTH = 1K');
           Add('  lock      (rw!x) : ORIGIN = 0x830000, LENGTH = 1K');
           Add('  signature (rw!x) : ORIGIN = 0x840000, LENGTH = 1K');
-          Add('  fpcinfo          : ORIGIN = 0xFF0000, LENGTH = 1K');
           Add('}');
           Add('_stack_top = 0x' + IntToHex(srambase+sramsize-1,4) + ';');
         end;
@@ -1074,11 +1070,11 @@ begin
       Add('  .rel.plt       : { *(.rel.plt)		}');
       Add('  .rela.plt      : { *(.rela.plt)		}');
       if [cs_link_discard_start,cs_link_discard_zeroreg_sp,cs_link_discard_copydata,
-          cs_link_discard_jmp_main]*current_settings.globalswitches<>[] then
+          cs_link_discard_jmp_main,cs_link_cvt]*current_settings.globalswitches<>[] then
         begin
           Add('  /DISCARD/ :');
           Add('  { /* Discard RTL startup code */');
-          if cs_link_discard_start in current_settings.globalswitches then
+          if [cs_link_discard_start,cs_link_cvt]*current_settings.globalswitches<>[] then
             begin
               Add('    *(.init)  /* vector table */');
               Add('    *(.text.*_default_irq_handler)');
@@ -1271,7 +1267,7 @@ begin
       Add('  /* DWARF Extension.  */');
       Add('  .debug_macro    0 : { *(.debug_macro) }');
       Add('  .debug_addr     0 : { *(.debug_addr) }');
-      Add('  .fpc (NOLOAD)     : { KEEP (*(.fpc .fpc.n_version .fpc.n_links)) } > fpcinfo');
+      Add('  .fpc              : { KEEP (*(.fpc .fpc.n_version .fpc.n_links)) }');
       Add('}');
     end;
 {$endif AVR}
@@ -1813,6 +1809,17 @@ begin
 { Call linker }
   SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
   Replace(cmdstr,'$OPT',Info.ExtraOptions);
+  {$ifdef xtensa}
+  if target_info.abi=abi_xtensa_call0 then
+   begin
+     if current_settings.controllertype=ct_esp8266 then
+      Replace(cmdstr,'$PLATFORMABI','')
+     else
+      Replace(cmdstr,'$PLATFORMABI','--abi-call0');
+   end
+  else if target_info.abi=abi_xtensa_windowed then
+   Replace(cmdstr,'$PLATFORMABI','--abi-windowed');
+  {$endif}
   if not(cs_link_on_target in current_settings.globalswitches) then
    begin
     Replace(cmdstr,'$EXE',FixedExeFileName);
@@ -1835,7 +1842,7 @@ begin
    end;
   success:=DoExec(FindUtil(utilsprefix+BinStr),cmdstr,true,false);
 
-{ Remove ReponseFile }
+{ Remove ResponseFile }
   if success and not(cs_link_nolink in current_settings.globalswitches) then
    DeleteFile(outputexedir+Info.ResName);
 
@@ -2194,7 +2201,7 @@ function TlinkerEmbedded_SdccSdld.MakeExecutable: boolean;
      end;
     success:=DoExec(FindUtil(utilsprefix+BinStr),cmdstr,true,false);
 
-  { Remove ReponseFile }
+  { Remove ResponseFile }
     if success and not(cs_link_nolink in current_settings.globalswitches) then
      DeleteFile(outputexedir+Info.ResName);
 

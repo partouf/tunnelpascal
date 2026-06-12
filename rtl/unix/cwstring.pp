@@ -285,7 +285,9 @@ begin
 {$endif}
   toencoding:=iconvname;
   if not assigned(iconvctl) then
-    toencoding:=toencoding+TransLitName+#0;
+    toencoding:=toencoding+TransLitName+#0
+  else
+    toencoding:=toencoding+#0;
   iconvname:=iconvname+#0;
   iconv_wide2ansi:=iconv_open(PAnsiChar(@toencoding[1]),unicode_encoding2);
   iconv_ansi2wide:=iconv_open(unicode_encoding2,PAnsiChar(@iconvname[1]));
@@ -931,7 +933,7 @@ function CodePointLength(const Str: PAnsiChar; maxlookahead: ptrint): PtrInt;
 {$else beos}
     fillchar(mbstate,sizeof(mbstate),0);
     result:=ptrint(mbrlen(str,maxlookahead,@mbstate));
-    { mbrlen can also return -2 for "incomplete but potially valid character
+    { mbrlen can also return -2 for "incomplete but potentially valid character
       and data has been processed" }
     if result<0 then
       result:=-1;
@@ -1120,8 +1122,6 @@ begin
     Result:={$IFDEF FPC_DOTTEDUNITS}UnixApi.CP{$ELSE}unixcp{$ENDIF}.GetSystemCodepage;
 end;
 
-{$ifdef FPC_HAS_CPSTRING}
-
 procedure SetStdIOCodePage(var T: Text); inline;
 begin
   case TextRec(T).Mode of
@@ -1138,7 +1138,6 @@ begin
   SetStdIOCodePage(StdOut);
   SetStdIOCodePage(StdErr);
 end;
-{$endif FPC_HAS_CPSTRING}
 
 var
   OrgWideStringManager: TUnicodeStringManager;
@@ -1210,9 +1209,7 @@ initialization
   DefaultFileSystemCodePage:=GetStandardCodePage(scpFileSystemSingleByte);
   DefaultRTLFileSystemCodePage:=DefaultFileSystemCodePage;
 
-  {$ifdef FPC_HAS_CPSTRING}
   SetStdIOCodePages;
-  {$endif FPC_HAS_CPSTRING}
 
   { init conversion tables for main program }
   InitThread;

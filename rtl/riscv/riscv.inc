@@ -16,6 +16,25 @@
  **********************************************************************}
 
 {****************************************************************************
+                       stack frame related stuff
+****************************************************************************}
+
+{$IFNDEF INTERNAL_BACKTRACE}
+{$define FPC_SYSTEM_HAS_GET_FRAME}
+function get_frame:pointer;assembler;nostackframe;
+  asm
+    addi a0, fp, 0
+  end;
+{$ENDIF not INTERNAL_BACKTRACE}
+
+
+{$define FPC_SYSTEM_HAS_SPTR}
+Function Sptr : pointer;assembler;nostackframe;
+  asm
+    addi a0, sp, 0
+  end;
+
+{****************************************************************************
                        fpu exception related stuff
 ****************************************************************************}
 
@@ -119,3 +138,131 @@ procedure fpc_throwfpuexception;[public,alias:'FPC_THROWFPUEXCEPTION'];
       RaisePendingExceptions;
   end;
 {$endif FPUFD}
+
+
+{$define FPC_SYSTEM_HAS_SYSINITFPU}
+procedure SysInitFPU;
+{$ifdef FPUFD}
+var
+  cw: TNativeFPUControlWord;
+{$endif}
+begin
+  softfloat_exception_flags:=[];
+  softfloat_exception_mask:=[exPrecision,exUnderflow];
+{$ifdef FPUFD}
+  cw:=GetNativeFPUControlWord;
+  { riscv does not support triggering exceptions when FPU exceptions happen;
+    it merely records which exceptions have happened until now -> clear }
+  cw.cw:=0;
+  { round to nearest }
+  cw.rndmode:=0;
+  SetNativeFPUControlWord(cw);
+{$endif}
+end;
+
+
+{$define FPC_SYSTEM_HAS_SYSRESETFPU}
+Procedure SysResetFPU;
+{$ifdef FPUFD}
+var
+  cw: TNativeFPUControlWord;
+{$endif}
+begin
+  softfloat_exception_flags:=[];
+{$ifdef FPUFD}
+  { clear all "exception happened" flags we care about}
+  cw:=GetNativeFPUControlWord;
+  cw.cw:=0;
+  SetNativeFPUControlWord(cw);
+{$endif FPUFD}
+end;
+
+
+{$define FPC_SYSTEM_HAS_MEM_BARRIER}
+
+procedure ReadBarrier; assembler; nostackframe;
+  asm
+    fence ir, ir
+  end;
+
+
+procedure ReadDependencyBarrier;
+  begin
+  end;
+
+
+procedure ReadWriteBarrier; assembler; nostackframe;
+  asm
+    fence iorw, iorw
+  end;
+
+
+procedure WriteBarrier; assembler; nostackframe;
+  asm
+    fence ow, ow
+  end;
+
+{****************************************************************************
+                       atomic operations
+****************************************************************************}
+
+{$define FPC_SYSTEM_HAS_DECLOCKED_LONGINT}
+  function declocked(var l: longint) : boolean; inline;
+  begin
+    Result:=InterLockedDecrement(l) = 0;
+  end;
+
+
+{$define FPC_SYSTEM_HAS_INCLOCKED_LONGINT}
+  procedure inclocked(var l: longint); inline;
+  begin
+    InterLockedIncrement(l);
+  end;
+
+
+{$ifdef CPURV_HAS_ZBB}
+
+{$define FPC_SYSTEM_HAS_SWAPENDIAN}
+
+function SwapEndian(const AValue: SmallInt): SmallInt; assembler; nostackframe;
+asm
+  rev8 a0, a0
+  srli a0, a0, 16
+end;
+
+
+function SwapEndian(const AValue: Word): Word; assembler; nostackframe;
+asm
+  rev8 a0, a0
+  srli a0, a0, 16
+end;
+
+
+function SwapEndian(const AValue: LongInt): LongInt; assembler; nostackframe;
+asm
+  rev8 a0, a0
+end;
+
+
+function SwapEndian(const AValue: DWord): DWord; assembler; nostackframe;
+asm
+  rev8 a0, a0
+end;
+
+
+function SwapEndian(const AValue: Int64): Int64; assembler; nostackframe;
+asm
+  rev8 a2, a0
+  rev8 a0, a1
+  addi a1, a2, 0
+end;
+
+
+function SwapEndian(const AValue: QWord): QWord; assembler; nostackframe;
+asm
+  rev8 a2, a0
+  rev8 a0, a1
+  addi a1, a2, 0
+end;
+
+{$endif CPURV_HAS_ZBB}

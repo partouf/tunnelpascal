@@ -40,9 +40,10 @@ uses
         { Pseudo instructions }
         A_NOP,A_CALL,A_LA,A_LLA,A_LGA,A_LI,A_MV,A_NOT,A_NEG,A_NEGW,
         A_SEXT_B,A_SEXT_H,A_ZEXT_B,A_ZEXT_H,A_SEQZ,A_SNEG,A_SLTZ,A_SGTZ,
-        A_FMV_S,A_FABS_S,A_FNEG_S,A_FMV_D,A_FABS_D,A_FNEG_D,
-        A_BEQZ,A_BNEZ,A_BLEZ,A_BGEZ,A_BLTZ,A_BGTZ,A_GT,A_BLE,
+        A_FMV_S,A_FABS_S,A_FNEG_S,A_FMV_D,A_FABS_D,A_FNEG_D,A_FNEG_Q,
+        A_BEQZ,A_BNEZ,A_BLEZ,A_BGEZ,A_BLTZ,A_BGTZ,A_BGT,A_BLE,
         A_BGTU,A_BLEU,A_J,A_JR,A_RET,A_TAIL,
+
         { normal opcodes }
         A_LUI,A_AUIPC,A_JAL,A_JALR,
         A_Bxx,A_LB,A_LH,A_LW,A_LBU,A_LHU,
@@ -83,15 +84,55 @@ uses
         A_AMOOR_D,A_AMOMIN_D,A_AMOMAX_D,A_AMOMINU_D,A_AMOMAXU_D,
 {$endif RISCV64}
 
+        { B-extension }
+        A_ADD_UW,A_ANDN,A_CLMUL,A_CLMULH,A_CLMULR,A_CLZ,
+{$ifdef RISCV64}
+        A_CLZW,
+{$endif RISCV64}
+        A_CPOP,
+{$ifdef RISCV64}
+        A_CPOPW,
+{$endif RISCV64}
+        A_CTZ,
+{$ifdef RISCV64}
+        A_CTZW,
+{$endif RISCV64}
+        A_MAX,A_MAXU,A_MIN,A_MINU,A_ORC_B,A_ORN,A_REV8,A_ROL,
+{$ifdef RISCV64}
+        A_ROLW,
+{$endif RISCV64}
+        A_ROR,A_RORI,
+{$ifdef RISCV64}
+        A_RORIW,
+        A_RORW,
+{$endif RISCV64}
+        A_BCLR,A_BCLRI,A_BEXT,A_BEXTI,A_BINV,A_BINVI,A_BSET,A_SETI,{ A_SEXT_B,A_SEXT_H, }
+        A_SH1ADD,
+{$ifdef RISCV64}
+        A_SH1ADD_UW,
+{$endif RISCV64}
+        A_SH2ADD,
+{$ifdef RISCV64}
+        A_SH2ADD_UW,
+{$endif RISCV64}
+        A_SH3ADD,
+{$ifdef RISCV64}
+        A_SH3ADD_UW,
+        A_SLLI_UW,
+{$endif RISCV64}
+        A_XNOR,
+        { A_ZEXT_H, }
+
         { F-extension }
         A_FLW,A_FSW,
         A_FMADD_S,A_FMSUB_S,A_FNMSUB_S,A_FNMADD_S,
         A_FADD_S,A_FSUB_S,A_FMUL_S,A_FDIV_S,
         A_FSQRT_S,A_FSGNJ_S,A_FSGNJN_S,A_FSGNJX_S,
         A_FMIN_S,A_FMAX_S,
-        A_FMV_X_S,A_FEQ_S,A_FLT_S,A_FLE_S,A_FCLASS_S,
+        A_FMV_X_S,A_FMV_X_W,
+        A_FEQ_S,A_FLT_S,A_FLE_S,A_FCLASS_S,
         A_FCVT_W_S,A_FCVT_WU_S,A_FCVT_S_W,A_FCVT_S_WU,
-        A_FMV_S_X,
+        A_FMV_S_X,A_FMV_W_X,
         A_FRCSR,A_FRRM,A_FRFLAGS,A_FSCSR,A_FSRM,
         A_FSFLAGS,A_FSRMI,A_FSFLAGSI,
 
@@ -117,6 +158,30 @@ uses
         A_FCVT_D_L,A_FCVT_D_LU,A_FMV_D_X,
 {$endif RISCV64}
 
+        { Zfa extension }
+        A_FLI_S,A_FLI_D,A_FLI_Q,A_FLI_H,
+        A_FMINM_S,A_FMAXM_S,A_FMINM_D,A_FMAXM_D,A_FMINM_H,A_FMAXM_H,A_FMINM_Q,A_FMAXM_Q,
+        A_FROUND_S,A_FROUNDNX_S,A_FROUND_D,A_FROUNDNX_D,A_FROUND_H,A_FROUNDNX_H,A_FROUND_Q,A_FROUNDNX_Q,
+        A_FCVTMOD_W_D,
+        A_FMVH_X_D,A_FMVP_D_X,A_FMVH_X_Q,A_FMVP_Q_X,
+        A_FLEQ_S,A_FLTQ_S,
+        A_FLEQ_D,A_FLTQ_D,
+        A_FLEQ_H,A_FLTQ_H,
+        A_FLEQ_Q,A_FLTQ_Q,
+
+        { Q-extension }
+        A_FLQ,A_FSQ,
+//        A_FMADD_D,A_FMSUB_D,A_FNMSUB_D,A_FNMADD_D,
+//        A_FADD_D,A_FSUB_D,A_FMUL_D,A_FDIV_D,
+//        A_FSQRT_D,A_FSGNJ_D,A_FSGNJN_D,A_FSGNJX_D,
+        A_FMIN_Q,A_FMAX_Q,
+        A_FEQ_Q,A_FLT_Q,A_FLE_Q,A_FCLASS_Q,
+//        A_FCVT_D_S,A_FCVT_S_D,
+//        A_FCVT_W_D,A_FCVT_WU_D,A_FCVT_D_W,A_FCVT_D_WU,
+
+        { Zihintpause }
+        A_PAUSE,
+
         { Machine mode }
         A_MRET,A_HRET,A_SRET,A_URET,
         A_WFI,
@@ -124,22 +189,19 @@ uses
         { Supervisor }
         A_SFENCE_VM,
 
-        { pseudo instructions for accessiong control and status registers }
+        { pseudo instructions for accessing control and status registers }
         A_RDINSTRET,A_RDINSTRETH,A_RDCYCLE,A_RDCYCLEH,A_RDTIME,A_RDTIMEH,A_CSRR,A_CSRW,A_CSRS,A_CSRC,A_CSRWI,
         A_CSRSI,A_CSRCI
       );
 
-      TAsmOps = set of TAsmOp;
-
-      {# This should define the array of instructions as string }
+      { This should define the array of instructions as string }
       op2strtable=array[tasmop] of string[8];
 
     Const
-      {# First value of opcode enumeration }
+      { First value of opcode enumeration }
       firstop = low(tasmop);
-      {# Last value of opcode enumeration  }
+      { Last value of opcode enumeration  }
       lastop  = high(tasmop);
-
 
 {*****************************************************************************
                                   Registers
@@ -269,6 +331,8 @@ uses
 
       TFenceFlag = (ffI, ffO, ffR, ffW);
       TFenceFlags = set of TFenceFlag;
+
+      TAsmRealSpecialValue = (ARSV_None,ARSV_Nan,ARSV_Min,ARSV_Inf);
 
       TRoundingMode = (RM_Default,
                        RM_RNE,
@@ -400,7 +464,7 @@ uses
          The value of this constant is equal to the constant
          PARM_BOUNDARY / BITS_PER_UNIT in the GCC source.
       }
-{$ifdef RISCV64}	  
+{$ifdef RISCV64}
       std_param_align = 8;
 {$endif RISCV64}
 {$ifdef RISCV32}
@@ -498,6 +562,8 @@ implementation
       begin
        is_calljmp:=false;
         case o of
+          A_BEQZ,A_BNEZ,A_BLEZ,A_BGEZ,A_BLTZ,A_BGTZ,A_BGT,A_BLE,
+          A_BGTU,A_BLEU,A_J,A_JR,
           A_JAL,A_JALR,A_Bxx,A_CALL:
             is_calljmp:=true;
           else

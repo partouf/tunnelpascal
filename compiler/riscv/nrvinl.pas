@@ -30,38 +30,41 @@ interface
        node,ninl,ncginl;
 
     type
+      trvinlinenode = class(tcginlinenode)
+        { first pass override
+          so that the code generator will actually generate
+          these nodes.
+        }
+        function first_sqrt_real: tnode; override;
+        function first_abs_real: tnode; override;
+        function first_sqr_real: tnode; override;
+        function first_round_real: tnode; override;
+        function first_trunc_real: tnode; override;
+        function first_fma: tnode; override;
+        function first_minmax: tnode; override;
 
-       { trvinlinenode }
+        procedure second_sqrt_real; override;
+        procedure second_abs_real; override;
+        procedure second_sqr_real; override;
+        procedure second_round_real; override;
+        procedure second_trunc_real; override;
 
-       trvinlinenode = class(tcginlinenode)
-          { first pass override
-            so that the code generator will actually generate
-            these nodes.
-          }
-          function first_sqrt_real: tnode; override;
-          function first_abs_real: tnode; override;
-          function first_sqr_real: tnode; override;
-          function first_round_real: tnode; override;
-          function first_trunc_real: tnode; override;
+        procedure second_fma; override;
+        procedure second_minmax; override;
 
-          function first_fma: tnode; override;
-
-          procedure second_sqrt_real; override;
-          procedure second_abs_real; override;
-          procedure second_sqr_real; override;
-          procedure second_round_real; override;
-          procedure second_trunc_real; override;
-
-          procedure second_fma; override;
-       protected
-          procedure load_fpu_location;
-       end;
+        function pass_typecheck_cpu: tnode; override;
+        function first_cpu: tnode; override;
+        procedure pass_generate_code_cpu; override;
+      protected
+        procedure load_fpu_location;
+      end;
 
 implementation
 
     uses
       ncal,
       cutils,globals,verbose,globtype,
+      compinnr,
       aasmtai,aasmdata,aasmcpu,
       symconst,symdef,
       defutil,
@@ -74,6 +77,48 @@ implementation
 {*****************************************************************************
                               trvinlinenode
 *****************************************************************************}
+
+     function trvinlinenode.pass_typecheck_cpu: tnode;
+       begin
+         Result:=nil;
+         case inlinenumber of
+           in_riscv_pause:
+             begin
+               if not(CPURV_HAS_ZIHINTPAUSE in cpu_capabilities[current_settings.cputype]) then
+                 Message(cg_e_intrinsic_not_supported_by_instruction_set);
+               resultdef:=voidtype;
+             end;
+           else
+             result:=inherited;
+         end;
+       end;
+
+
+    function trvinlinenode.first_cpu : tnode;
+      begin
+        Result:=nil;
+        case inlinenumber of
+          in_riscv_pause:
+            begin
+              expectloc:=LOC_VOID;
+              resultdef:=voidtype;
+            end;
+          else
+            Result:=inherited first_cpu;
+        end;
+      end;
+
+
+     procedure trvinlinenode.pass_generate_code_cpu;
+       begin
+         case inlinenumber of
+           in_riscv_pause:
+             current_asmdata.CurrAsmList.concat(taicpu.op_none(A_PAUSE));
+           else
+             inherited pass_generate_code_cpu;
+         end;
+       end;
+
 
      function trvinlinenode.first_sqrt_real : tnode;
        begin
@@ -117,7 +162,11 @@ implementation
 
      function trvinlinenode.first_round_real: tnode;
        begin
-         if (current_settings.fputype >= fpu_fd) then
+         if
+{$ifdef RISCV32}
+           is_32bitint(resultdef) and
+{$endif RISCV32}
+           (current_settings.fputype >= fpu_fd) then
            begin
              expectloc:=LOC_FPUREGISTER;
              first_round_real := nil;
@@ -131,7 +180,11 @@ implementation
 
      function trvinlinenode.first_trunc_real: tnode;
        begin
-         if (current_settings.fputype >= fpu_fd) then
+         if
+{$ifdef RISCV32}
+           is_32bitint(resultdef) and
+{$endif RISCV32}
+           (current_settings.fputype >= fpu_fd) then
            begin
              expectloc:=LOC_FPUREGISTER;
              first_trunc_real := nil;
@@ -149,6 +202,20 @@ implementation
            Include(current_procinfo.flags,pi_do_call);
          Result:=nil;
        end;
+
+
+    function trvinlinenode.first_minmax : tnode;
+      begin
+        if is_single(resultdef) or is_double(resultdef)  or is_quad(resultdef) then
+          begin
+            expectloc:=LOC_FPUREGISTER;
+            Result:=nil;
+            if needs_check_for_fpu_exceptions then
+              Include(current_procinfo.flags,pi_do_call);
+          end
+        else
+          Result:=inherited first_minmax;
+      end;
 
 
      { load the FPU into the an fpu register }
@@ -296,11 +363,11 @@ implementation
            (
             (
              (A_FMADD_S,A_FMSUB_S),
-             (A_FNMADD_S,A_FNMSUB_S)
+             (A_FNMSUB_S,A_FNMADD_S)
             ),
             (
              (A_FMADD_D,A_FMSUB_D),
-             (A_FNMADD_D,A_FNMSUB_D)
+             (A_FNMSUB_D,A_FNMADD_D)
             )
            );
        var
@@ -359,13 +426,66 @@ implementation
              location_reset(location,LOC_FPUREGISTER,paraarray[1].location.size);
              location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
 
-             current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg_reg(op[def_cgsize(resultdef), negproduct,negop3],location.register,paraarray[1].location.register,paraarray[2].location.register,paraarray[2].location.register));
+             current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg_reg(op[def_cgsize(resultdef), negproduct,negop3],
+               location.register,paraarray[1].location.register,paraarray[2].location.register,paraarray[3].location.register));
              cg.maybe_check_for_fpu_exception(current_asmdata.CurrAsmList);
            end
          else
            internalerror(2014032301);
        end;
 
+
+    procedure trvinlinenode.second_minmax;
+      var
+        paraarray : array[1..2] of tnode;
+        i: Integer;
+        ai: taicpu;
+        opcode: TAsmOp;
+        cond: TAsmCond;
+      begin
+        paraarray[1]:=tcallparanode(tcallparanode(parameters).nextpara).paravalue;
+          paraarray[2]:=tcallparanode(parameters).paravalue;
+
+        for i:=low(paraarray) to high(paraarray) do
+           secondpass(paraarray[i]);
+
+        if is_single(resultdef) or is_double(resultdef) then
+           begin
+             { no memory operand is allowed }
+             for i:=low(paraarray) to high(paraarray) do
+               begin
+                 if not(paraarray[i].location.loc in [LOC_FPUREGISTER,LOC_CFPUREGISTER]) then
+                   hlcg.location_force_fpureg(current_asmdata.CurrAsmList,paraarray[i].location,
+                     paraarray[i].resultdef,true);
+               end;
+
+             location_reset(location,LOC_FPUREGISTER,paraarray[1].location.size);
+             location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
+
+             case inlinenumber of
+               in_min_single:
+                 opcode:=A_FMIN_S;
+               in_min_double:
+                 opcode:=A_FMIN_D;
+               in_min_quad:
+                 opcode:=A_FMAX_Q;
+               in_max_single:
+                 opcode:=A_FMAX_S;
+               in_max_double:
+                 opcode:=A_FMAX_D;
+               in_max_quad:
+                 opcode:=A_FMAX_Q;
+               else
+                 Internalerror(2025010502);
+             end;
+             current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(opcode,
+               location.register,paraarray[1].location.register,paraarray[2].location.register));
+
+             cg.maybe_check_for_fpu_exception(current_asmdata.CurrAsmList);
+           end
+         else
+           internalerror(2025010501);
+      end;
 
 begin
    cinlinenode:=trvinlinenode;

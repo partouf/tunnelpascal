@@ -14,11 +14,9 @@
 
  **********************************************************************}
 unit System;
+
 interface
 
-
-
-{$DEFINE SYSTEM_HAS_FEATURE_MONITOR}
 {$define FPC_IS_SYSTEM}
 { $define SYSTEMEXCEPTIONDEBUG}
 
@@ -42,6 +40,10 @@ interface
   {$define FPC_SYSTEM_HAS_CAPTUREBACKTRACE}
 {$endif SYSTEM_USE_WIN_SEH}
 
+{$ifdef VER3_2}
+  {$define FPC_ABI_WIN64}
+{$endif VER3_2}
+
 { include system-independent routine headers }
 {$I systemh.inc}
 { include common windows headers }
@@ -53,12 +55,7 @@ var
 implementation
 
 var
-{$ifdef VER3_0}
-  SysInstance : qword;
-  FPCSysInstance: PQWord = @SysInstance; public name '_FPC_SysInstance';
-{$else VER3_0}
   FPCSysInstance : PQWord;public name '_FPC_SysInstance';
-{$endif VER3_0}
 
 {$define FPC_SYSTEM_HAS_OSSETUPENTRYINFORMATION}
 procedure OsSetupEntryInformation(constref info: TEntryInformation); forward;
@@ -80,17 +77,9 @@ function main_wrapper(arg: Pointer; proc: Pointer): ptrint; forward;
 {$ifndef SYSTEM_USE_WIN_SEH}
 procedure install_exception_handlers;forward;
 {$endif SYSTEM_USE_WIN_SEH}
-{$ifdef VER3_0}
-procedure PascalMain;external name 'PASCALMAIN';
-{$endif VER3_0}
 
 { include code common with win32 }
 {$I syswin.inc}
-
-{$ifdef VER3_0}
-{ TLS directory code }
-{$I systlsdir.inc}
-{$endif VER3_0}
 
 procedure OsSetupEntryInformation(constref info: TEntryInformation);
 begin
@@ -107,7 +96,7 @@ begin
     if DllInitState in [DLL_PROCESS_ATTACH,DLL_PROCESS_DETACH] then
       LongJmp(DLLBuf,1)
     else
-      MainThreadIDWin32:=0;
+      DllProcessAttachPerformed:=false;
   end;
   if not IsConsole then
    begin
@@ -133,27 +122,6 @@ begin
   { call exitprocess, with cleanup as required }
   ExitProcess(exitcode);
 end;
-
-{$ifdef VER3_0}
-procedure _FPC_DLLMainCRTStartup(_hinstance : qword;_dllreason : dword;_dllparam:Pointer);stdcall;public name '_DLLMainCRTStartup';
-begin
-  IsConsole:=true;
-  sysinstance:=_hinstance;
-  dllreason:=_dllreason;
-  dllparam:=PtrInt(_dllparam);
-  DLL_Entry;
-end;
-
-
-procedure _FPC_DLLWinMainCRTStartup(_hinstance : qword;_dllreason : dword;_dllparam:Pointer);stdcall;public name '_DLLWinMainCRTStartup';
-begin
-  IsConsole:=false;
-  sysinstance:=_hinstance;
-  dllreason:=_dllreason;
-  dllparam:=PtrInt(_dllparam);
-  DLL_Entry;
-end;
-{$endif VER3_0}
 
 //
 // Hardware exception handling
@@ -344,32 +312,6 @@ procedure install_exception_handlers;
   end;
 {$endif ndef SYSTEM_USE_WIN_SEH}
 
-{$ifdef VER3_0}
-procedure LinkIn(p1,p2,p3: Pointer); inline;
-begin
-end;
-
-procedure _FPC_mainCRTStartup;stdcall;public name '_mainCRTStartup';
-begin
-  IsConsole:=true;
-  GetConsoleMode(GetStdHandle((Std_Input_Handle)),@StartupConsoleMode);
-{$ifdef FPC_USE_TLS_DIRECTORY}
-  LinkIn(@_tls_used,@FreePascal_TLS_callback,@FreePascal_end_of_TLS_callback);
-{$endif FPC_USE_TLS_DIRECTORY}
-  Exe_entry;
-end;
-
-
-procedure _FPC_WinMainCRTStartup;stdcall;public name '_WinMainCRTStartup';
-begin
-  IsConsole:=false;
-{$ifdef FPC_USE_TLS_DIRECTORY}
-  LinkIn(@_tls_used,@FreePascal_TLS_callback,@FreePascal_end_of_TLS_callback);
-{$endif FPC_USE_TLS_DIRECTORY}
-  Exe_entry;
-end;
-{$endif VER3_0}
-
 {$ifdef FPC_SECTION_THREADVARS}
 function fpc_tls_add(addr: pointer): pointer; assembler; nostackframe;
   [public,alias: 'FPC_TLS_ADD']; compilerproc;
@@ -486,7 +428,7 @@ initialization
   StackLength := CheckInitialStkLen($1000000);
   StackBottom := StackTop - StackLength;
   SetThreadStackGuaranteeTo(StackMargin);
-  
+
   { get some helpful informations }
   GetStartupInfo(@startupinfo);
   { some misc Win32 stuff }
@@ -509,7 +451,6 @@ initialization
   InitSystemDynLibs;
   { Reset IO Error }
   InOutRes:=0;
-  ProcessID := GetCurrentProcessID;
   DispCallByIDProc:=@DoDispCallByIDError;
 
 finalization

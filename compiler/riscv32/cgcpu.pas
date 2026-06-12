@@ -44,8 +44,6 @@ unit cgcpu;
         procedure a_mul_reg_reg_pair(list: TAsmList;size: tcgsize; src1,src2,dstlo,dsthi: tregister); override;
 
         procedure g_concatcopy(list : TAsmList;const source,dest : treference;len : tcgint);override;
-
-        procedure g_overflowcheck(list: TAsmList; const Loc: tlocation; def: tdef); override;
      end;
 
      tcg64frv = class(tcg64f32)
@@ -53,6 +51,9 @@ unit cgcpu;
        procedure a_op64_const_reg(list : TAsmList;op:TOpCG;size : tcgsize;value : int64;reg : tregister64);override;
        procedure a_op64_const_reg_reg(list: TAsmList;op:TOpCG;size : tcgsize;value : int64;regsrc,regdst : tregister64);override;
        procedure a_op64_reg_reg_reg(list: TAsmList;op:TOpCG;size : tcgsize;regsrc1,regsrc2,regdst : tregister64);override;
+       procedure a_load64_ref_cgpara(list: TAsmList; const r: treference; const paraloc: tcgpara);override;
+       procedure a_load64_ref_reg(list: TAsmList; const ref: treference; reg: tregister64);override;
+       procedure a_load64_reg_ref(list: TAsmList; reg: tregister64; const ref: treference);override;
      end;
 
   procedure create_codegen;
@@ -116,16 +117,29 @@ unit cgcpu;
       var
         ai: taicpu;
       begin
+{$ifdef EXTDEBUG}
         list.concat(tai_comment.Create(strpnew('Move '+tcgsize2str(fromsize)+'->'+tcgsize2str(tosize))));
-
+{$endif EXTDEBUG}
         if (tosize=OS_S32) and (fromsize=OS_32) then
           begin
             ai:=taicpu.op_reg_reg_const(A_ADDI,reg2,reg1,0);
             list.concat(ai);
             rg[R_INTREGISTER].add_move_instruction(ai);
           end
+        else if (CPURV_HAS_ZBB in cpu_capabilities[current_settings.cputype]) and (tcgsize2unsigned[tosize]=OS_32) and (fromsize=OS_S8) then
+          list.Concat(taicpu.op_reg_reg(A_SEXT_B,reg2,reg1))
         else if (tcgsize2unsigned[tosize]=OS_32) and (fromsize=OS_8) then
           list.Concat(taicpu.op_reg_reg_const(A_ANDI,reg2,reg1,$FF))
+        else if (tosize=OS_8) and (fromsize<>OS_8) then
+          list.Concat(taicpu.op_reg_reg_const(A_ANDI,reg2,reg1,$FF))
+        else if (CPURV_HAS_ZBB in cpu_capabilities[current_settings.cputype]) and (tcgsize2unsigned[tosize]=OS_32) and (fromsize=OS_S16) then
+          list.Concat(taicpu.op_reg_reg(A_SEXT_H,reg2,reg1))
+        else if (CPURV_HAS_ZBB in cpu_capabilities[current_settings.cputype]) and (tosize=OS_S16) and (tcgsize2unsigned[fromsize]=OS_32) then
+          list.Concat(taicpu.op_reg_reg(A_SEXT_H,reg2,reg1))
+        else if (CPURV_HAS_ZBB in cpu_capabilities[current_settings.cputype]) and (tcgsize2unsigned[tosize]=OS_64) and (fromsize=OS_16) then
+          list.Concat(taicpu.op_reg_reg(A_ZEXT_H,reg2,reg1))
+        else if (CPURV_HAS_ZBB in cpu_capabilities[current_settings.cputype]) and (tosize=OS_16) and (fromsize<>OS_16) then
+          list.Concat(taicpu.op_reg_reg(A_ZEXT_H,reg2,reg1))
         else if (tcgsize2size[fromsize] > tcgsize2size[tosize]) or
           ((tcgsize2size[fromsize] = tcgsize2size[tosize]) and (fromsize <> tosize)) or
           { do we need to mask out the sign when loading from smaller signed to larger unsigned type? }
@@ -183,12 +197,12 @@ unit cgcpu;
         lab:      tasmlabel;
         Count, count2: aint;
 
-        function reference_is_reusable(const ref: treference): boolean;
-          begin
-            result:=(ref.base<>NR_NO) and (ref.index=NR_NO) and
-               (ref.symbol=nil) and
-               is_imm12(ref.offset);
-          end;
+      function reference_is_reusable(const ref: treference): boolean;
+        begin
+          result:=(ref.base<>NR_NO) and (ref.index=NR_NO) and
+             (ref.symbol=nil) and
+             is_imm12(ref.offset);
+        end;
 
       begin
         src2:=source;
@@ -285,12 +299,6 @@ unit cgcpu;
             a_load_reg_ref(list, OS_8, OS_8, hreg, dst);
           end;
         end;
-      end;
-
-
-    procedure tcgrv32.g_overflowcheck(list: TAsmList; const Loc: tlocation; def: tdef);
-      begin
-
       end;
 
 
@@ -433,7 +441,7 @@ unit cgcpu;
               else
                 cg.a_load_reg_reg(list,OS_32,OS_32,regsrc.reglo,regdst.reglo);
 
-              { With overflow checking and unsigned args, this generates slighly suboptimal code
+              { With overflow checking and unsigned args, this generates slightly suboptimal code
                ($80000000 constant loaded twice). Other cases are fine. Getting it perfect does not
                look worth the effort. }
               cg.a_op_const_reg_reg(list,OP_ADD,hisize,aint(hi(value)),regsrc.reghi,regdst.reghi);
@@ -469,6 +477,45 @@ unit cgcpu;
         else
           InternalError(2013050301);
         end;
+      end;
+
+
+    procedure tcg64frv.a_load64_ref_cgpara(list : TAsmList;const r : treference;const paraloc : tcgpara);
+      var
+        hreg64 : tregister64;
+      begin
+        { Override this function to prevent loading the reference twice.
+          Use here some extra registers, but those are optimized away by the RA }
+        hreg64.reglo:=cg.GetIntRegister(list,OS_32);
+        hreg64.reghi:=cg.GetIntRegister(list,OS_32);
+        a_load64_ref_reg(list,r,hreg64);
+        a_load64_reg_cgpara(list,hreg64,paraloc);
+      end;
+
+
+    procedure tcg64frv.a_load64_reg_ref(list : TAsmList;reg : tregister64;const ref : treference);
+      var
+        tmpref: treference;
+      begin
+        { Override this function to prevent loading the reference twice }
+        tmpref:=ref;
+        tcgrv32(cg).fixref(list,tmpref);
+        cg.a_load_reg_ref(list,OS_32,OS_32,reg.reglo,tmpref);
+        inc(tmpref.offset,4);
+        cg.a_load_reg_ref(list,OS_32,OS_32,reg.reghi,tmpref);
+      end;
+
+
+    procedure tcg64frv.a_load64_ref_reg(list : TAsmList;const ref : treference;reg : tregister64);
+      var
+        tmpref: treference;
+      begin
+        { Override this function to prevent loading the reference twice }
+        tmpref:=ref;
+        tcgrv32(cg).fixref(list,tmpref);
+        cg.a_load_ref_reg(list,OS_32,OS_32,tmpref,reg.reglo);
+        inc(tmpref.offset,4);
+        cg.a_load_ref_reg(list,OS_32,OS_32,tmpref,reg.reghi);
       end;
 
 

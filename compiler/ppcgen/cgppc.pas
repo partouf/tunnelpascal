@@ -35,7 +35,7 @@ unit cgppc;
       tcgppcgen = class(tcg)
         procedure a_loadaddr_ref_cgpara(list : TAsmList;const r : treference;const paraloc : tcgpara); override;
 
-        procedure a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); override;
+        procedure a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); override;
 
         procedure a_call_reg(list : TAsmList;reg: tregister); override;
 
@@ -205,7 +205,7 @@ unit cgppc;
       end;
 
 
-    procedure tcgppcgen.a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
+    procedure tcgppcgen.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
       var
         tmpreg: tregister;
         cntlzop: tasmop;
@@ -297,6 +297,7 @@ unit cgppc;
     function tcgppcgen.g_indirect_sym_load(list: TAsmList; const symname: string; const flags: tindsymflags): tregister;
       begin
         case target_info.system of
+          system_powerpc_macosclassic,
           system_powerpc_aix,
           system_powerpc64_aix:
             result:=load_got_symbol(list,symname,flags);
@@ -739,7 +740,7 @@ unit cgppc;
      case target_info.abi of
        abi_powerpc_aix:
          result:=LA_RTOC_AIX;
-{$ifdef powerpc64}
+{$if defined(powerpc64)}
        { no TOC on Linux/ppc32 }
        abi_powerpc_elfv1:
          result:=LA_RTOC_SYSV;
@@ -758,14 +759,14 @@ unit cgppc;
       l: tasmsymbol;
       ref: treference;
     begin
-      if target_info.system=system_powerpc64_linux then
+      if (target_info.system=system_powerpc64_freebsd) or (target_info.system=system_powerpc64_linux) then
         begin
           l:=current_asmdata.getasmsymbol(symbol);
           reference_reset_symbol(ref,l,0,sizeof(pint),[]);
           ref.base:=NR_RTOC;
           ref.refaddr:=addr_pic;
         end
-      else if target_info.system in systems_aix then
+      else if target_info.system in systems_aix+[system_powerpc_macosclassic] then
         get_aix_toc_sym(list,symbol,flags,ref,false)
       else
         internalerror(2007102010);
@@ -1033,9 +1034,9 @@ unit cgppc;
           end;
 
         { if we have to create PIC, add the symbol to the TOC/GOT }
-        if (((target_info.system = system_powerpc64_linux) and
+        if ((((target_info.system=system_powerpc64_freebsd) or (target_info.system = system_powerpc64_linux)) and
              (cs_create_pic in current_settings.moduleswitches)) or
-            (target_info.system in systems_aix)) and
+            (target_info.system in systems_aix+[system_powerpc_macosclassic])) and
            (assigned(ref.symbol) and
             not assigned(ref.relsymbol)) then
           begin

@@ -25,8 +25,11 @@ Unit aoptcpu;
 
 {$i fpcdefs.inc}
 
+{$ifdef EXTDEBUG}
+{$define DEBUG_AOPTCPU}
+{$endif EXTDEBUG}
+
 { $define DEBUG_PREREGSCHEDULER}
-{ $define DEBUG_AOPTCPU}
 
 Interface
 
@@ -79,6 +82,7 @@ Type
     function OptPass1CMP(var p: tai): Boolean;
     function OptPass1STM(var p: tai): Boolean;
     function OptPass1MOV(var p: tai): Boolean;
+    function OptPass1MOVW(var p: tai): Boolean;
     function OptPass1MUL(var p: tai): Boolean;
     function OptPass1MVN(var p: tai): Boolean;
     function OptPass1VMov(var p: tai): Boolean;
@@ -235,13 +239,13 @@ Implementation
 
   function TCpuAsmOptimizer.RegLoadedWithNewValue(reg: tregister; hp: tai): boolean;
     var
-      p: taicpu;
+      p: taicpu absolute hp; { Implicit typecast }
+      i: integer;
     begin
       Result := false;
       if not ((assigned(hp)) and (hp.typ = ait_instruction)) then
         exit;
 
-      p := taicpu(hp);
       case p.opcode of
         { These operands do not write into a register at all }
         A_CMP, A_CMN, A_TST, A_TEQ, A_B, A_BL, A_BX, A_BLX, A_SWI, A_MSR, A_PLD,
@@ -257,7 +261,7 @@ Implementation
               (taicpu(p).oper[1]^.ref^.addressmode in [AM_PREINDEXED,AM_POSTINDEXED]) and
               (taicpu(p).oper[1]^.ref^.base = reg);
             }
-            { STR does not load into it's first register }
+            { STR does not load into its first register }
             if p.opcode = A_STR then
               exit;
           end;
@@ -266,11 +270,6 @@ Implementation
             Result := false;
             exit;
           end;
-        { These four are writing into the first 2 register, UMLAL and SMLAL will also read from them }
-        A_UMLAL, A_UMULL, A_SMLAL, A_SMULL:
-          Result :=
-            (p.oper[1]^.typ = top_reg) and
-            (p.oper[1]^.reg = reg);
         {Loads to oper2 from coprocessor}
         {
         MCR/MRC is currently not supported in FPC
@@ -292,20 +291,38 @@ Implementation
       if Result then
         exit;
 
-      case p.oper[0]^.typ of
-        {This is the case}
-        top_reg:
-          Result := (p.oper[0]^.reg = reg) or
-            { LDRD }
-            (p.opcode=A_LDR) and (p.oppostfix=PF_D) and (getsupreg(p.oper[0]^.reg)+1=getsupreg(reg));
-        {LDM/STM might write a new value to their index register}
-        top_ref:
-          Result :=
-            (taicpu(p).oper[0]^.ref^.addressmode in [AM_PREINDEXED,AM_POSTINDEXED]) and
-            (taicpu(p).oper[0]^.ref^.base = reg);
-        else
-          ;
-      end;
+      for i:=0 to p.ops-1 do
+        begin
+          case p.spilling_get_operation_type(i) of
+            operand_read,
+            operand_readwrite:
+              if RegInOp(reg,p.oper[i]^) then
+                { Depends on register's previous value }
+                exit;
+
+            operand_write:
+              case p.oper[i]^.typ of
+                top_specialreg,
+                top_reg:
+                  if SuperRegistersEqual(p.oper[i]^.reg,reg) then
+                    Result:=True;
+                top_regset:
+                  if RegInOp(reg,p.oper[i]^) then
+                    Result:=True;
+                top_ref:
+                  { With a reference, if the register is pre- or post-indexed,
+                    it's a modified value, not a new value }
+                  if (taicpu(p).oper[i]^.ref^.addressmode in [AM_PREINDEXED,AM_POSTINDEXED]) and
+                    (taicpu(p).oper[i]^.ref^.base=reg) then
+                    begin
+                      Result:=False;
+                      Exit;
+                    end;
+                else
+                  ;
+              end;
+          end;
+        end;
     end;
 
 
@@ -379,7 +396,7 @@ Implementation
          ) and
          (taicpu(movp).ops=2) and
          MatchOperand(taicpu(movp).oper[1]^, taicpu(p).oper[0]^.reg) and
-         { the destination register of the mov might not be used beween p and movp }
+         { the destination register of the mov might not be used between p and movp }
          not(RegUsedBetween(taicpu(movp).oper[0]^.reg,p,movp)) and
          { Take care to only do this for instructions which REALLY load to the first register.
            Otherwise
@@ -602,7 +619,7 @@ Implementation
              )
             ) do
             begin
-              { neither reg1 nor reg2 might be changed inbetween }
+              { neither reg1 nor reg2 might be changed in between }
               if RegModifiedBetween(taicpu(p).oper[0]^.reg,p,hp1) or
                 RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1) then
                 break;
@@ -1192,7 +1209,7 @@ Implementation
             mov reg1,reg0, shift imm1+imm2
           }
           else if (taicpu(p).oper[2]^.shifterop^.shiftmode=taicpu(hp1).oper[2]^.shifterop^.shiftmode) or
-            { asr makes no use after a lsr, the asr can be foled into the lsr }
+            { asr makes no use after a lsr, the asr can be folded into the lsr }
              ((taicpu(p).oper[2]^.shifterop^.shiftmode=SM_LSR) and (taicpu(hp1).oper[2]^.shifterop^.shiftmode=SM_ASR) ) then
             begin
               inc(taicpu(p).oper[2]^.shifterop^.shiftimm,taicpu(hp1).oper[2]^.shifterop^.shiftimm);
@@ -1405,7 +1422,7 @@ Implementation
                  end;
              end;
 
-          { 2-operald mov optimisations }
+          { 2-operand mov optimisations }
           if (taicpu(p).ops = 2) then
             begin
               {
@@ -1484,6 +1501,13 @@ Implementation
 
                     if Result then
                       Exit;
+
+                    { If no changes were made, now try constant merging }
+                    if TryConstMerge(p, hpfar1) then
+                      begin
+                        Result := True;
+                        Exit;
+                      end;
                   end;
                 end;
               {
@@ -1586,7 +1610,7 @@ Implementation
                 end
             end
 
-          { 3-operald mov optimisations }
+          { 3-operand mov optimisations }
           else if (taicpu(p).ops = 3) then
             begin
 
@@ -1619,7 +1643,7 @@ Implementation
                     (taicpu(hpfar1).ops=3) and
                     MatchOperand(taicpu(p).oper[0]^, taicpu(hpfar1).oper[1]^) and
                     (taicpu(hpfar1).oper[2]^.typ = top_const) and
-                    { Check if the BIC actually would only mask out bits beeing already zero because of the shift }
+                    { Check if the BIC actually would only mask out bits being already zero because of the shift }
                     (taicpu(hpfar1).oper[2]^.val<>0) and
                     (BsfDWord(taicpu(hpfar1).oper[2]^.val)>=32-taicpu(p).oper[2]^.shifterop^.shiftimm) then
                     begin
@@ -1668,7 +1692,7 @@ Implementation
                    (hpfar1 = hp1)
                  )
                ) and
-               { reg1 might not be modified inbetween }
+               { reg1 might not be modified in between }
                not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hpfar1)) and
                { The shifterop can contain a register, might not be modified}
                (
@@ -1765,7 +1789,7 @@ Implementation
                (taicpu(p).oper[1]^.typ = top_reg) and
                (taicpu(p).oper[2]^.typ = top_shifterop) and
                { RRX is tough to handle, because it requires tracking the C-Flag,
-                 it is also extremly unlikely to be emitted this way}
+                 it is also extremely unlikely to be emitted this way}
                (taicpu(p).oper[2]^.shifterop^.shiftmode <> SM_RRX) and
                (taicpu(p).oper[2]^.shifterop^.shiftimm <> 0) and
                (taicpu(p).oppostfix = PF_NONE) and
@@ -1824,6 +1848,58 @@ Implementation
     end;
 
 
+  function TCpuAsmOptimizer.OptPass1MOVW(var p: tai): Boolean;
+    var
+      ThisReg: TRegister;
+      a: aint;
+      imm_shift: byte;
+      hp1, hp2: tai;
+    begin
+      Result := False;
+      ThisReg := taicpu(p).oper[0]^.reg;
+      if GetNextInstruction(p, hp1) then
+        begin
+          { Can the MOVW/MOVT pair be represented by a single MOV instruction? }
+          if MatchInstruction(hp1, A_MOVT, [taicpu(p).condition], []) and
+            (taicpu(hp1).oper[0]^.reg = ThisReg) then
+            begin
+              a := (aint(taicpu(p).oper[1]^.val) and $FFFF) or aint(taicpu(hp1).oper[1]^.val shl 16);
+
+              if is_shifter_const(a,imm_shift) then
+                begin
+                  DebugMsg(SPeepholeOptimization + 'MOVW/MOVT pair can encode value as a single MOV instruction (MovwMovT2Mov)', p);
+                  taicpu(p).opcode := A_MOV;
+                  taicpu(p).oper[1]^.val := a;
+                  RemoveInstruction(hp1);
+                  Result := True;
+                  Exit;
+                end
+              else if is_shifter_const(not(a),imm_shift) then
+                begin
+                  DebugMsg(SPeepholeOptimization + 'MOVW/MOVT pair can encode value as a single MVN instruction (MovwMovT2Mvn)', p);
+                  taicpu(p).opcode := A_MVN;
+                  taicpu(p).oper[1]^.val := not(a);
+                  RemoveInstruction(hp1);
+                  Result := True;
+                  Exit;
+                end;
+            end;
+
+          if (
+              (
+                MatchInstruction(hp1, A_STR, [taicpu(p).condition], [PF_H]) and
+                (taicpu(hp1).oper[0]^.reg = ThisReg)
+              )
+            ) and
+            TryConstMerge(p, hp1) then
+            begin
+              Result := True;
+              Exit;
+            end;
+        end;
+    end;
+
+
   function TCpuAsmOptimizer.OptPass1MVN(var p: tai): Boolean;
     var
       hp1: tai;
@@ -1848,7 +1924,7 @@ Implementation
           (taicpu(hp1).oper[1]^.typ=top_reg) and
           MatchOperand(taicpu(hp1).oper[1]^, taicpu(p).oper[0]^.reg))) and
         assigned(FindRegDealloc(taicpu(p).oper[0]^.reg,tai(hp1.Next))) and
-        { reg1 might not be modified inbetween }
+        { reg1 might not be modified in between }
         not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1)) then
         begin
           DebugMsg(SPeepholeOptimization + 'MvnAnd2Bic done', p);
@@ -2351,6 +2427,8 @@ Implementation
               Result := OptPass1LDR(p);
             A_MOV:
               Result := OptPass1MOV(p);
+            A_MOVW:
+              Result := OptPass1MOVW(p);
             A_AND:
               Result := OptPass1And(p);
             A_ADD,
@@ -2468,7 +2546,7 @@ Implementation
                 Exit(True);
 
               { Instruction sets CPSR register due to S suffix (floating-point
-                instructios won't raise false positives) }
+                instructions won't raise false positives) }
               if (taicpu(p1).oppostfix = PF_S) then
                 Exit(True)
             end;
@@ -2604,7 +2682,7 @@ Implementation
                 (taicpu(hp1).oper[1]^.ref^.offset=0)
                 )
                ) or
-               { try to prove that the memory accesses don't overlapp }
+               { try to prove that the memory accesses don't overlap }
                ((taicpu(p).opcode in [A_STRB,A_STRH,A_STR]) and
                 (taicpu(p).oper[1]^.typ = top_ref) and
                 (taicpu(p).oper[1]^.ref^.base=taicpu(hp1).oper[1]^.ref^.base) and
@@ -2612,7 +2690,7 @@ Implementation
                 (taicpu(hp1).oppostfix=PF_None) and
                 (taicpu(p).oper[1]^.ref^.index=NR_NO) and
                 (taicpu(hp1).oper[1]^.ref^.index=NR_NO) and
-                { get operand sizes and check if the offset distance is large enough to ensure no overlapp }
+                { get operand sizes and check if the offset distance is large enough to ensure no overlap }
                 (abs(taicpu(p).oper[1]^.ref^.offset-taicpu(hp1).oper[1]^.ref^.offset)>=max(tcgsize2size[reg_cgsize(taicpu(p).oper[0]^.reg)],tcgsize2size[reg_cgsize(taicpu(hp1).oper[0]^.reg)]))
               )
             )

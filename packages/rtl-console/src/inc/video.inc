@@ -18,6 +18,16 @@ const
     #9658,#9668,#8597,#8252,#0182,#0167,#9644,#8616,
     #8593,#8595,#8594,#8592,#8735,#8596,#9650,#9660
   );
+  convert_highascii_to_Unicode : array[#128..#255] of WideChar = ( { cp437 }
+  #$00C7, #$00FC, #$00E9, #$00E2, #$00E4, #$00E0, #$00E5, #$00E7, #$00EA, #$00EB, #$00E8, #$00EF, #$00EE, #$00EC, #$00C4, #$00C5
+, #$00C9, #$00E6, #$00C6, #$00F4, #$00F6, #$00F2, #$00FB, #$00F9, #$00FF, #$00D6, #$00DC, #$00A2, #$00A3, #$00A5, #$20A7, #$0192
+, #$00E1, #$00ED, #$00F3, #$00FA, #$00F1, #$00D1, #$00AA, #$00BA, #$00BF, #$2310, #$00AC, #$00BD, #$00BC, #$00A1, #$00AB, #$00BB
+, #$2591, #$2592, #$2593, #$2502, #$2524, #$2561, #$2562, #$2556, #$2555, #$2563, #$2551, #$2557, #$255D, #$255C, #$255B, #$2510
+, #$2514, #$2534, #$252C, #$251C, #$2500, #$253C, #$255E, #$255F, #$255A, #$2554, #$2569, #$2566, #$2560, #$2550, #$256C, #$2567
+, #$2568, #$2564, #$2565, #$2559, #$2558, #$2552, #$2553, #$256B, #$256A, #$2518, #$250C, #$2588, #$2584, #$258C, #$2590, #$2580
+, #$03B1, #$00DF, #$0393, #$03C0, #$03A3, #$03C3, #$00B5, #$03C4, #$03A6, #$0398, #$03A9, #$03B4, #$221E, #$03C6, #$03B5, #$2229
+, #$2261, #$00B1, #$2265, #$2264, #$2320, #$2321, #$00F7, #$2248, #$00B0, #$2219, #$00B7, #$221A, #$207F, #$00B2, #$25A0, #$00A0
+);
 
 { TEnhancedVideoCell }
 
@@ -260,7 +270,7 @@ begin
   SetLength(OldEnhancedVideoBuf,0);
 end;
 
-procedure EnhancedVideoBufResize(var Buf: TEnhancedVideoBuf; OldCols, OldRows : Word);
+procedure EnhancedVideoBufResize(var Buf: TEnhancedVideoBuf; OldCols, OldRows : Word; vAttribute : Byte);
 var
   NewVideoBufSize : SizeUInt;
   NewBuf: TEnhancedVideoBuf;
@@ -281,10 +291,35 @@ begin
       for Y := 0 to YS-1 do
         for X := 0 to XS-1 do
           NewBuf[Y*ScreenWidth+X]:=Buf[Y*OldCols+X];
+      { have to initialize newly obtained parts of screen buffer }
+      for X:=XS to ScreenWidth-1 do
+        for Y:=0 to YS-1 do
+          with NewBuf[Y*ScreenWidth+X] do
+          begin
+            Attribute:=vAttribute;
+            ExtendedGraphemeCluster:=' ';
+          end;
+      for Y:=YS to ScreenHeight-1 do
+        for X:=0 to XS-1 do
+          with NewBuf[Y*ScreenWidth+X] do
+          begin
+            Attribute:=vAttribute;
+            ExtendedGraphemeCluster:=' ';
+          end;
       Buf:=NewBuf;
     end
   else
-    SetLength(Buf,NewVideoBufSize);
+    begin
+      SetLength(Buf,NewVideoBufSize);
+      { have to initialize newly obtained parts of screen buffer }
+      for Y:=OldRows to ScreenHeight-1 do
+        for X:=0 to ScreenWidth-1 do
+          with Buf[Y*ScreenWidth+X] do
+          begin
+            Attribute:=vAttribute;
+            ExtendedGraphemeCluster:=' ';
+          end;
+    end;
 end;
 
 Procedure AssignVideoBuf (OldCols, OldRows : Word);
@@ -292,8 +327,10 @@ Procedure AssignVideoBuf (OldCols, OldRows : Word);
 var NewVideoBuf,NewOldVideoBuf:PVideoBuf;
     old_rowstart,new_rowstart:word;
     NewVideoBufSize : longint;
-
+    ooOldCols,ooOldRows:Word;
 begin
+  ooOldCols:=OldCols;
+  ooOldRows:=OldRows;
   if VideoInitialized or Assigned(CurrentVideoDriver.InitDriver) then
     begin
       NewVideoBufSize:=ScreenWidth*ScreenHeight*sizeof(TVideoCell);
@@ -308,11 +345,13 @@ begin
             OldRows:=ScreenHeight;
           old_rowstart:=0;
           new_rowstart:=0;
+          FillWord(NewVideoBuf^,NewVideoBufSize shr 1, $7020);
+          FillWord(NewOldVideoBuf^,NewVideoBufSize shr 1, $0720); { content of new and old buffer should differ }
           while oldrows>0 do
             begin
               move(VideoBuf^[old_rowstart],NewVideoBuf^[new_rowstart],OldCols*sizeof(TVideoCell));
               move(OldVideoBuf^[old_rowstart],NewOldVideoBuf^[new_rowstart],OldCols*sizeof(TVideoCell));
-              inc(old_rowstart,OldCols);
+              inc(old_rowstart,ooOldCols);
               inc(new_rowstart,ScreenWidth);
               dec(OldRows);
             end;
@@ -325,8 +364,8 @@ begin
     end;
   if EnhancedVideoInitialized or Assigned(CurrentVideoDriver.InitEnhancedDriver) then
     begin
-      EnhancedVideoBufResize(EnhancedVideoBuf,OldCols,OldRows);
-      EnhancedVideoBufResize(OldEnhancedVideoBuf,OldCols,OldRows);
+      EnhancedVideoBufResize(EnhancedVideoBuf,ooOldCols,ooOldRows,$07);
+      EnhancedVideoBufResize(OldEnhancedVideoBuf,ooOldCols,ooOldRows,$70);
     end;
 end;
 
@@ -446,6 +485,11 @@ begin
     Result:=convert_lowascii_to_Unicode[Ch]
   else if Ch=#127 then
     Result:=#$2302
+  else if CurrentLegacy2EnhancedTranslationCodePage=437 then
+    if ch<#128 then
+      Result:=ch { no conversion needed }
+    else
+      Result:=convert_highascii_to_Unicode[ch]  { cp437 to Unicode }
   else
     begin
       SetLength(tmpS, 1);
@@ -505,20 +549,26 @@ end;
 procedure Legacy2Enhanced;
 var
   I: Integer;
+  Attr: Byte;
 begin
-  { todo: optimize this }
   for I := 0 to Length(EnhancedVideoBuf)-1 do
     begin
-      with EnhancedVideoBuf[I] do
-        begin
-          Attribute:=Byte(VideoBuf^[I] shr 8);
-          ExtendedGraphemeCluster:=LegacyChar2ExtendedGraphemeCluster(Chr(Byte(VideoBuf^[I])));
-        end;
-      with OldEnhancedVideoBuf[I] do
-        begin
-          Attribute:=Byte(OldVideoBuf^[I] shr 8);
-          ExtendedGraphemeCluster:=LegacyChar2ExtendedGraphemeCluster(Chr(Byte(OldVideoBuf^[I])));
-        end;
+      if VideoBuf^[I]<> OldVideoBuf^[i] then
+      begin
+        Attr:=Byte(VideoBuf^[I] shr 8);
+        with EnhancedVideoBuf[I] do
+          begin
+            Attribute:=Attr;
+            ExtendedGraphemeCluster:=LegacyChar2ExtendedGraphemeCluster(Chr(Byte(VideoBuf^[I])));
+          end;
+        with OldEnhancedVideoBuf[I] do
+          begin
+            Attribute:=not Attr; { indicate that old cell is different from new }
+            ExtendedGraphemeCluster:=EnhancedVideoBuf[I].ExtendedGraphemeCluster;
+          end;
+      end else
+        with OldEnhancedVideoBuf[I] do
+         Attribute:=EnhancedVideoBuf[I].Attribute;  { Old and new cell will be equal }
     end;
 end;
 
@@ -568,6 +618,8 @@ begin
       else if VideoInitialized and Assigned(CurrentVideoDriver.InitEnhancedDriver) then
         Legacy2Enhanced;
       CurrentVideoDriver.UpdateScreen(Force);
+      if VideoInitialized and Assigned(CurrentVideoDriver.InitEnhancedDriver) then
+        Move(VideoBuf^,OldVideoBuf^,VideoBufSize);
     end;
 end;
 
@@ -707,6 +759,11 @@ begin
     Result := CurrentVideoDriver.GetActiveCodePage()
   else
     Result := DefaultSystemCodePage;
+end;
+
+function GetLegacyCodePage: TSystemCodePage;
+begin
+  Result := CurrentLegacy2EnhancedTranslationCodePage;
 end;
 
 { disallowed codepages (variable length), code points larger than an 8-bit byte, etc. }

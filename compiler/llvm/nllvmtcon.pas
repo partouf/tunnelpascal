@@ -374,7 +374,7 @@ implementation
         exit;
       inherited;
       { we can only check here whether the aggregate does not match our
-        cononical llvm definition, as the tail padding may cause a mismatch
+        canonical llvm definition, as the tail padding may cause a mismatch
         (in case not all fields have been defined), and we can't do it inside
         end_aggregate_internal as its inherited method (which calls this
         method) frees curagginfo before it returns }
@@ -864,7 +864,7 @@ implementation
         begin
           { insert an ordinal -> non-ordinal (e.g. pointer) conversion, as you
             cannot have integer constants as pointer values in LLVM }
-          int_to_type(value,valuedef);
+          valuedef:=cgsize_orddef(def_cgsize(def));
           queue_typeconvn(valuedef,def);
           { and now emit the constant as an ordinal }
           def:=valuedef;

@@ -164,7 +164,8 @@ Implementation
 
   function TCpuAsmOptimizer.RegLoadedWithNewValue(reg: tregister; hp: tai): boolean;
     var
-      p: taicpu;
+      p: taicpu absolute hp; { Implicit typecast }
+      i: integer;
     begin
       Result := false;
       if not ((assigned(hp)) and (hp.typ = ait_instruction)) then
@@ -177,25 +178,44 @@ Implementation
           LDR/STR with post/pre-indexed operations do not need special treatment
           because post-/preindexed does not mean that a register
           is loaded with a new value, it is only modified }
-        A_STR, A_CMP, A_CMN, A_TST, A_B, A_BL, A_MSR, A_FCMP:
+        A_STR, A_STP, A_CMP, A_CMN, A_TST, A_B, A_BL, A_MSR, A_FCMP:
           exit;
         else
           ;
       end;
 
-      if p.ops=0 then
-        exit;
+      for i:=0 to p.ops-1 do
+        begin
+          case p.spilling_get_operation_type(i) of
+            operand_read,
+            operand_readwrite:
+              if RegInOp(reg,p.oper[i]^) then
+                { Depends on register's previous value }
+                exit;
 
-      case p.oper[0]^.typ of
-        top_reg:
-          Result := SuperRegistersEqual(p.oper[0]^.reg,reg);
-        top_ref:
-          Result :=
-            (taicpu(p).oper[0]^.ref^.addressmode in [AM_PREINDEXED,AM_POSTINDEXED]) and
-            (taicpu(p).oper[0]^.ref^.base = reg);
-        else
-          ;
-      end;
+            operand_write:
+              case p.oper[i]^.typ of
+                top_reg,
+                top_indexedreg:
+                  if SuperRegistersEqual(p.oper[i]^.reg,reg) then
+                    Result:=True;
+                top_regset:
+                  if RegInOp(reg,p.oper[i]^) then
+                    Result:=True;
+                top_ref:
+                  { With a reference, if the register is pre- or post-indexed,
+                    it's a modified value, not a new value }
+                  if (taicpu(p).oper[i]^.ref^.addressmode in [AM_PREINDEXED,AM_POSTINDEXED]) and
+                    (taicpu(p).oper[i]^.ref^.base=reg) then
+                    begin
+                      Result:=False;
+                      Exit;
+                    end;
+                else
+                  ;
+              end;
+          end;
+        end;
     end;
 
 
@@ -301,7 +321,7 @@ Implementation
          ) and
          (taicpu(movp).ops=2) and
          MatchOperand(taicpu(movp).oper[1]^, taicpu(p).oper[0]^.reg) and
-         { the destination register of the mov might not be used beween p and movp }
+         { the destination register of the mov might not be used between p and movp }
          not(RegUsedBetween(taicpu(movp).oper[0]^.reg,p,movp)) and
          { Take care to only do this for instructions which REALLY load to the first register.
            Otherwise
@@ -383,6 +403,9 @@ Implementation
       if inherited OptPass1STR(p) or
         LookForPostindexedPattern(p) then
         Exit(True);
+
+      if getsupreg(taicpu(p).oper[0]^.reg) = RS_WZR then
+        Result := TryConstMerge(p, nil);
     end;
 
 
@@ -417,7 +440,7 @@ Implementation
          (taicpu(hp1).oper[0]^.reg<>NR_SP) and
          (taicpu(hp1).oper[1]^.reg<>NR_SP) and
          (taicpu(hp1).oper[taicpu(hp1).ops-1]^.reg<>NR_SP) and
-         { reg1 might not be modified inbetween }
+         { reg1 might not be modified in between }
          not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1)) and
          (
            { Only ONE of the two src operands is allowed to match }
@@ -522,7 +545,7 @@ Implementation
 
   function TCpuAsmOptimizer.OptPass1STP(var p : tai): boolean;
     var
-      hp1, hp2, hp3, hp4: tai;
+      hp1, hp2, hp3, hp4, tmp1 : tai;
     begin
       Result:=false;
       {
@@ -573,6 +596,22 @@ Implementation
         MatchInstruction(hp4, A_RET, [C_None], [PF_None]) and
         (taicpu(hp4).ops = 0) then
         begin
+          { remove the SEH instruction for the STP FP,LR }
+          if GetNextInstruction(p,tmp1,[ait_seh_directive]) and
+              (tmp1.typ=ait_seh_directive) and
+              (tai_seh_directive(tmp1).kind=ash_savefplr_x) then
+            begin
+              asml.Remove(tmp1);
+              tmp1.free;
+            end;
+          { remove the SEH instruction for the MOV FP,SP }
+          if GetNextInstruction(hp1,tmp1,[ait_seh_directive]) and
+              (tmp1.typ=ait_seh_directive) and
+              (tai_seh_directive(tmp1).kind=ash_setfp) then
+            begin
+              asml.Remove(tmp1);
+              tmp1.free;
+            end;
           asml.Remove(p);
           asml.Remove(hp1);
           asml.Remove(hp3);
@@ -645,10 +684,12 @@ Implementation
   function TCpuAsmOptimizer.OptPass1MOVZ(var p: tai): boolean;
     var
       hp1: tai;
-      ZeroReg: TRegister;
+      TargetReg: TRegister;
     begin
       Result := False;
       hp1 := nil;
+
+      TargetReg := taicpu(p).oper[0]^.reg;
       if (taicpu(p).oppostfix = PF_None) and (taicpu(p).condition = C_None) then
         begin
           if
@@ -658,7 +699,7 @@ Implementation
             not GetNextInstruction(p, hp1) or
             { MOVZ and MOVK/MOVN instructions undergo macro-fusion. }
             not MatchInstruction(hp1, [A_MOVK, A_MOVN], [C_None], [PF_None]) or
-            (taicpu(hp1).oper[0]^.reg <> taicpu(p).oper[0]^.reg) then
+            (taicpu(hp1).oper[0]^.reg <> TargetReg) then
             begin
               if (taicpu(p).oper[1]^.val = 0) then
                 begin
@@ -672,12 +713,11 @@ Implementation
                   }
                   DebugMsg(SPeepholeOptimization + 'Movz0ToMovZeroReg', p);
 
-                  { Make sure the zero register is the correct size }
-                  ZeroReg := taicpu(p).oper[0]^.reg;
-                  setsupreg(ZeroReg, RS_XZR);
+                  { Convert TargetReg to the correctly-sized zero register }
+                  setsupreg(TargetReg, RS_XZR);
 
                   taicpu(p).opcode := A_MOV;
-                  taicpu(p).loadreg(1, ZeroReg);
+                  taicpu(p).loadreg(1, TargetReg);
                   Result := True;
                   Exit;
                 end;
@@ -697,6 +737,48 @@ Implementation
               Result:=true;
               exit;
             end;
+        end;
+
+      if (getsupreg(TargetReg) <= RS_X30) and { Mostly to play safe }
+        GetNextInstructionUsingReg(p, hp1, TargetReg) and
+        (hp1.typ = ait_instruction) then
+        begin
+          case taicpu(hp1).opcode of
+{$ifdef AARCH64}
+            A_MOVK:
+              { Try to avoid too much unnecessary processing by checking to see
+                if the register is 32-bit }
+              if (getsubreg(TargetReg) = R_SUBD) and
+                (taicpu(hp1).oper[0]^.reg = TargetReg) and
+                TryConstMerge(p, hp1) then
+                begin
+                  Result := True;
+                  Exit;
+                end;
+{$endif AARCH64}
+            A_STR:
+              {
+                With sequences such as:
+                  movz  w0,x
+                  strb  w0,[sp, #ofs]
+                  movz  w0,y
+                  strb  w0,[sp, #ofs+1]
+
+                Merge the constants to:
+                  movz  w0,x + (y shl 8)
+                  strw  w0,[sp, #ofs]
+
+                Only use the stack pointer or frame pointer and an even offset though
+                to guarantee alignment
+              }
+              if TryConstMerge(p, hp1) then
+                begin
+                  Result := True;
+                  Exit;
+                end;
+            else
+              ;
+          end;
         end;
     end;
 
@@ -810,7 +892,7 @@ Implementation
             RegEndofLife(taicpu(p).oper[0]^.reg,taicpu(hp1)) and
             { the reference in strb might not use reg2 }
             not(RegInRef(taicpu(p).oper[0]^.reg,taicpu(hp1).oper[1]^.ref^)) and
-            { reg1 might not be modified inbetween }
+            { reg1 might not be modified in between }
             not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1)) then
             begin
               DebugMsg('Peephole SXTHStr2Str done', p);
@@ -831,7 +913,7 @@ Implementation
             (taicpu(hp1).ops=2) and
             MatchOperand(taicpu(hp1).oper[1]^, taicpu(p).oper[0]^.reg) and
             RegEndofLife(taicpu(p).oper[0]^.reg,taicpu(hp1)) and
-            { reg1 might not be modified inbetween }
+            { reg1 might not be modified in between }
             not(RegModifiedBetween(taicpu(p).oper[1]^.reg,p,hp1)) then
             begin
               DebugMsg('Peephole SxtwSxtw2Sxtw done', p);
@@ -1382,37 +1464,88 @@ Implementation
       hp1: tai;
       hp3: taicpu;
       bitval : cardinal;
+      swapoper: poper;
     begin
       Result:=false;
-      {
-        tst reg1,<const=power of 2>
-        b.e/b.ne label
-
-        into
-
-        tb(n)z reg0,<power of 2>,label
-      }
       if MatchOpType(taicpu(p),top_reg,top_const) and
         (PopCnt(QWord(taicpu(p).oper[1]^.val))=1) and
-        GetNextInstruction(p,hp1) and
-        MatchInstruction(hp1,A_B,[C_EQ,C_NE],[PF_None]) then
+        GetNextInstruction(p,hp1) then
         begin
-           bitval:=BsfQWord(qword(taicpu(p).oper[1]^.val));
-           case taicpu(hp1).condition of
-            C_NE:
-              hp3:=taicpu.op_reg_const_ref(A_TBNZ,taicpu(p).oper[0]^.reg,bitval,taicpu(hp1).oper[0]^.ref^);
-            C_EQ:
-              hp3:=taicpu.op_reg_const_ref(A_TBZ,taicpu(p).oper[0]^.reg,bitval,taicpu(hp1).oper[0]^.ref^);
-            else
-              Internalerror(2021100210);
-          end;
-          taicpu(hp3).fileinfo:=taicpu(p).fileinfo;
-          asml.insertafter(hp3, p);
+          {
+            tst reg1,<const=power of 2>
+            b.e/b.ne label
 
-          RemoveInstruction(hp1);
-          RemoveCurrentP(p, hp3);
-          DebugMsg(SPeepholeOptimization + 'TST; B(E/NE) -> TB(Z/NZ) done', p);
-          Result:=true;
+            into
+
+            tb(n)z reg0,<index of said power of 2>,label
+          }
+          if MatchInstruction(hp1,A_B,[C_EQ,C_NE],[PF_None]) then
+            begin
+               bitval:=BsfQWord(qword(taicpu(p).oper[1]^.val));
+               case taicpu(hp1).condition of
+                C_NE:
+                  hp3:=taicpu.op_reg_const_ref(A_TBNZ,taicpu(p).oper[0]^.reg,bitval,taicpu(hp1).oper[0]^.ref^);
+                C_EQ:
+                  hp3:=taicpu.op_reg_const_ref(A_TBZ,taicpu(p).oper[0]^.reg,bitval,taicpu(hp1).oper[0]^.ref^);
+                else
+                  Internalerror(2021100210);
+              end;
+              taicpu(hp3).fileinfo:=taicpu(p).fileinfo;
+              asml.insertafter(hp3, p);
+
+              RemoveInstruction(hp1);
+              RemoveCurrentP(p, hp3);
+              DebugMsg(SPeepholeOptimization + 'TST; B(E/NE) -> TB(Z/NZ) done', p);
+              Result:=true;
+              Exit;
+            end;
+
+          {
+            tst  reg1,#1
+            cset reg2,ne
+
+            into
+
+            and  reg2,reg1,#1
+          }
+          if (taicpu(p).oper[1]^.val=1) and
+            MatchInstruction(hp1,A_CSET,[PF_None]) and
+            (taicpu(hp1).oper[1]^.typ=top_conditioncode) and
+            (taicpu(hp1).oper[1]^.cc=C_NE) then
+            begin
+              TransferUsedRegs(TmpUsedRegs);
+              UpdateUsedRegs(TmpUsedRegs, tai(p.Next));
+              if not RegUsedAfterInstruction(NR_DEFAULTFLAGS, hp1, TmpUsedRegs) then
+                begin
+                  taicpu(p).opcode:=A_AND;
+                  taicpu(p).allocate_oper(2);
+                  taicpu(p).ops:=3;
+                  taicpu(p).loadconst(2,1);
+                  { Move p.oper[0] to p.oper[1] and hp1.oper[0] to p.oper[0] by cycling the pointers }
+                  swapoper:=taicpu(p).oper[0];
+                  taicpu(p).oper[0]:=taicpu(hp1).oper[0];
+                  taicpu(hp1).oper[0]:=taicpu(p).oper[1];
+                  taicpu(p).oper[1]:=swapoper;
+
+                  if (taicpu(p).oper[0]^.reg<>taicpu(p).oper[1]^.reg) then
+                    begin
+                      { p.oper[0] contains the register that was written to by CSET.
+                        Since we're deleting the next instruction, update UsedRegs directly }
+                      AllocRegBetween(taicpu(p).oper[1]^.reg, p, hp1, UsedRegs);
+
+                      { Ensure the registers are the same size (if the destination register
+                        is shrunk fro 64 bits to 32 bits, the upper 32 bits will be set to
+                        zero, preserving existing behaviour since only the least significant
+                        bit is set or cleared with everything else zeroed }
+                      setsubreg(taicpu(p).oper[0]^.reg, getsubreg(taicpu(p).oper[1]^.reg));
+                    end;
+
+                  RemoveInstruction(hp1);
+                  DebugMsg(SPeepholeOptimization + 'TST #1; CSET NE -> AND #1 done', p);
+                  Result:=true;
+                  Exit;
+                end;
+            end;
         end;
     end;
 
@@ -1458,6 +1591,12 @@ Implementation
               Result:=OptPass1Shift(p);
             A_AND:
               Result:=OptPass1And(p);
+            A_LSRV,
+            A_RORV,
+            A_ASRV,
+            A_LSLV,
+            A_UDIV,
+            A_SDIV,
             A_NEG,
             A_CSEL,
             A_ADD,
@@ -1480,6 +1619,14 @@ Implementation
             A_SXTW:
               Result:=OptPass1SXTW(p);
 //            A_VLDR,
+            A_FRINTA,
+            A_FRINTI,
+            A_FRINTM,
+            A_FRINTN,
+            A_FRINTP,
+            A_FRINTX,
+            A_FRINTZ,
+            A_FCSEL,
             A_FMADD,
             A_FMSUB,
             A_FNMADD,

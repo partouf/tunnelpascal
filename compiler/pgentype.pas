@@ -27,17 +27,22 @@ interface
 
 uses
   cclasses,
+  tokens,
   globtype,
   symtype,symbase;
 
 const
-  inline_specialization_block_types = [bt_type,bt_var_type,bt_const_type,bt_body];
+  inline_specialization_block_types = [bt_type,bt_var_type,bt_const_type,bt_body,bt_except];
 
 type
+  pspecializationstate = ^tspecializationstate;
   tspecializationstate = record
-    oldsymtablestack   : tsymtablestack;
-    oldextendeddefs    : tfphashobjectlist;
-    oldgenericdummysyms: tfphashobjectlist;
+    oldsymtablestack      : tsymtablestack;
+    oldextendeddefs       : tfphashobjectlist;
+    oldgenericdummysyms   : tfphashobjectlist;
+    oldspecializestate    : pspecializationstate;
+    oldcurrent_genericdef : tdef;
+    oldoptoken            : ttoken;
   end;
 
   tspecializationcontext=class
@@ -46,7 +51,7 @@ type
     poslist : tfplist;
     prettyname : ansistring;
     specializename : ansistring;
-    genname : string;
+    genname : ansistring;
     sym : tsym;
     symtable : tsymtable;
     forwarddef : tdef;
@@ -65,13 +70,10 @@ begin
 end;
 
 destructor tspecializationcontext.destroy;
-var
-  i : longint;
 begin
   paramlist.free;
-  for i:=0 to poslist.count-1 do
-    dispose(pfileposinfo(poslist[i]));
-  poslist.free;
+  paramlist := nil;
+  tfplist.FreeAndNilDisposing(poslist,TypeInfo(tfileposinfo));
   inherited destroy;
 end;
 
@@ -81,10 +83,12 @@ var
   i : longint;
 begin
   result:=tspecializationcontext.create;
+  result.paramlist.capacity:=paramlist.count;
   for i:=0 to paramlist.count-1 do
     begin
       result.paramlist.add(paramlist[i]);
     end;
+  result.poslist.capacity:=poslist.count;
   for i:=0 to poslist.count-1 do
     begin
       new(posinfo);

@@ -63,6 +63,8 @@ interface
           property parameters : tnode read left write left;
 
           function may_have_sideeffect_norecurse: boolean;
+
+          function may_ignore_result:boolean;
          protected
           { All the following routines currently
             call compilerprocs, unless they are
@@ -111,6 +113,7 @@ interface
 {$endif not cpu64bitalu and not cpuhighleveltarget}
           function first_AndOrXorShiftRot_assign: tnode; virtual;
           function first_NegNot_assign: tnode; virtual;
+          function first_atomic:tnode;virtual;
           function first_cpu : tnode; virtual;
 
           procedure CheckParameters(count : integer);
@@ -325,7 +328,8 @@ implementation
            not(is_real or is_enum or
                (source.left.resultdef.typ=orddef)) then
           begin
-            CGMessagePos(fileinfo,parser_e_illegal_expression);
+            CGMessagePos1(source.fileinfo,
+              type_e_integer_expr_expected,source.resultdef.typename);
             exit;
           end;
 
@@ -448,10 +452,18 @@ implementation
             pasbool1,pasbool8,pasbool16,pasbool32,pasbool64,
             bool8bit,bool16bit,bool32bit,bool64bit:
               procname := procname + 'bool';
-            else
+
+            scurrency,s64bit,u64bit,s32bit,u32bit,s16bit,u16bit,s8bit,u8bit:
               begin
                 intrinsiccode := in_str_x_string;
                 procname := procname + get_str_int_func(source.resultdef);
+              end;
+
+            else
+              begin
+                CGMessagePos1(source.fileinfo,
+                  type_e_integer_expr_expected,torddef(source.resultdef).typename);
+                exit;
               end;
           end;
 
@@ -475,6 +487,7 @@ implementation
           srsym : tsym;
           srsymtable : tsymtable;
           defaultname : tidstring;
+          varspez : tvarspez;
         begin
           if not assigned(def) or
               not (def.typ in [arraydef,recorddef,variantdef,objectdef,procvardef]) or
@@ -502,17 +515,26 @@ implementation
               srsym:=tsym(srsymtable.findwithhash(hashedid));
               if not assigned(srsym) then
                 begin
+                  varspez:=vs_const;
+                  { if we have an initialize or finalize management operator then
+                    we may not declare this as const as the unit init-/finalization
+                    needs to be able to modify it }
+                  if (def.typ=recorddef) and (mop_initialize in trecordsymtable(trecorddef(def).symtable).managementoperators) then
+                    varspez:=vs_var;
                   { no valid default variable found, so create it }
-                  srsym:=cstaticvarsym.create(defaultname,vs_const,def,[]);
+                  srsym:=cstaticvarsym.create(defaultname,varspez,def,[]);
                   { mark the staticvarsym as typedconst }
-                  include(tabstractvarsym(srsym).varoptions,vo_is_typed_const);
+                  if varspez=vs_const then
+                    include(tabstractvarsym(srsym).varoptions,vo_is_typed_const);
                   include(tabstractvarsym(srsym).varoptions,vo_is_default_var);
+                  { There is no reliable way to be sure that this symbol will not be used
+                    later on inside some inlined code, so mark it as global }
+                  include(tabstractvarsym(srsym).varoptions,vo_is_public);
                   { The variable has a value assigned }
                   tabstractvarsym(srsym).varstate:=vs_initialised;
 
                   srsymtable.insertsym(srsym);
                   cnodeutils.insertbssdata(tstaticvarsym(srsym));
-
                 end;
               result:=cloadnode.create(srsym,srsymtable);
             end
@@ -850,6 +872,12 @@ implementation
                 end;
               enumdef:
                 begin
+                  if m_isolike_io in current_settings.modeswitches then
+                    begin
+                      error_para := true;
+                      CGMessagePos(para.fileinfo,type_e_cant_read_write_type);
+                    end;
+
                   name:=procprefixes[do_read]+'enum';
                   if do_read then
                     { read is done with a var parameter so we need the correct
@@ -1128,6 +1156,7 @@ implementation
                   { parameters coming after it                    }
                   para.right := nil;
                   para.free;
+                  para := nil;
                 end
               else
                 { read of non s/u-8/16bit, or a write }
@@ -1169,15 +1198,18 @@ implementation
               { free the parameter, since it isn't referenced anywhere anymore }
               para.right := nil;
               para.free;
+              para := nil;
               if assigned(lenpara) then
                 begin
                   lenpara.right := nil;
                   lenpara.free;
+                  lenpara := nil;
                 end;
               if assigned(fracpara) then
                 begin
                   fracpara.right := nil;
                   fracpara.free;
+                  fracpara := nil;
                 end;
             end;
 
@@ -1302,7 +1334,7 @@ implementation
           { add fileparameter }
           para.right := filepara.getcopy;
 
-          { create call statment                                             }
+          { create call statement                                            }
           { since the parameters are in the correct order, we have to insert }
           { the statements always at the end of the current block            }
           addstatement(Tstatementnode(newstatement),
@@ -1543,17 +1575,19 @@ implementation
 
         { free the file parameter (it's copied inside the handle_*_read_write methods) }
         filepara.free;
+        filepara := nil;
 
         { if we found an error, simply delete the generated blocknode }
         if found_error then
           begin
             { ensure that the tempinfo is freed correctly by destroying a
               delete node for it
-              Note: this might happen legitimately whe parsing a generic that
-                    passes a undefined type to Write/Read }
+              Note: this might happen legitimately when parsing a generic that
+                    passes an undefined type to Write/Read }
             if assigned(filetemp) then
-              ctempdeletenode.create(filetemp).free;
-            newblock.free
+              ctempdeletenode.create(filetemp).free; // no nil needed
+            newblock.free;
+            newblock := nil;
           end
         else
           begin
@@ -1676,7 +1710,7 @@ implementation
             exit;
           end;
 
-        { we're going to reuse the exisiting para's, so make sure they }
+        { we're going to reuse the existing para's, so make sure they  }
         { won't be disposed                                            }
         left := nil;
 
@@ -1716,7 +1750,7 @@ implementation
           { unsigned para's  }
           begin
             codepara.left := ctypeconvnode.create_internal(codepara.left,valsinttype);
-            { make it explicit, oterwise you may get a nonsense range }
+            { make it explicit, otherwise you may get a nonsense range}
             { check error if the cardinal already contained a value   }
             { > $7fffffff                                             }
             codepara.get_paratype;
@@ -1762,7 +1796,7 @@ implementation
         { the shortstring-longint val routine by default                   }
         if (sourcepara.resultdef.typ = stringdef) then
           procname := procname + tstringdef(sourcepara.resultdef).stringtypname
-        { zero-based arrays (of char) can be implicitely converted to ansistring, but don't do
+        { zero-based arrays (of char) can be implicitly converted to ansistring, but don't do
           so if not needed because the array is too short }
         else if is_zero_based_array(sourcepara.resultdef) and (sourcepara.resultdef.size>255) then
           procname := procname + 'ansistr'
@@ -1774,7 +1808,7 @@ implementation
         { and the source para }
         codepara.right := sourcepara;
         { sizepara either contains nil if none is needed (which is ok, since   }
-        { then the next statement severes any possible links with other paras  }
+        { then the next statement serves any possible links with other paras   }
         { that sourcepara may have) or it contains the necessary size para and }
         { its right field is nil                                               }
         sourcepara.right := sizepara;
@@ -1804,6 +1838,7 @@ implementation
         destpara.left := nil;
         destpara.right := nil;
         destpara.free;
+        destpara := nil;
 
         { check if we used a temp for code and whether we have to store }
         { it to the real code parameter                                 }
@@ -2396,11 +2431,6 @@ implementation
                vl:=0;
                vl2:=0; { second parameter Ex: ptr(vl,vl2) }
                case left.nodetype of
-                 realconstn :
-                   begin
-                     { Real functions are all handled with internproc below }
-                     CGMessage1(type_e_integer_expr_expected,left.resultdef.typename)
-                   end;
                  ordconstn :
                    vl:=tordconstnode(left).value;
                  callparan :
@@ -2410,7 +2440,17 @@ implementation
                      vl2:=tordconstnode(tcallparanode(tcallparanode(left).right).left).value;
                    end;
                  else
-                   CGMessage(parser_e_illegal_expression);
+                   begin
+                     { Real functions are all handled with internproc below, and
+                       unsupported typex are also trapped here }
+                     if is_integer(left.resultdef) then
+                       { Not as informative, but less confusing }
+                       CGMessagePos(left.fileinfo,parser_e_illegal_expression)
+                     else
+                       CGMessagePos1(left.fileinfo,type_e_integer_expr_expected,left.resultdef.typename);
+                     result:=cerrornode.create;
+                     exit;
+                   end;
                end;
                case inlinenumber of
                  in_const_abs :
@@ -3326,13 +3366,14 @@ implementation
           encodedtype:='';
           if not objctryencodetype(left.resultdef,encodedtype,errordef) then
             Message1(type_e_objc_type_unsupported,errordef.typename);
-          result:=cstringconstnode.createpchar(ansistring2pchar(encodedtype),length(encodedtype),nil);
+          result:=cstringconstnode.createpchar(pchar(encodedtype),length(encodedtype),nil);
         end;
 
       var
          hightree,
          hp        : tnode;
          temp_pnode: pnode;
+         convdef   : tdef;
       begin
         result:=nil;
         { when handling writeln "left" contains no valid address }
@@ -4189,6 +4230,99 @@ implementation
                 begin
                   result:=handle_concat;
                 end;
+              in_atomic_dec,
+              in_atomic_inc,
+              in_atomic_xchg,
+              in_atomic_cmp_xchg:
+                begin
+                  { first parameter must exist for all }
+                  if not assigned(left) or (left.nodetype<>callparan) then
+                    internalerror(2022093001);
+                  { second parameter must exist for xchg and cmp_xchg }
+                  if (inlinenumber=in_atomic_xchg) or (inlinenumber=in_atomic_cmp_xchg) then
+                    begin
+                      if not assigned(tcallparanode(left).right) or (tcallparanode(left).right.nodetype<>callparan) then
+                        internalerror(2022093002);
+                      if inlinenumber=in_atomic_cmp_xchg then
+                        begin
+                          { third parameter must exist }
+                          if not assigned(tcallparanode(tcallparanode(left).right).right) or (tcallparanode(tcallparanode(left).right).right.nodetype<>callparan) then
+                            internalerror(2022093004);
+                          { fourth parameter may exist }
+                          if assigned(tcallparanode(tcallparanode(tcallparanode(left).right).right).right) then
+                            begin
+                              if tcallparanode(tcallparanode(tcallparanode(left).right).right).right.nodetype<>callparan then
+                                internalerror(2022093005);
+                              { fifth parameter must NOT exist }
+                              if assigned(tcallparanode(tcallparanode(tcallparanode(tcallparanode(left).right).right).right).right) then
+                                internalerror(2022093006);
+                            end;
+                        end
+                      { third parameter must NOT exist }
+                      else if assigned(tcallparanode(tcallparanode(left).right).right) then
+                        internalerror(2022093003);
+                    end
+                  else if assigned(tcallparanode(left).right) then
+                    begin
+                      { if the second parameter exists, it must be a callparan }
+                      if tcallparanode(left).right.nodetype<>callparan then
+                        internalerror(2022093004);
+                      { a third parameter must not exist }
+                      if assigned(tcallparanode(tcallparanode(left).right).right) then
+                        internalerror(2022093005);
+                    end;
+
+                  valid_for_var(tcallparanode(left).left,true);
+                  set_varstate(tcallparanode(left).left,vs_readwritten,[vsf_must_be_valid]);
+
+                  if is_integer(tcallparanode(left).resultdef) or is_pointer(tcallparanode(left).resultdef) then
+                    begin
+                      if not is_pointer(tcallparanode(left).resultdef) then
+                        begin
+                          resultdef:=get_signed_inttype(tcallparanode(left).left.resultdef);
+                          convdef:=resultdef;
+                        end
+                      else
+                        begin
+                          { pointer is only allowed for Exchange and CmpExchange }
+                          if (inlinenumber<>in_atomic_xchg) and (inlinenumber<>in_atomic_cmp_xchg) then
+                            cgmessagepos(fileinfo,type_e_ordinal_expr_expected);
+                          resultdef:=voidpointertype;
+                          convdef:=ptrsinttype;
+                        end;
+                      { left gets changed -> must be unique }
+                      set_unique(tcallparanode(left).left);
+                      inserttypeconv_internal(tcallparanode(left).left,convdef);
+                      if assigned(tcallparanode(left).right) then
+                        begin
+                          inserttypeconv(tcallparanode(tcallparanode(left).right).left,resultdef);
+                          if resultdef<>convdef then
+                            inserttypeconv_internal(tcallparanode(tcallparanode(left).right).left,convdef);
+                          if assigned(tcallparanode(tcallparanode(left).right).right) then
+                            begin
+                              inserttypeconv(tcallparanode(tcallparanode(tcallparanode(left).right).right).left,resultdef);
+                              if resultdef<>convdef then
+                                inserttypeconv_internal(tcallparanode(tcallparanode(tcallparanode(left).right).right).left,convdef);
+                              if assigned(tcallparanode(tcallparanode(tcallparanode(left).right).right).right) then
+                                begin
+                                  { the boolean parameter must be assignable }
+                                  valid_for_var(tcallparanode(tcallparanode(tcallparanode(tcallparanode(left).right).right).right).left,true);
+                                  set_varstate(tcallparanode(tcallparanode(tcallparanode(tcallparanode(left).right).right).right).left,vs_written,[]);
+                                  if not is_boolean(tcallparanode(tcallparanode(tcallparanode(tcallparanode(left).right).right).right).left.resultdef) then
+                                    inserttypeconv(tcallparanode(tcallparanode(tcallparanode(tcallparanode(left).right).right).right).left,pasbool1type);
+                                end;
+                            end;
+                        end;
+                    end
+                  else if is_typeparam(tcallparanode(left).left.resultdef) then
+                    begin
+                      resultdef:=tcallparanode(left).left.resultdef;
+                    end
+                  else if (inlinenumber=in_atomic_xchg) or (inlinenumber=in_atomic_cmp_xchg) then
+                    CGMessagePos(tcallparanode(left).left.fileinfo,type_e_ordinal_or_pointer_expr_expected)
+                  else
+                    CGMessagePos(tcallparanode(left).left.fileinfo,type_e_ordinal_expr_expected);
+                end;
               else
                 result:=pass_typecheck_cpu;
             end;
@@ -4203,7 +4337,8 @@ implementation
     function tinlinenode.pass_typecheck_cpu : tnode;
       begin
         Result:=nil;
-        internalerror(2017110102);
+
+        Message1(cg_f_unknown_internal_procedure_number,tostr(ord(inlinenumber)));
       end;
 
 
@@ -4213,6 +4348,7 @@ implementation
          shiftconst: longint;
          objdef: tobjectdef;
          sym : tsym;
+         hdef: tdef;
 
       begin
          result:=nil;
@@ -4353,8 +4489,11 @@ implementation
               if (([cs_check_overflow,cs_check_range]*current_settings.localswitches)<>[]) and not(nf_internal in flags) then
 {$endif}
                 begin
-                  { create constant 1 }
-                  hp:=cordconstnode.create(1,left.resultdef,false);
+                  { create constant 1, ensure the data type is large enough }
+                  range_to_type(
+                    min(1,get_min_value(left.resultdef)),
+                    max(1,get_max_value(left.resultdef)),hdef);
+                  hp:=cordconstnode.create(1,hdef,false);
                   typecheckpass(hp);
                   if not is_integer(hp.resultdef) then
                     inserttypeconv_internal(hp,sinttype);
@@ -4363,7 +4502,7 @@ implementation
                   if not is_integer(left.resultdef) then
                     inserttypeconv_internal(left,sinttype);
 
-                  { addition/substraction depending on succ/pred }
+                  { addition/subtraction depending on succ/pred }
                   if inlinenumber=in_succ_x then
                     hp:=caddnode.create(addn,left,hp)
                   else
@@ -4540,14 +4679,14 @@ implementation
             end;
 
           in_slice_x:
-            { slice can be used only in calls for open array parameters, so it has to be converted appropriatly before
+            { slice can be used only in calls for open array parameters, so it has to be converted appropriately before
               if we get here, the array could not be passed to an open array parameter so it is an error }
             CGMessagePos(left.fileinfo,type_e_mismatch);
 
           in_ord_x,
           in_chr_byte:
             begin
-               { should not happend as it's converted to typeconv }
+               { should not happened as it's converted to typeconv }
                internalerror(200104045);
             end;
 
@@ -4633,6 +4772,11 @@ implementation
          in_max_single,
          in_max_double:
            result:=first_minmax;
+         in_atomic_inc,
+         in_atomic_dec,
+         in_atomic_xchg,
+         in_atomic_cmp_xchg:
+           result:=first_atomic;
          else
            result:=first_cpu;
           end;
@@ -4702,7 +4846,7 @@ implementation
          temp_pnode: pnode;
       begin
 {$ifndef cpufpemu}
-        { this procedure might be only used for cpus definining cpufpemu else
+        { this procedure might be only used for cpus defining cpufpemu else
           the optimizer might go into an endless loop when doing x*x -> changes }
         internalerror(2011092401);
 {$endif cpufpemu}
@@ -4905,6 +5049,7 @@ implementation
          tempnode: ttempcreatenode;
          newstatement: tstatementnode;
          newblock: tblocknode;
+         hdef: tdef;
        begin
          newblock := internalstatements(newstatement);
          { extra parameter? }
@@ -4914,12 +5059,16 @@ implementation
              hpp := tcallparanode(tcallparanode(left).right).left;
              tcallparanode(tcallparanode(left).right).left := nil;
              if assigned(tcallparanode(tcallparanode(left).right).right) then
-               CGMessage(parser_e_illegal_expression);
+               { A syntax error should have already been raised }
+               InternalError(2025050601);
            end
          else
            begin
-             { no, create constant 1 }
-             hpp := cordconstnode.create(1,tcallparanode(left).left.resultdef,false);
+             { no, create constant 1, ensure the data type is large enough }
+             range_to_type(
+               min(1,get_min_value(tcallparanode(left).left.resultdef)),
+               max(1,get_max_value(tcallparanode(left).left.resultdef)),hdef);
+             hpp:=cordconstnode.create(1,hdef,false)
            end;
          typecheckpass(hpp);
 
@@ -5261,6 +5410,7 @@ implementation
 
             ppn.left:=nil;
             paras.free;
+            paras := nil;
           end
         else
           result:=ccallnode.createintern('fpc_shortstr_copy',paras);
@@ -5721,7 +5871,7 @@ implementation
                      end;
                    if lastchanged then
                      begin
-                       { we concatted all consecutive ones, so typecheck the new one again }
+                       { we concatenated all consecutive ones, so typecheck the new one again }
                        n:=tnode(list[i]);
                        typecheckpass(n);
                        list[i]:=n;
@@ -5755,7 +5905,7 @@ implementation
                      if not is_array_constructor(n.resultdef) then
                        inserttypeconv(n,arrn.resultdef);
                      { we need to ensure that we get a reference counted
-                       assignement for the temp array }
+                       assignment for the temp array }
                      tempnode:=ctempcreatenode.create(arrn.resultdef,arrn.resultdef.size,tt_persistent,true);
                      addstatement(newstatement,tempnode);
                      addstatement(newstatement,cassignmentnode.create(ctemprefnode.create(tempnode),n));
@@ -5820,6 +5970,7 @@ implementation
            end;
 
          list.free;
+         list := nil;
        end;
 
 
@@ -5931,6 +6082,20 @@ implementation
        end;
 
 
+     function tinlinenode.may_ignore_result:boolean;
+       begin
+         case inlinenumber of
+           in_atomic_inc,
+           in_atomic_dec,
+           in_atomic_xchg,
+           in_atomic_cmp_xchg:
+             result:=true;
+           else
+             result:=is_void(resultdef);
+         end;
+       end;
+
+
      function tinlinenode.first_fma: tnode;
        begin
          CGMessage1(cg_e_function_not_support_by_selected_instruction_set,'FMA');
@@ -5944,20 +6109,7 @@ implementation
          result:=nil;
        end;
 
-//
-//||||||| .merge-left.r31134
-//
-//{$ifdef ARM}
-//              {$i armtype.inc}
-//{$endif ARM}
-//=======
-//
-//{$ifdef x86}
-//              {$i x86type.inc}
-//{$endif x86}
-//{$ifdef ARM}
-//              {$i armtype.inc}
-//{$endif ARM}
+
 {$if not defined(cpu64bitalu) and not defined(cpuhighleveltarget)}
      function tinlinenode.first_ShiftRot_assign_64bitint: tnode;
        var
@@ -6019,6 +6171,121 @@ implementation
        begin
          result:=nil;
          expectloc:=left.expectloc;
+       end;
+
+
+     function tinlinenode.first_atomic: tnode;
+       var
+         name : string;
+         n,n2,cmpn,succn,valn : tnode;
+         c : sizeint;
+         stmt : tstatementnode;
+         tmp,tmp2: ttempcreatenode;
+       begin
+         { by default we redirect to the corresponding compilerprocs }
+         name:='fpc_atomic_';
+         case inlinenumber of
+           in_atomic_inc:
+             if assigned(tcallparanode(left).right) then
+               name:=name+'add'
+             else
+               name:=name+'inc';
+           in_atomic_dec:
+             if assigned(tcallparanode(left).right) then
+               name:=name+'sub'
+             else
+               name:=name+'dec';
+           in_atomic_xchg:
+             name:=name+'xchg';
+           in_atomic_cmp_xchg:
+             name:=name+'cmp_xchg';
+           else
+             internalerror(2022093008);
+         end;
+         name:=name+'_';
+         if is_pointer(resultdef) then
+           name:=name+tostr(voidpointertype.size*8)
+         else if is_integer(resultdef) then
+           case torddef(resultdef).ordtype of
+             s8bit:
+               name:=name+'8';
+             s16bit:
+               name:=name+'16';
+             s32bit:
+               name:=name+'32';
+             s64bit:
+               name:=name+'64';
+             else
+               internalerror(2022100101);
+           end
+         else
+           internalerror(2022093009);
+
+         { for the call node we need to reverse the parameters }
+         c:=reverseparameters(tcallparanode(left));
+
+         succn:=nil;
+         cmpn:=nil;
+         valn:=nil;
+
+         if (inlinenumber=in_atomic_cmp_xchg) and (c=4) then
+           begin
+             { don't pass along the Succeeded parameter }
+             succn:=tcallparanode(left).left;
+             n:=tcallparanode(left).right;
+             tcallparanode(left).left:=nil;
+             tcallparanode(left).right:=nil;
+             left.free;
+             left:=tcallparanode(n);
+             { get a copy of the Comparand parameter }
+             cmpn:=tcallparanode(left).left.getcopy;
+           end
+         else if ((inlinenumber=in_atomic_inc) or (inlinenumber=in_atomic_dec)) and (c=2) then
+           begin
+             valn:=tcallparanode(left).left.getcopy;
+           end;
+
+         result:=ctypeconvnode.create_internal(ccallnode.createintern(name,left),resultdef);
+
+         left:=nil;
+
+         if assigned(succn) then
+           begin
+             { we need to execute the intrinsic and then we check whether the
+               returned result, namely the original value, is equal to the
+               comparand which means that the Succeeded parameter needs to be
+               True (otherwise it needs to be False). }
+             n:=internalstatements(stmt);
+             tmp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
+             addstatement(stmt,tmp);
+             addstatement(stmt,cassignmentnode.create(ctemprefnode.create(tmp),result));
+             cmpn:=cmpn.getcopy;
+             inserttypeconv_internal(cmpn,resultdef);
+             addstatement(stmt,
+               cassignmentnode.create(succn,
+                 caddnode.create(equaln,cmpn,
+                   ctemprefnode.create(tmp))));
+             addstatement(stmt,ctempdeletenode.create_normal_temp(tmp));
+             addstatement(stmt,ctemprefnode.create(tmp));
+             result:=n;
+           end
+         else if ((inlinenumber=in_atomic_dec) or (inlinenumber=in_atomic_inc)) and (c=2) then
+           begin
+             { the helpers return the original value, due to ease of implementation with the
+               existing Interlocked* implementations, but the intrinsics need to return the
+               resulting value so we add/sub the Value to/from the result }
+             n:=internalstatements(stmt);
+             tmp:=ctempcreatenode.create(resultdef,resultdef.size,tt_persistent,true);
+             addstatement(stmt,tmp);
+             if inlinenumber=in_atomic_inc then
+               n2:=caddnode.create(addn,result,valn)
+             else
+               n2:=caddnode.create(subn,result,valn);
+             addstatement(stmt,cassignmentnode.create(ctemprefnode.create(tmp),n2));
+             addstatement(stmt,ctempdeletenode.create_normal_temp(tmp));
+             addstatement(stmt,ctemprefnode.create(tmp));
+             result:=n;
+           end;
        end;
 
 

@@ -76,7 +76,6 @@ Type
   Public
     Constructor Create(const AKey : UTF8String; Dest: TStream); overload; virtual;
     Constructor Create(AKey : TBytes; Dest: TStream); overload; virtual;
-    Destructor Destroy; override;
   end;
 
   TBlowFish2EncryptStream = Class(TBlowFish2Stream)
@@ -109,7 +108,7 @@ Const
   N = 64;
   MaxKeyLen = 528;
   ORIG_P : TBlowFishPArray = (
-        
+
 QWord($243F6A8885A308D3),QWord($13198A2E03707344),QWord($A4093822299F31D0),
 QWord($082EFA98EC4E6C89),QWord($452821E638D01377),QWord($BE5466CF34E90C6C),
 QWord($C0AC29B7C97C50DD),QWord($3F84D5B5B5470917),QWord($9216D5D98979FB1B),
@@ -1044,12 +1043,6 @@ begin
   FPos:=0;
 end;
 
-destructor TBlowFish2Stream.Destroy;
-
-begin
-  FreeAndNil(FBF);
-  Inherited;
-end;
 
 { ---------------------------------------------------------------------
     TBlowFish2EncryptStream

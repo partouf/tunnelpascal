@@ -21,6 +21,7 @@ var R,R2: TRect;
     SwitchesCount : integer;
     LastItem: PSItem;
     L: longint;
+    OldCompilerMode: TCompilerMode;
 begin
   SwitchesCount:=ord(high(TSwitchMode))-ord(low(TSwitchMode))+1;
   R.Assign(0,0,36,4+SwitchesCount);
@@ -52,18 +53,56 @@ begin
   end;
   InsertButtons(D);
   RB^.Select;
+  OldCompilerMode:=TCompilerMode(CompilerModeSwitches^.GetCurrSelParamID());
   if Desktop^.ExecView(D)=cmOK then
+  begin
    SwitchesMode:=TSwitchMode(RB^.Value);
+   UpdateEditorsCompilerMode(OldCompilerMode);
+  end;
   Dispose(D, Done);
   UpdateMode;
   UpdateTarget;
 end;
 
+type
+ PCompilerOptDlg = ^TCompilerOptDlg;
+ TCompilerOptDlg = object(TFPVerticalResizeDialog)
+   ProcessorCount : Sw_Word;
+   FRB1,FRB2 : PScrollerRadioButtons;
+   FVScrollBar1,FVScrollBar2 : PScrollBar;
+   constructor Init(var Bounds: TRect; ATitle: TTitleStr);
+   procedure ChangeBounds (Var Bounds: TRect); virtual;
+   procedure SizeLimits (Var Min, Max: TPoint); virtual;
+ end;
+
+constructor TCompilerOptDlg.Init(var Bounds: TRect; ATitle: TTitleStr);
+begin
+  inherited Init(Bounds,ATitle);
+  ProcessorCount:=10;  {used to determine max height}
+end;
+
+procedure TCompilerOptDlg.ChangeBounds (Var Bounds: TRect);
+begin
+  inherited ChangeBounds(Bounds);
+  UpdateScrollBar( FRB1, FVScrollBar1 );
+  UpdateScrollBar( FRB2, FVScrollBar2 );
+end;
+
+procedure TCompilerOptDlg.SizeLimits (Var Min, Max: TPoint);
+begin
+  Min.X:=76;
+  Min.Y:=24;
+  Max.X:=76;
+  Max.Y:=WUtils.Min(ProcessorCount+14,WUtils.Max(24,ScreenHeight-12));
+end;
+
 procedure TIDEApp.DoCompilerSwitch;
 var R,R2,R3,TabR,TabIR: TRect;
-    D: PCenterDialog;
+    D: PCompilerOptDlg;
     CB1,CB2,CB3,CB4,CB5: PCheckBoxes;
-    RB1,RB1b,RB2,RB4,RB5,RB6: PRadioButtons;
+    RB1,RB1b: PScrollerRadioButtons;
+    RB2,RB3,RB4,RB5,RB6: PRadioButtons;
+    VScrollBar1,VScrollBar2 : PScrollBar;
     Items: PSItem;
     IL: PEditorInputLine;
     IL2: PEditorInputLine;
@@ -71,15 +110,32 @@ var R,R2,R3,TabR,TabIR: TRect;
     I,L: longint;
     Tab: PTab;
     Label11,Label12,
-    Label21,Label22,Label23,Label23b,
+    Label21,Label22,Label23,Label23b,Label24,
     Label31,Label41,
     Label51,Label52,Label53: PLabel;
+    TargetHeight,ProcessorHeight: sw_integer;
+    OldCompilerMode: TCompilerMode;
+    V : PView;
 begin
-  R.Assign(0,0,76,31);
+  {decide height of dialog view}
+  GetExtent(R);
+  Count:=ProcessorOptimizationSwitches^.ItemCount;
+  Count:=max(Count,ProcessorCodeGenerationSwitches^.ItemCount); {lines we need to be able to show}
+  if Count < 10 then Count:=10; {10 lines are needed in Assembler page}
+  TargetHeight:=Count+11; {11 lines for rest (empty lines, borders, pages, conditions...)}
+  if TargetHeight> 31 then TargetHeight:=31; {don't go wild, limit ourselves on 31 line}
+  if (R.B.Y-R.A.Y) < (TargetHeight+5) then
+    TargetHeight:= (R.B.Y-R.A.Y)-5; {screen allow exactly this much lines}
+  if TargetHeight<21 then
+    TargetHeight:=21; {at last 21 for our view}
+  {actual height will be TargetHeight + 2 border lines + 3 lines for Ok buttons (min 26 lines)}
+  R.Assign(0,0,76,TargetHeight);
   New(D, Init(R, dialog_compilerswitches));
   with D^ do
   begin
     HelpCtx:=hcCompilerNoAltX;
+    GrowMode:=gfGrowAll+gfGrowRel;
+    ProcessorCount:=Count;
     GetExtent(R);
     R.Grow(-2,-1);
     Dec(R.B.Y,2);
@@ -111,7 +167,7 @@ begin
     R.Copy(TabIR);
     R2.Copy(R);
     R2.A.X:=(R2.A.X+(R2.B.X-R2.A.X) div 2)-2;
-    R2.B.X:=R2.B.X-3;
+    R2.B.X:=R2.B.X-4;
 {    R2.B.Y:=R2.A.Y+((Count+1) div 2);}
     R2.B.Y:=R2.A.Y+Count;
     Items:=nil;
@@ -140,10 +196,25 @@ begin
     R2.B.Y:=R2.A.Y+1;
     New(Label21, Init(R2, label_compiler_codegeneration, CB3));
 
-    Count:=OptimizationSwitches^.ItemCount;
+    {Optimization level}
+    Count:=OptimizationLevelSwitches^.ItemCount;
     R2.Copy(TabIR);
     R2.A.X:=R2.B.X-(R2.B.X-R2.A.X) div 2;
     Dec(R2.B.X,4);
+    R2.B.Y:=R2.A.Y+Count;
+    Items:=nil;
+    for I:=Count-1 downto 0 do
+      Items:=NewSItem(OptimizationLevelSwitches^.ItemName(I), Items);
+    New(RB3, Init(R2, Items));
+    L:=OptimizationLevelSwitches^.GetCurrSel;
+    RB3^.SetData(L);
+    Dec(R2.A.Y);
+    R3.Copy(R2);
+    R2.B.Y:=R2.A.Y+1;
+    New(Label22, Init(R2, label_compiler_optimization_level, RB3));
+
+    Count:=OptimizationSwitches^.ItemCount;
+    R2.A.Y:=R3.B.Y+2;
     R2.B.Y:=R2.A.Y+Count;
     Items:=nil;
     for I:=Count-1 downto 0 do
@@ -154,40 +225,67 @@ begin
         CB2^.Press(I);
     Dec(R2.A.Y);
     R2.B.Y:=R2.A.Y+1;
-    New(Label22, Init(R2, label_compiler_optimizations, CB2));
+    New(Label24, Init(R2, label_compiler_optimizations, CB2));
 
     { --- Sheet 3 --- }
     Count:=ProcessorOptimizationSwitches^.ItemCount;
+    ProcessorHeight:=Count;
+    if (ProcessorHeight+11 > TargetHeight) then
+      ProcessorHeight:=ProcessorHeight-((ProcessorHeight+11) -TargetHeight);
     R.Copy(TabIR);
     R2.Copy(R);
     R2.B.X:=R2.A.X+(R2.B.X-R2.A.X) div 2;
     Dec(R2.B.X,4);
-    R2.B.Y:=R2.A.Y+Count;
+    R2.B.Y:=R2.A.Y+ProcessorHeight;
+    VScrollBar1:=nil;
+    if Count>10 then
+    begin
+      R3.Copy(R2);R3.A.X:=R3.B.X; R3.B.X:=R3.B.X+1;
+      VScrollBar1:=New(PScrollBar, Init(R3));
+    end;
     Items:=nil;
     for I:=Count-1 downto 0 do
       Items:=NewSItem(ProcessorOptimizationSwitches^.ItemName(I), Items);
-    New(RB1, Init(R2, Items));
+    New(RB1, Init(R2, Items, VScrollBar1));
+    RB1^.GrowMode:=gfGrowHiY;
     L:=ProcessorOptimizationSwitches^.GetCurrSel;
     RB1^.SetData(L);
+    RB1^.CentreSelected;
     Dec(R2.A.Y);
     R2.B.Y:=R2.A.Y+1;
     New(Label23, Init(R2, label_compiler_opt_targetprocessor, RB1));
+    FRB1:=RB1;
+    FVScrollBar1:=VScrollBar1;
 
     Count:=ProcessorCodeGenerationSwitches^.ItemCount;
+    ProcessorHeight:=Count;
+    if (ProcessorHeight+11 > TargetHeight) then
+      ProcessorHeight:=ProcessorHeight-((ProcessorHeight+11) -TargetHeight);
     R.Copy(TabIR);
     R2.Copy(R);
-    R2.A.X:=R2.A.X+(R2.B.X-R2.A.X) div 2;
-    R2.B.X:=R2.B.X-3;
-    R2.B.Y:=R2.A.Y+Count;
+    R2.A.X:=R2.A.X+(R2.B.X-R2.A.X) div 2-1;
+    R2.B.X:=R2.B.X-4;
+    R2.B.Y:=R2.A.Y+ProcessorHeight;
+    VScrollBar2:=nil;
+    if Count>10 then
+    begin
+      Dec(R2.B.X);
+      R3.Copy(R2);R3.A.X:=R3.B.X; R3.B.X:=R3.B.X+1;
+      VScrollBar2:=New(PScrollBar, Init(R3));
+    end;
     Items:=nil;
     for I:=Count-1 downto 0 do
       Items:=NewSItem(ProcessorCodeGenerationSwitches^.ItemName(I), Items);
-    New(RB1b, Init(R2, Items));
+    New(RB1b, Init(R2, Items, VScrollBar2));
+    RB1b^.GrowMode:=gfGrowHiY;
     L:=ProcessorCodeGenerationSwitches^.GetCurrSel;
     RB1b^.SetData(L);
-    Dec(R2.A.Y);
-    R2.B.Y:=R2.A.Y+1;
+    RB1b^.CentreSelected;
+    Dec(R2.A.Y); R2.B.Y:=R2.A.Y+1;
+    Inc(R2.B.X);
     New(Label23b, Init(R2, label_compiler_codegen_targetprocessor, RB1b));
+    FRB2:=RB1b;
+    FVScrollBar2:=VScrollBar2;
 
     { --- Sheet 4 --- }
     Count:=VerboseSwitches^.ItemCount;
@@ -255,17 +353,17 @@ begin
     R2.B.Y:=R2.A.Y+1;
     New(Label52, Init(R2, label_compiler_assemblerinfo, CB5));
 
-    Count:=AsmOutputSwitches^.ItemCount;
+    UpdateAsmOutputSwitches;
+    Count:=AsmOutputSwitches[SwitchesMode]^.ItemCount;
     R2.Copy(TabIR);
     R2.A.X:=R2.B.X-(R2.B.X-R2.A.X) div 2;
     Dec(R2.B.X,4);
     R2.B.Y:=R2.A.Y+Count;
     Items:=nil;
-    UpdateAsmOutputSwitches;
     for I:=Count-1 downto 0 do
-      Items:=NewSItem(AsmOutputSwitches^.ItemName(I), Items);
+      Items:=NewSItem(AsmOutputSwitches[SwitchesMode]^.ItemName(I), Items);
     New(RB6, Init(R2, Items));
-    L:=AsmOutputSwitches^.GetCurrSel;
+    L:=AsmOutputSwitches[SwitchesMode]^.GetCurrSel;
     RB6^.SetData(L);
     Dec(R2.A.Y);
     R2.B.Y:=R2.A.Y+1;
@@ -283,14 +381,18 @@ begin
         NewTabItem(Label21,
         NewTabItem(CB3,
         NewTabItem(Label22,
+        NewTabItem(RB3,
+        NewTabItem(Label24,
         NewTabItem(CB2,
-        nil)))),
+        nil)))))),
       NewTabDef('~P~rocessor',RB1,
         NewTabItem(Label23,
+        NewTabItem(VScrollBar1,
         NewTabItem(RB1,
         NewTabItem(Label23b,
+        NewTabItem(VScrollBar2,
         NewTabItem(RB1b,
-        nil)))),
+        nil)))))),
       NewTabDef(page_compiler_verbose,CB4,
         NewTabItem(Label31,
         NewTabItem(CB4,
@@ -311,7 +413,7 @@ begin
     Tab^.GrowMode:=0;
     Insert(Tab);
 
-    { conditionnals }
+    { conditionals }
     R2.Copy(TabR); R2.A.Y:=R2.B.Y+1; R2.B.Y:=R2.A.Y+1; Dec(R2.B.X,4);
     New(IL, Init(R2, 255));
     IL^.Data^:=ConditionalSwitches^.GetStringItem(0);
@@ -332,13 +434,30 @@ begin
     Insert(New(PLabel, Init(R2,label_debugger_compilerargs, IL2)));
   end;
   InsertButtons(D);
+  { Set Grow modes after Ok and Cancel buttons have been added }
+  D^.First^.GrowMode:=gfGrowLoY+gfGrowHiY;         { Cancel button }
+  D^.First^.Next^.GrowMode:=gfGrowLoY+gfGrowHiY;   { Ok button }
+  Tab^.GrowMode:=gfGrowHiX+gfGrowHiY;
+  IL^.GrowMode:=gfGrowLoY+gfGrowHiY+gfGrowHiX;
+  V:=IL^.Prev;                                     { History View of IL }
+  V^.GrowMode:=gfGrowLoY+gfGrowHiY+gfGrowLoX+gfGrowHiX;
+  V:=V^.Prev;                                      { Lable View of IL }
+  V^.GrowMode:=gfGrowLoY+gfGrowHiY+gfGrowHiX;
+  IL2^.GrowMode:=gfGrowLoY+gfGrowHiY+gfGrowHiX;
+  V:=IL2^.Prev;                                    { History View of IL2 }
+  V^.GrowMode:=gfGrowLoY+gfGrowHiY+gfGrowLoX+gfGrowHiX;
+  V:=V^.Prev;                                      { Lable View of IL2 }
+  V^.GrowMode:=gfGrowLoY+gfGrowHiY+gfGrowHiX;
+
   if Desktop^.ExecView(D)=cmOK then
   begin
+    OldCompilerMode:= TCompilerMode(CompilerModeSwitches^.GetCurrSelParamID());
     for I:=0 to SyntaxSwitches^.ItemCount-1 do
       SyntaxSwitches^.SetBooleanItem(I,CB1^.Mark(I));
     CompilerModeSwitches^.SetCurrSel(RB2^.Value);
     for I:=0 to CodeGenSwitches^.ItemCount-1 do
       CodegenSwitches^.SetBooleanItem(I,CB3^.Mark(I));
+    OptimizationLevelSwitches^.SetCurrSel(RB3^.Value);
     for I:=0 to OptimizationSwitches^.ItemCount-1 do
       OptimizationSwitches^.SetBooleanItem(I,CB2^.Mark(I));
     for I:=0 to VerboseSwitches^.ItemCount-1 do
@@ -348,12 +467,34 @@ begin
     AsmReaderSwitches^.SetCurrSel(RB5^.Value);
     for I:=0 to AsmInfoSwitches^.ItemCount-1 do
       AsmInfoSwitches^.SetBooleanItem(I,CB5^.Mark(I));
-    AsmOutputSwitches^.SetCurrSel(RB6^.Value);
+    AsmOutputSwitches[SwitchesMode]^.SetCurrSel(RB6^.Value);
     BrowserSwitches^.SetCurrSel(RB4^.Value);
     ConditionalSwitches^.SetStringItem(0,IL^.Data^);
     CustomArg[SwitchesMode]:=IL2^.Data^;
+    UpdateEditorsCompilerMode(OldCompilerMode);
   end;
   Dispose(D, Done);
+end;
+
+procedure TIDEApp.UpdateEditorsCompilerMode(OldMode:TCompilerMode);
+
+  procedure UpdateEditor(P: PView);
+  begin
+    if assigned(P) and (TypeOf(P^)=TypeOf(TSourceWindow)) then
+    begin
+      PSourceWindow(P)^.Editor^.UpdateAttrs(0,attrForceFull);
+      PSourceWindow(P)^.ReDraw;
+    end;
+  end;
+
+var NewMode:TCompilerMode;
+begin
+  NewMode:=TCompilerMode(CompilerModeSwitches^.GetCurrSelParamID());
+  if (OldMode in [moFpc,moObjfpc]) and not (NewMode in [moFpc,moObjfpc]) then
+    Desktop^.ForEach(TCallbackProcParam(@UpdateEditor))
+  else
+  if not (OldMode in [moFpc,moObjfpc]) and (NewMode in [moFpc,moObjfpc]) then
+    Desktop^.ForEach(TCallbackProcParam(@UpdateEditor));
 end;
 
 procedure TIDEApp.MemorySizes;
@@ -464,11 +605,11 @@ begin
     OtherLinkerSwitches^.SetBooleanItem(1,CB2^.Mark(0));
     if LibLinkerSwitches^.GetCurrSelParam='X' then
      if CompareText(TargetSwitches^.GetCurrSelParam,'Windows')=0 then
-      if CompareText(AsmOutputSwitches^.GetCurrSelParam,'pecoff')<>0 then
+      if CompareText(AsmOutputSwitches[SwitchesMode]^.GetCurrSelParam,'pecoff')<>0 then
         if ConfirmBox(
           FormatStrStr3(msg_xmustbesettoyforz_doyouwanttochangethis,
            label_compiler_assembleroutput,'pecoff','smartlinking'),nil,false)=cmYes then
-             AsmOutputSwitches^.SetCurrSelParam('pecoff');
+             AsmOutputSwitches[SwitchesMode]^.SetCurrSelParam('pecoff');
     for I:=0 to LinkAfterSwitches^.ItemCount-1 do
       LinkAfterSwitches^.SetBooleanItem(I,CB^.Mark(I));
   end;
@@ -708,7 +849,40 @@ begin
 end;
 {$endif SUPPORT_REMOTE}
 
+type
+ PDirectoriesDlg = ^TDirectoriesDlg;
+ TDirectoriesDlg = object(TFPDlgWindow)//object(TCenterDialog)
+   constructor Init(var Bounds: TRect; ATitle: TTitleStr);
+   procedure ChangeBounds (Var Bounds: TRect); virtual;
+   procedure SizeLimits (Var Min, Max: TPoint); virtual;
+ end;
 
+constructor TDirectoriesDlg.Init(var Bounds: TRect; ATitle: TTitleStr);
+begin
+  inherited Init(Bounds,ATitle,0);
+  Options:=Options or ofCentered;
+  Flags:=Flags and not (wfGrow + wfZoom);
+end;
+
+procedure TDirectoriesDlg.ChangeBounds (Var Bounds: TRect);
+var I,O,D : Sw_Integer;
+begin
+  O:=Size.X div 2;
+  inherited ChangeBounds(Bounds);
+  I:=Size.X div 2;
+  D:=O-I;
+  {Assume that two last inserted Views are Buttons }
+  First^.Next^.Origin.X:=First^.Next^.Origin.X-(D div 2); {Ok button}
+  First^.Origin.X:=First^.Origin.X-D-(D div 2);           {Cancel button}
+end;
+
+procedure TDirectoriesDlg.SizeLimits (Var Min, Max: TPoint);
+begin
+  Min.X:=64;
+  Min.Y:=18;
+  Max.X:=WUtils.Max(64,ScreenWidth);
+  Max.Y:=WUtils.Max(18,ScreenHeight-2);
+end;
 
 procedure TIDEApp.directories;
 
@@ -717,10 +891,11 @@ procedure TIDEApp.directories;
 
 var tab:Ptab;
     tabR,R,R2:Trect;
-    D:PCenterDialog;
+    D:PDirectoriesDlg;
     s,misc_string:string;
     E_units,E_includes,E_libraries,E_objects,e:Pfpmemo;
     L_units,L_includes,L_libraries,L_objects:Plabel;
+    SB_units,SB_includes,SB_libraries,SB_objects:PScrollBar;
     c:PunsortedStringCollection;
     count,i,j:integer;
     IL:array[0..11] of PEditorInputLine;
@@ -731,33 +906,48 @@ var tab:Ptab;
 const LW=25;
 
 begin
-  R.assign(0,0,screenwidth*64 div 80,18);
+  R.assign(0,0,screenwidth*64 div 80,Max(18,12+(ScreenHeight-18) div 2));
   new(D,init(R,dialog_directories));
+  D^.GrowMode:=gfGrowAll+gfGrowRel;
   if d^.size.x<72 then
     misc_string:='~M~isc.'
   else
     misc_string:='~M~iscellaneous';
 
   {Create editors.}
-  R.assign(1,4,d^.size.x-4,d^.size.y-4);
-  new(E_units,init(R,nil,nil,nil));
-  R.assign(1,3,d^.size.x-4,4);
+  SB_units:=nil;
+  {
+  R.assign(d^.size.x-5,4,d^.size.x-4,d^.size.y-3);
+  new(SB_units,init(R));
+  SB_units^.GrowMode:=gfGrowLoX+gfGrowHiX+gfGrowHiY;
+  }
+  R.assign(1,4,d^.size.x-5,d^.size.y-3);
+  new(E_units,init(R,nil,SB_units,nil));
+  E_units^.GrowMode:=gfGrowHiX+gfGrowHiY;
+  R.assign(1,3,d^.size.x-5,4);
   new(L_units,init(R,'Unit ~d~irectories:',E_units));
+  L_units^.GrowMode:=gfGrowHiX;
 
-  R.assign(1,4,d^.size.x-4,d^.size.y-4);
+  R.assign(1,4,d^.size.x-5,d^.size.y-3);
   new(E_includes,init(R,nil,nil,nil));
-  R.assign(1,3,d^.size.x-4,4);
+  E_includes^.GrowMode:=gfGrowHiX+gfGrowHiY;
+  R.assign(1,3,d^.size.x-5,4);
   new(L_includes,init(R,'Include ~d~irectories:',E_includes));
+  L_includes^.GrowMode:=gfGrowHiX;
 
-  R.assign(1,4,d^.size.x-4,d^.size.y-4);
+  R.assign(1,4,d^.size.x-5,d^.size.y-3);
   new(E_libraries,init(R,nil,nil,nil));
-  R.assign(1,3,d^.size.x-4,4);
+  E_libraries^.GrowMode:=gfGrowHiX+gfGrowHiY;
+  R.assign(1,3,d^.size.x-5,4);
   new(L_libraries,init(R,'Library ~d~irectories:',E_libraries));
+  L_libraries^.GrowMode:=gfGrowHiX;
 
-  R.assign(1,4,d^.size.x-4,d^.size.y-4);
+  R.assign(1,4,d^.size.x-5,d^.size.y-3);
   new(E_objects,init(R,nil,nil,nil));
-  R.assign(1,3,d^.size.x-4,4);
+  E_objects^.GrowMode:=gfGrowHiX+gfGrowHiY;
+  R.assign(1,3,d^.size.x-5,4);
   new(L_objects,init(R,'Object file ~d~irectories:',E_objects));
+  L_objects^.GrowMode:=gfGrowHiX;
 
   {The switches that are put into the editors are of type multistring.
    We add multistrings to the editor. Other inputboxes are created on
@@ -782,7 +972,7 @@ begin
             else
               messagebox('Internal error: Unknown switch.',nil,mfOkButton);
           end;
-          e^.setcontent(directorySwitches^.getMultiStringItem(i));
+          e^.SetContent(directorySwitches^.getMultiStringItem(i));
           e^.addline(''); {Empty line so user can scroll below existing dirs.}
           IL[i]:=nil;
         end
@@ -791,6 +981,7 @@ begin
           R2.copy(R);
           R2.A.X:=LW;
           new(IL[i],init(R2,255));
+          IL[i]^.GrowMode:=gfGrowHiX;
           IL[i]^.data^:=DirectorySwitches^.GetStringItem(i);
           misc_items:=newTabItem(IL[i],misc_items);
           if misc_tabfocus=nil then
@@ -825,7 +1016,8 @@ begin
     newtabdef('~U~nits',e_units,
       NewTabItem(L_units,
       NewTabItem(E_units,
-      nil)),
+      NewTabItem(SB_units,
+      nil))),
     NewTabDef('~I~nclude files',E_includes,
       NewTabItem(L_includes,
       NewTabItem(E_includes,
@@ -843,9 +1035,13 @@ begin
     nil)))))
   ));
 
-  tab^.growmode:=0;
+  tab^.GrowMode:=0;
   d^.insert(tab);
   insertbuttons(D);
+  D^.First^.GrowMode:=gfGrowLoY+gfGrowHiY;
+  D^.First^.Next^.GrowMode:=gfGrowLoY+gfGrowHiY;
+  tab^.GrowMode:=gfGrowHiX+gfGrowHiY;
+
   if desktop^.execview(D)=cmOK then
     begin
       {Move the data from the window back into the switches.}
@@ -866,14 +1062,10 @@ begin
             end;
             c:=directorySwitches^.getMultiStringItem(i);
             c^.freeall;
-            for j:=0 to e^.getlinecount-1 do
+            for j:=0 to e^.GetLineCount-1 do
               begin
-                s:=e^.getlinetext(j);
-                {Strip string.}
-                while (length(s)>0) and (s[length(s)]=' ') do
-                  dec(s[0]);
-                while (length(s)>0) and (s[1]=' ') do
-                  system.delete(s,1,1);
+                s:=e^.GetLineText(j);   { Note: AnsiString to ShortString convertion}
+                s:=Trim(s);
                 if s<>'' then
                   c^.insert(newstr(s));
               end;
@@ -881,11 +1073,7 @@ begin
         else
           begin
             s:=IL[i]^.data^;
-            {Strip string.}
-            while (length(s)>0) and (s[length(s)]=' ') do
-              dec(s[0]);
-            while (length(s)>0) and (s[1]=' ') do
-              system.delete(s,1,1);
+            s:=Trim(s);
             DirectorySwitches^.SetStringItem(i,s);
           end;
     end;
@@ -1005,14 +1193,14 @@ end;
 
 procedure TIDEApp.Preferences;
 var R,R2: TRect;
-    D: PCenterDialog;
+    D: PDialogEmptyClick;
     C: PVideoModeCollection;
     VMLB: PVideoModeListBox;
     OldScreenMode,VM: TVideoMode;
     ScreenModeInfo : array[1..3] of longint;
     CurVP,VP: PVideoMode;
     RB1: PPlainRadioButtons;
-    CB1,CB2: PPlainCheckBoxes;
+    CB1,CB2,CB3: PPlainCheckBoxes;
     CurIdx: integer;
     i : word;
 begin
@@ -1038,7 +1226,7 @@ begin
 
     R.B.Y:=R.A.Y+3;
     R2.Copy(R); R2.Grow(-1,-1);
-    New(VMLB, Init(R2, Min(4,C^.Count), C));
+    New(VMLB, Init(R2, Min(5,C^.Count), C));
     if CurVP=nil then CurIdx:=-1 else
       CurIdx:=C^.IndexOf(CurVP);
     if CurIdx<>-1 then
@@ -1069,7 +1257,19 @@ begin
 
     GetExtent(R); R.Grow(-2,-2);
     R.A.X:=R.B.X-(R.B.X-R.A.X) div 2 + 1;
-    R.B.Y:=R.A.Y+7;
+    R.B.Y:=R.A.Y+3;
+
+    R.Move(0,R.B.Y-R.A.Y{+1}); R.B.Y:=R.A.Y+4;
+    R2.Copy(R); R2.Grow(-1,-1);
+    New(CB3, Init(R2,
+      NewSItem(label_preferences_showclock,
+      NewSItem(label_preferences_showheapmonitor,
+      nil))));
+    CB3^.Value:=DesktopPreferences;
+    if OverrideHeapMonitor then  { if heap monitor state is set by fp parameter }
+      CB3^.EnableMask:=CB3^.EnableMask and not(dpHeapMonitor); { disable heap monitor check box }
+    Insert(New(PGroupView, Init(R, label_preferences_clockheap, CB3)));
+    Insert(CB3);
 
     R.Move(0,R.B.Y-R.A.Y{+1}); R.B.Y:=R.A.Y+5;
     R2.Copy(R); R2.Grow(-1,-1);
@@ -1121,6 +1321,8 @@ begin
      AutoSaveOptions:=CB1^.Value;
      MiscOptions:=CB2^.Value;
      DesktopLocation:=RB1^.Value;
+     DesktopPreferences:=CB3^.Value;
+     UpdateClockAndHeap;
    end;
   Dispose(D, Done);
   Dispose(C, Done);
@@ -1156,22 +1358,25 @@ begin
   if (EFlags and efUseTabCharacters  )<>0 then EFValue:=EFValue or (1 shl  3);
   if (EFlags and efBackSpaceUnindents)<>0 then EFValue:=EFValue or (1 shl  4);
   if (EFlags and efPersistentBlocks  )<>0 then EFValue:=EFValue or (1 shl  5);
-  if (EFlags and efSyntaxHighlight   )<>0 then EFValue:=EFValue or (1 shl  6);
-  if (EFlags and efBlockInsCursor    )<>0 then EFValue:=EFValue or (1 shl  7);
-  if (EFlags and efVerticalBlocks    )<>0 then EFValue:=EFValue or (1 shl  8);
-  if (EFlags and efHighlightColumn   )<>0 then EFValue:=EFValue or (1 shl  9);
-  if (EFlags and efHighlightRow      )<>0 then EFValue:=EFValue or (1 shl 10);
-  if (EFlags and efAutoBrackets      )<>0 then EFValue:=EFValue or (1 shl 11);
-  if (EFlags and efKeepTrailingSpaces)<>0 then EFValue:=EFValue or (1 shl 12);
-  if (EFlags and efCodeComplete      )<>0 then EFValue:=EFValue or (1 shl 13);
-  if (EFlags and efFolds             )<>0 then EFValue:=EFValue or (1 shl 14);
+  if (EFlags and efOverwriteBlocks   )<>0 then EFValue:=EFValue or (1 shl  6);
+  if (EFlags and efSyntaxHighlight   )<>0 then EFValue:=EFValue or (1 shl  7);
+  if (EFlags and efShowIndent        )<>0 then EFValue:=EFValue or (1 shl  8);
+  if (EFlags and efVerticalBlocks    )<>0 then EFValue:=EFValue or (1 shl  9);
+  if (EFlags and efHighlightColumn   )<>0 then EFValue:=EFValue or (1 shl 10);
+  if (EFlags and efHighlightRow      )<>0 then EFValue:=EFValue or (1 shl 11);
+  if (EFlags and efAutoBrackets      )<>0 then EFValue:=EFValue or (1 shl 12);
+  if (EFlags and efKeepTrailingSpaces)<>0 then EFValue:=EFValue or (1 shl 13);
+  if (EFlags and efCodeComplete      )<>0 then EFValue:=EFValue or (1 shl 14);
+  if (EFlags and efFolds             )<>0 then EFValue:=EFValue or (1 shl 15);
+  if (EFlags and efBlockInsCursor    )<>0 then EFValue:=EFValue or (1 shl 16);
+  if (EFlags and efEnhWordRightLeft  )<>0 then EFValue:=EFValue or (1 shl 17);
 
-  R.Assign(0,0,66,20);
+  R.Assign(0,0,66,21);
   New(D, Init(R, Title));
   with D^ do
   begin
     HelpCtx:=hcEditor;
-    GetExtent(R); R.Grow(-2,-2); R.B.Y:=R.A.Y+9;
+    GetExtent(R); R.Grow(-2,-2); R.B.Y:=R.A.Y+10;
     R2.Copy(R); Inc(R2.A.Y);
     New(CB, Init(R2,
       NewSItem(label_editor_backupfiles,
@@ -1180,8 +1385,9 @@ begin
       NewSItem(label_editor_usetabcharacters,
       NewSItem(label_editor_backspaceunindents,
       NewSItem(label_editor_persistentblocks,
+      NewSItem(label_editor_overwriteblocks,
       NewSItem(label_editor_syntaxhighlight,
-      NewSItem(label_editor_blockinsertcursor,
+      NewSItem(label_editor_showlineindents,
       NewSItem(label_editor_verticalblocks,
       NewSItem(label_editor_highlightcolumn,
       NewSItem(label_editor_highlightrow,
@@ -1189,7 +1395,9 @@ begin
       NewSItem(label_editor_keeptrailingspaces,
       NewSItem(label_editor_codecomplete,
       NewSItem(label_editor_folds,
-      nil)))))))))))))))));
+      NewSItem(label_editor_blockinsertcursor,
+      NewSItem(label_editor_enhancedwordrightleft,
+      nil))))))))))))))))))));
     CB^.Value:=EFValue;
     Insert(CB);
     R2.Move(0,-1); R2.B.Y:=R2.A.Y+1;
@@ -1237,15 +1445,18 @@ begin
     if (CB^.Value and (1 shl  3))<>0 then EFlags:=EFlags or efUseTabCharacters;
     if (CB^.Value and (1 shl  4))<>0 then EFlags:=EFlags or efBackSpaceUnindents;
     if (CB^.Value and (1 shl  5))<>0 then EFlags:=EFlags or efPersistentBlocks;
-    if (CB^.Value and (1 shl  6))<>0 then EFlags:=EFlags or efSyntaxHighlight;
-    if (CB^.Value and (1 shl  7))<>0 then EFlags:=EFlags or efBlockInsCursor;
-    if (CB^.Value and (1 shl  8))<>0 then EFlags:=EFlags or efVerticalBlocks;
-    if (CB^.Value and (1 shl  9))<>0 then EFlags:=EFlags or efHighlightColumn;
-    if (CB^.Value and (1 shl 10))<>0 then EFlags:=EFlags or efHighlightRow;
-    if (CB^.Value and (1 shl 11))<>0 then EFlags:=EFlags or efAutoBrackets;
-    if (CB^.Value and (1 shl 12))<>0 then EFlags:=EFlags or efKeepTrailingSpaces;
-    if (CB^.Value and (1 shl 13))<>0 then EFlags:=EFlags or efCodeComplete;
-    if (CB^.Value and (1 shl 14))<>0 then EFlags:=EFlags or efFolds;
+    if (CB^.Value and (1 shl  6))<>0 then EFlags:=EFlags or efOverwriteBlocks;
+    if (CB^.Value and (1 shl  7))<>0 then EFlags:=EFlags or efSyntaxHighlight;
+    if (CB^.Value and (1 shl  8))<>0 then EFlags:=EFlags or efShowIndent;
+    if (CB^.Value and (1 shl  9))<>0 then EFlags:=EFlags or efVerticalBlocks;
+    if (CB^.Value and (1 shl 10))<>0 then EFlags:=EFlags or efHighlightColumn;
+    if (CB^.Value and (1 shl 11))<>0 then EFlags:=EFlags or efHighlightRow;
+    if (CB^.Value and (1 shl 12))<>0 then EFlags:=EFlags or efAutoBrackets;
+    if (CB^.Value and (1 shl 13))<>0 then EFlags:=EFlags or efKeepTrailingSpaces;
+    if (CB^.Value and (1 shl 14))<>0 then EFlags:=EFlags or efCodeComplete;
+    if (CB^.Value and (1 shl 15))<>0 then EFlags:=EFlags or efFolds;
+    if (CB^.Value and (1 shl 16))<>0 then EFlags:=EFlags or efBlockInsCursor;
+    if (CB^.Value and (1 shl 17))<>0 then EFlags:=EFlags or efEnhWordRightLeft;
     TabSize:=StrToInt(ILTab^.Data^);
     IndentSize:=StrToInt(ILIdent^.Data^);
     if Editor=nil then
@@ -1285,54 +1496,84 @@ var D: PCenterDialog;
     TitleS: string;
     CB1,CB2: PCheckBoxes;
     RB1,RB2: PRadioButtons;
+    SymbolsFlags,DisplayFlags,BrowserFlags : Longint;
+    BrowserSub,BrowserPane : Longint;
+    DialogWidth : sw_integer;
+    SymbolsHight: sw_integer;
+    DisplayHight: sw_integer;
 begin
   if Browser=nil then
-    TitleS:=dialog_browseroptions
-  else
+  begin    { Default browser options }
+    TitleS:=dialog_browseroptions;
+    SymbolsFlags := DefaultSymbolFlags;
+    DisplayFlags := DefaultDisplayFlags;
+    BrowserSub:=DefaultBrowserSub;
+    BrowserPane:=DefaultBrowserPane;
+    DialogWidth:=56;
+    SymbolsHight:=4;
+    DisplayHight:=1;
+  end else
+  begin   { Local browser options }
     TitleS:=dialog_localbrowseroptions;
-  R.Assign(0,0,56,15);
+    {BrowserFlags := DefaultBrowserFlags;}
+    BrowserFlags := Browser^.GetFlags;
+    DisplayFlags := BrowserFlags shr 30;
+    SymbolsFlags := BrowserFlags and $7f;
+    DialogWidth:=56-20;
+    SymbolsHight:=7;
+    DisplayHight:=2;
+    RB1:=nil; {it is not supposed to be valid}
+  end;
+  R.Assign(0,0,DialogWidth,16);
   New(D, Init(R, TitleS));
   with D^ do
   begin
     HelpCtx:=hcBrowser;
     GetExtent(R); R.Grow(-2,-2);
-    R.B.Y:=R.A.Y+1+3; R2.Copy(R); Inc(R2.A.Y);
+    R.B.Y:=R.A.Y+1+SymbolsHight; R2.Copy(R); Inc(R2.A.Y);
     New(CB1, Init(R2,
-      NewSItem(RExpand(label_browser_labels,21+2),
+      NewSItem(RExpand(label_browser_units,21+2),
+      NewSItem(label_browser_labels,
       NewSItem(label_browser_constants,
       NewSItem(label_browser_types,
       NewSItem(label_browser_variables,
       NewSItem(label_browser_procedures,
       NewSItem(label_browser_inherited,
-      nil)))))))
+      nil))))))))
     );
     Insert(CB1);
     R2.Move(0,-1); R2.B.Y:=R2.A.Y+1;
     Insert(New(PLabel, Init(R2, label_browser_symbols, CB1)));
+    CB1^.Value := SymbolsFlags;
+
+    if Browser=nil then
+    begin
+      R.Move(0,R.B.Y-R.A.Y+1);
+      R.B.Y:=R.A.Y+1+2; R2.Copy(R);
+      R3.Copy(R2); R3.B.X:=R3.A.X+(R3.B.X-R3.A.X) div 2-1; Inc(R3.A.Y);
+      New(RB1, Init(R3,
+        NewSItem(label_browser_newbrowser,
+        NewSItem(label_browser_currentbrowser,
+        nil)))
+      );
+      Insert(RB1);
+      R3.Move(0,-1); R3.B.Y:=R3.A.Y+1;
+      Insert(New(PLabel, Init(R3, label_browser_subbrowsing, RB1)));
+      R3.Copy(R2); R3.A.X:=R3.B.X-(R3.B.X-R3.A.X) div 2+1; Inc(R3.A.Y);
+      New(RB2, Init(R3,
+        NewSItem(label_browser_scope,
+        NewSItem(label_browser_reference,
+        nil)))
+      );
+      Insert(RB2);
+      R3.Move(0,-1); R3.B.Y:=R3.A.Y+1;
+      Insert(New(PLabel, Init(R3, label_browser_preferredpane, RB2)));
+      RB1^.Value:=BrowserSub;
+      RB2^.Value:=BrowserPane;
+    end;
 
     R.Move(0,R.B.Y-R.A.Y+1);
-    R.B.Y:=R.A.Y+1+2; R2.Copy(R);
-    R3.Copy(R2); R3.B.X:=R3.A.X+(R3.B.X-R3.A.X) div 2-1; Inc(R3.A.Y);
-    New(RB1, Init(R3,
-      NewSItem(label_browser_newbrowser,
-      NewSItem(label_browser_currentbrowser,
-      nil)))
-    );
-    Insert(RB1);
-    R3.Move(0,-1); R3.B.Y:=R3.A.Y+1;
-    Insert(New(PLabel, Init(R3, label_browser_subbrowsing, RB1)));
-    R3.Copy(R2); R3.A.X:=R3.B.X-(R3.B.X-R3.A.X) div 2+1; Inc(R3.A.Y);
-    New(RB2, Init(R3,
-      NewSItem(label_browser_scope,
-      NewSItem(label_browser_reference,
-      nil)))
-    );
-    Insert(RB2);
-    R3.Move(0,-1); R3.B.Y:=R3.A.Y+1;
-    Insert(New(PLabel, Init(R3, label_browser_preferredpane, RB2)));
-
-    R.Move(0,R.B.Y-R.A.Y+1);
-    R.B.Y:=R.A.Y+1+1; R2.Copy(R); Inc(R2.A.Y);
+    R.B.Y:=R.A.Y+1+DisplayHight; R2.Copy(R); Inc(R2.A.Y);
     New(CB2, Init(R2,
       NewSItem(RExpand(label_browser_qualifiedsymbols,21+2),
       NewSItem(label_browser_sortsymbols,
@@ -1341,11 +1582,26 @@ begin
     Insert(CB2);
     R2.Move(0,-1); R2.B.Y:=R2.A.Y+1;
     Insert(New(PLabel, Init(R2, label_browser_display, CB2)));
+    CB2^.Value:=DisplayFlags;
   end;
   InsertButtons(D);
   CB1^.Select;
   if Desktop^.ExecView(D)=cmOK then
   begin
+    SymbolsFlags:=CB1^.Value;
+    DisplayFlags:=CB2^.Value;
+    if Browser=nil then
+    begin
+      {DefaultBrowserFlags:=BrowserFlags;}
+      DefaultSymbolFlags:=SymbolsFlags;
+      DefaultDisplayFlags:=DisplayFlags;
+      DefaultBrowserSub:=RB1^.Value;
+      DefaultBrowserPane:=RB2^.Value;
+    end else
+    begin
+      BrowserFlags:=DisplayFlags shl 30 or SymbolsFlags;
+      Browser^.SetFlags(BrowserFlags);
+    end;
   end;
   Dispose(D, Done);
 end;
@@ -1360,12 +1616,12 @@ var R: TRect;
     D: PCenterDialog;
     CB: PCheckBoxes;
 begin
-  R.Assign(0,0,40,12);
+  R.Assign(0,0,40,13);
   New(D, Init(R, dialog_desktoppreferences));
   with D^ do
   begin
     HelpCtx:=hcDesktopOptions;
-    GetExtent(R); R.Grow(-2,-2); Inc(R.A.Y); R.B.Y:=R.A.Y+8;
+    GetExtent(R); R.Grow(-2,-2); Inc(R.A.Y); R.B.Y:=R.A.Y+9;
     New(CB, Init(R,
       NewSItem(label_desktop_historylists,
       NewSItem(label_desktop_clipboard,
@@ -1375,7 +1631,8 @@ begin
       NewSItem(label_desktop_symbolinfo,
       NewSItem(label_desktop_codecompletewords,
       NewSItem(label_desktop_codetemplates,
-      nil))))))))));
+      NewSItem(label_desktop_returntolastdir,
+      nil)))))))))));
     CB^.Value:=DesktopFileFlags;
     Insert(CB);
     R.Move(0,-1); R.B.Y:=R.A.Y+1;
@@ -1547,7 +1804,7 @@ begin
   D^.HelpCtx:=hcColors;
   if ExecuteDialog(D, @AppPalette)=cmOK then
     begin
-      DoneMemory;
+      {DoneMemory;}
       Message(Application,evBroadcast,cmUpdate,nil);
       ReDraw;
       UpdateScreen(true);
@@ -1559,17 +1816,17 @@ end;
 {$endif COLORSEL}
 
 procedure TIDEApp.OpenINI;
-var D: PFileDialog;
+var D : PFPFileDialog;
     FileName: string;
 begin
-  New(D, Init('*'+ExtOf(INIFileName),dialog_openoptions,dialog_ini_filename,fdOpenButton,hidOpenIniFile));
+  New(D, Init('*'+ExtOf(INIFilePath),dialog_openoptions,dialog_ini_filename,fdOpenButton,hidOpenIniFile));
   D^.HelpCtx:=hcOpenIni;
   if Desktop^.ExecView(D)<>cmCancel then
     begin
       D^.GetFileName(FileName);
       if ExistsFile(FileName)=false then ErrorBox(msg_cantopenconfigfile,nil) else
         begin
-          IniFileName:=FileName;
+          IniFilePath:=FileName;
           ReadINIFile;
           Message(Application,evBroadcast,cmUpdate,nil);
         end;
@@ -1584,11 +1841,11 @@ begin
 end;
 
 procedure TIDEApp.SaveAsINI;
-var D: PFileDialog;
+var D : PFPFileDialog;
     FileName: string;
     CanWrite: boolean;
 begin
-  New(D, Init('*'+ExtOf(INIFileName),dialog_saveoptions,dialog_ini_filename,fdOkButton,hidSaveIniFile));
+  New(D, Init('*'+ExtOf(INIFilePath),dialog_saveoptions,dialog_ini_filename,fdOkButton,hidSaveIniFile));
   D^.HelpCtx:=hcSaveAsINI;
   if Desktop^.ExecView(D)<>cmCancel then
     begin
@@ -1598,7 +1855,7 @@ begin
         CanWrite:=ConfirmBox(FormatStrStr(msg_filealreadyexistsoverwrite,SmartPath(FileName)),nil,false)=cmYes;
       if CanWrite then
         begin
-          IniFileName:=FileName;
+          IniFilePath:=FileName;
           if WriteINIFile(true)=false then
             ErrorBox(msg_errorsavingconfigfile,nil);
           Message(Application,evBroadcast,cmUpdate,nil);

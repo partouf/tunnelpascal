@@ -105,7 +105,7 @@ implementation
       register ireg26d can be replaced by a memory reference.}
     function trgx86.do_spill_replace(list:TAsmList;instr:tai_cpu_abstract_sym;orgreg:tsuperregister;const spilltemp:treference):boolean;
 
-       { returns true if opcde is an avx opcode which allows only the first (zero) operand might be a memory reference }
+       { returns true if opcode is an avx opcode which allows only the first (zero) operand might be a memory reference }
        function avx_opcode_only_op0_may_be_memref(opcode : TAsmOp) : boolean;
          begin
            case opcode of
@@ -418,6 +418,25 @@ implementation
             { Replace register with spill reference }
             if replaceoper<>-1 then
               begin
+                if replaceoper<=1 then
+                  begin
+{$ifdef x86_64}
+                    { if an mm register => int register (v)movq is converted, replace it by MOV with opsize Q }
+                    if ((opcode=A_MOVQ) or (opcode=A_VMOVQ)) and (oper[0]^.typ=top_reg)  and (oper[1]^.typ=top_reg) and (getregtype(oper[replaceoper xor 1]^.reg)=R_INTREGISTER) then
+                      begin
+                        opcode:=A_MOV;
+                        opsize:=S_Q;
+                      end
+                    else
+{$endif x86_64}
+                    { if an mm register => int register (v)movd is converted, replace it by MOV with opsize L }
+                    if ((opcode=A_MOVD) or (opcode=A_VMOVD)) and (oper[0]^.typ=top_reg)  and (oper[1]^.typ=top_reg) and (getregtype(oper[replaceoper xor 1]^.reg)=R_INTREGISTER) then
+                      begin
+                        opcode:=A_MOV;
+                        opsize:=S_L;
+                      end;
+                  end;
+
                 if opcode=A_LEA then
                   begin
                     opcode:=A_ADD;

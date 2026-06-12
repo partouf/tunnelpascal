@@ -289,11 +289,12 @@ interface
 
            if o.vopext and OTVE_VECTOR_BCST = OTVE_VECTOR_BCST then
             begin
-              case o.vopext and (OTVE_VECTOR_BCST2 or OTVE_VECTOR_BCST4 or OTVE_VECTOR_BCST8 or OTVE_VECTOR_BCST16) of
+              case o.vopext and OTVE_VECTOR_BCST_MASK of
                  OTVE_VECTOR_BCST2: owner.writer.AsmWrite('{1to2}');
                  OTVE_VECTOR_BCST4: owner.writer.AsmWrite('{1to4}');
                  OTVE_VECTOR_BCST8: owner.writer.AsmWrite('{1to8}');
                 OTVE_VECTOR_BCST16: owner.writer.AsmWrite('{1to16}');
+                OTVE_VECTOR_BCST32: owner.writer.AsmWrite('{1to32}');
                                else ; //TG TODO errormsg
               end;
             end;
@@ -527,7 +528,7 @@ interface
             idtxt  : 'AS-CLANG';
             asmbin : 'clang';
             asmcmd : '-x assembler -c -target $TRIPLET -o $OBJ $EXTRAOPT -x assembler $ASM';
-            supported_targets : [system_x86_64_linux, system_x86_64_freebsd, system_x86_64_netbsd, system_x86_64_openbsd];
+            supported_targets : [system_x86_64_linux, system_x86_64_freebsd, system_x86_64_netbsd, system_x86_64_openbsd, system_x86_64_dragonfly];
             flags : [af_needar,af_smartlink_sections,af_supports_dwarf,af_llvm,af_supports_hlcfi];
             labelprefix : '.L';
             labelmaxlen : -1;

@@ -227,20 +227,15 @@ implementation
 
     procedure TVMTWriter.writenames(tcb: ttai_typedconstbuilder; p: pprocdeftree);
       var
-        ca : pchar;
-        len : byte;
         datatcb : ttai_typedconstbuilder;
+        len : byte;
       begin
          if assigned(p^.l) then
            writenames(tcb,p^.l);
          tcb.start_internal_data_builder(current_asmdata.AsmLists[al_const],sec_rodata,_class.vmt_mangledname,datatcb,p^.nl);
          len:=length(p^.data.messageinf.str^);
          datatcb.maybe_begin_aggregate(carraydef.getreusable(cansichartype,len+1));
-         datatcb.emit_tai(tai_const.create_8bit(len),cansichartype);
-         getmem(ca,len+1);
-         move(p^.data.messageinf.str^[1],ca^,len);
-         ca[len]:=#0;
-         datatcb.emit_tai(Tai_string.Create_pchar(ca,len),carraydef.getreusable(cansichartype,len));
+         datatcb.emit_tai(Tai_string.Create_Data(@p^.data.messageinf.str^[0],len+1,false),carraydef.getreusable(cansichartype,len+1));
          datatcb.maybe_end_aggregate(carraydef.getreusable(cansichartype,len+1));
          tcb.finish_internal_data_builder(datatcb,p^.nl,carraydef.getreusable(cansichartype,len+1),sizeof(pint));
          if assigned(p^.r) then
@@ -556,7 +551,7 @@ implementation
                }
               tcb.start_internal_data_builder(current_asmdata.AsmLists[al_const],sec_rodata,_class.vmt_mangledname,lists.pubmethodstcb,lab);
               get_tabledef(itp_vmt_intern_tmethodnametable,u32inttype,lists.methodnamerec,count,packrecords,pubmethodsdef,pubmethodsarraydef);
-              { begin record ecompassing the tmethodnametable and the extended method table }
+              { begin record encompassing the tmethodnametable and the extended method table }
               lists.pubmethodstcb.begin_anonymous_record('',packrecords,
                   pubmethodsdef.alignment, targetinfos[target_info.system]^.alignment.recordalignmin);
               { begin tmethodnametable }
@@ -723,6 +718,7 @@ implementation
           end;
 
         classtablelist.free;
+        classtablelist := nil;
       end;
 
 
@@ -735,7 +731,7 @@ implementation
         realintfdef: tobjectdef;
         tmpstr : AnsiString;
         hs : TSymStr;
-        crc : DWord;
+        hash : QWord;
       begin
         realintfdef:=AImplIntf.IntfDef;
         while realintfdef.is_unique_objpasdef do
@@ -744,9 +740,9 @@ implementation
         tmpstr:=_class.objname^+'_$_'+make_mangledname('',realintfdef.owner,'')+'_$$_'+realintfdef.objname^+'_$_'+tostr(i)+'_$_'+pd.mangledname;
         if length(tmpstr)>50 then
           begin
-            crc:=0;
-            crc:=UpdateCrc32(crc,tmpstr[51],length(tmpstr)-50);
-            hs:=copy(tmpstr,1,50)+'$CRC'+hexstr(crc,8);
+            hash:=InitFnv64;
+            hash:=UpdateFnv64(hash,tmpstr[51],length(tmpstr)-50);
+            hs:=copy(tmpstr,1,50)+'$H'+Base64Mangle(hash);
           end
         else
           hs:=tmpstr;
@@ -928,6 +924,7 @@ implementation
             s,
             sizeof(pint)));
           tcb.free;
+          tcb := nil;
           current_module.add_public_asmsym(sym);
         end;
       s:=make_mangledname('IIDSTR',_class.owner,_class.objname^);
@@ -941,6 +938,7 @@ implementation
         s,
         sizeof(pint)));
       tcb.free;
+      tcb := nil;
       current_module.add_public_asmsym(sym);
     end;
 
@@ -1237,6 +1235,7 @@ implementation
            )
          );
          tcb.free;
+         tcb := nil;
 {$ifdef vtentry}
          { write vtinherit symbol to notify the linker of the class inheritance tree }
          hs:='VTINHERIT'+'_'+_class.vmt_mangledname+'$$';
@@ -1312,7 +1311,7 @@ implementation
                         current_filepos:=pd.fileinfo
                       else
                         begin
-                          current_filepos.moduleindex:=current_module.unit_index;
+                          current_filepos.moduleindex:=current_module.moduleid;
                           current_filepos.fileindex:=1;
                           current_filepos.line:=1;
                           current_filepos.column:=1;
@@ -1330,6 +1329,7 @@ implementation
                            current_debuginfo.insertlineinfo(tmplist);
                       list.concatlist(tmplist);
                       tmplist.Free;
+                      tmplist := nil;
                       current_filepos:=oldfileposinfo;
                     end;
                   end;
@@ -1370,6 +1370,7 @@ implementation
                       if (oo_has_vmt in tobjectdef(def).objectoptions) then
                         vmtwriter.writevmt;
                       vmtwriter.free;
+                      vmtwriter := nil;
                       include(def.defstates,ds_vmt_written);
                     end;
                   if is_class(def) then

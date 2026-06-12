@@ -2,7 +2,7 @@
     $Id: header,v 1.1 2000/07/13 06:33:45 michael Exp $
     This file is part of the Free Component Library (Fcl)
     Copyright (c) 2011- by the Free Pascal development team
-    
+
     Simple HTTP server component.
 
     See the file COPYING.FPC, included in this distribution,
@@ -23,16 +23,19 @@ interface
 
 {$IFDEF FPC_DOTTEDUNITS}
 uses
-  System.Classes, System.SysUtils, System.Net.Sockets, System.Net.Sslbase, System.Net.Sslsockets, System.Net.Ssockets, System.Net.Resolve, FpWeb.Http.Defs, FpWeb.Http.Protocol,
+  System.Classes, System.SysUtils, System.Net.Sockets, System.Net.Sslbase, System.Net.Sslsockets, System.Net.FPSockets, System.Net.Ssockets, System.Net.Resolve, FpWeb.Http.Defs, FpWeb.Http.Protocol,
   Fcl.ThreadPool;
 {$ELSE FPC_DOTTEDUNITS}
 uses
-  Classes, SysUtils, sockets, sslbase, sslsockets, ssockets, resolve, httpdefs, httpprotocol,
+  Classes, SysUtils, sockets, sslbase, sslsockets, fpsockets, ssockets,  resolve, httpdefs, httpprotocol,
   fpthreadpool;
 {$ENDIF FPC_DOTTEDUNITS}
 
 Const
   ReadBufLen = 4096;
+  DefaultMaxHeaderLineLength = 8*ReadBufLen;
+  DefaultMaxHeaderCount = 256;
+  DefaultMaxLiveConnectionCount = 128;
   DefaultKeepConnectionIdleTimeout = 50; // Ms
 
 Type
@@ -63,6 +66,10 @@ Type
     Procedure DoSendHeaders(Headers : TStrings); override;
     Procedure DoSendContent; override;
     Property Connection : TFPHTTPConnection Read FConnection;
+  Public
+    procedure StartServerEvents; override;
+    Procedure SendServerEvent(const aEvent : THTTPServerEvent); override;
+    Procedure EndServerEvents; override;
   end;
 
 
@@ -77,6 +84,7 @@ Type
     FBusy: Boolean;
     FConnectionID: String;
     FEmptyDetected: Boolean;
+    FLastRequestTime: QWord;
     FIsUpgraded: Boolean;
     FOnRequestError: TRequestErrorHandler;
     FOnUnexpectedError: TRequestErrorHandler;
@@ -323,6 +331,10 @@ Type
     FKeepConnectionIdleTimeout: Integer;
     FKeepConnectionTimeout: Integer;
     FLogMoments: THTTPLogMoments;
+    FMaxBodySize: SizeInt;
+    FMaxHeaderCount: Integer;
+    FMaxLineLength: Integer;
+    FMaxLiveConnectionCount: Integer;
     FOnAcceptIdle: TNotifyEvent;
     FOnKeepConnectionIdle: TNotifyEvent;
     FOnAllowConnect: TConnectQuery;
@@ -334,6 +346,7 @@ Type
     FAddress: string;
     FPort: Word;
     FQueueSize: Word;
+    FSend503OnMaxConnections: Boolean;
     FServer : TInetServer;
     FLoadActivate : Boolean;
     FServerBanner: string;
@@ -343,6 +356,7 @@ Type
     FConnectionHandler : TFPHTTPServerConnectionHandler;
     FUpdateHandlers : TUpgradeHandlerList;
     procedure DoCreateClientHandler(Sender: TObject; out AHandler: TSocketHandler);
+    procedure DoOnAllowConnect(Sender: TObject; ASocket: TFPSocket; var Allow: Boolean);
     function GetActive: Boolean;
     function GetConnectionCount: Integer;
     function GetHasUpdateHandlers: Boolean;
@@ -383,7 +397,7 @@ Type
     Procedure InitRequest({%H-}ARequest : TFPHTTPConnectionRequest); virtual;
     Procedure InitResponse({%H-}AResponse : TFPHTTPConnectionResponse); virtual;
     // Called on accept errors
-    procedure DoAcceptError(Sender: TObject; {%H-}ASocket: Longint; {%H-}E: Exception;  var ErrorAction: TAcceptErrorAction); virtual;
+    procedure DoAcceptError(Sender: TObject; {%H-}ASocket: TFPSocket; {%H-}E: Exception;  var ErrorAction: TAcceptErrorAction); virtual;
     // Called when accept is idle. Will check for new requests.
     procedure DoAcceptIdle(Sender: TObject); virtual;
     // Called when KeepConnection is idle.
@@ -411,6 +425,8 @@ Type
     procedure HandleRequestError(Sender: TObject; E: Exception); virtual;
     // Called when a connection encounters an error outside the request. Will call OnUnexpectedError when set.
     procedure HandleUnexpectedError(Sender: TObject; E : Exception); virtual;
+    // Inet Server
+    Property Server : TInetServer Read FServer;
     // Connection Handler
     Property Connectionhandler : TFPHTTPServerConnectionHandler Read FConnectionHandler;
     // Connection count. Convenience shortcut for Connectionhandler.GetActiveConnectionCount;
@@ -466,8 +482,18 @@ Type
     Property OnKeepConnectionIdle : TNotifyEvent Read FOnKeepConnectionIdle Write FOnKeepConnectionIdle;
     // If >0, when no new connection appeared after timeout, OnAcceptIdle is called.
     Property AcceptIdleTimeout : Cardinal Read FAcceptIdleTimeout Write SetAcceptIdleTimeout;
+    // Max line length (for headers)
+    Property MaxLineLength : Integer Read FMaxLineLength Write FMaxLineLength default DefaultMaxHeaderLineLength;
+    // Max header count.
+    Property MaxHeaderCount : Integer Read FMaxHeaderCount Write FMaxHeaderCount default DefaultMaxHeaderCount;
+    // Max body size
+    Property MaxBodySize : SizeInt Read FMaxBodySize Write FMaxBodySize default DefaultMaxBodySize;
+    // Max number of simultaneous connections
+    Property MaxLiveConnectionCount : Integer Read FMaxLiveConnectionCount Write FMaxLiveConnectionCount Default DefaultMaxLiveConnectionCount;
+    // If true, when max connections is reached, send a 503. If false, connection is simply closed.
+    property Send503OnMaxConnections : Boolean Read FSend503OnMaxConnections Write FSend503OnMaxConnections Default True;
   published
-    //aditional server information
+    //additional server information
     property AdminMail: string read FAdminMail write FAdminMail;
     property AdminName: string read FAdminName write FAdminName;
     property ServerBanner: string read FServerBanner write FServerBanner;
@@ -508,6 +534,8 @@ Type
     Property OnUnexpectedError;
     Property LogMoments;
     Property OnLog;
+    Property MaxLineLength;
+    Property MaxHeaderCount;
   end;
 
   EHTTPServer = Class(EHTTP);
@@ -535,6 +563,7 @@ resourcestring
   SRequestStart = 'Start handling request %s';
   SErrLogMissingProtocol = 'Missing HTTP protocol version in first line "%s" for request';
   SWarnEmptyRequest = 'Empty request detected.';
+  SerrRequestHeaderTooLong = 'Request Header exceeds maximum size (%d)';
 
 { TFPHTTPConnectionRequest }
 
@@ -651,7 +680,17 @@ end;
 
 procedure TFPPooledConnectionHandler.CheckRequest(aConnection: TFPHTTPConnection; var aContinue: Boolean);
 begin
-  if Server.Active and aConnection.AllowNewRequest and aConnection.RequestPending then
+  if not Server.Active or not aConnection.AllowNewRequest then
+    exit;
+  // Enforce keep-alive timeout, matching tmThread behavior
+  if (aConnection.KeepConnectionTimeout > 0)
+     and (GetTickCount64 > aConnection.FLastRequestTime + QWord(aConnection.KeepConnectionTimeout)) then
+  begin
+    RemoveConnection(aConnection);
+    exit;
+  end;
+  // Use non-blocking check (timeout=0) to avoid blocking the accept thread
+  if (Not aConnection.IsUpgraded) and aConnection.Socket.CanRead(0) then
     ScheduleRequest(aConnection);
 end;
 
@@ -896,7 +935,7 @@ end;
 
 procedure TFPHTTPConnectionResponse.DoSendContent;
 begin
-  if Connection.IsUpgraded then
+  if Connection.IsUpgraded or EventsStarted then
     exit;
   If Assigned(ContentStream) and (ContentStream.Size>0) then
     Connection.Socket.CopyFrom(ContentStream,0)
@@ -905,418 +944,27 @@ begin
       Connection.Socket.WriteBuffer(Content[1],Length(Content));
 end;
 
-{ TFPHTTPConnection }
-
-function TFPHTTPConnection.ReadString : String;
-
-  Procedure FillBuffer;
-
-  Var
-    R : Integer;
-
-  begin
-    SetLength(FBuffer,ReadBufLen);
-    r:=FSocket.Read(FBuffer[1],ReadBufLen);
-    If r<0 then
-      Raise EHTTPServer.Create(SErrReadingSocket);
-    if (r<ReadBuflen) then
-      SetLength(FBuffer,r);
-  end;
-
-Var
-  CheckLF,Done : Boolean;
-  P,L : integer;
-
+procedure TFPHTTPConnectionResponse.StartServerEvents;
 begin
-  Result:='';
-  Done:=False;
-  CheckLF:=False;
-  Repeat
-    if Length(FBuffer)=0 then
-      FillBuffer;
-    if Length(FBuffer)=0 then
-      Done:=True
-    else if CheckLF then
-      begin
-      If (FBuffer[1]<>#10) then
-        Result:=Result+#13
-      else
-        begin
-        Delete(FBuffer,1,1);
-        Done:=True;
-        end;
-      CheckLF:=False;  
-      end;
-    if not Done then
-      begin
-      P:=Pos(#13#10,FBuffer);
-      If P=0 then
-        begin
-        L:=Length(FBuffer);
-        CheckLF:=FBuffer[L]=#13;
-        if CheckLF then
-          Result:=Result+Copy(FBuffer,1,L-1)
-        else
-          Result:=Result+FBuffer;
-        FBuffer:='';
-        end
-      else
-        begin
-        Result:=Result+Copy(FBuffer,1,P-1);
-        Delete(FBuffer,1,P+1);
-        Done:=True;
-        end;
-      end;
-  until Done;
+  CheckServerEvents;
 end;
 
-procedure TFPHTTPConnection.UnknownHeader(ARequest: TFPHTTPConnectionRequest;
-  const AHeader: String);
+procedure TFPHTTPConnectionResponse.SendServerEvent(const aEvent: THTTPServerEvent);
+var
+  lEvent : RawByteString;
 begin
-  // Do nothing
+  if not EventsStarted then
+    Raise EHTTPServer.Create('Server side events not started');
+  lEvent:=aEvent.ToString;
+  SetCodePage(lEvent,CP_UTF8); // UTF8 is mandatory
+  Connection.Socket.WriteBuffer(lEvent[1],Length(lEvent));
 end;
 
-procedure TFPHTTPConnection.HandleRequestError(E: Exception);
+procedure TFPHTTPConnectionResponse.EndServerEvents;
 begin
-  If Assigned(FOnRequestError) then
-    try
-      FOnRequestError(Self,E);
-    except
-      On E : exception do
-        HandleUnexpectedError(E);
-    end
-  else if Assigned(Server) and Server.CanLog(hlmError) then
-    Server.DoLog(hlmError,SErrorDuringRequest,[E.ClassName,E.Message]);
+  Connection.Socket.Close;
 end;
 
-procedure TFPHTTPConnection.HandleUnexpectedError(E: Exception);
-begin
-  If Assigned(FOnUnexpectedError) then
-    FOnUnexpectedError(Self,E)
-  else if Assigned(Server) and Server.CanLog(hlmError) then
-     Server.DoLog(hlmError,SErrorDuringRequest,[E.ClassName,E.Message]);
-end;
-
-procedure TFPHTTPConnection.SetupSocket;
-begin
-{$if defined(FreeBSD) or defined(Linux)}
-  FSocket.ReadFlags:=MSG_NOSIGNAL;
-  FSocket.WriteFlags:=MSG_NOSIGNAL;
-{$endif}
-  FIsSocketSetup:=True;
-end;
-
-procedure TFPHTTPConnection.SetBusy;
-begin
-  FBusy:=True;
-end;
-
-procedure TFPHTTPConnection.InterPretHeader(ARequest: TFPHTTPConnectionRequest;
-  const AHeader: String);
-
-Var
-  P : Integer;
-  N,V : String;
-
-begin
-  V:=AHeader;
-  P:=Pos(':',V);
-  if (P=0) then
-    begin
-    UnknownHeader(ARequest,Aheader);
-    Exit;
-    end;
-  N:=Copy(V,1,P-1);
-  if SameText(N,'Upgrade') then
-    V:=V;
-  Delete(V,1,P);
-  V:=Trim(V);
-  ARequest.SetFieldByName(N,V);
-end;
-
-procedure TFPHTTPConnection.ParseStartLine(Request : TFPHTTPConnectionRequest;
-  AStartLine : String);
-
-  Function GetNextWord(Var S : String) : string;
-
-  Var
-    P : Integer;
-
-  begin
-    P:=Pos(' ',S);
-    If (P=0) then
-      P:=Length(S)+1;
-    Result:=Copy(S,1,P-1);
-    Delete(S,1,P);
-  end;
-
-Var
-  S : String;
-  I : Integer;
-  
-begin
-  if aStartLine='' then 
-    exit;
-  Request.Method:=GetNextWord(AStartLine);
-  Request.URL:=GetNextWord(AStartLine);
-  S:=Request.URL;
-  I:=Pos('?',S);
-  if (I>0) then
-    S:=Copy(S,1,I-1);
-  If (Length(S)>1) and (S[1]<>'/') then
-    S:='/'+S
-  else if S='/' then 
-    S:='';
-  Request.PathInfo:=S;
-  S:=GetNextWord(AStartLine);
-  If Assigned(Server) and Server.CanLog(hlmRequestStart) then
-    Server.DoLog(hlmRequestStart,SRequestStart,[Request.ToString]);
-  If (S<>'') and (Pos('HTTP/',S)<>1) then
-    begin
-    If Assigned(Server) and Server.CanLog(hlmNoHTTPProtocol) then
-      Server.DoLog(hlmNoHTTPProtocol,SErrLogMissingProtocol,[aStartLine,Request.ToString]);
-    Raise EHTTPServer.CreateFmtHelp(SErrMissingProtocol,[AStartLine],400);
-    end;
-  Delete(S,1,5);
-  Request.ProtocolVersion:=trim(S);
-end;
-
-procedure TFPHTTPConnection.ReadRequestContent(
-  ARequest: TFPHTTPConnectionRequest);
-
-Var
-  P,L,R : integer;
-  S : TBytes;
-
-begin
-  S:=[];
-  L:=ARequest.ContentLength;
-  If (L>0) then
-    begin
-    SetLength(S,L);
-    P:=Length(FBuffer);
-    if (P>0) then
-      begin
-      if P>L then
-        P:=L;
-      Move(FBuffer[1],S[0],P);
-      FBuffer:='';
-      L:=L-P;
-      end;
-    R:=1;
-    While (L>0) and (R>0) do
-      begin
-      R:=FSocket.Read(S[p],L);
-      If R<0 then
-        Raise EHTTPServer.Create(SErrReadingSocket);
-      if (R>0) then
-        begin
-        P:=P+R;
-        L:=L-R;
-        end;
-      end;  
-    end;
-  ARequest.ContentBytes:=S;
-end;
-
-function TFPHTTPConnection.ReadRequestHeaders: TFPHTTPConnectionRequest;
-
-Var
-  StartLine,S : String;
-begin
-  Result:=Nil;
-  StartLine:=ReadString;
-  if StartLine='' then
-    exit;
-  Result:=Server.CreateRequest;
-  try
-    Server.InitRequest(Result);
-    Result.FConnection:=Self;
-    ParseStartLine(Result,StartLine);
-    Repeat
-      S:=ReadString;
-      if (S<>'') then
-        InterPretHeader(Result,S);
-    Until (S='');
-    Result.RemoteAddress := SocketAddrToString(FSocket.RemoteAddress);
-    Result.ServerPort := FServer.Port;
-  except
-    FreeAndNil(Result);
-    Raise;
-  end;
-end;
-
-function TFPHTTPConnection.AllowNewRequest: Boolean;
-begin
-  Result:=not (Busy or IsUpgraded or EmptyDetected);
-  Result:=Result and KeepConnections and KeepAlive and (Socket.LastError=0) ;
-end;
-
-function TFPHTTPConnection.RequestPending: Boolean;
-begin
-  Result:=(Not IsUpgraded) and Socket.CanRead(KeepConnectionIdleTimeout);
-end;
-
-constructor TFPHTTPConnection.Create(AServer: TFPCustomHTTPServer;
-  ASocket: TSocketStream);
-begin
-  FIsUpgraded:=False;
-  FIsSocketSetup:=False;
-  FSocket:=ASocket;
-  FServer:=AServer;
-  AllocateConnectionID;
-end;
-
-destructor TFPHTTPConnection.Destroy;
-begin
-  If Assigned(FServer) and FServer.CanLog(hlmDisConnect) then
-    FServer.DoLog(hlmDisconnect,SClosingConnection,[Self.ConnectionID,HostAddrToStr(FSocket.RemoteAddress.sin_addr)]);
-  FreeAndNil(FSocket);
-
-  Inherited;
-end;
-
-function TFPHTTPConnection.GetLookupHostNames: Boolean;
-
-begin
-  if Assigned(FServer) then
-    Result:=FServer.LookupHostNames
-  else
-    Result:=False;  
-end;
-
-procedure TFPHTTPConnection.AllocateConnectionID;
-
-begin
-  if Assigned(IDAllocator) then
-    IDAllocator(FConnectionID);
-  if FConnectionID='' then
-{$IFDEF CPU64}
-    FConnectionID:=IntToStr(InterlockedIncrement64(_ConnectionCount));
-{$ELSE}
-    FConnectionID:=IntToStr(InterlockedIncrement(_ConnectionCount));
-{$ENDIF}
-end;
-
-procedure TFPHTTPConnection.DoHandleRequest;
-
-Var
-  Req : TFPHTTPConnectionRequest;
-  Resp : TFPHTTPConnectionResponse;
-
-begin
-  if IsUpgraded then
-    exit;
-  // Read headers.
-  Resp:=Nil;
-  Req:=ReadRequestHeaders;
-  If Req=Nil then
-    begin
-    If Assigned(Server) and Server.CanLog(hlmEmptyRequest) then
-      Server.DoLog(hlmEmptyRequest,SWarnEmptyRequest);
-    FKeepAlive:=False;
-    FEmptyDetected:=True;
-    exit;
-    end;
-  try
-    If Assigned(Server) and Server.CanLog(hlmHeaders) then
-      Server.DoLog(hlmHeaders,Req.ToString);
-    //set port
-    Req.ServerPort := Server.Port;
-    // Read content, if any
-    If Req.ContentLength>0 then
-      ReadRequestContent(Req);
-    Req.InitRequestVars;
-    If Server.CheckUpgrade(Self,Req) then
-      begin
-      FSocket:=Nil; // Must have been taken over by upgrader
-      FIsUpgraded:=True;
-      Exit;
-      end;
-    if KeepConnections then
-      begin
-      // Read out keep-alive
-      FKeepAlive:=Req.HttpVersion='1.1'; // keep-alive is default on HTTP 1.1
-      if SameText(Req.GetHeader(hhConnection),'close') then
-        FKeepAlive:=False
-      else if SameText(Req.GetHeader(hhConnection),'keep-alive') then
-        FKeepAlive:=True;
-      end;
-    // Create Response
-    Resp:= Server.CreateResponse(Req);
-    Server.InitResponse(Resp);
-    // We set the header here now. User can override it when needed.
-    if FKeepAlive and (Req.HttpVersion='1.0') and not Resp.HeaderIsSet(hhConnection) then
-      Resp.SetHeader(hhConnection,'keep-alive');
-    Resp.FConnection:=Self;
-    // And dispatch
-    if Server.Active then
-      Server.HandleRequest(Req,Resp);
-    if Assigned(Resp) and (not Resp.ContentSent) then
-      Resp.SendContent;
-    If Assigned(Server) and Server.CanLog(hlmRequestDone) then
-      begin
-      if Assigned(Resp) then
-        Server.DoLog(hlmRequestDone,SRequestDone,[Resp.ToString])
-      else
-        Server.DoLog(hlmRequestDone,SRequestDone,['Response was freed']);
-      end;
-  Finally
-    FreeAndNil(Resp);
-    FreeAndNil(Req);
-  end;
-end;
-
-procedure TFPHTTPConnection.DoKeepConnectionIdle;
-begin
-  if Assigned(FServer) then
-    FServer.DoKeepConnectionIdle(Self);
-end;
-
-function TFPHTTPConnection.GetKeepConnections: Boolean;
-begin
-  if Assigned(FServer) then
-    Result := FServer.KeepConnections
-  else
-    Result := False;
-end;
-
-function TFPHTTPConnection.GetKeepConnectionIdleTimeout: Integer;
-begin
-  if Assigned(FServer) then
-    Result := FServer.KeepConnectionIdleTimeout
-  else
-    Result := 0;
-  if Result=0 then
-    Result := KeepConnectionTimeout; // when there is KeepConnectionTimeout set, limit KeepConnectionIdleTimeout with its value
-end;
-
-function TFPHTTPConnection.GetKeepConnectionTimeout: Integer;
-begin
-  if Assigned(FServer) then
-    Result := FServer.KeepConnectionTimeout
-  else
-    Result := 0;
-end;
-
-procedure TFPHTTPConnection.HandleRequest;
-
-
-begin
-  FBusy:=True;
-  Try
-    if not FIsSocketSetup then
-      SetupSocket;
-    DoHandleRequest;
-  Except
-    On E : Exception do
-      begin
-      FKeepAlive:=False; // don't keep alive connections that failed
-      HandleRequestError(E);
-      end;
-  end;
-  FBusy:=False;
-end;
 
 { TFPHTTPConnectionThread }
 
@@ -1332,26 +980,29 @@ end;
 procedure TFPHTTPConnectionThread.Execute;
 
 var
-  AttemptsLeft: Integer;
+  WaitUntil: QWord;
+
+  procedure SetWaitUntil;
+  begin
+    if Connection.KeepConnectionTimeout>0 then
+      WaitUntil := GetTickCount64+Connection.KeepConnectionTimeout
+    else
+      WaitUntil := 0;
+  end;
 begin
   try
     // Always handle first request
     Connection.HandleRequest;
-    if (Connection.KeepConnectionIdleTimeout>0) and (Connection.KeepConnectionTimeout>0) then
-      AttemptsLeft := Connection.KeepConnectionTimeout div Connection.KeepConnectionIdleTimeout
-    else
-      AttemptsLeft := -1; // infinitely
-    While not Terminated and Connection.AllowNewRequest and (AttemptsLeft<>0) do
+    SetWaitUntil;
+    While not Terminated and Connection.AllowNewRequest and (WaitUntil>0) and (GetTickCount64<WaitUntil) do
       begin
       if Connection.RequestPending then
-        Connection.HandleRequest
-      else // KeepConnectionIdleTimeout was reached without a new request -> idle
         begin
-        if AttemptsLeft>0 then
-          Dec(AttemptsLeft);
-        if AttemptsLeft<>0 then
-          Connection.DoKeepConnectionIdle;
-        end;
+        Connection.HandleRequest;
+        SetWaitUntil;
+        end
+      else // KeepConnectionIdleTimeout was reached without a new request -> idle
+        Connection.DoKeepConnectionIdle;
       end;
   except
     on E : Exception do
@@ -1362,6 +1013,30 @@ begin
 end;
 
 { TFPCustomHttpServer }
+
+function TFPCustomHttpServer.CanLog(aMoment: THTTPLogMoment): Boolean;
+begin
+  Result:=aMoment in FLogMoments;
+end;
+
+procedure TFPCustomHttpServer.DoLog(aType: TEventType; const Msg: String);
+begin
+  if Assigned(FOnLog) then
+    FOnLog(Self,aType,Msg);
+end;
+
+procedure TFPCustomHttpServer.DoLog(aMoment: THTTPLogMoment; const Msg: String);
+begin
+  If CanLog(aMoment) then
+    DoLog(LogMomentEventTypes[aMoment],Msg)
+end;
+
+procedure TFPCustomHttpServer.DoLog(aMoment: THTTPLogMoment; const Fmt: String;
+  const Args: array of const);
+begin
+  if CanLog(aMoment) then
+    DoLog(aMoment,Format(Fmt,Args));
+end;
 
 procedure TFPCustomHttpServer.HandleRequestError(Sender: TObject; E: Exception);
 begin
@@ -1375,7 +1050,7 @@ begin
     end
 end;
 
-procedure TFPCustomHttpServer.DoAcceptError(Sender: TObject; ASocket: Longint;
+procedure TFPCustomHttpServer.DoAcceptError(Sender: TObject; ASocket: TFPSocket;
   E: Exception; var ErrorAction: TAcceptErrorAction);
 begin
   If Not Active then
@@ -1408,6 +1083,30 @@ end;
 procedure TFPCustomHttpServer.DoCreateClientHandler(Sender: TObject; out AHandler: TSocketHandler);
 begin
   AHandler:=GetSocketHandler(UseSSL);
+end;
+
+procedure TFPCustomHttpServer.DoOnAllowConnect(Sender: TObject; ASocket: TFPSocket; var Allow: Boolean);
+const
+  CRLF = #13#10;
+
+  Error503 =
+  'HTTP/1.1 503 Service Unavailable'+CRLF+
+  'Content-Type: text/plain'+CRLF+
+  'Retry-After: 30'+CRLF+
+  'Connection: close'+CRLF+CRLF+
+  'Server is temporarily overloaded. Please try again shortly.';
+
+
+begin
+  if (MaxLiveConnectionCount>0) and (GetConnectionCount>=MaxLiveConnectionCount) then
+    begin
+    if Send503OnMaxConnections then
+      fpSend(aSocket.FD,@Error503[1],Length(Error503),0);
+    // This will close the connection
+    allow:=False;
+    end
+  else
+    Allow:=True;
 end;
 
 procedure TFPCustomHttpServer.DoAcceptIdle(Sender: TObject);
@@ -1597,7 +1296,7 @@ begin
   Con.OnRequestError:=@HandleRequestError;
   Con.OnUnexpectedError:=@HandleUnexpectedError;
   If CanLog(hlmConnect) then
-    DoLog(hlmConnect,SErrAcceptingNewConnection,[Con.ConnectionID, HostAddrToStr(Data.RemoteAddress.sin_addr)]);
+    DoLog(hlmConnect,SErrAcceptingNewConnection,[Con.ConnectionID,  HostAddrToStr(Data.RemoteAddress.sin_addr)]);
   FConnectionHandler.HandleConnection(Con);
 end;
 
@@ -1615,29 +1314,6 @@ begin
   FConnectionHandler:=CreateConnectionHandler();
 end;
 
-function TFPCustomHttpServer.CanLog(aMoment: THTTPLogMoment): Boolean;
-begin
-  Result:=aMoment in FLogMoments;
-end;
-
-procedure TFPCustomHttpServer.DoLog(aType: TEventType; const Msg: String);
-begin
-  if Assigned(FOnLog) then
-    FOnLog(Self,aType,Msg);
-end;
-
-procedure TFPCustomHttpServer.DoLog(aMoment: THTTPLogMoment; const Msg: String);
-begin
-  If CanLog(aMoment) then
-    DoLog(LogMomentEventTypes[aMoment],Msg)
-end;
-
-procedure TFPCustomHttpServer.DoLog(aMoment: THTTPLogMoment; const Fmt: String;
-  const Args: array of const);
-begin
-  if CanLog(aMoment) then
-    DoLog(aMoment,Format(Fmt,Args));
-end;
 
 function TFPCustomHttpServer.CheckUpgrade(aConnection: TFPHTTPConnection; aRequest: TFPHTTPConnectionRequest): Boolean;
 
@@ -1693,6 +1369,7 @@ begin
   LogMomentEventTypes:=aDefaults;
 end;
 
+
 procedure TFPCustomHttpServer.CreateServerSocket;
 
 begin
@@ -1702,9 +1379,9 @@ begin
     FServer:=TInetServer.Create(FAddress,FPort);
   FServer.OnCreateClientSocketHandler:=@DoCreateClientHandler;
   FServer.MaxConnections:=-1;
-  FServer.OnConnectQuery:=OnAllowConnect;
+  FServer.OnConnectSocketQuery:=@DoOnAllowConnect;
   FServer.OnConnect:=@DOConnect;
-  FServer.OnAcceptError:=@DoAcceptError;
+  FServer.OnAcceptSocketError:=@DoAcceptError;
   FServer.OnIdle:=@DoAcceptIdle;
   FServer.AcceptIdleTimeOut:=AcceptIdleTimeout;
 end;
@@ -1739,6 +1416,11 @@ begin
   FCertificateData:=CreateCertificateData;
   FKeepConnections:=False;
   FKeepConnectionIdleTimeout:=DefaultKeepConnectionIdleTimeout;
+  MaxLineLength:=DefaultMaxHeaderLineLength;
+  MaxHeaderCount:=DefaultMaxHeaderCount;
+  FMaxBodySize:=DefaultMaxBodySize;
+  FMaxLiveConnectionCount:=DefaultMaxLiveConnectionCount;
+  FSend503OnMaxConnections:=True;
 end;
 
 
@@ -1826,6 +1508,443 @@ begin
       Delete(Idx);
     end;
 end;
+
+{ TFPHTTPConnection }
+
+function TFPHTTPConnection.ReadString : String;
+
+  Procedure FillBuffer;
+
+  Var
+    R : Integer;
+
+  begin
+    SetLength(FBuffer,ReadBufLen);
+    r:=FSocket.Read(FBuffer[1],ReadBufLen);
+    If r<0 then
+      Raise EHTTPServer.Create(SErrReadingSocket);
+    if (r<ReadBuflen) then
+      SetLength(FBuffer,r);
+  end;
+
+Var
+  CheckLF,Done : Boolean;
+  P,L : integer;
+  Err : EHTTP;
+begin
+  Result:='';
+  Done:=False;
+  CheckLF:=False;
+  Repeat
+    if Length(FBuffer)=0 then
+      FillBuffer;
+    if Length(FBuffer)=0 then
+      Done:=True
+    else if CheckLF then
+      begin
+      If (FBuffer[1]<>#10) then
+        Result:=Result+#13
+      else
+        begin
+        Delete(FBuffer,1,1);
+        Done:=True;
+        end;
+      CheckLF:=False;
+      end;
+    if not Done then
+      begin
+      P:=Pos(#13#10,FBuffer);
+      If P=0 then
+        begin
+        L:=Length(FBuffer);
+        CheckLF:=FBuffer[L]=#13;
+        if CheckLF then
+          Result:=Result+Copy(FBuffer,1,L-1)
+        else
+          Result:=Result+FBuffer;
+        FBuffer:='';
+        end
+      else
+        begin
+        Result:=Result+Copy(FBuffer,1,P-1);
+        Delete(FBuffer,1,P+1);
+        Done:=True;
+        end;
+      end;
+    if (Server.MaxLineLength>0) and (Length(Result)>Server.MaxLineLength) then
+      begin
+      Err:=EHTTP.CreateFmt(SerrRequestHeaderTooLong, [Server.MaxLineLength]);
+      Err.StatusCode:=431 ;
+      Err.StatusText:='REQUEST HEADER FIELDS TOO LARGE';
+      Raise Err;
+      end;
+  until Done;
+end;
+
+procedure TFPHTTPConnection.UnknownHeader(ARequest: TFPHTTPConnectionRequest;
+  const AHeader: String);
+begin
+  // Do nothing
+end;
+
+procedure TFPHTTPConnection.HandleRequestError(E: Exception);
+begin
+  If Assigned(FOnRequestError) then
+    try
+      FOnRequestError(Self,E);
+    except
+      On E : exception do
+        HandleUnexpectedError(E);
+    end
+  else if Assigned(Server) and Server.CanLog(hlmError) then
+    Server.DoLog(hlmError,SErrorDuringRequest,[E.ClassName,E.Message]);
+end;
+
+procedure TFPHTTPConnection.HandleUnexpectedError(E: Exception);
+begin
+  If Assigned(FOnUnexpectedError) then
+    FOnUnexpectedError(Self,E)
+  else if Assigned(Server) and Server.CanLog(hlmError) then
+     Server.DoLog(hlmError,SErrorDuringRequest,[E.ClassName,E.Message]);
+end;
+
+procedure TFPHTTPConnection.SetupSocket;
+begin
+{$if defined(FreeBSD) or defined(Linux)}
+  FSocket.ReadFlags:=MSG_NOSIGNAL;
+  FSocket.WriteFlags:=MSG_NOSIGNAL;
+{$endif}
+  FIsSocketSetup:=True;
+end;
+
+procedure TFPHTTPConnection.SetBusy;
+begin
+  FBusy:=True;
+end;
+
+procedure TFPHTTPConnection.InterPretHeader(ARequest: TFPHTTPConnectionRequest;
+  const AHeader: String);
+
+Var
+  P : Integer;
+  N,V : String;
+
+begin
+  V:=AHeader;
+  P:=Pos(':',V);
+  if (P=0) then
+    begin
+    UnknownHeader(ARequest,Aheader);
+    Exit;
+    end;
+  N:=Copy(V,1,P-1);
+  if SameText(N,'Upgrade') then
+    V:=V;
+  Delete(V,1,P);
+  V:=Trim(V);
+  ARequest.SetFieldByName(N,V);
+end;
+
+procedure TFPHTTPConnection.ParseStartLine(Request : TFPHTTPConnectionRequest;
+  AStartLine : String);
+
+  Function GetNextWord(Var S : String) : string;
+
+  Var
+    P : Integer;
+
+  begin
+    P:=Pos(' ',S);
+    If (P=0) then
+      P:=Length(S)+1;
+    Result:=Copy(S,1,P-1);
+    Delete(S,1,P);
+  end;
+
+Var
+  S : String;
+  I : Integer;
+
+begin
+  if aStartLine='' then
+    exit;
+  Request.Method:=GetNextWord(AStartLine);
+  Request.URL:=GetNextWord(AStartLine);
+  S:=Request.URL;
+  I:=Pos('?',S);
+  if (I>0) then
+    S:=Copy(S,1,I-1);
+  If (Length(S)>1) and (S[1]<>'/') then
+    S:='/'+S
+  else if S='/' then
+    S:='';
+  Request.PathInfo:=S;
+  S:=GetNextWord(AStartLine);
+  If Assigned(Server) and Server.CanLog(hlmRequestStart) then
+    Server.DoLog(hlmRequestStart,SRequestStart,[Request.ToString]);
+  If (S<>'') and (Pos('HTTP/',S)<>1) then
+    begin
+    If Assigned(Server) and Server.CanLog(hlmNoHTTPProtocol) then
+      Server.DoLog(hlmNoHTTPProtocol,SErrLogMissingProtocol,[aStartLine,Request.ToString]);
+    Raise EHTTPServer.CreateFmtHelp(SErrMissingProtocol,[AStartLine],400);
+    end;
+  Delete(S,1,5);
+  Request.ProtocolVersion:=trim(S); 
+end;
+
+procedure TFPHTTPConnection.ReadRequestContent(
+  ARequest: TFPHTTPConnectionRequest);
+
+Var
+  P,R : integer;
+  L : SizeInt;
+  S : TBytes;
+
+begin
+  S:=[];
+  L:=ARequest.ContentLength;
+  if (Server.MaxBodySize>0) and (L>Server.MaxBodySize) then
+    PayloadTooLarge('Payload size exceeds maximum size');
+  If (L>0) then
+    begin
+    SetLength(S,L);
+    P:=Length(FBuffer);
+    if (P>0) then
+      begin
+      if P>L then
+        P:=L;
+      Move(FBuffer[1],S[0],P);
+      FBuffer:='';
+      L:=L-P;
+      end;
+    R:=1;
+    While (L>0) and (R>0) do
+      begin
+      R:=FSocket.Read(S[p],L);
+      If R<0 then
+        Raise EHTTPServer.Create(SErrReadingSocket);
+      if (R>0) then
+        begin
+        P:=P+R;
+        L:=L-R;
+        end;
+      end;
+    end;
+  ARequest.ContentBytes:=S;
+end;
+
+function TFPHTTPConnection.ReadRequestHeaders: TFPHTTPConnectionRequest;
+
+Var
+  StartLine,S : String;
+  Err : EHTTP;
+  Count : integer;
+
+begin
+  Result:=Nil;
+  StartLine:=ReadString;
+  if StartLine='' then
+    exit;
+  Result:=Server.CreateRequest;
+  try
+    Server.InitRequest(Result);
+    Result.FConnection:=Self;
+    ParseStartLine(Result,StartLine);
+    Count:=0;
+    Repeat
+      S:=ReadString;
+      if (S<>'') then
+        InterPretHeader(Result,S);
+      inc(Count);
+      if (Server.MaxHeaderCount>0) and (Count>Server.MaxHeaderCount) then
+        begin
+        Err:=EHTTP.Create('Too many headers');
+        Err.StatusCode:=400;
+        Err.StatusText:='BAD REQUEST';
+        Raise Err;
+        end;
+    Until (S='');
+    Result.RemoteAddress :=  HostAddrToStr(FSocket.RemoteAddress.sin_addr);
+    Result.ServerPort := FServer.Port;
+  except
+    FreeAndNil(Result);
+    Raise;
+  end;
+end;
+
+function TFPHTTPConnection.AllowNewRequest: Boolean;
+begin
+  Result:=not (Busy or IsUpgraded or EmptyDetected);
+  Result:=Result and KeepConnections and KeepAlive and (Socket.LastError=0) ;
+end;
+
+function TFPHTTPConnection.RequestPending: Boolean;
+begin
+  Result:=(Not IsUpgraded) and Socket.CanRead(KeepConnectionIdleTimeout);
+end;
+
+constructor TFPHTTPConnection.Create(AServer: TFPCustomHTTPServer;
+  ASocket: TSocketStream);
+begin
+  FIsUpgraded:=False;
+  FIsSocketSetup:=False;
+  FSocket:=ASocket;
+  FServer:=AServer;
+  AllocateConnectionID;
+end;
+
+destructor TFPHTTPConnection.Destroy;
+
+begin
+  If Assigned(FServer) and FServer.CanLog(hlmDisConnect) then
+    FServer.DoLog(hlmDisconnect,SClosingConnection,[Self.ConnectionID, HostAddrToStr(FSocket.RemoteAddress.sin_addr)]);
+  FreeAndNil(FSocket);
+  Inherited;
+end;
+
+function TFPHTTPConnection.GetLookupHostNames: Boolean;
+
+begin
+  if Assigned(FServer) then
+    Result:=FServer.LookupHostNames
+  else
+    Result:=False;
+end;
+
+procedure TFPHTTPConnection.AllocateConnectionID;
+
+begin
+  if Assigned(IDAllocator) then
+    IDAllocator(FConnectionID);
+  if FConnectionID='' then
+{$IFDEF CPU64}
+    FConnectionID:=IntToStr(InterlockedIncrement64(_ConnectionCount));
+{$ELSE}
+    FConnectionID:=IntToStr(InterlockedIncrement(_ConnectionCount));
+{$ENDIF}
+end;
+
+procedure TFPHTTPConnection.DoHandleRequest;
+
+Var
+  Req : TFPHTTPConnectionRequest;
+  Resp : TFPHTTPConnectionResponse;
+
+begin
+  if IsUpgraded then
+    exit;
+  // Read headers.
+  Resp:=Nil;
+  Req:=ReadRequestHeaders;
+  If Req=Nil then
+    begin
+    If Assigned(Server) and Server.CanLog(hlmEmptyRequest) then
+      Server.DoLog(hlmEmptyRequest,SWarnEmptyRequest);
+    FKeepAlive:=False;
+    FEmptyDetected:=True;
+    exit;
+    end;
+  try
+    If Assigned(Server) and Server.CanLog(hlmHeaders) then
+      Server.DoLog(hlmHeaders,Req.ToString);
+    //set port
+    Req.ServerPort := Server.Port;
+    // Read content, if any
+    If Req.ContentLength>0 then
+      ReadRequestContent(Req);
+    Req.InitRequestVars;
+    If Server.CheckUpgrade(Self,Req) then
+      begin
+      FSocket:=Nil; // Must have been taken over by upgrader
+      FIsUpgraded:=True;
+      Exit;
+      end;
+    if KeepConnections then
+      begin
+      // Read out keep-alive
+      FKeepAlive:=Req.HttpVersion='1.1'; // keep-alive is default on HTTP 1.1
+      if SameText(Req.GetHeader(hhConnection),'close') then
+        FKeepAlive:=False
+      else if SameText(Req.GetHeader(hhConnection),'keep-alive') then
+        FKeepAlive:=True;
+      end;
+    // Create Response
+    Resp:= Server.CreateResponse(Req);
+    Server.InitResponse(Resp);
+    // We set the header here now. User can override it when needed.
+    if FKeepAlive and (Req.HttpVersion='1.0') and not Resp.HeaderIsSet(hhConnection) then
+      Resp.SetHeader(hhConnection,'keep-alive');
+    Resp.FConnection:=Self;
+    // And dispatch
+    if Server.Active then
+      Server.HandleRequest(Req,Resp);
+    if Assigned(Resp) and (not Resp.ContentSent) then
+      Resp.SendContent;
+    If Assigned(Server) and Server.CanLog(hlmRequestDone) then
+      begin
+      if Assigned(Resp) then
+        Server.DoLog(hlmRequestDone,SRequestDone,[Resp.ToString])
+      else
+        Server.DoLog(hlmRequestDone,SRequestDone,['Response was freed']);
+      end;
+  Finally
+    FreeAndNil(Resp);
+    FreeAndNil(Req);
+  end;
+end;
+
+procedure TFPHTTPConnection.DoKeepConnectionIdle;
+begin
+  if Assigned(FServer) then
+    FServer.DoKeepConnectionIdle(Self);
+end;
+
+function TFPHTTPConnection.GetKeepConnections: Boolean;
+begin
+  if Assigned(FServer) then
+    Result := FServer.KeepConnections
+  else
+    Result := False;
+end;
+
+function TFPHTTPConnection.GetKeepConnectionIdleTimeout: Integer;
+begin
+  if Assigned(FServer) then
+    Result := FServer.KeepConnectionIdleTimeout
+  else
+    Result := 0;
+  if Result=0 then
+    Result := KeepConnectionTimeout; // when there is KeepConnectionTimeout set, limit KeepConnectionIdleTimeout with its value
+end;
+
+function TFPHTTPConnection.GetKeepConnectionTimeout: Integer;
+
+begin
+  if Assigned(FServer) then
+    Result := FServer.KeepConnectionTimeout
+  else
+    Result := 0;
+end;
+
+procedure TFPHTTPConnection.HandleRequest;
+
+begin
+  FBusy:=True;
+  Try
+    if not FIsSocketSetup then
+      SetupSocket;
+    DoHandleRequest;
+  Except
+    On E : Exception do
+      begin
+      FKeepAlive:=False; // don't keep alive connections that failed
+      HandleRequestError(E);
+      end;
+  end;
+  FBusy:=False;
+  FLastRequestTime:=GetTickCount64;
+end;
+
 
 end.
 

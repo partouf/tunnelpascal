@@ -106,7 +106,7 @@ unit cgcpu;
 
         procedure a_opmm_reg_reg(list: TAsmList; Op: TOpCG; size : tcgsize;src,dst: tregister;shuffle : pmmshuffle); override;
         { Transform unsupported methods into Internal errors }
-        procedure a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: TCGSize; src, dst: TRegister); override;
+        procedure a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: TCGSize; src, dst: TRegister); override;
 
         { try to generate optimized 32 Bit multiplication, returns true if successful generated }
         function try_optimized_mul32_const_reg_reg(list: TAsmList; a: tcgint; src, dst: tregister) : boolean;
@@ -1779,7 +1779,8 @@ unit cgcpu;
         ai: taicpu;
         l: TAsmLabel;
       begin
-        if needs_check_for_fpu_exceptions and
+        if (FPUARM_HAS_VFP_EXTENSION in fpu_capabilities[current_settings.fputype]) and
+          needs_check_for_fpu_exceptions and
           (force or current_procinfo.FPUExceptionCheckNeeded) then
           begin
             r:=getintregister(list,OS_INT);
@@ -1826,7 +1827,7 @@ unit cgcpu;
       end;
 
 
-    procedure tbasecgarm.a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: TCGSize; src, dst: TRegister);
+    procedure tbasecgarm.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: TCGSize; src, dst: TRegister);
       begin
         if reverse then
           begin
@@ -1840,12 +1841,15 @@ unit cgcpu;
           begin
             list.Concat(taicpu.op_reg_reg(A_RBIT,dst,src));
             list.Concat(taicpu.op_reg_reg(A_CLZ,dst,dst));
-            a_reg_alloc(list,NR_DEFAULTFLAGS);
-            list.Concat(taicpu.op_reg_const(A_CMP,dst,32));
-            if GenerateThumb2Code then
-              list.Concat(taicpu.op_cond(A_IT, C_EQ));
-            list.Concat(setcondition(taicpu.op_reg_const(A_MOV,dst,$ff),C_EQ));
-            a_reg_dealloc(list,NR_DEFAULTFLAGS);
+            if not(not_zero) then
+              begin
+                a_reg_alloc(list,NR_DEFAULTFLAGS);
+                list.Concat(taicpu.op_reg_const(A_CMP,dst,32));
+                if GenerateThumb2Code then
+                  list.Concat(taicpu.op_cond(A_IT, C_EQ));
+                list.Concat(setcondition(taicpu.op_reg_const(A_MOV,dst,$ff),C_EQ));
+                a_reg_dealloc(list,NR_DEFAULTFLAGS);
+              end;
           end;
       end;
 
@@ -2670,7 +2674,7 @@ unit cgcpu;
 
     procedure tbasecgarm.g_concatcopy_internal(list : TAsmList;const source,dest : treference;len : tcgint;aligned : boolean);
       const
-        maxtmpreg_arm = 10; {roozbeh: can be reduced to 8 or lower if might conflick with reserved ones,also +2 is used becouse of regs required for referencing}
+        maxtmpreg_arm = 10; {roozbeh: can be reduced to 8 or lower if might conflict with reserved ones,also +2 is used because of regs required for referencing}
         maxtmpreg_thumb = 5;
 
       type
@@ -2983,7 +2987,7 @@ unit cgcpu;
                 countreg:=getintregister(list,OS_32);
 
 //            if cs_opt_size in current_settings.optimizerswitches  then
-                { roozbeh : it seems loading 1 byte is faster becouse of caching/fetching(?) }
+                { roozbeh : it seems loading 1 byte is faster because of caching/fetching(?) }
                 {if aligned then
                 genloop(len,4)
                 else}
@@ -3530,7 +3534,7 @@ unit cgcpu;
             end;
             if size=OS_64 then
               begin
-                { the arm has an weired opinion how flags for SUB/ADD are handled }
+                { the arm has an weird opinion how flags for SUB/ADD are handled }
                 ovloc.loc:=LOC_FLAGS;
                 case op of
                   OP_ADD:
@@ -3636,7 +3640,7 @@ unit cgcpu;
             ovloc.loc:=LOC_FLAGS;
             if size=OS_64 then
               begin
-                { arm has a weired opinion how flags for SUB/ADD are handled }
+                { arm has a weird opinion how flags for SUB/ADD are handled }
                 case op of
                   OP_ADD:
                     ovloc.resflags:=F_CS;

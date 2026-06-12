@@ -40,7 +40,8 @@ type
     procedure TestGen_Class_OverloadsInUnit;
     procedure TestGen_ClassForward_CircleRTTI;
     procedure TestGen_Class_Nested_RTTI;
-    Procedure TestGen_Class_ClassVarRecord_UnitImpl;
+    procedure TestGen_Class_ClassVarRecord_UnitImpl;
+    procedure TestGen_Class_Field_ArrayOfSpec;
 
     // generic external class
     procedure TestGen_ExtClass_VarArgsOfType;
@@ -328,7 +329,7 @@ begin
     LinesToStr([ // statements
     'var $impl = $mod.$impl;',
     'rtl.recNewT(this, "TAnt$G1", function () {',
-    '  var $r = $mod.$rtti.$Record("TAnt<Test1.TBird>", {});',
+    '  var $r = $mod.$rtti.$Record("TAnt<Test1.TBird>", {}, this);',
     '  this.$initSpec = function () {',
     '    this.x = $impl.TBird.$new();',
     '    $r.addField("x", $mod.$rtti["TBird"]);',
@@ -354,7 +355,7 @@ begin
     '    this.b = s.b;',
     '    return this;',
     '  };',
-    '  var $r = $mod.$rtti.$Record("TBird", {});',
+    '  var $r = $mod.$rtti.$Record("TBird", {}, this);',
     '  $r.addField("b", rtl.word);',
     '});',
     '$impl.f = $mod.TAnt$G1.$new();',
@@ -679,7 +680,7 @@ begin
     '    this.m = 0;',
     '  };',
     '  var $r = this.$rtti;',
-    '  $r.addField("m", rtl.word);',
+    '  $r.addField("m", rtl.word, 4);',
     '}, "TBird<System.Word>");',
     'this.b = null;',
     'this.p = null;',
@@ -838,7 +839,7 @@ begin
   'type',
   '  TObject = class end;',
   '  TPoint<T> = class',
-  '    var x: TPoint;', // alowed in objfpc, forbidden in delphi
+  '    var x: TPoint;', // allowed in objfpc, forbidden in delphi
   '  end;',
   'var p: specialize TPoint<word>;',
   'begin',
@@ -1144,7 +1145,7 @@ begin
     '    $mod.TPersistent.$final.call(this);',
     '  };',
     '  var $r = this.$rtti;',
-    '  $r.addField("f", $mod.$rtti["TFish<System.Word>"]);',
+    '  $r.addField("f", $mod.$rtti["TFish<System.Word>"], 4);',
     '}, "TAnt<System.Word>");',
     'rtl.createClass(this, "TFish$G2", this.TPersistent, function () {',
     '  this.$init = function () {',
@@ -1156,7 +1157,7 @@ begin
     '    $mod.TPersistent.$final.call(this);',
     '  };',
     '  var $r = this.$rtti;',
-    '  $r.addField("a", $mod.$rtti["TAnt<System.Word>"]);',
+    '  $r.addField("a", $mod.$rtti["TAnt<System.Word>"], 4);',
     '}, "TFish<System.Word>");',
     'this.WordFish = null;',
     'this.p = null;',
@@ -1205,7 +1206,7 @@ begin
     '        this.Size = false;',
     '      };',
     '      var $r = this.$rtti;',
-    '      $r.addField("Size", rtl.boolean);',
+    '      $r.addField("Size", rtl.boolean, 4);',
     '    }, "TAnt<System.Boolean>.TLeg");',
     '  }, "TAnt<System.Boolean>");',
     '});']));
@@ -1284,6 +1285,47 @@ begin
     '$mod.$implcode = function () {',
     '  pas.UnitA.TAnt$G1.$initSpec();',
     '};',
+    '']),
+    LinesToStr([ // $mod.$main
+    '']));
+end;
+
+procedure TTestGenerics.TestGen_Class_Field_ArrayOfSpec;
+begin
+  StartProgram(false);
+  Add([
+  '{$mode delphi}',
+  'type',
+  '  TObject = class',
+  '  end;',
+  '  TWing<T> = class',
+  '  end;',
+  '  TBird = class',
+  '    Wings: array of TWing<string>;',
+  '  end;',
+  'begin',
+  'end.']);
+  ConvertProgram;
+  CheckSource('TestGen_Class_Field_ArrayOfSpec',
+    LinesToStr([ // statements
+    'rtl.createClass(this, "TObject", null, function () {',
+    '  this.$init = function () {',
+    '  };',
+    '  this.$final = function () {',
+    '  };',
+    '});',
+    'rtl.createClass(this, "TWing$G1", this.TObject, function () {',
+    '}, "TWing<System.String>");',
+    'rtl.createClass(this, "TBird", this.TObject, function () {',
+    '  this.$init = function () {',
+    '    $mod.TObject.$init.call(this);',
+    '    this.Wings = [];',
+    '  };',
+    '  this.$final = function () {',
+    '    this.Wings = undefined;',
+    '    $mod.TObject.$final.call(this);',
+    '  };',
+    '});',
     '']),
     LinesToStr([ // $mod.$main
     '']));
@@ -1524,7 +1566,7 @@ begin
     '        this.b = s.b;',
     '        return this;',
     '      };',
-    '      var $r = $mod.$rtti.$Record("TBird", {});',
+    '      var $r = $mod.$rtti.$Record("TBird", {}, this);',
     '      $r.addField("b", rtl.word);',
     '    });',
     '    $impl.f = null;',
@@ -2735,7 +2777,7 @@ begin
     '        this.b = s.b;',
     '        return this;',
     '      };',
-    '      var $r = $mod.$rtti.$Record("TBird", {});',
+    '      var $r = $mod.$rtti.$Record("TBird", {}, this);',
     '      $r.addField("b", rtl.word);',
     '    });',
     '    rtl.createClass($impl, "TAnt", pas.system.TObject, function () {',
@@ -2909,7 +2951,7 @@ begin
     '        this.b = s.b;',
     '        return this;',
     '      };',
-    '      var $r = $mod.$rtti.$Record("TBird", {});',
+    '      var $r = $mod.$rtti.$Record("TBird", {}, this);',
     '      $r.addField("b", rtl.word);',
     '    });',
     '    $impl.f = null;',

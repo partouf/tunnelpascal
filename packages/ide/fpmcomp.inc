@@ -14,42 +14,28 @@
  **********************************************************************}
 
 procedure TIDEApp.Target;
-var R,R2: TRect;
-    D: PCenterDialog;
-    RB: PRadioButtons;
-    TargetCount,I: integer;
-    LastItem: PSItem;
+var R: TRect;
+    D: PFPSwitchesDialog;
+    TargetHeight: Sw_Integer;
     L: longint;
 begin
-  TargetCount:=TargetSwitches^.ItemCount;
-  R.Assign(0,0,60,4+TargetCount);
-  New(D, Init(R, dialog_target));
-  with D^ do
-  begin
-    HelpCtx:=hcTarget;
-    GetExtent(R); R.Grow(-3,-1); Inc(R.A.Y);
-    R2.Copy(R); Inc(R2.A.Y); R2.B.Y:=R2.A.Y+TargetCount;
-    LastItem:=nil;
-    for I:=TargetCount-1 downto 0 do
-      LastItem:=NewSItem(TargetSwitches^.ItemName(I), LastItem);
-    New(RB, Init(R2, LastItem));
-    L:=ord(TargetSwitches^.GetCurrSel);
-    RB^.SetData(L);
-    Insert(RB);
-    R2.Copy(R);
-    R2.B.Y:=R2.A.Y+1;
-    Insert(New(PLabel, Init(R2, label_target_platform, RB)));
-  end;
-  InsertButtons(D);
-  RB^.Select;
+  TargetHeight:=TargetSwitches^.ItemCount;
+  GetExtent(R);
+  if (R.B.Y-R.A.Y) < (TargetHeight+9) then TargetHeight:= (R.B.Y-R.A.Y)-9;
+  if TargetHeight<3 then TargetHeight:=3;
+  R.Assign(0,0,60,4+TargetHeight);
+  New(D, Init(R, dialog_target, label_target_platform, TargetSwitches));
+  D^.HelpCtx:=hcTarget;
+  L:=D^.RB^.Value;
   if Desktop^.ExecView(D)=cmOK then
     begin
-       TargetSwitches^.SetCurrSel(RB^.Value);
-       { we allways need to recompile if we change
+       TargetSwitches^.SetCurrSel(D^.RB^.Value);
+       { we always need to recompile if we change
          the target OS PM }
-       if L<>RB^.Value then
+       if L<>D^.RB^.Value then
          PrevMainFile:='';
        UpdateTarget;
+       UpdateAsmOutputSwitches;
     end;
   Dispose(D, Done);
 end;
@@ -80,7 +66,7 @@ end;
 
 procedure TIDEApp.DoPrimaryFile;
 var
-  D : PFileDialog;
+  D : PFPFileDialog;
   FileName : string;
 begin
   New(D, Init('*.pri;*.pas',label_primaryfile_primaryfile,'*.pri;*.pas',fdOpenButton,hidPrimaryFile));

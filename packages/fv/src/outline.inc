@@ -317,7 +317,7 @@ var position:sw_integer;
       begin
         if not lastchild then
           lines:=lines or (1 shl level);
-        {Iterate all childs.}
+        {Iterate all children}
         childcount:=getnumchildren(cur);
         for i:=0 to childcount-1 do
           begin
@@ -349,7 +349,8 @@ var c_normal,c_normal_x,c_select,c_focus:byte;
   function draw_item(cur:pointer;level,position:sw_integer;
                      lines:longint;flags:word):boolean;
 
-  var c,i:byte;
+  var c:byte;
+      i:sw_integer;
 {$ifdef FV_UNICODE}
       s,t:UnicodeString;
 {$else FV_UNICODE}

@@ -21,7 +21,7 @@
  ****************************************************************************
 }
 {# @abstract(Abstract code generator unit)
-   Abstreact code generator unit. This contains the base class
+   Abstract code generator unit. This contains the base class
    to implement for all new supported processors.
 
    WARNING: None of the routines implemented in these modules,
@@ -267,7 +267,7 @@ unit cgobj;
           procedure a_loadaddr_ref_reg(list : TAsmList;const ref : treference;r : tregister);virtual; abstract;
 
           { bit scan instructions }
-          procedure a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); virtual;
+          procedure a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); virtual;
 
           { Multiplication with doubling result size.
             dstlo or dsthi may be NR_NO, in which case corresponding half of result is discarded. }
@@ -600,7 +600,7 @@ implementation
        cpuinfo;
 
 {*****************************************************************************
-                            basic functionallity
+                            basic functionality
 ******************************************************************************}
 
     constructor tcg.create;
@@ -1903,7 +1903,7 @@ implementation
               end;
             LOC_REGISTER,LOC_CREGISTER:
               begin
-                { paramfpu_ref does the check_simpe_location check here if necessary }
+                { paramfpu_ref does the check_simple_location check here if necessary }
                 tg.GetTemp(list,TCGSize2Size[size],TCGSize2Size[size],tt_normal,ref);
                 a_loadfpu_reg_ref(list,size,size,r,ref);
                 a_loadfpu_ref_cgpara(list,size,ref,cgpara);
@@ -3026,7 +3026,7 @@ implementation
       end;
 
 
-    procedure tcg.a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
+    procedure tcg.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
       begin
         internalerror(2014070601);
       end;

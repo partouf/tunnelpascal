@@ -81,7 +81,7 @@ implementation
       aasmbase,aasmdata,
       cgbase,pass_2,
       cpubase,procinfo,
-      ncon,ncal,
+      nadd,ncon,ncal,nutils,
       tgobj,ncgutil,
       cgutils,cgobj,hlcgobj,
       defcmp
@@ -632,7 +632,7 @@ implementation
 
           location_reset(location,LOC_VOID,OS_NO);
 
-{$ifndef cpu64bitalu}
+{$if not defined(cpu64bitalu) } // and not defined(cpuhighleveltarget)}
           if (def_cgsize(left.resultdef) in [OS_64,OS_S64]) and (left.location.loc in [LOC_REGISTER,LOC_CREGISTER,LOC_REFERENCE,LOC_CREFERENCE]) then
             cg64.a_op64_loc(current_asmdata.CurrAsmList,negnotop[inlinenumber],def_cgsize(left.resultdef),left.location)
           else
@@ -997,7 +997,6 @@ implementation
       reverse: boolean;
       opsize: tcgsize;
     begin
-      reverse:=(inlinenumber = in_bsr_x);
       secondpass(left);
 
       opsize:=tcgsize2unsigned[left.location.size];
@@ -1006,7 +1005,7 @@ implementation
 
       location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
       location.register:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
-      cg.a_bit_scan_reg_reg(current_asmdata.CurrAsmList,reverse,opsize,location.size,left.location.register,location.register);
+      cg.a_bit_scan_reg_reg(current_asmdata.CurrAsmList,inlinenumber=in_bsr_x,node_not_zero(left),opsize,location.size,left.location.register,location.register);
     end;
 
 

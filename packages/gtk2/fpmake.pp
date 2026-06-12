@@ -18,7 +18,9 @@ begin
 {$endif ALLPACKAGES}
     P.Version:='3.3.1';
     P.SupportBuildModes := [bmOneByOne];
-    P.OSes:=AllUnixOSes+[Win32,Win64]-[darwin,iphonesim,ios,Android];
+    P.OSes:=AllUnixOSes+[Win32,Win64]-[darwin,iphonesim,ios];
+    if Defaults.CPU=jvm then
+      P.OSes := P.OSes - [android];
     if Defaults.CPU<>arm then
       P.OSes := P.OSes + [darwin];
 
@@ -1234,7 +1236,7 @@ begin
           AddInclude('pango-matrix.inc');
           AddInclude('pango-renderer.inc');
         end;
-    
+
     T:=P.Targets.AddImplicitUnit('src/pangocairo/pangocairo.pas');
       T.IncludePath.Add('src/pangocairo');
 
@@ -1246,14 +1248,14 @@ begin
           AddInclude('gtkstatusicon.inc');
 	  AddInclude('gtkscalebuttonh.inc');
 	  AddInclude('gtkscalebutton.inc');
-	  AddInclude('gtkvolumebuttonh.inc');	  
-	  AddInclude('gtkvolumebutton.inc');	  
+	  AddInclude('gtkvolumebuttonh.inc');
+	  AddInclude('gtkvolumebutton.inc');
 	  AddInclude('gtktextmarkh.inc');
 	  AddInclude('gtktextmark.inc');
 	  AddInclude('gtktextiterh.inc');
 	  AddInclude('gtktextiter.inc');
         end;
-// For some reson this isn't build in the buildunit nor the Makefile.fpc
+// For some reason this isn't build in the buildunit nor the Makefile.fpc
 {     T:=P.Targets.AddUnit('src/gtkhtml/gtkhtml.pas');
        T.IncludePath.Add('src/gtkhtml');
        with T.Dependencies do

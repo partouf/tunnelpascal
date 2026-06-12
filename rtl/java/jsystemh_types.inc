@@ -27,8 +27,8 @@
 {$endif}
 
 { Using inlining for small system functions/wrappers }
-{$inline on}
 {$ifndef DISABLE_SYSTEMINLINE}
+  {$inline on}
   {$define SYSTEMINLINE}
 {$endif}
 
@@ -365,6 +365,20 @@ Type
   ValUInt = Word;
 {$endif CPU16}
 
+{$if defined(CPUINT8)}
+  ALUSInt = ShortInt;
+  ALUUInt = Byte;
+{$elseif defined(CPUINT16)}
+  ALUSInt = SmallInt;
+  ALUUInt = Word;
+{$elseif defined(CPUINT32)}
+  ALUSInt = Longint;
+  ALUUInt = DWord;
+{$elseif defined(CPUINT64)}
+  ALUSInt = Int64;
+  ALUUInt = QWord;
+{$endif defined(CPUINT64)}
+
   { NativeInt and NativeUInt are Delphi compatibility types. Even though Delphi
     has IntPtr and UIntPtr, the Delphi documentation for NativeInt states that
     'The size of NativeInt is equivalent to the size of the pointer on the
@@ -403,7 +417,7 @@ Type
   PAnsiChar           = ^AnsiChar;
   PPAnsiChar          = ^PAnsiChar;
   PPPAnsiChar         = ^PPAnsiChar;
-  
+
   // Char is an alias
   PChar               = ^Char;
   PPChar              = ^PChar;
@@ -419,18 +433,9 @@ Type
   PUCS4CharArray      = ^TUCS4CharArray;
   UCS4String          = array of UCS4Char;
 
-{$ifdef FPC_HAS_CPSTRING}
   UTF8String          = type AnsiString(CP_UTF8);
-{$else FPC_HAS_CPSTRING}
-  UTF8String          = type ansistring;
-{$endif FPC_HAS_CPSTRING}
   PUTF8String         = ^UTF8String;
-
-{$ifdef FPC_HAS_CPSTRING}
   RawByteString       = type AnsiString(CP_NONE);
-{$else FPC_HAS_CPSTRING}
-  RawByteString       = ansistring;
-{$endif FPC_HAS_CPSTRING}
 
   HRESULT             = type Longint;
 {$ifndef FPUNONE}
@@ -685,9 +690,9 @@ const
 var
 {$endif FPC_HAS_FEATURE_DYNLIBS}
   IsConsole : boolean = false; public name 'operatingsystem_isconsole';
-  NoErrMsg: Boolean platform = False; // For Delphi compatibility, not used in FPC.
+  NoErrMsg: Boolean platform = False;
   FirstDotAtFileNameStartIsExtension : Boolean = False;
-  
+
   DefaultSystemCodePage,
   DefaultUnicodeCodePage,
   { the code page to use when sending paths/file names to OS file system API

@@ -35,20 +35,38 @@ type
 
   TVisibilityClass = (vcPrivate, vcProtected, vcPublic, vcPublished);
   TVisibilityClasses = set of TVisibilityClass;
- 
+
  {$MINENUMSIZE DEFAULT}
- 
+
 const
 {$IFNDEF SMALLRTTI}
   DefaultFieldRttiVisibility = [vcPrivate..vcPublished];
-  DefaultMethodRttiVisibility = [vcPublic..vcPublished];
-  DefaultPropertyRttiVisibility = [vcPublic..vcPublished];
+  DefaultMethodRttiVisibility = [vcPublic,vcPublished];
+  DefaultPropertyRttiVisibility = [vcPublic,vcPublished];
 {$ELSE SMALLRTTI}
   DefaultFieldRttiVisibility = [];
   DefaultMethodRttiVisibility = [];
   DefaultPropertyRttiVisibility = [];
 {$ENDIF SMALLRTTI}
- 
+
+ { Default RTTI settings }
+
+{$IFDEF FPC_HAS_FEATURE_RTTI}
+{$IFDEF ENABLE_DELPHI_RTTI}
+
+{$Message WARN 'Delphi RTTI enabled'}
+
+{$RTTI INHERIT
+   METHODS(DefaultMethodRttiVisibility)
+   FIELDS(DefaultFieldRttiVisibility)
+   PROPERTIES(DefaultPropertyRttiVisibility)
+}
+
+{$ENDIF ENABLE_DELPHI_RTTI}
+
+{$ENDIF FPC_HAS_FEATURE_RTTI}
+
+
 
 {$POP}
 
@@ -61,9 +79,10 @@ const
   tkWideString = tkWString;
   tkUnicodeString = tkUString;
 
-{$ifdef FPC_HAS_FEATURE_RTTI}
+{$IFDEF FPC_HAS_FEATURE_RTTI}
 procedure InitializeArray(p, typeInfo: Pointer; count: SizeInt);
 procedure FinalizeArray(p, typeInfo: Pointer; count: SizeInt);
+procedure AddRefArray(p, typeInfo: Pointer; count: SizeInt);
 procedure CopyArray(dest, source, typeInfo: Pointer; count: SizeInt);
 {$endif FPC_HAS_FEATURE_RTTI}
 

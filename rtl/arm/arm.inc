@@ -323,7 +323,7 @@ asm
         mov     ip,r2
 .LFillchar_at_least_8bytes:
         // Do 16 bytes per loop
-        // More unrolling is uncessary, as we'll just stall on the write buffers
+        // More unrolling is unnecessary, as we'll just stall on the write buffers
         stmia   r3!,{r2,ip}
         subs    r1,r1,#8
         stmplia r3!,{r2,ip}
@@ -763,7 +763,12 @@ end;
   {$endif FPC_PIC}
 {$endif}
 
+{$ifdef VER3_2}
 function InterLockedDecrement (var Target: longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_DEC_32}
+function fpc_atomic_dec_32 (var Target: longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 asm
 {$ifdef CPUARM_HAS_LDREX}
 .Lloop:
@@ -783,18 +788,18 @@ asm
 
   // We expect this to work without looping most of the time
   // R3 gets clobbered in kuser_cmpxchg so in the unlikely case that we have to
-  // loop here again, we have to reload the value. Normaly this just fills the
+  // loop here again, we have to reload the value. Normally this just fills the
   // load stall-cycles from the above ldr so in reality we'll not get any additional
   // delays because of this
   // Don't use ldr to load r3 to avoid cacheline trashing
-  // Load 0xffff0fff into r3 and substract to 0xffff0fc0,
+  // Load 0xffff0fff into r3 and subtract to 0xffff0fc0,
   // the kuser_cmpxchg entry point
   mvn r3, #0x0000f000
   sub r3, r3, #0x3F
 
   sub r1, r0, #1 // Decrement value
 {$ifdef CPUARM_HAS_BLX}
-  blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
+  blx r3       // Call kuser_cmpxchg, sets C-Flag on success
 {$else}
   mov lr, pc
 {$ifdef CPUARM_HAS_BX}
@@ -805,7 +810,7 @@ asm
 {$endif}
   // MOVS sets the Z flag when the result reaches zero, this can be used later on
   // The C-Flag will not be modified by this because we're not doing any shifting
-  movcss r0, r1	 // We expect that to work most of the time so keep it pipeline friendly
+  movcss r0, r1     // We expect that to work most of the time so keep it pipeline friendly
   ldmcsfd r13!, {pc}
   b .Latomic_dec_loop // kuser_cmpxchg sets C flag on error
 
@@ -846,7 +851,12 @@ asm
 {$endif}
 end;
 
+{$ifdef VER3_2}
 function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_INC_32}
+function fpc_atomic_inc_32 (var Target: longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 asm
 {$ifdef CPUARM_HAS_LDREX}
 .Lloop:
@@ -866,18 +876,18 @@ asm
 
   // We expect this to work without looping most of the time
   // R3 gets clobbered in kuser_cmpxchg so in the unlikely case that we have to
-  // loop here again, we have to reload the value. Normaly this just fills the
+  // loop here again, we have to reload the value. Normally this just fills the
   // load stall-cycles from the above ldr so in reality we'll not get any additional
   // delays because of this
   // Don't use ldr to load r3 to avoid cacheline trashing
-  // Load 0xffff0fff into r3 and substract to 0xffff0fc0,
+  // Load 0xffff0fff into r3 and subtract to 0xffff0fc0,
   // the kuser_cmpxchg entry point
   mvn r3, #0x0000f000
   sub r3, r3, #0x3F
 
   add r1, r0, #1 // Increment value
 {$ifdef CPUARM_HAS_BLX}
-  blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
+  blx r3     // Call kuser_cmpxchg, sets C-Flag on success
 {$else}
   mov lr, pc
 {$ifdef CPUARM_HAS_BX}
@@ -886,7 +896,7 @@ asm
   mov pc, r3
 {$endif}
 {$endif}
-  movcs r0, r1	 // We expect that to work most of the time so keep it pipeline friendly
+  movcs r0, r1     // We expect that to work most of the time so keep it pipeline friendly
   ldmcsfd r13!, {pc}
   b .Latomic_inc_loop // kuser_cmpxchg sets C flag on error
 
@@ -927,7 +937,12 @@ asm
 {$endif}
 end;
 
+{$ifdef VER3_2}
 function InterLockedExchange (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_XCHG_32}
+function fpc_atomic_xchg_32 (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 asm
 {$ifdef CPUARM_HAS_LDREX}
 // swp is deprecated on ARMv6 and above
@@ -947,17 +962,17 @@ asm
 
   // We expect this to work without looping most of the time
   // R3 gets clobbered in kuser_cmpxchg so in the unlikely case that we have to
-  // loop here again, we have to reload the value. Normaly this just fills the
+  // loop here again, we have to reload the value. Normally this just fills the
   // load stall-cycles from the above ldr so in reality we'll not get any additional
   // delays because of this
   // Don't use ldr to load r3 to avoid cacheline trashing
-  // Load 0xffff0fff into r3 and substract to 0xffff0fc0,
+  // Load 0xffff0fff into r3 and subtract to 0xffff0fc0,
   // the kuser_cmpxchg entry point
   mvn r3, #0x0000f000
   sub r3, r3, #0x3F
   mov r4, r0     // save the current value because kuser_cmpxchg clobbers r0
 {$ifdef CPUARM_HAS_BLX}
-  blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
+  blx r3     // Call kuser_cmpxchg, sets C-Flag on success
 {$else}
   mov lr, pc
 {$ifdef CPUARM_HAS_BX}
@@ -1008,7 +1023,12 @@ asm
 {$endif}
 end;
 
+{$ifdef VER3_2}
 function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_ADD_32}
+function fpc_atomic_add_32 (var Target: longint;Value : longint) : longint; assembler; nostackframe;
+{$endif VER3_2}
 asm
 {$ifdef CPUARM_HAS_LDREX}
 .Lloop:
@@ -1029,18 +1049,18 @@ asm
 
   // We expect this to work without looping most of the time
   // R3 gets clobbered in kuser_cmpxchg so in the unlikely case that we have to
-  // loop here again, we have to reload the value. Normaly this just fills the
+  // loop here again, we have to reload the value. Normally this just fills the
   // load stall-cycles from the above ldr so in reality we'll not get any additional
   // delays because of this
   // Don't use ldr to load r3 to avoid cacheline trashing
-  // Load 0xffff0fff into r3 and substract to 0xffff0fc0,
+  // Load 0xffff0fff into r3 and subtract to 0xffff0fc0,
   // the kuser_cmpxchg entry point
   mvn r3, #0x0000f000
   sub r3, r3, #0x3F
 
   add r1, r0, r4 // Add to value
 {$ifdef CPUARM_HAS_BLX}
-  blx r3	 // Call kuser_cmpxchg, sets C-Flag on success
+  blx r3     // Call kuser_cmpxchg, sets C-Flag on success
 {$else}
   mov lr, pc
 {$ifdef CPUARM_HAS_BX}
@@ -1096,7 +1116,12 @@ asm
 end;
 
 
+{$ifdef VER3_2}
 function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; assembler; nostackframe;
+{$else VER3_2}
+{$define FPC_SYSTEM_HAS_ATOMIC_CMP_XCHG_32}
+function fpc_atomic_cmp_xchg_32 (var Target: longint; NewValue: longint; Comparand: longint) : longint; [public,alias:'FPC_ATOMIC_CMP_XCHG_32']; assembler; nostackframe;
+{$endif VER3_2}
 asm
 {$ifdef CPUARM_HAS_LDREX}
 .Lloop:
@@ -1138,7 +1163,7 @@ asm
   // The error case is a bit tricky, kuser_cmpxchg does not return the current value
   // So we may need to loop to avoid race conditions
   // The loop case is HIGHLY unlikely, it would require that we got rescheduled between
-  // calling kuser_cmpxchg and the ldr. While beeing rescheduled another process/thread
+  // calling kuser_cmpxchg and the ldr. While being rescheduled another process/thread
   // would have the set the value to our comperand
   ldr   r0, [r2] // Load the currently set value
   cmp   r0, r4   // Return if Comperand != current value, otherwise loop again
@@ -1246,14 +1271,14 @@ But FPC currently does not support inlining of asm-functions, so the whole call-
 is bigger than the gain of the optimized function.
 function AsmSwapEndian(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif};assembler;nostackframe;
 asm
-	// We're starting with 4321
+    // We're starting with 4321
 {$if defined(CPUARM_HAS_REV)}
-	rev r0, r0		// Reverse byteorder    r0 = 1234
-	mov r0, r0, shr #16	// Shift down to 16bits r0 = 0012
+    rev r0, r0        // Reverse byteorder    r0 = 1234
+    mov r0, r0, shr #16    // Shift down to 16bits r0 = 0012
 {$else}
-	mov r0, r0, shl #16	// Shift to make that 2100
-	mov r0, r0, ror #24	// Rotate to 1002
-	orr r0, r0, r0 shr #16  // Shift and combine into 0012
+    mov r0, r0, shl #16    // Shift to make that 2100
+    mov r0, r0, ror #24    // Rotate to 1002
+    orr r0, r0, r0 shr #16  // Shift and combine into 0012
 {$endif}
 end;
 
@@ -1321,7 +1346,7 @@ end;
 procedure barrier; assembler; nostackframe;
 asm
   // manually encode the instructions to avoid bootstrap and -march external
-  // assembler settings 
+  // assembler settings
 {$ifdef CPUARM_HAS_DMB}
   .long 0xf57ff05f  // dmb sy
 {$else CPUARM_HAS_DMB}
@@ -1373,7 +1398,7 @@ asm
 {$else CPUARM_HAS_DMB}
 {$ifdef CPUARMV6}
   mov r0, #0
-  .long 0xee070fba  // mcr 15, 0, r0, cr7, cr10, {5} 
+  .long 0xee070fba  // mcr 15, 0, r0, cr7, cr10, {5}
 {$else CPUARMV6}
 {$ifdef SYSTEM_HAS_KUSER_MEMORY_BARRIER}
   stmfd r13!, {lr}

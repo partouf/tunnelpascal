@@ -72,7 +72,7 @@ type
     _type : word;
   end;
   PCoffRelocation = ^TCoffRelocation;
-  
+
   { TCoffRelocations }
 
   TCoffRelocations = class
@@ -434,6 +434,7 @@ begin
   st.SectionNumber:=1;
   st._type:=0;
   st.StorageClass:=fSymStorageClass;
+  st.NumAuxSymbol:=0;
   if OppositeEndianess then
     begin
       st.Value:=SwapEndian(st.Value);
@@ -495,7 +496,7 @@ begin
       hdr.characteristics:=SwapEndian(hdr.characteristics);
     end;
   aStream.WriteBuffer(hdr,sizeof(hdr));
-  
+
   aStream.Position:=oldpos;
 
 end;

@@ -334,7 +334,7 @@ Var
   HasData: Boolean;
   D : DWord;
   Q : QWord;
-  
+
 begin
   //writeln('TXmlRegistry.DoGetValueData: Name=',Name,' IsUnicode=',IsUnicode);
   Node:=FindValueKey(Name);
@@ -603,9 +603,13 @@ begin
     FDocument.Free;
     FDocument:=Nil;
     end;
-  ReadXMLFile(FDocument,S);
-  if (FDocument=Nil) then
+  try
+    ReadXMLFile(FDocument,S);
+    if (FDocument=Nil) then
+      CreateEmptyDoc;
+  except
     CreateEmptyDoc;
+  end;
   SetRootKey('HKEY_CURRENT_USER');
   FDirty:=False;
 end;
@@ -713,7 +717,7 @@ Var
   N  : TDomElement;
   DN : TDomNode;
   L : Integer;
-  S: Ansistring; 
+  S: Ansistring;
 begin
   N:=FindValueKey(Name);
   Result:=(N<>Nil);

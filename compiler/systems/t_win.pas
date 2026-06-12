@@ -1157,15 +1157,15 @@ implementation
 {$ifdef arm}
            targetopts:='-m arm_wince_pe';
 {$endif arm}
-           ExeCmd[1]:='ld '+targetopts+' $OPT $GCSECTIONS $MAP $STRIP $APPTYPE $ENTRY  $IMAGEBASE $RELOC -o $EXE $RES';
-           DllCmd[1]:='ld '+targetopts+' $OPT $GCSECTIONS $MAP $STRIP --dll $APPTYPE $ENTRY  $IMAGEBASE $RELOC -o $EXE $RES';
+           ExeCmd[1]:='ld '+targetopts+' $OPT $GCSECTIONS $MAP $STRIP $APPTYPE $ENTRY  $IMAGEBASE $RELOC -o $EXE -T $RES';
+           DllCmd[1]:='ld '+targetopts+' $OPT $GCSECTIONS $MAP $STRIP --dll $APPTYPE $ENTRY  $IMAGEBASE $RELOC -o $EXE -T $RES';
            { ExeCmd[2]:='dlltool --as $ASBIN --dllname $EXE --output-exp exp.$$$ $RELOC $DEF';
              use short forms to avoid 128 char limitation problem }
            ExeCmd[2]:='dlltool -S $ASBIN -D $EXE -e exp.$$$ $RELOC $DEF';
-           ExeCmd[3]:='ld '+targetopts+' $OPT $STRIP $APPTYPE $ENTRY $IMAGEBASE -o $EXE $RES exp.$$$';
+           ExeCmd[3]:='ld '+targetopts+' $OPT $STRIP $APPTYPE $ENTRY $IMAGEBASE -o $EXE -T $RES exp.$$$';
            { DllCmd[2]:='dlltool --as $ASBIN --dllname $EXE --output-exp exp.$$$ $RELOC $DEF'; }
            DllCmd[2]:='dlltool -S $ASBIN -D $EXE -e exp.$$$ $RELOC $DEF';
-           DllCmd[3]:='ld '+targetopts+' $OPT $STRIP --dll $APPTYPE $ENTRY  $IMAGEBASE -o $EXE $RES exp.$$$';
+           DllCmd[3]:='ld '+targetopts+' $OPT $STRIP --dll $APPTYPE $ENTRY  $IMAGEBASE -o $EXE -T $RES exp.$$$';
          end;
       end;
 
@@ -1362,6 +1362,7 @@ implementation
             Add('    ___crt_xt_start__ = . ;');
             Add('    *(SORT(.CRT$XT*))  /* Termination */');
             Add('    ___crt_xt_end__ = . ;');
+            Add('    . = . ; /* This forces GNU linker to keep the section even if it is empty */');
             Add('  }');
             Add('  .tls BLOCK(__section_alignment__) :');
             Add('  {');
@@ -1370,6 +1371,7 @@ implementation
             Add('    *(.tls$)');
             Add('    *(SORT(.tls$*))');
             Add('    ___tls_end__ = . ;');
+            Add('    . = . ; /* This forces GNU linker to keep the section even if it is empty */');
             Add('  }');
             Add('  .rsrc BLOCK(__section_alignment__) :');
             Add('  {');
@@ -1499,7 +1501,7 @@ implementation
         if success then
          success:=PostProcessExecutable(current_module.exefilename,false);
 
-      { Remove ReponseFile }
+      { Remove ResponseFile }
         if (success) and not(cs_link_nolink in current_settings.globalswitches) then
          begin
            DeleteFile(outputexedir+Info.ResName);
@@ -1605,7 +1607,7 @@ implementation
         if success then
          success:=PostProcessExecutable(current_module.sharedlibfilename,true);
 
-      { Remove ReponseFile }
+      { Remove ResponseFile }
         if (success) and not(cs_link_nolink in current_settings.globalswitches) then
          begin
            DeleteFile(outputexedir+Info.ResName);
@@ -1690,11 +1692,15 @@ implementation
           Message1(execinfo_f_cant_open_executable,fn);
         { read headers }
         blockread(f,dosheader,sizeof(tdosheader));
+        if source_info.endian<>target_info.endian then
+          dosheader.e_lfanew:=SwapEndian(dosheader.e_lfanew);
         peheaderpos:=dosheader.e_lfanew;
         { skip to headerpos and skip pe magic }
         seek(f,peheaderpos+4);
         blockread(f,peheader,sizeof(tcoffheader));
+	maybeswap(peheader);
         blockread(f,peoptheader,sizeof(tcoffpeoptheader));
+	maybeswap(peoptheader);
         { write info }
         Message1(execinfo_x_codesize,tostr(peoptheader.tsize));
         Message1(execinfo_x_initdatasize,tostr(peoptheader.dsize));
@@ -1737,16 +1743,20 @@ implementation
         peheader.time:=0;
         { write header back, skip pe magic }
         seek(f,peheaderpos+4);
+	maybeswap(peheader);
         blockwrite(f,peheader,sizeof(tcoffheader));
         if ioresult<>0 then
           Message1(execinfo_f_cant_process_executable,fn);
+	maybeswap(peoptheader);
         blockwrite(f,peoptheader,sizeof(tcoffpeoptheader));
         if ioresult<>0 then
           Message1(execinfo_f_cant_process_executable,fn);
         { skip to headerpos and skip pe magic }
         seek(f,peheaderpos+4);
         blockread(f,peheader,sizeof(tcoffheader));
+	maybeswap(peheader);
         blockread(f,peoptheader,sizeof(tcoffpeoptheader));
+	maybeswap(peoptheader);
         { write the value after the change }
         Message1(execinfo_x_stackreserve,tostr(peoptheader.SizeOfStackReserve));
         Message1(execinfo_x_stackcommit,tostr(peoptheader.SizeOfStackCommit));
@@ -1757,6 +1767,7 @@ implementation
         for l:=1 to peheader.nsects do
          begin
            blockread(f,coffsec,sizeof(tcoffsechdr));
+	   maybeswap(coffsec);
            if coffsec.datapos>0 then
             begin
               if secroot=nil then
@@ -1795,7 +1806,7 @@ implementation
         freemem(zerobuf,maxfillsize);
         close(f);
         {$pop}
-        if ioresult<>0 then;
+        if ioresult<>0 then
           postprocessexecutable:=true;
       end;
 

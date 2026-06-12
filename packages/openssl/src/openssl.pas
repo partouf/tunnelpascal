@@ -49,7 +49,7 @@ unit openssl;
 |                                                                              |
 | 2010 - Felipe Monteiro de Carvalho - Added RAND functios                     |
 |==============================================================================|
-|  2010-08-24 add fuctions to hash strings based on rsa key PEM format         |
+|  2010-08-24 add functions to hash strings based on rsa key PEM format        |
 |             change some type declarationc on x509 type                       |
 |             work is not complete.                                            |
 |             Work made by Alberto Brito based on unit from                    |
@@ -75,7 +75,7 @@ Special thanks to Gregor Ibic <gregor.ibic@intelicom.si>
 {:@abstract(OpenSSL support)
 
 This unit is Pascal interface to OpenSSL library (used by @link(ssl_openssl) unit).
-OpenSSL is loaded dynamicly on-demand. If this library is not found in system,
+OpenSSL is loaded dynamically on-demand. If this library is not found in system,
 requested OpenSSL function just return errorcode.
 }
 
@@ -102,8 +102,13 @@ const
 // SSL and Crypto DLL arrays must have the same length and contain
 // matched pairs of DLL filenames. Place newer versions at the beginning.
 {$IF DEFINED(WIN64)}
-  SSL_DLL_Names:    array[1..4] of AnsiString = ('libssl-3-x64',    'libssl-1_1-x64',    'ssleay32', 'libssl32');
-  Crypto_DLL_Names: array[1..4] of AnsiString = ('libcrypto-3-x64', 'libcrypto-1_1-x64', 'libeay32', 'libeay32');
+  {$IFDEF CPUAARCH64}
+    SSL_DLL_Names:    array[1..1] of AnsiString = ('libssl-3-arm64');
+    Crypto_DLL_Names: array[1..1] of AnsiString = ('libcrypto-3-arm64');
+  {$ELSE}
+    SSL_DLL_Names:    array[1..4] of AnsiString = ('libssl-3-x64',    'libssl-1_1-x64',    'ssleay32', 'libssl32');
+    Crypto_DLL_Names: array[1..4] of AnsiString = ('libcrypto-3-x64', 'libcrypto-1_1-x64', 'libeay32', 'libeay32');
+  {$ENDIF}
 {$ELSEIF DEFINED(WINDOWS)}
   SSL_DLL_Names:    array[1..4] of AnsiString = ('libssl-3',    'libssl-1_1',    'ssleay32', 'libssl32');
   Crypto_DLL_Names: array[1..4] of AnsiString = ('libcrypto-3', 'libcrypto-1_1', 'libeay32', 'libeay32');
@@ -149,6 +154,19 @@ const
 
   SHA_DIGEST_LENGTH = 20;
 
+const
+  OSSL_PKEY_PARAM_PAD_MODE = 'pad-mode';
+  OSSL_ASYM_CIPHER_PARAM_PAD_MODE = OSSL_PKEY_PARAM_PAD_MODE;
+  OSSL_PKEY_RSA_PAD_MODE_NONE = 'none';
+  OSSL_PKEY_RSA_PAD_MODE_PKCSV15 = 'pkcs1';
+  OSSL_PKEY_RSA_PAD_MODE_OAEP = 'oaep';
+  OSSL_ASYM_CIPHER_PARAM_OAEP_LABEL = 'oaep-label';
+  OSSL_ALG_PARAM_DIGEST = 'digest';
+  OSSL_ASYM_CIPHER_PARAM_OAEP_DIGEST = OSSL_ALG_PARAM_DIGEST;
+  OSSL_ASYM_CIPHER_PARAM_OAEP_DIGEST_PROPS = 'digest-props';
+  SN_sha256 = 'SHA256';
+  LN_sha256 = 'sha256';
+
 type
   uint64_t = qword;
   SslPtr = Pointer;
@@ -167,6 +185,10 @@ type
   PASN1_UTCTIME = SslPtr;
   PASN1_INTEGER = SSlPtr;
   POPENSSL_INIT_SETTINGS = SSLPtr;
+
+  POSSL_LIB_CTX = pointer;
+  POSSL_PARAM = pointer;
+  POSSL_PARAM_BLD = pointer;
 
   PDH = pointer;
   PSTACK_OFX509 = pointer;
@@ -275,6 +297,10 @@ type
   end;
   PEVP_PKEY = ^EVP_PKEY;
   PPEVP_PKEY = ^PEVP_PKEY;
+  PEC_KEY = SslPtr;
+  PPEC_KEY = ^PEC_KEY;
+  PEC_GROUP = SslPtr;
+  PEC_POINT = SslPtr;
 
   PPRSA = ^PRSA;
   PASN1_cInt = SslPtr;
@@ -1295,6 +1321,12 @@ var
   procedure OpenSSL_add_all_ciphers;
   procedure OpenSSL_add_all_digests;
   //
+  function OSSL_PARAM_BLD_new: POSSL_PARAM_BLD;
+  function OSSL_PARAM_BLD_push_utf8_string(bld: POSSL_PARAM_BLD; key: PAnsiChar; const buf: PAnsiChar; bsize: csize_t): integer;
+  function OSSL_PARAM_BLD_to_param(bld: POSSL_PARAM_BLD): POSSL_PARAM;
+  procedure OSSL_PARAM_BLD_free(bld: POSSL_PARAM_BLD);
+  procedure OSSL_PARAM_free(params: POSSL_PARAM);
+  //
   function EVP_DigestInit(ctx: PEVP_MD_CTX; type_: PEVP_MD): cint;
   function EVP_DigestUpdate(ctx: PEVP_MD_CTX; const data: Pointer; cnt: csize_t): cint;
   function EVP_DigestFinal(ctx: PEVP_MD_CTX; md: PByte; s: pcuint): cint;
@@ -1302,12 +1334,20 @@ var
     key: pEVP_PKEY): integer;
   function EVP_PKEY_size(key: pEVP_PKEY): integer;
   procedure EVP_PKEY_free(key: pEVP_PKEY);
+  function EVP_PKEY_encrypt_init_ex(ctx: PEVP_PKEY_CTX; params: POSSL_PARAM): integer;
+  function EVP_PKEY_encrypt(ctx: PEVP_PKEY_CTX; out_: PByte; var outlen: csize_t; const in_: PByte; inlen: csize_t): integer;
+  function EVP_PKEY_decrypt(ctx: PEVP_PKEY_CTX; out_: PByte; var outlen: csize_t; const in_: PByte; inlen: csize_t): integer;
+  procedure EVP_PKEY_CTX_free(ctx: PEVP_PKEY_CTX);
+  function EVP_PKEY_CTX_new_from_name(libctx: POSSL_LIB_CTX; const name: PAnsiChar; const propquery: PAnsiChar): PEVP_PKEY_CTX;
+  function EVP_PKEY_CTX_new_from_pkey(libctx: POSSL_LIB_CTX; const pkey: PEVP_PKEY; const propquery: PAnsiChar): PEVP_PKEY_CTX;
   function EVP_VerifyFinal(ctx: pEVP_MD_CTX; sigbuf: pointer;
     siglen: cardinal; pkey: pEVP_PKEY): integer;
   //
   function EVP_get_cipherbyname(const name: PAnsiChar): PEVP_CIPHER;
   function EVP_get_digestbyname(const name: PAnsiChar): PEVP_MD;
   //
+  function EVP_CIPHER_CTX_new(): PEVP_CIPHER_CTX;
+  procedure EVP_CIPHER_CTX_free(ctx: PEVP_CIPHER_CTX);
   procedure EVP_CIPHER_CTX_init(a: PEVP_CIPHER_CTX);
   function EVP_CIPHER_CTX_cleanup(a: PEVP_CIPHER_CTX): cint;
   function EVP_CIPHER_CTX_set_key_length(x: PEVP_CIPHER_CTX; keylen: cint): cint;
@@ -1338,12 +1378,22 @@ var
   function EVP_DigestVerifyUpdate(ctx: PEVP_MD_CTX; const data: Pointer; cnt: csize_t): cint;
   function EVP_DigestVerifyFinal(ctx: PEVP_MD_CTX; sig: PByte; siglen: csize_t): cint;
   function EVP_DigestVerify(ctx: PEVP_MD_CTX; sig: PByte; siglen: csize_t; const tbs : pointer; tbslen: csize_t): cint;
+  function EVP_PKEY_set1_EC_KEY(pkey: PEVP_PKEY; key: PEC_KEY): cint;
+  function EC_KEY_get0_group(key: PEC_KEY): PEC_GROUP;
+  function EC_KEY_get0_public_key(key: PEC_KEY): PEC_POINT;
+  function EVP_PKEY_get1_EC_KEY(pkey: PEVP_PKEY): PEC_KEY;
+  function EC_KEY_check_key(key: PEC_KEY): cint;
+  function EC_KEY_dup(key: PEC_KEY): PEC_KEY;
+  function EC_KEY_generate_key(key: PEC_KEY): cint;
+  procedure EC_KEY_free(key: PEC_KEY);
+
   //function
   //
   // PEM Functions - pem.h
   //
   function PEM_read_bio_PrivateKey(bp: PBIO; X: PPEVP_PKEY;
            cb: Ppem_password_cb; u: Pointer): PEVP_PKEY;
+  function PEM_read_bio_ECPrivateKey(bp: PBIO; key: PPEC_KEY; cb: Pointer; u: Pointer): PEC_KEY;
   function PEM_read_bio_PUBKEY(bp: pBIO; var x: pEVP_PKEY;
                cb: Ppem_password_cb; u: pointer): pEVP_PKEY;
   function PEM_write_bio_PrivateKey(bp: pBIO; x: pEVP_PKEY;
@@ -1366,11 +1416,11 @@ var
   function BIO_read_filename(b: PBIO; const name: PAnsiChar): cint;
 
   function BIO_push(b: PBIO; append: PBIO): PBIO;
-  function BIO_pop(b: PBIO): PBIO; 
+  function BIO_pop(b: PBIO): PBIO;
   function BIO_gets(b: PBIO; buf: PAnsiChar; size: cint): cint;
-  function BIO_puts(b: PBIO; const buf: PAnsiChar): cint; 
+  function BIO_puts(b: PBIO; const buf: PAnsiChar): cint;
   procedure BIO_set_mem_eof_return(b: PBIO; v: cint);
-  procedure BIO_set_mem_buf(b: PBIO; bm: pointer; c: cint); 
+  procedure BIO_set_mem_buf(b: PBIO; bm: pointer; c: cint);
   procedure BIO_get_mem_ptr(b: PBIO; var pp: pointer);
 
   function BIO_s_file: pBIO_METHOD;
@@ -1702,6 +1752,16 @@ type
   TSkX509PopFree = procedure(st: PSslPtr; func: TX509Free); cdecl;
   Ti2dPrivateKeyBio= function(b: PBIO; pkey: PEVP_PKEY): cInt; cdecl;
 
+  // libcrypto
+  TEVP_PKEY_set1_EC_KEY = function(pkey: PEVP_PKEY; key: PEC_KEY): cint; cdecl;
+  TEC_KEY_free = procedure(key: PEC_KEY); cdecl;
+  TEC_KEY_check_key = function(key: PEC_KEY): cint; cdecl;
+  TEC_KEY_dup = function (key: PEC_KEY): PEC_KEY; cdecl;
+  TEVP_PKEY_get1_EC_KEY = function(pkey: PEVP_PKEY): PEC_KEY; cdecl;
+  TEC_KEY_generate_key = function (key: PEC_KEY): cint; cdecl;
+  TEC_KEY_get0_group = function(key: PEC_KEY): PEC_GROUP; cdecl;
+  TEC_KEY_get0_public_key = function(key: PEC_KEY): PEC_POINT; cdecl;
+
   // 3DES functions
   TDESsetoddparity = procedure(Key: des_cblock); cdecl;
   TDESsetkeychecked = function(key: des_cblock; schedule: des_key_schedule): cInt; cdecl;
@@ -1771,6 +1831,12 @@ type
   TOpenSSL_add_all_ciphers = procedure(); cdecl;
   TOpenSSL_add_all_digests = procedure(); cdecl;
   //
+  TOSSL_PARAM_BLD_new = function: POSSL_PARAM_BLD; cdecl;
+  TOSSL_PARAM_BLD_push_utf8_string = function(bld: POSSL_PARAM_BLD; key: PAnsiChar; const buf: PAnsiChar; bsize: csize_t): integer; cdecl;
+  TOSSL_PARAM_BLD_to_param = function(bld: POSSL_PARAM_BLD): POSSL_PARAM; cdecl;
+  TOSSL_PARAM_BLD_free = procedure(bld: POSSL_PARAM_BLD); cdecl;
+  TOSSL_PARAM_free = procedure(params: POSSL_PARAM); cdecl;
+  //
   TEVP_DigestInit = function(ctx: PEVP_MD_CTX; type_: PEVP_MD): cint; cdecl;
   TEVP_DigestUpdate = function(ctx: PEVP_MD_CTX; const data: Pointer; cnt: csize_t): cint; cdecl;
   TEVP_DigestFinal = function(ctx: PEVP_MD_CTX; md: PByte; s: pcuint): cint; cdecl;
@@ -1779,6 +1845,12 @@ type
     key: pEVP_PKEY): integer; cdecl;
   TEVP_PKEY_size = function(key: pEVP_PKEY): integer; cdecl;
   TEVP_PKEY_free = Procedure(key: pEVP_PKEY); cdecl;
+  TEVP_PKEY_encrypt_init_ex = function(ctx: PEVP_PKEY_CTX; params: POSSL_PARAM): integer; cdecl;
+  TEVP_PKEY_encrypt = function(ctx: PEVP_PKEY_CTX; out_: PByte; var outlen: csize_t; const in_: PByte; inlen: csize_t): integer; cdecl;
+  TEVP_PKEY_decrypt = function(ctx: PEVP_PKEY_CTX; out_: PByte; var outlen: csize_t; const in_: PByte; inlen: csize_t): integer; cdecl;
+  TEVP_PKEY_CTX_free = procedure(pctx: PEVP_PKEY_CTX); cdecl;
+  TEVP_PKEY_CTX_new_from_name = function(libctx: POSSL_LIB_CTX; const name: PAnsiChar; const propquery: PAnsiChar): PEVP_PKEY_CTX; cdecl;
+  TEVP_PKEY_CTX_new_from_pkey = function(libctx: POSSL_LIB_CTX; const pkey: PEVP_PKEY; const propquery: PAnsiChar): PEVP_PKEY_CTX; cdecl;
   TEVP_VerifyFinal = function(ctx: pEVP_MD_CTX; sigbuf: pointer;
     siglen: cardinal; pkey: pEVP_PKEY): integer;  cdecl;
   //
@@ -1786,6 +1858,8 @@ type
   TEVP_get_cipherbyname = function(const name: PAnsiChar): PEVP_CIPHER; cdecl;
   TEVP_get_digestbyname = function(const name: PAnsiChar): PEVP_MD; cdecl;
   //
+  TEVP_CIPHER_CTX_new = function(): PEVP_CIPHER_CTX; cdecl;
+  TEVP_CIPHER_CTX_free = procedure(ctx: PEVP_CIPHER_CTX); cdecl;
   TEVP_CIPHER_CTX_init = procedure(a: PEVP_CIPHER_CTX); cdecl;
   TEVP_CIPHER_CTX_cleanup = function(a: PEVP_CIPHER_CTX): cint; cdecl;
   TEVP_CIPHER_CTX_reset = function(a: PEVP_CIPHER_CTX): cint; cdecl;
@@ -1826,17 +1900,18 @@ type
   TPEM_read_bio_X509 = function(bp: pBIO; x: PPX509; cb: Ppem_password_cb; u: pointer): px509; cdecl;
   TPEM_write_bio_X509 = function(bp: pBIO; x: PX509): integer; cdecl;
   TPEM_write_bio_PKCS7 = function(bp: pBIO; x: PPKCS7): integer; cdecl;
+  TPEM_read_bio_ECPrivateKey = function(bp: PBIO; key: PPEC_KEY; cb: Pointer; u: Pointer): PEC_KEY; cdecl;
 
   // BIO Functions
 
   TBIO_ctrl = function(bp: PBIO; cmd: cint; larg: clong; parg: Pointer): clong; cdecl;
 
   TBIO_push = function(b: PBIO; append: PBIO): PBIO;cdecl;
-  TBIO_pop = function(b: PBIO): PBIO;cdecl; 
+  TBIO_pop = function(b: PBIO): PBIO;cdecl;
   TBIO_gets = function(b: PBIO; buf: PAnsiChar; size: cint): cint;cdecl;
   TBIO_puts = function(b: PBIO; const buf: PAnsiChar): cint;cdecl;
   TBIO_set_mem_eof_return = procedure(b: PBIO; v: cint);cdecl;
-  TBIO_set_mem_buf = procedure(b: PBIO; bm: pointer; c: cint);cdecl; 
+  TBIO_set_mem_buf = procedure(b: PBIO; bm: pointer; c: cint);cdecl;
   TBIO_get_mem_ptr = procedure (b: PBIO; var pp: pointer);cdecl;
 
   TBIO_s_file = function: pBIO_METHOD; cdecl;
@@ -2034,12 +2109,26 @@ var
   _CRYPTOcleanupAllExData: TCRYPTOcleanupAllExData = nil;
   _OPENSSLaddallalgorithms: TOPENSSLaddallalgorithms = nil;
 
+
+  _EC_KEY_get0_group: TEC_KEY_get0_group = nil;
+  _EC_KEY_get0_public_key: TEC_KEY_get0_public_key = nil;
+  _EC_KEY_check_key: TEC_KEY_check_key = nil;
+  _EC_KEY_dup: TEC_KEY_dup = nil;
+  _EC_KEY_generate_key: TEC_KEY_generate_key = nil;
+  _EC_KEY_free: TEC_KEY_free = nil;
+
   // EVP Functions
 
   _OpenSSL_add_all_algorithms: TOpenSSL_add_all_algorithms = nil;
   _OpenSSL_add_all_ciphers: TOpenSSL_add_all_ciphers = nil;
   _OpenSSL_add_all_digests: TOpenSSL_add_all_digests = nil;
   //
+  _OSSL_PARAM_BLD_new: TOSSL_PARAM_BLD_new = nil;
+  _OSSL_PARAM_BLD_push_utf8_string: TOSSL_PARAM_BLD_push_utf8_string = nil;
+  _OSSL_PARAM_BLD_to_param: TOSSL_PARAM_BLD_to_param = nil;
+  _OSSL_PARAM_BLD_free: TOSSL_PARAM_BLD_free = nil;
+  _OSSL_PARAM_free: TOSSL_PARAM_free = nil;
+//
   _EVP_DigestInit: TEVP_DigestInit = nil;
   _EVP_DigestUpdate: TEVP_DigestUpdate = nil;
   _EVP_DigestFinal: TEVP_DigestFinal = nil;
@@ -2047,11 +2136,22 @@ var
   _EVP_SignFinal: TEVP_SignFinal = nil;
   _EVP_PKEY_size: TEVP_PKEY_size = nil;
   _EVP_PKEY_free: TEVP_PKEY_free = nil;
+  _EVP_PKEY_encrypt_init_ex: TEVP_PKEY_encrypt_init_ex = nil;
+  _EVP_PKEY_encrypt: TEVP_PKEY_encrypt = nil;
+  _EVP_PKEY_decrypt: TEVP_PKEY_decrypt = nil;
+  _EVP_PKEY_CTX_free: TEVP_PKEY_CTX_free = nil;
+  _EVP_PKEY_CTX_new_from_name: TEVP_PKEY_CTX_new_from_name = nil;
+  _EVP_PKEY_CTX_new_from_pkey: TEVP_PKEY_CTX_new_from_pkey = nil;
+  _EVP_PKEY_set1_EC_KEY: TEVP_PKEY_set1_EC_KEY = nil;
+  _EVP_PKEY_get1_EC_KEY: TEVP_PKEY_get1_EC_KEY = nil;
+
   _EVP_VerifyFinal: TEVP_VerifyFinal = nil;
   //
   _EVP_get_cipherbyname: TEVP_get_cipherbyname = nil;
   _EVP_get_digestbyname: TEVP_get_digestbyname = nil;
   //
+  _EVP_CIPHER_CTX_new: TEVP_CIPHER_CTX_new = nil;
+  _EVP_CIPHER_CTX_free: TEVP_CIPHER_CTX_free = nil;
   _EVP_CIPHER_CTX_reset: TEVP_CIPHER_CTX_reset = nil;
   _EVP_CIPHER_CTX_init: TEVP_CIPHER_CTX_init = nil;
   _EVP_CIPHER_CTX_cleanup: TEVP_CIPHER_CTX_cleanup = nil;
@@ -2076,6 +2176,7 @@ var
   _EVP_DigestVerify: TEVP_DigestVerify = nil;
   // PEM
   _PEM_read_bio_PrivateKey: TPEM_read_bio_PrivateKey = nil;
+  _PEM_read_bio_ECPrivateKey: TPEM_read_bio_ECPrivateKey = nil;
 
   _PEM_read_bio_PUBKEY: TPEM_read_bio_PUBKEY = nil;
   _PEM_write_bio_PrivateKey: TPEM_write_bio_PrivateKey = nil;
@@ -3633,6 +3734,42 @@ begin
      _OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_DIGESTS, Nil)
 end;
 //
+function OSSL_PARAM_BLD_new: POSSL_PARAM_BLD;
+begin
+  if InitSSLInterface and Assigned(_OSSL_PARAM_BLD_new) then
+    Result := _OSSL_PARAM_BLD_new
+  else
+    Result := nil;
+end;
+
+function OSSL_PARAM_BLD_push_utf8_string(bld: POSSL_PARAM_BLD; key: PAnsiChar; const buf: PAnsiChar; bsize: csize_t): integer;
+begin
+  if InitSSLInterface and Assigned(_OSSL_PARAM_BLD_push_utf8_string) then
+    Result := _OSSL_PARAM_BLD_push_utf8_string(bld, key, buf, bsize)
+  else
+    Result := 0;
+end;
+
+function OSSL_PARAM_BLD_to_param(bld: POSSL_PARAM_BLD): POSSL_PARAM;
+begin
+  if InitSSLInterface and Assigned(_OSSL_PARAM_BLD_to_param) then
+    Result := _OSSL_PARAM_BLD_to_param(bld)
+  else
+    Result := nil;
+end;
+
+procedure OSSL_PARAM_BLD_free(bld: POSSL_PARAM_BLD);
+begin
+  if InitSSLInterface and Assigned(_OSSL_PARAM_BLD_free) then
+    _OSSL_PARAM_BLD_free(bld);
+end;
+
+procedure OSSL_PARAM_free(params: POSSL_PARAM);
+begin
+  if InitSSLInterface and Assigned(_OSSL_PARAM_free) then
+    _OSSL_PARAM_free(params);
+end;
+//
 function EVP_DigestInit(ctx: PEVP_MD_CTX; type_: PEVP_MD): cint;
 begin
   if InitSSLInterface and Assigned(_EVP_DigestInit) then
@@ -3688,6 +3825,52 @@ begin
     _EVP_PKEY_free(key);
 end;
 
+function EVP_PKEY_encrypt_init_ex(ctx: PEVP_PKEY_CTX; params: POSSL_PARAM): integer;
+begin
+  if InitSSLInterface and Assigned(_EVP_PKEY_encrypt_init_ex) then
+    Result := _EVP_PKEY_encrypt_init_ex(ctx, params)
+  else
+    Result := -1;
+end;
+
+function EVP_PKEY_encrypt(ctx: PEVP_PKEY_CTX; out_: PByte; var outlen: csize_t; const in_: PByte; inlen: csize_t): integer;
+begin
+  if InitSSLInterface and Assigned(_EVP_PKEY_encrypt) then
+    Result := _EVP_PKEY_encrypt(ctx, out_, outlen, in_, inlen)
+  else
+    Result := -1;
+end;
+
+function EVP_PKEY_decrypt(ctx: PEVP_PKEY_CTX; out_: PByte; var outlen: csize_t; const in_: PByte; inlen: csize_t): integer;
+begin
+  if InitSSLInterface and Assigned(_EVP_PKEY_decrypt) then
+    Result := _EVP_PKEY_decrypt(ctx, out_, outlen, in_, inlen)
+  else
+    Result := -1;
+end;
+
+procedure EVP_PKEY_CTX_free(ctx: PEVP_PKEY_CTX);
+begin
+  if InitSSLInterface and Assigned(_EVP_PKEY_CTX_free) then
+    _EVP_PKEY_CTX_free(ctx);
+end;
+
+function EVP_PKEY_CTX_new_from_name(libctx: POSSL_LIB_CTX; const name: PAnsiChar; const propquery: PAnsiChar): PEVP_PKEY_CTX;
+begin
+  if InitSSLInterface and Assigned(_EVP_PKEY_CTX_new_from_name) then
+    Result := _EVP_PKEY_CTX_new_from_name(libctx, name, propquery)
+  else
+    Result := nil;
+end;
+
+function EVP_PKEY_CTX_new_from_pkey(libctx: POSSL_LIB_CTX; const pkey: PEVP_PKEY; const propquery: PAnsiChar): PEVP_PKEY_CTX;
+begin
+  if InitSSLInterface and Assigned(_EVP_PKEY_CTX_new_from_pkey) then
+    Result := _EVP_PKEY_CTX_new_from_pkey(libctx, pkey, propquery)
+  else
+    Result := nil;
+end;
+
 function EVP_VerifyFinal(ctx: pEVP_MD_CTX; sigbuf: pointer;
     siglen: cardinal; pkey: pEVP_PKEY): integer;
 begin
@@ -3715,6 +3898,21 @@ begin
     Result := nil;
 end;
 //
+function EVP_CIPHER_CTX_new(): PEVP_CIPHER_CTX;
+begin
+  if InitSSLInterface and Assigned(_EVP_CIPHER_CTX_new) then
+    Result := _EVP_CIPHER_CTX_new()
+  else
+    Result := nil;
+end;
+
+procedure EVP_CIPHER_CTX_free(ctx: PEVP_CIPHER_CTX);
+begin
+  if InitSSLInterface then
+    if Assigned(_EVP_CIPHER_CTX_free) then
+      _EVP_CIPHER_CTX_free(ctx)
+end;
+
 procedure EVP_CIPHER_CTX_init(a: PEVP_CIPHER_CTX);
 begin
   if InitSSLInterface then
@@ -3726,13 +3924,12 @@ end;
 
 function EVP_CIPHER_CTX_cleanup(a: PEVP_CIPHER_CTX): cint;
 begin
+  Result := -1;
   if InitSSLInterface then
    if  Assigned(_EVP_CIPHER_CTX_cleanup) then
     Result := _EVP_CIPHER_CTX_cleanup(a)
   else if  Assigned(_EVP_CIPHER_CTX_reset) then
-    Result := _EVP_CIPHER_CTX_reset(a)
-  else
-    Result := -1;
+    Result := _EVP_CIPHER_CTX_reset(a);
 end;
 
 function EVP_CIPHER_CTX_set_key_length(x: PEVP_CIPHER_CTX; keylen: cint): cint;
@@ -3883,11 +4080,83 @@ end;
 
 { PEM }
 
+function EVP_PKEY_set1_EC_KEY(pkey: PEVP_PKEY; key: PEC_KEY): cint;
+begin
+ if InitSSLInterface and Assigned(_EVP_PKEY_set1_EC_KEY) then
+   Result := _EVP_PKEY_set1_EC_KEY(pkey, key)
+ else
+   Result := -1;
+end;
+
+function EC_KEY_get0_group(key: PEC_KEY): PEC_GROUP;
+begin
+ if InitSSLInterface and Assigned(_EC_KEY_get0_group) then
+   Result := _EC_KEY_get0_group(key)
+ else
+   Result := nil;
+end;
+
+function EC_KEY_get0_public_key(key: PEC_KEY): PEC_POINT;
+begin
+ if InitSSLInterface and Assigned(_EC_KEY_get0_public_key) then
+   Result := _EC_KEY_get0_public_key(key)
+ else
+   Result := nil;
+end;
+
+function EVP_PKEY_get1_EC_KEY(pkey: PEVP_PKEY): PEC_KEY;
+begin
+ if InitSSLInterface and Assigned(_EVP_PKEY_get1_EC_KEY) then
+   Result := _EVP_PKEY_get1_EC_KEY(pkey)
+ else
+   Result := nil;
+end;
+
+function EC_KEY_check_key(key: PEC_KEY): cint;
+begin
+ if InitSSLInterface and Assigned(_EC_KEY_check_key) then
+   Result := _EC_KEY_check_key(key)
+ else
+   Result := -1;
+end;
+
+function EC_KEY_dup(key: PEC_KEY): PEC_KEY;
+begin
+ if InitSSLInterface and Assigned(_EC_KEY_dup) then
+   Result := _EC_KEY_dup(key)
+ else
+   Result := nil;
+end;
+
+function EC_KEY_generate_key(key: PEC_KEY): cint;
+begin
+ if InitSSLInterface and Assigned(_EC_KEY_generate_key) then
+   Result := _EC_KEY_check_key(key)
+ else
+   Result := -1;
+
+end;
+
+procedure EC_KEY_free(key: PEC_KEY);
+begin
+ if InitSSLInterface and Assigned(_EC_KEY_free) then
+   _EC_KEY_free(key)
+end;
+
 function PEM_read_bio_PrivateKey(bp: PBIO; X: PPEVP_PKEY;
          cb: Ppem_password_cb; u: Pointer): PEVP_PKEY;
 begin
   if InitSSLInterface and Assigned(_PEM_read_bio_PrivateKey) then
     Result := _PEM_read_bio_PrivateKey(bp, x, cb, u)
+  else
+    Result := nil;
+end;
+
+function PEM_read_bio_ECPrivateKey(bp: PBIO; key: PPEC_KEY; cb: Pointer;
+  u: Pointer): PEC_KEY;
+begin
+  if InitSSLInterface and Assigned(_PEM_read_bio_ECPrivateKey) then
+    Result := _PEM_read_bio_ECPrivateKey(bp, key, cb, u)
   else
     Result := nil;
 end;
@@ -5048,7 +5317,7 @@ begin
   _SslWrite := GetProcAddr(SSLLibHandle, 'SSL_write');
   _SslPending := GetProcAddr(SSLLibHandle, 'SSL_pending');
   _SslGetPeerCertificate := GetProcAddr(SSLLibHandle, 'SSL_get_peer_certificate');
-  if not Assigned(_SslGetPeerCertificate) 
+  if not Assigned(_SslGetPeerCertificate)
   then _SslGetPeerCertificate := GetProcAddr(SSLLibHandle, 'SSL_get1_peer_certificate');
   _SslGetVersion := GetProcAddr(SSLLibHandle, 'SSL_get_version');
   _SslCtxSetVerify := GetProcAddr(SSLLibHandle, 'SSL_CTX_set_verify');
@@ -5159,6 +5428,15 @@ begin
   _EVP_DigestVerifyInit := GetProcAddr(SSLUtilHandle, 'EVP_DigestVerifyInit');
   _EVP_DigestVerifyFinal := GetProcAddr(SSLUtilHandle, 'EVP_DigestVerifyFinal');
   _EVP_DigestVerify := GetProcAddr(SSLUtilHandle, 'EVP_DigestVerify');
+  _EVP_PKEY_set1_EC_KEY := GetProcAddress(SSLUtilHandle, 'EVP_PKEY_set1_EC_KEY');
+  _EVP_PKEY_get1_EC_KEY := GetProcAddress(SSLUtilHandle, 'EVP_PKEY_get1_EC_KEY');
+  _EC_KEY_get0_group := GetProcAddress(SSLUtilHandle, 'EC_KEY_get0_group');
+  _EC_KEY_get0_public_key := GetProcAddress(SSLUtilHandle, 'EC_KEY_get0_public_key');
+  _EC_KEY_check_key := GetProcAddress(SSLUtilHandle, 'EC_KEY_check_key');
+  _EC_KEY_dup := GetProcAddress(SSLUtilHandle, 'EC_KEY_dup');
+  _EC_KEY_generate_key := GetProcAddress(SSLUtilHandle, 'EC_KEY_generate_key');
+  _EC_KEY_free := GetProcAddress(SSLUtilHandle, 'EC_KEY_free');
+
    // 3DES functions
   _DESsetoddparity := GetProcAddr(SSLUtilHandle, 'DES_set_odd_parity');
   _DESsetkeychecked := GetProcAddr(SSLUtilHandle, 'DES_set_key_checked');
@@ -5215,15 +5493,30 @@ begin
   _OpenSSL_add_all_algorithms := GetProcAddr(SSLUtilHandle, 'OpenSSL_add_all_algorithms');
   _OpenSSL_add_all_ciphers := GetProcAddr(SSLUtilHandle, 'OpenSSL_add_all_ciphers');
   _OpenSSL_add_all_digests := GetProcAddr(SSLUtilHandle, 'OpenSSL_add_all_digests');
+
+  _OSSL_PARAM_BLD_new := GetProcAddr(SSLUtilHandle, 'OSSL_PARAM_BLD_new');
+  _OSSL_PARAM_BLD_push_utf8_string := GetProcAddr(SSLUtilHandle, 'OSSL_PARAM_BLD_push_utf8_string');
+  _OSSL_PARAM_BLD_to_param := GetProcAddr(SSLUtilHandle, 'OSSL_PARAM_BLD_to_param');
+  _OSSL_PARAM_BLD_free := GetProcAddr(SSLUtilHandle, 'OSSL_PARAM_BLD_free');
+  _OSSL_PARAM_free := GetProcAddr(SSLUtilHandle, 'OSSL_PARAM_free');
+  //
   _EVP_DigestInit := GetProcAddr(SSLUtilHandle, 'EVP_DigestInit');
   _EVP_DigestUpdate := GetProcAddr(SSLUtilHandle, 'EVP_DigestUpdate');
   _EVP_DigestFinal := GetProcAddr(SSLUtilHandle, 'EVP_DigestFinal');
   _EVP_SignFinal := GetProcAddr(SSLUtilHandle, 'EVP_SignFinal');
   _EVP_PKEY_size := GetProcAddr(SSLUtilHandle,'EVP_PKEY_size');
   _EVP_PKEY_free := GetProcAddr(SSLUtilHandle,'EVP_PKEY_free');
+  _EVP_PKEY_encrypt_init_ex := GetProcAddr(SSLUtilHandle,'EVP_PKEY_encrypt_init_ex');
+  _EVP_PKEY_encrypt := GetProcAddr(SSLUtilHandle,'EVP_PKEY_encrypt');
+  _EVP_PKEY_decrypt := GetProcAddr(SSLUtilHandle,'EVP_PKEY_decrypt');
+  _EVP_PKEY_CTX_free := GetProcAddr(SSLUtilHandle,'EVP_PKEY_CTX_free');
+  _EVP_PKEY_CTX_new_from_name := GetProcAddr(SSLUtilHandle,'EVP_PKEY_CTX_new_from_name');
+  _EVP_PKEY_CTX_new_from_pkey := GetProcAddr(SSLUtilHandle,'EVP_PKEY_CTX_new_from_pkey');
   _EVP_VerifyFinal := GetProcAddr(SSLUtilHandle,'EVP_VerifyFinal');
   _EVP_get_cipherbyname := GetProcAddr(SSLUtilHandle, 'EVP_get_cipherbyname');
   _EVP_get_digestbyname := GetProcAddr(SSLUtilHandle, 'EVP_get_digestbyname');
+  _EVP_CIPHER_CTX_new := GetProcAddr(SSLUtilHandle, 'EVP_CIPHER_CTX_new');
+  _EVP_CIPHER_CTX_free := GetProcAddr(SSLUtilHandle, 'EVP_CIPHER_CTX_free');
   _EVP_CIPHER_CTX_init := GetProcAddr(SSLUtilHandle, 'EVP_CIPHER_CTX_init');
   _EVP_CIPHER_CTX_reset := GetProcAddr(SSLUtilHandle, 'EVP_CIPHER_CTX_reset');
   _EVP_CIPHER_CTX_cleanup := GetProcAddr(SSLUtilHandle, 'EVP_CIPHER_CTX_cleanup');
@@ -5237,6 +5530,7 @@ begin
   _EVP_DecryptFinal := GetProcAddr(SSLUtilHandle, 'EVP_DecryptFinal');
    // PEM
   _PEM_read_bio_PrivateKey := GetProcAddr(SSLUtilHandle, 'PEM_read_bio_PrivateKey');
+  _PEM_read_bio_ECPrivateKey := GetProcAddress(SSLUtilHandle, 'PEM_read_bio_ECPrivateKey');
   _PEM_read_bio_PUBKEY := GetProcAddr(SSLUtilHandle, 'PEM_read_bio_PUBKEY');
   _PEM_write_bio_PrivateKey := GetProcAddr(SSLUtilHandle, 'PEM_write_bio_PrivateKey');
   _PEM_write_bio_PUBKEY := GetProcAddr(SSLUtilHandle, 'PEM_write_bio_PUBKEY');
@@ -5651,6 +5945,12 @@ begin
   _OpenSSL_add_all_ciphers := nil;
   _OpenSSL_add_all_digests := nil;
   //
+  _OSSL_PARAM_BLD_new := nil;
+  _OSSL_PARAM_BLD_push_utf8_string := nil;
+  _OSSL_PARAM_BLD_to_param := nil;
+  _OSSL_PARAM_BLD_free := nil;
+  _OSSL_PARAM_free := nil;
+  //
   _EVP_DigestInit := nil;
   _EVP_DigestUpdate := nil;
   _EVP_DigestFinal := nil;
@@ -5658,11 +5958,19 @@ begin
       _EVP_SignFinal := nil;
       _EVP_PKEY_size := nil;
       _EVP_PKEY_free := nil;
+      _EVP_PKEY_encrypt_init_ex := nil;
+      _EVP_PKEY_encrypt := nil;
+      _EVP_PKEY_decrypt := nil;
+      _EVP_PKEY_CTX_free := nil;
+      _EVP_PKEY_CTX_new_from_name := nil;
+      _EVP_PKEY_CTX_new_from_pkey := nil;
       _EVP_VerifyFinal := nil;
   //
   _EVP_get_cipherbyname := nil;
   _EVP_get_digestbyname := nil;
   //
+  _EVP_CIPHER_CTX_new := nil;
+  _EVP_CIPHER_CTX_free := nil;
   _EVP_CIPHER_CTX_reset := nil;
   _EVP_CIPHER_CTX_init := nil;
   _EVP_CIPHER_CTX_cleanup := nil;
@@ -5839,7 +6147,7 @@ begin
     Result:=LoadLibreSSL;
   if not Result then
     Result:=LoadOpenSSL;
-  if (Not Result) and (LibreSSLSupport=lssFirst) then
+  if (Not Result) and (LibreSSLSupport=lssLast) then
     Result:=LoadLibreSSL;
 {$ENDIF}
 end;

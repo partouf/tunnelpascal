@@ -34,16 +34,19 @@ type
     FParser : TCSSParser;
     FToFree: TCSSElement;
     procedure Clear;
-    function GetRule: TCSSRuleElement;
-    procedure OnScannerWarn(Sender: TObject; Msg: string);
+    function GetFirstRule: TCSSRuleElement;
+    function GetFirstInlineDeclaration: TCSSDeclarationElement;
+    function OnScannerWarn(Sender: TObject; Msg: string; aRow, aCol: integer): boolean;
   protected
     procedure SetUp; override;
     procedure TearDown; override;
     Procedure CreateParser(Const ASource : string);
     procedure Parse;
+    procedure ParseInline;
     procedure Parse(Const aSource : String);
+    procedure ParseInline(Const aSource : String);
     function ParseRule(Const aSource : String) : TCSSRuleElement;
-    procedure AssertEquals(AMessage: String; AExpected, AActual: TCSSUnits);   overload;
+    procedure AssertEquals(AMessage: String; AExpected, AActual: TCSSUnit);   overload;
     procedure AssertEquals(AMessage: String; AExpected, AActual: TCSSBinaryOperation);   overload;
     Function CheckClass(Const aMsg : String; aExpectedClass : TCSSElementClass; aActual : TCSSElement) : TCSSElement;
     Function CheckDeclaration(aRule : TCSSRuleElement; aIndex : Integer) : TCSSDeclarationElement;
@@ -54,11 +57,13 @@ type
     function CheckList(aList: TCSSListElement; aIndex: Integer; const aName: String): TCSSElement;
     function CheckLiteral(Msg: String; aEl: TCSSelement; aValue: String) : TCSSStringElement; overload;
     function CheckLiteral(Msg: String; aEl: TCSSelement; aValue: Integer) : TCSSIntegerElement;  overload;
-    function CheckLiteral(Msg: String; aEl: TCSSelement; aValue: Integer; AUnits : TCSSUnits) : TCSSIntegerElement;  overload;
+    function CheckLiteral(Msg: String; aEl: TCSSelement; aValue: Integer; AUnits : TCSSUnit) : TCSSIntegerElement;  overload;
     Function GetCalArg(aCall : TCSSCallElement; aIndex : Integer) : TCSSElement;
+    function GetSecondRule: TCSSRuleElement;
   Public
     Property ParseResult : TCSSElement read FParseResult;
-    Property FirstRule : TCSSRuleElement Read GetRule;
+    Property FirstRule : TCSSRuleElement Read GetFirstRule;
+    Property FirstInlineDeclaration : TCSSDeclarationElement Read GetFirstInlineDeclaration;
     Property ToFree : TCSSElement Read FToFree Write FToFree;
     Property SkipInvalid: boolean read FSkipInvalid write FSkipInvalid;
   end;
@@ -92,6 +97,7 @@ type
     Procedure TestOneDeclarationStringValue;
     Procedure TestOneDeclarationHashValue;
     Procedure TestOneDeclarationURLValue;
+    Procedure TestOneDeclarationFloatValue;
     Procedure TestOneDeclarationMultiValue;
     Procedure TestOneDeclarationMultiListValue;
     Procedure TestOneDeclarationExprValue;
@@ -100,9 +106,34 @@ type
     Procedure TestTwoDeclarationNoColon;
     Procedure TestOneEmptyDeclaration;
     Procedure TestImportAtKeyWord;
-    Procedure TestMediaPrint;
+    Procedure TestMediaBoolean;
+    Procedure TestMediaNotBoolean;
+    Procedure TestMediaCommaBoolean;
+    Procedure TestMediaCommaNotBoolean;
+    Procedure TestMediaPlain;
+    Procedure TestMediaNotPlain;
+    Procedure TestMediaNotIdentifier;
+    Procedure TestMediaOnlyIdentifier;
+    Procedure TestMediaRangeNameValue;
+    Procedure TestMediaRangeValueName;
+    Procedure TestMediaRangeValueLtNameLtValue;
+    Procedure TestMediaRangeValueGtNameGtValue;
+    Procedure TestMediaPlainAndPlain;
+    Procedure TestMediaPlainAndPlainBrackets;
+    Procedure TestMediaPlainOrPlain;
+    Procedure TestMediaPlainOrPlainBrackets;
+    Procedure TestMediaPlainCommaPlain;
+    Procedure TestMediaRatio;
+    Procedure TestMediaNestedBracket;
     Procedure TestSupportsFunction;
     Procedure TestSkipUnknownFunction;
+    Procedure TestNestedRule;
+    Procedure TestNestedAndSpaceRule;
+    Procedure TestNestedAndNoSpaceRule;
+    Procedure TestNestedPlusRule;
+    Procedure TestNestedAndPlusRule;
+    Procedure TestNestedRule_AppendedAndOperator;
+    Procedure TestNestedRule_NestedDeclarations;
   end;
 
   { TTestCSSFilesParser }
@@ -155,7 +186,7 @@ end;
 procedure TTestCSSFilesParser.SetUp;
 begin
   inherited SetUp;
-  With TMemIniFile.Create(ChangeFileExt(Paramstr(0),RTLString('.ini'))) do
+  With TMemIniFile.Create(ChangeFileExt(Paramstr(0),TCSSString('.ini'))) do
     try
       TestDir:=ReadString('CSS','SourceDir','css');
     finally
@@ -580,14 +611,13 @@ var
   List : TCSSListElement;
 
 begin
-  R:=ParseRule('input:enabled:read-write:-webkit-any(:focus,:hover)::-webkit-clear-button {  }');
+  R:=ParseRule('input:enabled:read-write:-webkit-any(:focus,:hover) {  }');
   AssertEquals('No rule children',0,R.ChildCount);
   AssertEquals('selector count',1,R.SelectorCount);
   List:=TCSSListElement(CheckClass('List',TCSSListElement,R.Selectors[0]));
   CheckList(List,0,'input');
   CheckList(List,1,':enabled');
   CheckList(List,2,':read-write');
-  CheckList(List,4,'::-webkit-clear-button');
 end;
 
 procedure TTestCSSParser.TestQueryPrefixedEmptyRule;
@@ -634,10 +664,10 @@ procedure TTestCSSParser.TestOneDeclarationIntValue;
 var
   R : TCSSRuleElement;
   D : TCSSDeclarationElement;
-  U : TCSSUnits;
+  U : TCSSUnit;
 
 begin
-  For U in TCSSUnits do
+  For U in TCSSUnit do
     begin
     R:=ParseRule('{ a : 1'+CSSUnitNames[U]+'; }');
     AssertEquals('selector count',0,R.SelectorCount);
@@ -672,8 +702,8 @@ begin
   AssertEquals('selector count',0,R.SelectorCount);
   D:=CheckDeclaration(R,0,'a');
   AssertEquals('Value count', 1, D.ChildCount);
-  S:=TCSSStringElement(CheckClass('Value', TCSSStringElement,D.Children[0]));
-  AssertEquals('Value ','#ABABAB',S.Value);
+  S:=TCSSStringElement(CheckClass('Value', TCSSHashValueElement,D.Children[0]));
+  AssertEquals('Value ','ABABAB',S.Value);
 end;
 
 procedure TTestCSSParser.TestOneDeclarationURLValue;
@@ -691,6 +721,23 @@ begin
   AssertEquals('Value ','b.c',U.Value);
 end;
 
+procedure TTestCSSParser.TestOneDeclarationFloatValue;
+var
+  R : TCSSRuleElement;
+  D : TCSSDeclarationElement;
+  F : TCSSFloatElement;
+
+begin
+  R:=ParseRule('{ a : -.5em; }');
+  AssertEquals('selector count',0,R.SelectorCount);
+  D:=CheckDeclaration(R,0,'a');
+  AssertEquals('Value count', 1, D.ChildCount);
+  F:=TCSSFloatElement(CheckClass('Value', TCSSFloatElement,D.Children[0]));
+  AssertEquals('Value ',-0.5,F.Value);
+  if F.Units<>cu_em then
+    Fail('Units expected unit em, but found '+IntToStr(ord(F.Units)));
+end;
+
 procedure TTestCSSParser.TestOneDeclarationMultiValue;
 var
   R : TCSSRuleElement;
@@ -704,10 +751,10 @@ begin
   AssertEquals('Value count', 1, D.ChildCount);
   L:=TCSSListElement(CheckClass('List',TCSSListElement,D.Children[0]));
   AssertEquals('List element count', 4, L.ChildCount);
-  CheckLiteral('Value 1 ',L.Children[0],1,cuPX);
-  CheckLiteral('Value 2 ',L.Children[1],2,cuPX);
-  CheckLiteral('Value 3 ',L.Children[2],3,cuPX);
-  CheckLiteral('Value 4 ',L.Children[3],4,cuPX);
+  CheckLiteral('Value 1 ',L.Children[0],1,cu_px);
+  CheckLiteral('Value 2 ',L.Children[1],2,cu_px);
+  CheckLiteral('Value 3 ',L.Children[2],3,cu_px);
+  CheckLiteral('Value 4 ',L.Children[3],4,cu_px);
 end;
 
 procedure TTestCSSParser.TestOneDeclarationMultiListValue;
@@ -723,12 +770,12 @@ begin
   AssertEquals('Value count', 2, D.ChildCount);
   L:=TCSSListElement(CheckClass('List',TCSSListElement,D.Children[0]));
   AssertEquals('List element count', 2, L.ChildCount);
-  CheckLiteral('Value 1 ',L.Children[0],1,cuPX);
-  CheckLiteral('Value 2 ',L.Children[1],2,cuPX);
+  CheckLiteral('Value 1 ',L.Children[0],1,cu_px);
+  CheckLiteral('Value 2 ',L.Children[1],2,cu_px);
   L:=TCSSListElement(CheckClass('List',TCSSListElement,D.Children[1]));
   AssertEquals('List element count', 2, L.ChildCount);
-  CheckLiteral('Value 3 ',L.Children[0],3,cuPX);
-  CheckLiteral('Value 4 ',L.Children[1],4,cuPX);
+  CheckLiteral('Value 3 ',L.Children[0],3,cu_px);
+  CheckLiteral('Value 4 ',L.Children[1],4,cu_px);
 end;
 
 procedure TTestCSSParser.TestOneDeclarationExprValue;
@@ -782,9 +829,219 @@ begin
   AssertEquals('declaration count',0,R.ChildCount);
 end;
 
-procedure TTestCSSParser.TestMediaPrint;
+procedure TTestCSSParser.TestMediaBoolean;
+var
+  R: TCSSAtRuleElement;
+  aSel: TCSSIdentifierElement;
 begin
-  ParseRule('@media print { *, *:before {} }');
+  R:=TCSSAtRuleElement(ParseRule('@media print { *, *:before {} }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aSel:=TCSSIdentifierElement(CheckClass('media selector',TCSSIdentifierElement,R.Selectors[0]));
+  AssertEquals('media selector name','print',aSel.Value);
+end;
+
+procedure TTestCSSParser.TestMediaNotBoolean;
+var
+  R: TCSSAtRuleElement;
+  aList: TCSSListElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media not (print) { }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aList:=TCSSListElement(CheckClass('media selector',TCSSListElement,R.Selectors[0]));
+  AssertEquals('selector list count',2,aList.ChildCount);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[0]',TCSSIdentifierElement,aList[0]));
+  AssertEquals('selector list[0] value','not',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[1]',TCSSIdentifierElement,aList[1]));
+  AssertEquals('selector list[1] value','print',aSel.Value);
+  AssertEquals('declaration count',0,R.ChildCount);
+  AssertEquals('nested rule count',0,R.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestMediaCommaBoolean;
+var
+  R: TCSSAtRuleElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media print, screen { }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',2,R.SelectorCount);
+  aSel:=TCSSIdentifierElement(CheckClass('selector 0',TCSSIdentifierElement,R.Selectors[0]));
+  AssertEquals('selector 0 value','print',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector 1',TCSSIdentifierElement,R.Selectors[1]));
+  AssertEquals('selector 1 value','screen',aSel.Value);
+end;
+
+procedure TTestCSSParser.TestMediaCommaNotBoolean;
+begin
+  ParseRule('@media not print, not screen { }');
+end;
+
+procedure TTestCSSParser.TestMediaPlain;
+var
+  R: TCSSAtRuleElement;
+  aBin: TCSSBinaryElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (any-hover: hover) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('selector 0',TCSSBinaryElement,R.Selectors[0]));
+  AssertEquals('selector operation',boColon,aBin.Operation);
+  aSel:=TCSSIdentifierElement(CheckClass('selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('selector left value','any-hover',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('selector right value','hover',aSel.Value);
+end;
+
+procedure TTestCSSParser.TestMediaNotPlain;
+begin
+  ParseRule('@media not (any-hover: hover) {  }');
+end;
+
+procedure TTestCSSParser.TestMediaNotIdentifier;
+begin
+  ParseRule('@media not screen {  }');
+end;
+
+procedure TTestCSSParser.TestMediaOnlyIdentifier;
+begin
+  ParseRule('@media only print {  }');
+end;
+
+procedure TTestCSSParser.TestMediaRangeNameValue;
+var
+  R: TCSSAtRuleElement;
+  aBin: TCSSBinaryElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (width > 100px) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('selector 0',TCSSBinaryElement,R.Selectors[0]));
+  AssertEquals('selector operation',boGT,aBin.Operation);
+  aSel:=TCSSIdentifierElement(CheckClass('selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('selector left value','width',aSel.Value);
+  CheckLiteral('selector right',aBin.Right,100,cu_px);
+end;
+
+procedure TTestCSSParser.TestMediaRangeValueName;
+var
+  R: TCSSAtRuleElement;
+  aBin: TCSSBinaryElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (100px <= width) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('selector 0',TCSSBinaryElement,R.Selectors[0]));
+  AssertEquals('selector operation',boLE,aBin.Operation);
+  CheckLiteral('selector left',aBin.Left,100,cu_px);
+  aSel:=TCSSIdentifierElement(CheckClass('selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('selector right value','width',aSel.Value);
+end;
+
+procedure TTestCSSParser.TestMediaRangeValueLtNameLtValue;
+begin
+  ParseRule('@media (100px <= width < 200px) {  }');
+end;
+
+procedure TTestCSSParser.TestMediaRangeValueGtNameGtValue;
+var
+  R: TCSSAtRuleElement;
+  aBinOuter, aBinInner: TCSSBinaryElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (1000px > height >= 200px) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aBinOuter:=TCSSBinaryElement(CheckClass('selector 0',TCSSBinaryElement,R.Selectors[0]));
+  AssertEquals('selector outer operation',boGE,aBinOuter.Operation);
+  aBinInner:=TCSSBinaryElement(CheckClass('selector outer left',TCSSBinaryElement,aBinOuter.Left));
+  AssertEquals('selector inner operation',boGT,aBinInner.Operation);
+  CheckLiteral('selector inner left',aBinInner.Left,1000,cu_px);
+  aSel:=TCSSIdentifierElement(CheckClass('selector inner right',TCSSIdentifierElement,aBinInner.Right));
+  AssertEquals('selector inner right value','height',aSel.Value);
+  CheckLiteral('selector outer right',aBinOuter.Right,200,cu_px);
+end;
+
+procedure TTestCSSParser.TestMediaPlainAndPlain;
+var
+  R: TCSSAtRuleElement;
+  aList: TCSSListElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media print and screen {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aList:=TCSSListElement(CheckClass('media selector',TCSSListElement,R.Selectors[0]));
+  AssertEquals('selector list count',3,aList.ChildCount);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[0]',TCSSIdentifierElement,aList[0]));
+  AssertEquals('selector list[0] value','print',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[1]',TCSSIdentifierElement,aList[1]));
+  AssertEquals('selector list[1] value','and',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[2]',TCSSIdentifierElement,aList[2]));
+  AssertEquals('selector list[2] value','screen',aSel.Value);
+end;
+
+procedure TTestCSSParser.TestMediaPlainAndPlainBrackets;
+var
+  R: TCSSAtRuleElement;
+  aList: TCSSListElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (print and screen) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aList:=TCSSListElement(CheckClass('media selector',TCSSListElement,R.Selectors[0]));
+  AssertEquals('selector list count',3,aList.ChildCount);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[0]',TCSSIdentifierElement,aList[0]));
+  AssertEquals('selector list[0] value','print',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[1]',TCSSIdentifierElement,aList[1]));
+  AssertEquals('selector list[1] value','and',aSel.Value);
+  aSel:=TCSSIdentifierElement(CheckClass('selector list[2]',TCSSIdentifierElement,aList[2]));
+  AssertEquals('selector list[2] value','screen',aSel.Value);
+end;
+
+procedure TTestCSSParser.TestMediaPlainOrPlain;
+begin
+  ParseRule('@media print or screen {  }');
+end;
+
+procedure TTestCSSParser.TestMediaPlainOrPlainBrackets;
+begin
+  ParseRule('@media (print or screen) {  }');
+end;
+
+procedure TTestCSSParser.TestMediaPlainCommaPlain;
+begin
+  ParseRule('@media print, screen {  }');
+end;
+
+procedure TTestCSSParser.TestMediaRatio;
+var
+  R: TCSSAtRuleElement;
+  aBin, aRatio: TCSSBinaryElement;
+  aSel: TCSSIdentifierElement;
+begin
+  R:=TCSSAtRuleElement(ParseRule('@media (aspect-ratio > 3/2) {  }'));
+  AssertEquals('at keyword','@media',R.AtKeyWord);
+  AssertEquals('selector count',1,R.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('selector 0',TCSSBinaryElement,R.Selectors[0]));
+  AssertEquals('selector operation',boGT,aBin.Operation);
+  aSel:=TCSSIdentifierElement(CheckClass('selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('selector left value','aspect-ratio',aSel.Value);
+  aRatio:=TCSSBinaryElement(CheckClass('selector right',TCSSBinaryElement,aBin.Right));
+  AssertEquals('selector right operation',boDIV,aRatio.Operation);
+  CheckLiteral('selector right left',aRatio.Left,3);
+  CheckLiteral('selector right right',aRatio.Right,2);
+end;
+
+procedure TTestCSSParser.TestMediaNestedBracket;
+begin
+  ParseRule('@media ((print)) {  }');
 end;
 
 procedure TTestCSSParser.TestSupportsFunction;
@@ -808,10 +1065,197 @@ begin
     +'}');
 end;
 
+procedure TTestCSSParser.TestNestedRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+begin
+  aRule:=ParseRule('.parent { .child { } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','parent',aSel.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Nested selector',TCSSClassNameElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested sel name','child',aSel.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedAndSpaceRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  aAndSel: TCSSIdentifierElement;
+  aBin: TCSSBinaryElement;
+begin
+  aRule:=ParseRule('.parent { & .child { } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','parent',aSel.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boWhiteSpace,aBin.Operation);
+  aAndSel:=TCSSIdentifierElement(CheckClass('Nested selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('Nested selector left value','&',aAndSel.Value);
+  aSel:=TCSSClassNameElement(CheckClass('Nested selector right',TCSSClassNameElement,aBin.Right));
+  AssertEquals('Nested selector right value','child',aSel.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedAndNoSpaceRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aSel: TCSSClassNameElement;
+  aAndSel: TCSSIdentifierElement;
+  aList: TCSSListElement;
+begin
+  aRule:=ParseRule('.parent { &.child { } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aSel:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','parent',aSel.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aList:=TCSSListElement(CheckClass('Nested selector',TCSSListElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector list count',2,aList.ChildCount);
+  aAndSel:=TCSSIdentifierElement(CheckClass('Nested selector[0]',TCSSIdentifierElement,aList[0]));
+  AssertEquals('Nested selector[0] value','&',aAndSel.Value);
+  aSel:=TCSSClassNameElement(CheckClass('Nested selector[1]',TCSSClassNameElement,aList[1]));
+  AssertEquals('Nested selector[1] value','child',aSel.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedPlusRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aUnary: TCSSUnaryElement;
+begin
+  aRule:=ParseRule('h1 { + p { } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Selector',TCSSIdentifierElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','h1',aIdent.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aUnary:=TCSSUnaryElement(CheckClass('Nested selector',TCSSUnaryElement,aNestedRule.Selectors[0]));
+  if aUnary.Operation<>uoPlus then
+    Fail('Nested selector operation expected uoPlus, but found '+GetEnumName(TypeInfo(TCSSUnaryOperation),Ord(aUnary.Operation)));
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aUnary.Right));
+  AssertEquals('Nested selector right value','p',aIdent.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedAndPlusRule;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aBin: TCSSBinaryElement;
+begin
+  aRule:=ParseRule('h1 { & + p { } }');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Selector',TCSSIdentifierElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','h1',aIdent.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boPlus,aBin.Operation);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('Nested selector left value','&',aIdent.Value);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('Nested selector right value','p',aIdent.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedRule_AppendedAndOperator;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aBin: TCSSBinaryElement;
+  aClass: TCSSClassNameElement;
+  aIdent: TCSSIdentifierElement;
+begin
+  aRule:=ParseRule(
+   '.foo {'+LineEnding
+  +'  .bar & {'+LineEnding
+  +'  }'+LineEnding
+  +'}');
+  // outer rule: .foo { }
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aClass:=TCSSClassNameElement(CheckClass('Selector',TCSSClassNameElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','foo',aClass.Value);
+  AssertEquals('No declarations',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',1,aRule.NestedRuleCount);
+  // nested rule: .bar & { }
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boWhiteSpace,aBin.Operation);
+  aClass:=TCSSClassNameElement(CheckClass('Nested selector left',TCSSClassNameElement,aBin.Left));
+  AssertEquals('Nested selector left value','bar',aClass.Value);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('Nested selector right value','&',aIdent.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+end;
+
+procedure TTestCSSParser.TestNestedRule_NestedDeclarations;
+var
+  aRule, aNestedRule: TCSSRuleElement;
+  aIdent: TCSSIdentifierElement;
+  aBin: TCSSBinaryElement;
+  aDecl: TCSSDeclarationElement;
+begin
+  aRule:=ParseRule(
+   'div {'+LineEnding
+  +'  & span {'+LineEnding
+  +'  }'+LineEnding
+  +'  color: blue;'+LineEnding
+  +'}');
+  AssertEquals('selector count',1,aRule.SelectorCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Selector',TCSSIdentifierElement,aRule.Selectors[0]));
+  AssertEquals('Sel name','div',aIdent.Value);
+  AssertEquals('Declaration count',0,aRule.ChildCount);
+  AssertEquals('Nested rule count',2,aRule.NestedRuleCount);
+  // Check nested rule: & span { }
+  aNestedRule:=aRule.NestedRules[0];
+  AssertEquals('Nested selector count',1,aNestedRule.SelectorCount);
+  aBin:=TCSSBinaryElement(CheckClass('Nested selector',TCSSBinaryElement,aNestedRule.Selectors[0]));
+  AssertEquals('Nested selector operation',boWhiteSpace,aBin.Operation);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector left',TCSSIdentifierElement,aBin.Left));
+  AssertEquals('Nested selector left value','&',aIdent.Value);
+  aIdent:=TCSSIdentifierElement(CheckClass('Nested selector right',TCSSIdentifierElement,aBin.Right));
+  AssertEquals('Nested selector right value','span',aIdent.Value);
+  AssertEquals('No nested declarations',0,aNestedRule.ChildCount);
+  AssertEquals('No nested rules',0,aNestedRule.NestedRuleCount);
+  // Check nested declaration rule
+  aNestedRule:=aRule.NestedRules[1];
+  AssertEquals('Nested Declaration selector count',0,aNestedRule.SelectorCount);
+  // declaration: color: blue
+  aDecl:=CheckDeclaration(aNestedRule,0,'color');
+  AssertEquals('Declaration value count',1,aDecl.ChildCount);
+  aIdent:=TCSSIdentifierElement(CheckClass('Declaration value',TCSSIdentifierElement,aDecl.Children[0]));
+  AssertEquals('Declaration value','blue',aIdent.Value);
+end;
+
+
 
 { TTestBaseCSSParser }
 
-function TTestBaseCSSParser.GetRule: TCSSRuleElement;
+function TTestBaseCSSParser.GetFirstRule: TCSSRuleElement;
 var
   L : TCSSCompoundElement;
 begin
@@ -823,12 +1267,24 @@ begin
     Result:=TCSSRuleElement(CheckClass('First element is rule',TCSSRuleElement,L.Children[0]));
 end;
 
-procedure TTestBaseCSSParser.OnScannerWarn(Sender: TObject; Msg: string);
+function TTestBaseCSSParser.GetFirstInlineDeclaration: TCSSDeclarationElement;
+var
+  Rule: TCSSRuleElement;
+begin
+  Rule:=TCSSRuleElement(CheckClass('rule',TCSSRuleElement,ParseResult));
+  if Rule.ChildCount=0 then
+    Fail('No valid child found');
+  Result:=TCSSDeclarationElement(CheckClass('declaration',TCSSDeclarationElement,Rule.Children[0]));
+end;
+
+function TTestBaseCSSParser.OnScannerWarn(Sender: TObject; Msg: string; aRow, aCol: integer
+  ): boolean;
 var
   aScanner: TCSSScanner;
 begin
+  Result:=true;
   aScanner:=FParser.Scanner;
-  writeln('TTestBaseCSSParser.OnScannerWarn ',aScanner.CurFilename+'('+IntToStr(aScanner.CurRow)+','+IntToStr(aScanner.CurColumn)+') ',Msg);
+  writeln('TTestBaseCSSParser.OnScannerWarn ',aScanner.CurFilename+'('+IntToStr(aRow)+','+IntToStr(aCol)+') ',Msg);
 end;
 
 procedure TTestBaseCSSParser.SetUp;
@@ -845,7 +1301,7 @@ begin
     FreeAndNil(FToFree);
   FreeAndNil(FParseResult);
   FreeAndNil(FParser);
-  FReeAndNil(FSource);
+  FreeAndNil(FSource);
 end;
 
 procedure TTestBaseCSSParser.TearDown;
@@ -869,10 +1325,22 @@ begin
   FToFree:=FParseResult;
 end;
 
+procedure TTestBaseCSSParser.ParseInline;
+begin
+  FParseResult:=FParser.ParseInline;
+  FToFree:=FParseResult;
+end;
+
 procedure TTestBaseCSSParser.Parse(const aSource: String);
 begin
   CreateParser(aSource);
   Parse;
+end;
+
+procedure TTestBaseCSSParser.ParseInline(const aSource: String);
+begin
+  CreateParser(aSource);
+  ParseInline;
 end;
 
 function TTestBaseCSSParser.ParseRule(const aSource: String): TCSSRuleElement;
@@ -884,7 +1352,7 @@ begin
     Result:=FirstRule;
 end;
 
-procedure TTestBaseCSSParser.AssertEquals(AMessage : String; AExpected, AActual: TCSSUnits);
+procedure TTestBaseCSSParser.AssertEquals(AMessage : String; AExpected, AActual: TCSSUnit);
 
 Var
   S,EN1,EN2 : String;
@@ -892,8 +1360,8 @@ Var
 begin
   If (AActual<>AExpected) then
     begin
-    EN1:=GetEnumName(TypeINfo(TCSSUnits),Ord(AExpected));
-    EN2:=GetEnumName(TypeINfo(TCSSUnits),Ord(AActual));
+    EN1:=GetEnumName(TypeINfo(TCSSUnit),Ord(AExpected));
+    EN2:=GetEnumName(TypeINfo(TCSSUnit),Ord(AActual));
     S:=Format('%s : %s <> %s',[AMessage,EN1,EN2]);
     Fail(S);
     end;
@@ -989,7 +1457,7 @@ begin
   AssertEquals(Msg+': Value ',aValue,Result.Value);
 end;
 
-function TTestBaseCSSParser.CheckLiteral(Msg: String; aEl: TCSSelement; aValue: Integer; AUnits: TCSSUnits): TCSSIntegerElement;
+function TTestBaseCSSParser.CheckLiteral(Msg: String; aEl: TCSSelement; aValue: Integer; AUnits: TCSSUnit): TCSSIntegerElement;
 begin
   Result:=CheckLiteral(Msg,aEl,aValue);
   AssertEquals('Units',aUnits,Result.Units);
@@ -1002,7 +1470,19 @@ begin
   Result:=aCall.Children[0];
   AssertNotNull('Have call argument',Result);
 end;
- 
+
+function TTestBaseCSSParser.GetSecondRule: TCSSRuleElement;
+var
+  L : TCSSCompoundElement;
+begin
+  L:=TCSSCompoundElement(CheckClass('list',TCSSCompoundElement,ParseResult));
+  AssertTrue('Result has at least 2 children',L.ChildCount>1);
+  if L.Children[1] is TCSSAtRuleElement then
+    Result:=TCSSAtRuleElement(CheckClass('Second element is rule',TCSSAtRuleElement,L.Children[1]))
+  else
+    Result:=TCSSRuleElement(CheckClass('Second element is rule',TCSSRuleElement,L.Children[1]));
+end;
+
 initialization
   RegisterTests([TTestCSSParser,TTestCSSFilesParser]);
 end.

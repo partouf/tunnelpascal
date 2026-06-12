@@ -32,13 +32,10 @@ unit cgrv;
        parabase;
 
     type
-
-      { tcgrv }
-
       tcgrv = class(tcg)
         procedure a_loadaddr_ref_cgpara(list : TAsmList;const r : treference;const paraloc : tcgpara); override;
 
-        procedure a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); override;
+        procedure a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister); override;
 
         procedure a_call_reg(list : TAsmList;reg: tregister); override;
         procedure a_call_name(list : TAsmList;const s : string; weak: boolean); override;
@@ -46,13 +43,15 @@ unit cgrv;
         procedure a_load_const_ref(list: TAsmList; size: tcgsize; a: tcgint; const ref: treference); override;
         procedure a_load_reg_ref(list: TAsmList; fromsize, tosize: TCGSize; reg: tregister; const ref: treference); override;
         procedure a_load_ref_reg(list: TAsmList; fromsize, tosize: tcgsize; const ref: treference; reg: tregister); override;
-        procedure a_load_const_reg(list: TAsmList; size: tcgsize; a: tcgint; register: tregister); override;            
+        procedure a_load_const_reg(list: TAsmList; size: tcgsize; a: tcgint; register: tregister); override;
 
         procedure a_op_const_reg(list : TAsmList; Op: TOpCG; size: TCGSize; a: tcgint; reg: TRegister); override;
         procedure a_op_reg_reg(list : TAsmList; Op: TOpCG; size: TCGSize; src, dst: TRegister); override;
 
         procedure a_op_const_reg_reg(list: TAsmList; op: TOpCg; size: tcgsize; a: tcgint; src, dst: tregister); override;
         procedure a_op_reg_reg_reg(list: TAsmList; op: TOpCg; size: tcgsize; src1, src2, dst: tregister); override;
+        procedure a_op_const_reg_reg_checkoverflow(list: TAsmList; op: TOpCg; size: tcgsize; a: tcgint; src, dst: tregister;setflags : boolean;var ovloc : tlocation); override;
+        procedure a_op_reg_reg_reg_checkoverflow(list: TAsmList; op: TOpCg; size: tcgsize; src1, src2, dst: tregister; setflags: boolean; var ovloc: tlocation); override;
 
         procedure a_loadaddr_ref_reg(list : TAsmList;const ref : treference;r : tregister);override;
 
@@ -69,6 +68,9 @@ unit cgrv;
         procedure g_restore_registers(list: TAsmList); override;
 
         procedure g_profilecode(list: TAsmList); override;
+
+        procedure g_overflowcheck_loc(list: TAsmList; const Loc: tlocation; def: tdef; ovloc: tlocation); override;
+        procedure g_overflowcheck(list: TAsmList; const Loc: tlocation; def: tdef); override;
 
         { fpu move instructions }
         procedure a_loadfpu_reg_reg(list: TAsmList; fromsize, tosize: tcgsize; reg1, reg2: tregister); override;
@@ -88,10 +90,10 @@ unit cgrv;
   const
     TOpCG2AsmConstOp: Array[topcg] of TAsmOp = (A_NONE,
           A_NONE,A_ADDI,A_ANDI,A_NONE,A_NONE,A_NONE,A_NONE,
-          A_None,A_None,A_ORI,A_SRAI,A_SLLI,A_SRLI,A_NONE,A_XORI,A_None,A_None);
+          A_None,A_None,A_ORI,A_SRAI,A_SLLI,A_SRLI,A_NONE,A_XORI,A_None,A_RORI);
     TOpCG2AsmOp: Array[topcg] of TAsmOp = (A_NONE,
           A_NONE,A_ADD,A_AND,A_DIVU,A_DIV,A_MUL,A_MUL,
-          A_None,A_None,A_OR,A_SRA,A_SLL,A_SRL,A_SUB,A_XOR,A_None,A_None);
+          A_None,A_None,A_OR,A_SRA,A_SLL,A_SRL,A_SUB,A_XOR,A_ROL,A_ROR);
 
 {$ifdef extdebug}
      function ref2string(const ref : treference) : string;
@@ -130,6 +132,7 @@ unit cgrv;
       var
         href: treference;
         l: TAsmLabel;
+        ai: taicpu;
       begin
         if not(weak) then
           reference_reset_symbol(href,current_asmdata.RefAsmSymbol(s,AT_FUNCTION),0,0,[])
@@ -152,7 +155,9 @@ unit cgrv;
 
             reference_reset_symbol(href,l,0,0,[]);
             href.refaddr:=addr_pcrel_lo12;
-            list.concat(taicpu.op_reg_reg_ref(A_JALR,NR_RETURN_ADDRESS_REG,NR_RETURN_ADDRESS_REG,href));
+            ai:=taicpu.op_reg_reg_ref(A_JALR,NR_RETURN_ADDRESS_REG,NR_RETURN_ADDRESS_REG,href);
+            ai.is_jmp:=true;
+            list.concat(ai);
           end;
 
         { not assigned while generating external wrappers }
@@ -196,10 +201,10 @@ unit cgrv;
       end;
 
 
-    procedure tcgrv.a_bit_scan_reg_reg(list: TAsmList; reverse: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
+    procedure tcgrv.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tcgsize; src, dst: TRegister);
       begin
         internalerror(2016060401);
-      end;       
+      end;
 
 
     procedure tcgrv.a_op_const_reg(list : TAsmList; Op: TOpCG; size: TCGSize; a: tcgint; reg: TRegister);
@@ -216,64 +221,32 @@ unit cgrv;
 
     procedure tcgrv.a_op_const_reg_reg(list: TAsmList; op: TOpCg; size: tcgsize; a: tcgint; src, dst: tregister);
       var
-        tmpreg: TRegister;
+        ovloc: tlocation;
       begin
-        optimize_op_const(size,op,a);
-
-        if op=OP_NONE then
-          begin
-            a_load_reg_reg(list,size,size,src,dst);
-            exit;
-          end;
-
-        if op=OP_SUB then
-          begin
-            op:=OP_ADD;
-            a:=-a;
-          end;
-
-{$ifdef RISCV64}
-        if (op=OP_SHL) and
-               (size=OS_S32) then
-          begin
-            list.concat(taicpu.op_reg_reg_const(A_SLLIW,dst,src,a));
-            maybeadjustresult(list,op,size,dst);
-          end
-        else if (op=OP_SHR) and
-               (size=OS_S32) then
-          begin
-            list.concat(taicpu.op_reg_reg_const(A_SRLIW,dst,src,a));
-            maybeadjustresult(list,op,size,dst);
-          end
-        else if (op=OP_SAR) and
-               (size=OS_S32) then
-          begin
-            list.concat(taicpu.op_reg_reg_const(A_SRAIW,dst,src,a));
-            maybeadjustresult(list,op,size,dst);
-          end
-        else
-{$endif RISCV64}
-        if (TOpCG2AsmConstOp[op]<>A_None) and
-           is_imm12(a) then
-          begin
-            list.concat(taicpu.op_reg_reg_const(TOpCG2AsmConstOp[op],dst,src,a));
-            maybeadjustresult(list,op,size,dst);
-          end
-        else
-          begin
-            tmpreg:=getintregister(list,size);
-            a_load_const_reg(list,size,a,tmpreg);
-            a_op_reg_reg_reg(list,op,size,tmpreg,src,dst);
-          end;
-      end;   
+        a_op_const_reg_reg_checkoverflow(list, op, size, a, src, dst, false, ovloc);
+      end;
 
 
-    procedure tcgrv.a_op_reg_reg_reg(list: TAsmList; op: TOpCg; size: tcgsize; src1, src2, dst: tregister);
+    procedure tcgrv.a_op_reg_reg_reg_checkoverflow(list: TAsmList; op: TOpCg; size: tcgsize; src1, src2, dst: tregister; setflags: boolean; var ovloc: tlocation);
       var
         name: String;
         pd: tprocdef;
         paraloc1, paraloc2: tcgpara;
+        ai: taicpu;
+        tmpreg1, tmpreg2: TRegister;
+        signed: Boolean;
       begin
+        signed:=tcgsize2unsigned[size]<>size;
+        if setflags and
+          { do we know overflow checking for this operation? fix me! }(size in [OS_32,OS_S32{$ifdef RISCV64},OS_S64,OS_64{$endif RISCV64}]) and
+          (op in [OP_ADD,OP_SUB,OP_MUL,OP_IMUL,OP_IDIV,OP_NEG]) then
+          begin
+            ovloc.loc:=LOC_JUMP;
+            current_asmdata.getjumplabel(ovloc.truelabel);
+            current_asmdata.getjumplabel(ovloc.falselabel);
+          end
+        else
+          ovloc.loc:=LOC_VOID;
         if op=OP_NOT then
           begin
             list.concat(taicpu.op_reg_reg_const(A_XORI,dst,src1,-1));
@@ -282,6 +255,15 @@ unit cgrv;
         else if op=OP_NEG then
           begin
             list.concat(taicpu.op_reg_reg_reg(A_SUB,dst,NR_X0,src1));
+
+            if setflags then
+              begin
+                { if dst and src are equal, an overflow happened }
+                a_cmp_reg_reg_label(list,OS_INT,OC_NE,dst,src1,ovloc.falselabel);
+
+                a_jmp_always(list,ovloc.truelabel);
+              end;
+
             maybeadjustresult(list,op,size,dst);
           end
         else
@@ -308,9 +290,15 @@ unit cgrv;
                 list.concat(taicpu.op_reg_reg_reg(A_SRAW,dst,src2,src1));
                 maybeadjustresult(list,op,size,dst);
               end
+            else if (op=OP_SUB) and not(setflags) and
+               (size in [OS_32,OS_S32]) then
+              begin
+                list.concat(taicpu.op_reg_reg_reg(A_SUBW,dst,src2,src1));
+                maybeadjustresult(list,op,size,dst);
+              end
             else
 {$endif RISCV64}
-            if (op in [OP_IMUL,OP_MUL]) and not(CPURV_HAS_MUL in cpu_capabilities[current_settings.cputype]) then
+            if (op in [OP_IMUL,OP_MUL]) and ([CPURV_HAS_MUL,CPURV_HAS_ZMMUL]*cpu_capabilities[current_settings.cputype]=[]) then
               begin
                 case size of
                   OS_8:
@@ -352,9 +340,171 @@ unit cgrv;
               end
             else
               begin
+                if setflags and (op=OP_MUL) and (size in [OS_32{$ifdef RISCV64},OS_64{$endif RISCV64}]) then
+                  begin
+                    tmpreg1:=getintregister(list,size);
+                    list.concat(taicpu.op_reg_reg_reg(A_MULHU,tmpreg1,src2,src1));
+                  end
+                else
+                  tmpreg1:=NR_NO;
                 list.concat(taicpu.op_reg_reg_reg(TOpCG2AsmOp[op],dst,src2,src1));
+                if setflags and (size in [OS_S32,OS_32{$ifdef RISCV64},OS_S64,OS_64{$endif RISCV64}]) then
+                  begin
+                    case op of
+                      OP_ADD:
+                        begin
+                          if size=OS_SINT then
+                            begin
+                              tmpreg1:=getintregister(list,size);
+                              list.concat(taicpu.op_reg_reg_reg(A_SLT,tmpreg1,dst,src2));
+                              tmpreg2:=getintregister(list,size);
+                              list.concat(taicpu.op_reg_reg_const(A_SLTI,tmpreg2,src1,0));
+                              a_cmp_reg_reg_label(list,OS_INT,OC_EQ,tmpreg1,tmpreg2,ovloc.falselabel)
+                            end
+                          else if size=OS_INT then
+                            begin
+                              ai:=taicpu.op_reg_reg_sym_ofs(A_Bxx,dst,src2,ovloc.falselabel,0);
+                              ai.condition:=C_GEU;
+                              list.concat(ai);
+                            end
+                          else
+                            Internalerror(2025102003);
+                          a_jmp_always(list,ovloc.truelabel);
+                        end;
+                      OP_SUB:
+                        begin
+                          if signed then
+                            begin
+                              tmpreg1:=getintregister(list,size);
+                              list.concat(taicpu.op_reg_reg_reg(A_SLT,tmpreg1,src2,dst));
+                              tmpreg2:=getintregister(list,size);
+                              list.concat(taicpu.op_reg_reg_const(A_SLTI,tmpreg2,src1,0));
+                              a_cmp_reg_reg_label(list,OS_INT,OC_EQ,tmpreg1,tmpreg2,ovloc.falselabel)
+                            end
+                          else
+                            begin
+{$ifdef RISCV64}
+                              { no overflow if result<=src2 }
+                              if size in [OS_S32,OS_32] then
+                                begin
+                                  tmpreg1:=getintregister(list,OS_INT);
+                                  a_load_reg_reg(list,size,OS_64,dst,tmpreg1);
+                                  dst:=tmpreg1;
+                                end;
+{$endif RISCV64}
+                              ai:=taicpu.op_reg_reg_sym_ofs(A_Bxx,src2,dst,ovloc.falselabel,0);
+                              ai.condition:=C_GEU;
+                              list.concat(ai);
+                            end;
+                          a_jmp_always(list,ovloc.truelabel);
+                        end;
+                      OP_MUL:
+                        begin
+                          if size=OS_INT then
+                            a_cmp_reg_reg_label(list,OS_INT,OC_EQ,tmpreg1,NR_X0,ovloc.falselabel)
+                          else
+                            Internalerror(2025102002);
+                          a_jmp_always(list,ovloc.truelabel);
+                        end;
+                      OP_IMUL:
+                        begin
+                          if size=OS_SINT then
+                            begin
+                              tmpreg1:=getintregister(list,size);
+                              list.concat(taicpu.op_reg_reg_reg(A_MULH,tmpreg1,src2,src1));
+                              tmpreg2:=getintregister(list,size);
+                              list.concat(taicpu.op_reg_reg_const(A_SRAI,tmpreg2,dst,sizeof(aint)*8-1));
+                              a_cmp_reg_reg_label(list,OS_INT,OC_EQ,tmpreg1,tmpreg2,ovloc.falselabel);
+                            end
+                          else
+                            Internalerror(2025102004);
+                          a_jmp_always(list,ovloc.truelabel);
+                        end;
+                      OP_IDIV:
+                        begin
+                          { Only overflow if dst is all 1's }
+                          tmpreg1:=getintregister(list,OS_INT);
+                          list.Concat(taicpu.op_reg_reg_const(A_ADDI,tmpreg1,dst,1));
+
+                          a_cmp_reg_reg_label(list,OS_INT,OC_NE,tmpreg1,NR_X0,ovloc.falselabel);
+
+                          a_jmp_always(list,ovloc.truelabel);
+                        end;
+                      else
+                        ;
+                    end
+                  end;
                 maybeadjustresult(list,op,size,dst);
               end;
+          end;
+      end;
+
+
+    procedure tcgrv.a_op_reg_reg_reg(list: TAsmList; op: TOpCg; size: tcgsize; src1, src2, dst: tregister);
+      var
+        ovloc: tlocation;
+      begin
+        a_op_reg_reg_reg_checkoverflow(list, op, size, src1, src2, dst, false, ovloc);
+      end;
+
+
+    procedure tcgrv.a_op_const_reg_reg_checkoverflow(list: TAsmList; op: TOpCg; size: tcgsize; a: tcgint; src, dst: tregister; setflags: boolean;
+      var ovloc: tlocation);
+      var
+        tmpreg: TRegister;
+      begin
+        optimize_op_const(size,op,a);
+
+        if op=OP_NONE then
+          begin
+            a_load_reg_reg(list,size,size,src,dst);
+            exit;
+          end;
+
+        if (op=OP_SUB) and not(setflags) then
+          begin
+            op:=OP_ADD;
+            a:=-a;
+          end;
+
+{$ifdef RISCV64}
+        if (op=OP_SHL) and
+          (size=OS_S32) then
+          begin
+            list.concat(taicpu.op_reg_reg_const(A_SLLIW,dst,src,a));
+            maybeadjustresult(list,op,size,dst);
+          end
+        else if (op=OP_SHR) and
+          (size=OS_S32) then
+          begin
+            list.concat(taicpu.op_reg_reg_const(A_SRLIW,dst,src,a));
+            maybeadjustresult(list,op,size,dst);
+          end
+        else if (op=OP_SAR) and
+          (size=OS_S32) then
+          begin
+            list.concat(taicpu.op_reg_reg_const(A_SRAIW,dst,src,a));
+            maybeadjustresult(list,op,size,dst);
+          end
+        else
+{$endif RISCV64}
+        if (TOpCG2AsmConstOp[op]<>A_None) and
+           is_imm12(a) and not(setflags) then
+          begin
+            list.concat(taicpu.op_reg_reg_const(TOpCG2AsmConstOp[op],dst,src,a));
+            maybeadjustresult(list,op,size,dst);
+          end
+        else if setflags then
+          begin
+            tmpreg:=getintregister(list,size);
+            a_load_const_reg(list,size,a,tmpreg);
+            a_op_reg_reg_reg_checkoverflow(list,op,size,tmpreg,src,dst,true,ovloc);
+          end
+        else
+          begin
+            tmpreg:=getintregister(list,size);
+            a_load_const_reg(list,size,a,tmpreg);
+            a_op_reg_reg_reg(list,op,size,tmpreg,src,dst);
           end;
       end;
 
@@ -396,12 +546,12 @@ unit cgrv;
             list.concat(taicpu.op_reg_reg_const(A_ADDI,r,href.base,href.offset));
           end
         else if (href.refaddr=addr_pcrel) then
-          begin                     
+          begin
             tmpreg:=getintregister(list,OS_ADDR);
 
             b:=href.base;
             href.base:=NR_NO;
-                                        
+
             current_asmdata.getjumplabel(l);
             a_label(list,l);
 
@@ -417,7 +567,7 @@ unit cgrv;
           end
         else
           internalerror(2016060504);
-      end;                
+      end;
 
 
     procedure tcgrv.a_cmp_const_reg_label(list: TAsmList; size: tcgsize; cmp_op: topcmp; a: tcgint; reg: tregister; l: tasmlabel);
@@ -484,7 +634,7 @@ unit cgrv;
       begin
         {reference_reset_symbol(href,l,0,0);
 
-        tmpreg:=getintregister(list,OS_ADDR);    
+        tmpreg:=getintregister(list,OS_ADDR);
 
         current_asmdata.getjumplabel(l);
         a_label(list,l);
@@ -551,7 +701,7 @@ unit cgrv;
                     inc(localsize,sizeof(pint));
                   end;
               end;
-               
+
             reference_reset_base(href,NR_STACK_POINTER_REG,stackcount,ctempposinvalid,0,[]);
 
             stackAdjust:=0;
@@ -652,11 +802,11 @@ unit cgrv;
                 postcompensation:=localsize-precompensation;
               end
             else
-              begin            
+              begin
                 precompensation:=0;
                 postcompensation:=localsize;
               end;
-            
+
             reference_reset_base(href,NR_STACK_POINTER_REG,postcompensation-stacksize,ctempposinvalid,0,[]);
 
             if precompensation>0 then
@@ -718,6 +868,24 @@ unit cgrv;
           end
         else
           internalerror(2018092201);
+      end;
+
+
+    procedure tcgrv.g_overflowcheck_loc(list: TAsmList; const Loc: tlocation; def: tdef; ovloc: tlocation);
+      begin
+        { no overflow checking yet generated }
+        if ovloc.loc=LOC_VOID then
+          exit;
+        if ovloc.loc<>LOC_JUMP then
+          Internalerror(2025102001);
+        a_label(list,ovloc.truelabel);
+        a_call_name(list,'FPC_OVERFLOW',false);
+        a_label(list,ovloc.falselabel);
+      end;
+
+
+    procedure tcgrv.g_overflowcheck(list: TAsmList; const Loc: tlocation; def: tdef);
+      begin
       end;
 
 
@@ -862,21 +1030,34 @@ unit cgrv;
         l: TAsmLabel;
       begin
         href:=ref;
-        fixref(list,href);      
 
-        if href.refaddr=addr_pcrel then
+        { can we use the fl* rd,symbol,rd pseudoinstruction? }
+        if (assigned(href.symbol) or (href.offset<>0)) then
           begin
-            tmpreg:=getintregister(list,OS_ADDR);
-            a_loadaddr_ref_reg(list,href,tmpreg);
-            reference_reset_base(href,tmpreg,0,ctempposinvalid,0,ref.volatility);
-          end;
+            if (href.base<>NR_NO) or (href.index<>NR_NO) then
+              fixref(list,href)
+            else
+              href.refaddr:=addr_full;
+          end
+        else
+          fixref(list,href);
 
         if fromsize=OS_F32 then
           op:=A_FLW
+        else if fromsize=OS_F64 then
+          op:=A_FLD
+        else if fromsize=OS_F128 then
+          op:=A_FLQ
         else
-          op:=A_FLD;
+          Internalerror(2025011101);
 
-        list.concat(taicpu.op_reg_ref(op,reg,href));
+        if href.refaddr in [addr_pcrel,addr_full] then
+          begin
+            tmpreg:=getintregister(list,OS_ADDR);
+            list.concat(taicpu.op_reg_ref_reg(op,reg,href,tmpreg));
+          end
+        else
+          list.concat(taicpu.op_reg_ref(op,reg,href));
 
         if fromsize<>tosize then
           a_loadfpu_reg_reg(list,fromsize,tosize,reg,reg);
@@ -890,7 +1071,7 @@ unit cgrv;
         tmpreg: TRegister;
       begin
         href:=ref;
-        fixref(list,href);    
+        fixref(list,href);
 
         if href.refaddr=addr_pcrel then
           begin
@@ -928,6 +1109,12 @@ unit cgrv;
 
         if assigned(ref.symbol) then
           begin
+{$ifdef unused}
+            { keeping the code for reference
+
+              we use the pseudo instruction LA below which is expanded by the assembler, doing
+              so results in more readable assembler and easier optimization of the assembler code
+            }
             if cs_create_pic in current_settings.moduleswitches then
               begin
                 reference_reset_symbol(href,ref.symbol,0,0,[]);
@@ -966,6 +1153,15 @@ unit cgrv;
                 href.refaddr:=addr_pcrel_lo12;
                 list.concat(taicpu.op_reg_reg_ref(A_ADDI,tmpreg,tmpreg,href));
               end;
+{$endif unused}
+
+            reference_reset_symbol(href,ref.symbol,0,0,[]);
+            href.refaddr:=addr_full;
+            ref.symbol:=nil;
+
+            tmpreg:=getintregister(list,OS_ADDR);
+
+            list.concat(taicpu.op_reg_ref(A_LA,tmpreg,href));
 
             if (ref.index<>NR_NO) and
                (ref.base<>NR_NO) then
@@ -981,7 +1177,7 @@ unit cgrv;
           end
         else if (ref.index=NR_NO) and
                 (ref.base=NR_NO) then
-          begin              
+          begin
             tmpreg:=getintregister(list,OS_INT);
 
             a_load_const_reg(list, OS_ADDR,ref.offset,tmpreg);
@@ -1040,7 +1236,8 @@ unit cgrv;
         ai: taicpu;
         l: TAsmLabel;
       begin
-        if needs_check_for_fpu_exceptions then
+        if (CPURV_HAS_F in cpu_capabilities[current_settings.cputype]) and
+          needs_check_for_fpu_exceptions then
           begin
             r:=getintregister(list,OS_INT);
             list.concat(taicpu.op_reg(A_FRFLAGS,r));

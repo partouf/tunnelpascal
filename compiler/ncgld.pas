@@ -326,8 +326,12 @@ implementation
              else
                reference_reset_symbol(tvref,current_asmdata.WeakRefAsmSymbol(gvs.mangledname,AT_DATA),0,sizeof(pint),[]);
              { Enable size optimization with -Os or PIC code is generated and PIC uses GOT }
-             size_opt:=(cs_opt_size in current_settings.optimizerswitches)
-                       or ((cs_create_pic in current_settings.moduleswitches) and (tf_pic_uses_got in target_info.flags));
+             size_opt:={$if defined(RISCV)}
+                         true
+                       {$else defined(RISCV)}
+                         (cs_opt_size in current_settings.optimizerswitches)
+                         or ((cs_create_pic in current_settings.moduleswitches) and (tf_pic_uses_got in target_info.flags))
+                       {$endif defined(RISCV)};
              hreg_tv_rec:=NR_INVALID;
              if size_opt then
                begin
@@ -1143,7 +1147,33 @@ implementation
 {$ifdef cpuflags}
               LOC_FLAGS :
                 begin
-                  if is_pasbool(left.resultdef) then
+                  { check for cbool here as booleans converted to other types shall be handled as pas booleans,
+                    see also tests/webtbs/tw40908.pp }
+                  if is_cbool(left.resultdef) then
+                    begin
+{$if not defined(cpu64bitalu) and not defined(cpuhighleveltarget)}
+                      if left.location.size in [OS_S64,OS_64] then
+                        begin
+                          r64.reglo:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+                          r64.reghi:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+                          cg.g_flags2reg(current_asmdata.CurrAsmList,OS_32,right.location.resflags,r64.reglo);
+                          cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
+                          cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_32,0,r64.reghi);
+                          cg64.a_op64_reg_reg(current_asmdata.CurrAsmList,OP_NEG,OS_S64,
+                            r64,r64);
+                          cg64.a_load64_reg_loc(current_asmdata.CurrAsmList,r64,left.location);
+                        end
+                      else
+{$endif not cpu64bitalu and not cpuhighleveltarget}
+                        begin
+                          r:=cg.getintregister(current_asmdata.CurrAsmList,left.location.size);
+                          cg.g_flags2reg(current_asmdata.CurrAsmList,left.location.size,right.location.resflags,r);
+                          cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
+                          cg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_NEG,left.location.size,r,r);
+                          hlcg.a_load_reg_loc(current_asmdata.CurrAsmList,left.resultdef,left.resultdef,r,left.location);
+                        end
+                    end
+                  else
                     begin
                       case left.location.loc of
                         LOC_REGISTER,LOC_CREGISTER:
@@ -1160,9 +1190,10 @@ implementation
                               cg.g_flags2reg(current_asmdata.CurrAsmList,left.location.size,right.location.resflags,left.location.register);
                               cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
                             end;
+                        LOC_CREFERENCE,
                         LOC_REFERENCE:
                         { i8086 and i386 have hacks in their code generators so that they can
-                          deal with 64 bit locations in this parcticular case }
+                          deal with 64 bit locations in this particular case }
 {$if not defined(cpu64bitalu) and not defined(x86) and not defined(cpuhighleveltarget)}
                           if left.location.size in [OS_S64,OS_64] then
                             begin
@@ -1189,30 +1220,6 @@ implementation
                         else
                           internalerror(200203273);
                       end;
-                    end
-                  else
-                    begin
-{$if not defined(cpu64bitalu) and not defined(cpuhighleveltarget)}
-                      if left.location.size in [OS_S64,OS_64] then
-                        begin
-                          r64.reglo:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
-                          r64.reghi:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
-                          cg.g_flags2reg(current_asmdata.CurrAsmList,OS_32,right.location.resflags,r64.reglo);
-                          cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
-                          cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_32,0,r64.reghi);
-                          cg64.a_op64_reg_reg(current_asmdata.CurrAsmList,OP_NEG,OS_S64,
-                            r64,r64);
-                          cg64.a_load64_reg_loc(current_asmdata.CurrAsmList,r64,left.location);
-                        end
-                      else
-{$endif not cpu64bitalu and not cpuhighleveltarget}
-                        begin
-                          r:=cg.getintregister(current_asmdata.CurrAsmList,left.location.size);
-                          cg.g_flags2reg(current_asmdata.CurrAsmList,left.location.size,right.location.resflags,r);
-                          cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_DEFAULTFLAGS);
-                          cg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_NEG,left.location.size,r,r);
-                          hlcg.a_load_reg_loc(current_asmdata.CurrAsmList,left.resultdef,left.resultdef,r,left.location);
-                        end
                     end;
                 end;
 {$endif cpuflags}

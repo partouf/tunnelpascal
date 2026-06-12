@@ -70,10 +70,12 @@ end;
 destructor tdeffile.destroy;
 begin
   if WrittenOnDisk and
-     not(cs_link_nolink in current_settings.globalswitches) then
+     ([cs_link_nolink,cs_link_deffile]*current_settings.globalswitches=[]) then
     DeleteFile(FName);
   importlist.Free;
+  importlist := nil;
   exportlist.Free;
+  exportlist := nil;
 end;
 
 

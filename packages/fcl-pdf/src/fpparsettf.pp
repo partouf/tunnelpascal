@@ -343,6 +343,8 @@ Type
     Property OS2Data : TOS2Data Read FOS2Data;
     Property PostScript : TPostScript Read FPostScript;
     property NameEntries: TNameEntries read FNameEntries;
+    { Returns True if the font contains CFF (PostScript) outlines instead of TrueType outlines }
+    function IsCFF: Boolean;
   end;
 
 type
@@ -596,7 +598,7 @@ begin
             Gid:=J+Segm.IDDelta
           else
             begin
-            Gid:=GlyphIDArray[Segm.IDRangeOffset div 2 + i-segcount - Segm.startCode+j];
+            Gid:=GlyphIDArray[Segm.IDRangeOffset div 2 + i + (j-Segm.startCode) - segcount];
             if (Gid>0) then
               Gid:= Gid+Segm.IDDelta;
             end;
@@ -888,6 +890,11 @@ function TTFFileInfo.Embeddable: Boolean;
 begin
   With FOS2Data do
     Result:=(FsType<> 2) and ((FsType and 512)= 0);
+end;
+
+function TTFFileInfo.IsCFF: Boolean;
+begin
+  Result := FTableDir.FontVersion.Version = $4F54544F; // 'OTTO'
 end;
 
 function TTFFileInfo.Ascender: SmallInt;

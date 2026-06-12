@@ -29,8 +29,8 @@ type
   end;
 
   TltvInitTablesTable = {$ifndef FPC_ALIGNED_THREADVARTABLES}packed{$endif} record
-    count  : dword;
-    tables : {$ifndef FPC_ALIGNED_THREADVARTABLES}packed{$endif} array [1..{$ifdef cpu16}16{$else}32767{$endif}] of {$ifdef ver3_0}pltvInitEntry{$else}ppltvInitEntry{$endif};
+    count  : SizeInt;
+    tables : {$ifndef FPC_ALIGNED_THREADVARTABLES}packed{$endif} array [1..{$ifdef cpu16}16{$else}32767{$endif}] of ppltvInitEntry;
   end;
   PltvInitTablesTable = ^TltvInitTablesTable;
 
@@ -63,7 +63,7 @@ begin
     WriteLn ('init_all_unit_threadvars (',count,') units');
 {$endif}
     for i := 1 to count do
-      init_unit_threadvars (tables[i]{$ifndef ver3_0}^{$endif});
+      init_unit_threadvars (tables[i]^);
   end;
 end;
 
@@ -97,7 +97,7 @@ begin
     WriteLn ('copy_all_unit_threadvars (',count,') units');
 {$endif}
     for i := 1 to count do
-      copy_unit_threadvars (tables[i]{$ifndef ver3_0}^{$endif});
+      copy_unit_threadvars (tables[i]^);
   end;
 end;
 {$endif FPC_SECTION_THREADVARS}
@@ -116,13 +116,9 @@ begin
    fpc_threadvar_relocate_proc:=RelocProc;
 {$endif FPC_SECTION_THREADVARS}
 
-{$ifdef FPC_HAS_FEATURE_HEAP}
-{$ifndef HAS_MEMORYMANAGER}
-{$ifndef FPC_NO_DEFAULT_HEAP}
+{$if defined(FPC_HAS_FEATURE_HEAP) and not defined(HAS_MEMORYMANAGER)}
    RelocateHeap;
-{$endif ndef FPC_NO_DEFAULT_HEAP}
-{$endif HAS_MEMORYMANAGER}
-{$endif}
+{$endif FPC_HAS_FEATURE_HEAP and not HAS_MEMORYMANAGER}
 end;
 
 

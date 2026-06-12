@@ -293,7 +293,7 @@ type
   TWSOption = (woPongExplicit,      // Send Pong explicitly, not implicitly.
                woCloseExplicit,     // SeDo Close explicitly, not implicitly.
                woIndividualFrames,  // Send frames one by one, do not concatenate.
-               woSkipUpgradeCheck,  // Skip handshake "Upgrade:" HTTP header cheack.
+               woSkipUpgradeCheck,  // Skip handshake "Upgrade:" HTTP header check.
                woSkipVersionCheck,  // Skip handshake "Sec-WebSocket-Version' HTTP header check.
                woSendErrClosesConn  // Don't raise an exception when writing to a broken connection
               );
@@ -354,7 +354,7 @@ type
     // read & process incoming message. Return nil if connection was close.
     function ReadMessage: Boolean;
     // Disconnect
-    Procedure Disconnect;
+    Procedure Disconnect; inline;
     // Descendents can override this to provide custom frames
     Function FrameClass : TWSFrameClass; virtual;
     // Send raw frame. No checking is done !
@@ -1602,8 +1602,6 @@ end;
 procedure TWSConnection.Disconnect;
 begin
   DoDisconnect;
-  if Assigned(FOnDisconnect) then
-    FOnDisconnect(Self);
 end;
 
 procedure TWSConnection.Close(aData: TBytes);
@@ -1664,7 +1662,6 @@ begin
 end;
 
 function TWSConnection.CheckIncoming(aTimeout: Integer; DoRead: Boolean = True): TIncomingResult;
-
 begin
   if not Transport.CanRead(aTimeOut) then
     Result:=irNone

@@ -25,7 +25,6 @@ Unit System;
                                     interface
 {*****************************************************************************}
 
-{$DEFINE SYSTEM_HAS_FEATURE_MONITOR}
 {$define FPC_IS_SYSTEM}
 {$define HAS_CMDLINE}
 {$define USE_NOTHREADMANAGER}
@@ -36,15 +35,6 @@ Unit System;
 {$i osdefs.inc}
 
 {$I sysunixh.inc}
-
-{$if defined(VER3_0) and defined(CPUX86_64)}
-{$define FPC_BOOTSTRAP_INDIRECT_ENTRY}
-const
-  { this constant only exists during bootstrapping of the RTL with FPC 3.0.x,
-    so that the whole condition doesn't need to be repeated in si_intf }
-  indirect_bootstrap = true;
-{$endif defined(VER3_0) and defined(CPUX86_64)}
-
 
 function get_cmdline:PAnsiChar; deprecated 'use paramstr' ;
 property cmdline:PAnsiChar read get_cmdline;
@@ -251,7 +241,7 @@ procedure InitTLS; [public,alias:'FPC_INITTLS'];
     inc(auxp);
     phdr:=nil;
     phnum:=0;
-    { now we are at the auxillary vector }
+    { now we are at the auxiliary vector }
     while assigned(auxp^) do
       begin
         case plongint(auxp)^ of
@@ -455,7 +445,7 @@ end;
 
 function paramstr(l: longint) : shortstring;
  begin
-   { stricly conforming POSIX applications  }
+   { strictly conforming POSIX applications }
    { have the executing filename as argv[0] }
    if l=0 then
      begin

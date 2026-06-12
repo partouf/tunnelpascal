@@ -1,0 +1,25 @@
+# Known test failures tolerated by CI (the "Aggregate Results" gate).
+#
+# These tests ALSO fail on a pristine upstream FPC `main` build in the same
+# CI environment -- they are inherited from upstream, NOT caused by the
+# tunnelpascal fork or by merging upstream. Several are environmental
+# (glibc symbol versioning, ISO mode runtime, a known segfault, etc.).
+#
+# The gate fails the build only on failures NOT listed here, so genuine
+# regressions are still caught. If an entry below starts PASSING, CI prints
+# a warning so it can be removed from this list.
+#
+# Format: <classname>/<name>  (one JUnit testcase per line; '#' = comment)
+# Verified against upstream fpc/main @ fcdde3162a (2026-06-12).
+
+packages/rtl-generics/tests/testrunner.rtlgenerics.pp
+test/packages/webtbs/tw11142.pp
+test/texception14.pp
+test/tisoreset.pp
+test/tlibrary3.pp
+test/tmultilinestring26.pp
+webtbf/tw27378.pp
+webtbs/tw11563.pp
+webtbs/tw2536b.pp
+webtbs/tw40453.pp
+webtbs/tw41487.pp

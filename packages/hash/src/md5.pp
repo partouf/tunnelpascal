@@ -118,7 +118,7 @@ procedure MDFinal(var Context: TMDContext; out Digest: TMDDigest);
 
 
 (******************************************************************************
- * Auxilary functions
+ * Auxiliary functions
  ******************************************************************************)
 
 function MDString(const S: RawByteString; const Version: TMDVersion): TMDDigest;
@@ -152,7 +152,7 @@ procedure MD5Final(var Context: TMD5Context; out Digest: TMD5Digest); external n
 
 
 (******************************************************************************
- * Dedicated auxilary functions
+ * Dedicated auxiliary functions
  ******************************************************************************)
 
 function MD2String(const S: RawByteString): TMD2Digest; inline;
@@ -353,6 +353,9 @@ end;
       {$i md5x64_sysv.inc}
       {$define MD5ASM}
     {$endif MSWINDOWS}
+  {$elseif defined(CPUARM) and not (defined(CPUTHUMB)) and not (defined(CPUTHUMB2))}
+    {$i md5arm.inc}
+    {$define MD5ASM}
   {$endif}
 {$endif not MD5PASCAL}
 
@@ -627,17 +630,20 @@ begin
   Reset(F, 1);
   {$pop}
 
-  if IOResult = 0 then
-  begin
-    GetMem(Buf, BufSize);
-    repeat
-      BlockRead(F, Buf^, Bufsize, Count);
-      if Count > 0 then
-        MDUpdate(Context, Buf^, Count);
-    until Count < BufSize;
-    FreeMem(Buf, BufSize);
-    Close(F);
-  end;
+  if IOResult <> 0 then
+    begin
+    Result:=Default(TMDDigest);
+    Exit;
+    end;
+
+  GetMem(Buf, BufSize);
+  repeat
+    BlockRead(F, Buf^, Bufsize, Count);
+    if Count > 0 then
+      MDUpdate(Context, Buf^, Count);
+  until Count < BufSize;
+  FreeMem(Buf, BufSize);
+  Close(F);
 
   MDFinal(Context, Result);
   FileMode := ofm;
@@ -660,17 +666,19 @@ begin
   Reset(F, 1);
   {$pop}
 
-  if IOResult = 0 then
-  begin
-    GetMem(Buf, BufSize);
-    repeat
-      BlockRead(F, Buf^, Bufsize, Count);
-      if Count > 0 then
-        MDUpdate(Context, Buf^, Count);
-    until Count < BufSize;
-    FreeMem(Buf, BufSize);
-    Close(F);
-  end;
+  if IOResult <> 0 then
+    begin
+    Result:=Default(TMDDigest);
+    Exit;
+    end;
+  GetMem(Buf, BufSize);
+  repeat
+    BlockRead(F, Buf^, Bufsize, Count);
+    if Count > 0 then
+      MDUpdate(Context, Buf^, Count);
+  until Count < BufSize;
+  FreeMem(Buf, BufSize);
+  Close(F);
 
   MDFinal(Context, Result);
   FileMode := ofm;
@@ -818,5 +826,5 @@ function StrtoMD5(const MD5String:String):TMDDigest;
        end;
      if not f then
        FillChar(Result, Sizeof(Result), 0);
-   end; 
+   end;
 end.

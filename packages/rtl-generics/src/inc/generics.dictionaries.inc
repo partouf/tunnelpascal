@@ -171,6 +171,12 @@ begin
   Result := GetCurrent;
 end;
 
+function TCustomDictionaryEnumerator<T, CUSTOM_DICTIONARY_CONSTRAINTS>.GetCurrent: T;
+
+begin
+  Result:=Default(T);
+end;
+
 { TDictionaryEnumerable<TDictionaryEnumerator, TDictionaryPointersEnumerator, T, CUSTOM_DICTIONARY_CONSTRAINTS> }
 
 function TDictionaryEnumerable<TDictionaryEnumerator, TDictionaryPointersEnumerator, T, CUSTOM_DICTIONARY_CONSTRAINTS>.GetPtrEnumerator: TEnumerator<PT>;
@@ -341,25 +347,74 @@ begin
   Result := FindBucketIndex(FItems, AKey, LHash);
 end;
 
-procedure TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.PrepareAddingItem;
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndex(const AKey: TKey;
+  out AHash: UInt32): SizeInt;
 begin
+  Result := FindBucketIndex(FItems, AKey, AHash);
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndexForHash(const AItems: TArray<TItem>;
+  const AKey: TKey; var AHash: UInt32): SizeInt;
+begin
+  Result := FindBucketIndex(AItems, AKey, AHash);
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.GetKeyFromBucket(
+  ABucketIndex: SizeInt): TKey;
+begin
+  Result := FItems[ABucketIndex].Pair.Key;
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.GetValueFromBucket(
+  ABucketIndex: SizeInt): TValue;
+begin
+  Result := FItems[ABucketIndex].Pair.Value;
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.GetMutableValueFromBucket(
+  ABucketIndex: SizeInt): PValue;
+begin
+  Result := @FItems[ABucketIndex].Pair.Value;
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.PrepareAddingItem: boolean;
+begin
+  Result := False;
   if RealItemsLength > FItemsThreshold then
-    Rehash(Length(FItems) shl 1)
+  begin
+    Rehash(Length(FItems) shl 1);
+    Result := True;
+  end
   else if FItemsThreshold = 0 then
   begin
     SetLength(FItems, 8);
     UpdateItemsThreshold(8);
+    Result := True;
   end
-  else if FItemsLength = $40000001 then // High(TIndex) ... Error: Type mismatch
+  else
+  if FItemsLength = $40000001 then // High(TIndex) ... Error: Type mismatch
     OutOfMemoryError;
+end;
+
+procedure TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.InternalDoAdd(const AKey: TKey;
+  const AValue: TValue; AHash: UInt32; var ABucketIndex: SizeInt);
+begin
+  if ABucketIndex >= 0 then
+    raise EListError.CreateRes(@SDuplicatesNotAllowed);
+
+  ABucketIndex := not ABucketIndex;
+  AddItem(FItems[ABucketIndex], AKey, AValue, AHash);
 end;
 
 procedure TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.UpdateItemsThreshold(ASize: SizeInt);
 begin
   if ASize = $40000000 then
     FItemsThreshold := $40000001
-  else
+  else begin
     FItemsThreshold := Pred(Round(ASize * FMaxLoadFactor));
+    if FItemsThreshold < 0 then
+      FItemsThreshold := 0;
+  end;
 end;
 
 procedure TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.AddItem(var AItem: TItem; const AKey: TKey;
@@ -390,6 +445,25 @@ begin
   DoAdd(APair.Key, APair.Value);
 end;
 
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.DoAdd(const AKey: TKey; const AValue: TValue;
+  AHash: UInt32; ABucketIndex: SizeInt): SizeInt;
+begin
+  if not PrepareAddingItem then
+    Result := ABucketIndex
+  else
+    Result := FindBucketIndexForHash(FItems, AKey, AHash);
+  InternalDoAdd(AKey, AValue, AHash, Result);
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.DoAdd(const AKey: TKey; const AValue: TValue;
+  AHash: UInt32): SizeInt;
+begin
+  PrepareAddingItem;
+
+  Result := FindBucketIndexForHash(FItems, AKey, AHash);
+  InternalDoAdd(AKey, AValue, AHash, Result);
+end;
+
 function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.DoAdd(const AKey: TKey; const AValue: TValue): SizeInt;
 var
   LHash: UInt32;
@@ -397,11 +471,7 @@ begin
   PrepareAddingItem;
 
   Result := FindBucketIndex(FItems, AKey, LHash);
-  if Result >= 0 then
-    raise EListError.CreateRes(@SDuplicatesNotAllowed);
-
-  Result := not Result;
-  AddItem(FItems[Result], AKey, AValue, LHash);
+  InternalDoAdd(AKey, AValue, LHash, Result);
 end;
 
 function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.DoRemove(AIndex: SizeInt;
@@ -472,7 +542,6 @@ end;
 function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.Rehash(ASizePow2: SizeInt; AForce: Boolean): Boolean;
 var
   LNewItems: TArray<TItem>;
-  LHash: UInt32;
   LIndex: SizeInt;
   i: SizeInt;
   LItem, LNewItem: PItem;
@@ -492,11 +561,11 @@ begin
 
     if (LItem.Hash and UInt32.GetSignMask) <> 0 then
     begin
-      LIndex := FindBucketIndex(LNewItems, LItem.Pair.Key, LHash);
+      LIndex := FindBucketIndexForHash(LNewItems, LItem.Pair.Key, LItem.Hash);
       LIndex := not LIndex;
 
       LNewItem := @LNewItems[LIndex];
-      LNewItem.Hash := LHash;
+      LNewItem.Hash := LItem.Hash;
       LNewItem.Pair := LItem.Pair;
     end;
   end;
@@ -601,6 +670,38 @@ begin
   SetValue(FItems[LIndex].Pair.Value, AValue);
 end;
 
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.GetOrAddMutableValue(const AKey: TKey): PValue;
+var
+  LIndex: SizeInt;
+  LHash: UInt32;
+begin
+  LIndex := FindBucketIndex(FItems, AKey, LHash);
+  if LIndex < 0 then
+    LIndex := DoAdd(AKey, Default(TValue), LHash, LIndex);
+  Result := @FItems[LIndex].Pair.Value;
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.GetMutableValue(const AKey: TKey): PValue;
+var
+  LIndex: SizeInt;
+  LHash: UInt32;
+begin
+  LIndex := FindBucketIndex(FItems, AKey, LHash);
+  if LIndex < 0 then
+    Result := Nil
+  else
+    Result := @FItems[LIndex].Pair.Value;
+end;
+
+function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.TryGetMutableValue(const AKey: TKey; out APValue: PValue): Boolean;
+var
+  LPValue: PValue;
+begin
+  LPValue := GetMutableValue(AKey);
+  APValue := LPValue;
+  Result := LPValue <> Nil;
+end;
+
 function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.TryGetValue(const AKey: TKey; out AValue: TValue): Boolean;
 var
   LIndex: SizeInt;
@@ -617,10 +718,12 @@ end;
 function TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.TryAdd(const AKey: TKey; const AValue: TValue): Boolean;
 var
   LHash: UInt32;
+  i: SizeInt;
 begin
-  Result := FindBucketIndex(FItems, AKey, LHash) < 0;
+  i := FindBucketIndex(FItems, AKey, LHash);
+  Result := i < 0;
   if Result then
-    DoAdd(AKey, AValue);
+    DoAdd(AKey, AValue, LHash, i);
 end;
 
 procedure TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.AddOrSetValue(const AKey: TKey; const AValue: TValue);
@@ -631,7 +734,7 @@ begin
   LIndex := FindBucketIndex(FItems, AKey, LHash);
 
   if LIndex < 0 then
-    DoAdd(AKey, AValue)
+    DoAdd(AKey, AValue, LHash, LIndex)
   else
     SetValue(FItems[LIndex].Pair.Value, AValue);
 end;
@@ -769,36 +872,39 @@ end;
 
 function TOpenAddressingLP<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndex(const AItems: TArray<TItem>;
   const AKey: TKey; out AHash: UInt32): SizeInt;
+begin
+  AHash := FEqualityComparer.GetHashCode(AKey);
+  AHash := AHash or UInt32.GetSignMask;
+  Result := FindBucketIndexForHash(AItems, AKey, AHash);
+end;
+
+function TOpenAddressingLP<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndexForHash(
+  const AItems: TArray<TItem>; const AKey: TKey; var AHash: UInt32): SizeInt;
 var
-  LItem: {TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.}_TItem; // for workaround Lazarus bug #25613
   LLengthMask: SizeInt;
   i, m: SizeInt;
-  LHash: UInt32;
 begin
   m := Length(AItems);
-  LLengthMask := m - 1;
-
-  LHash := FEqualityComparer.GetHashCode(AKey);
-
-  i := 0;
-  AHash := LHash or UInt32.GetSignMask;
 
   if m = 0 then
     Exit(-1);
 
+  LLengthMask := m - 1;
   Result := AHash and LLengthMask;
 
+  i := 0;
   repeat
-    LItem := _TItem(AItems[Result]);
+    with AItems[Result] do
+    begin
+      // Empty position
+      if (Hash and UInt32.GetSignMask) = 0 then
+        Exit(not Result); // insert!
 
-    // Empty position
-    if (LItem.Hash and UInt32.GetSignMask) = 0 then
-      Exit(not Result); // insert!
-
-    // Same position?
-    if LItem.Hash = AHash then
-      if FEqualityComparer.Equals(AKey, LItem.Pair.Key) then
-        Exit;
+      // Same position?
+      if Hash = AHash then
+        if FEqualityComparer.Equals(AKey, Pair.Key) then
+          Exit;
+    end;
 
     Inc(i);
 
@@ -852,7 +958,7 @@ begin
     raise EListError.CreateRes(@SDuplicatesNotAllowed);
 
   Result := not Result;
-  // Can't ovverride because we lost info about old hash
+  // Can't override because we lost info about old hash
   if FItems[Result].Hash <> 0 then
     Dec(FTombstonesCount);
 
@@ -863,25 +969,27 @@ end;
 
 function TOpenAddressingSH<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndex(const AItems: TArray<TItem>;
   const AKey: TKey; out AHash: UInt32): SizeInt;
+begin
+  AHash := FEqualityComparer.GetHashCode(AKey);
+  AHash := AHash or UInt32.GetSignMask;
+  Result := FindBucketIndexForHash(AItems, AKey, AHash);
+end;
+
+function TOpenAddressingSH<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndexForHash(
+  const AItems: TArray<TItem>; const AKey: TKey; var AHash: UInt32): SizeInt;
 var
   LItem: {TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.}_TItem; // for workaround Lazarus bug #25613
   LLengthMask: SizeInt;
   i, m: SizeInt;
-  LHash: UInt32;
 begin
   m := Length(AItems);
-  LLengthMask := m - 1;
-
-  LHash := FEqualityComparer.GetHashCode(AKey);
-
-  i := 0;
-  AHash := LHash or UInt32.GetSignMask;
-
   if m = 0 then
     Exit(-1);
 
+  LLengthMask := m - 1;
   Result := AHash and LLengthMask;
 
+  i := 0;
   repeat
     LItem := _TItem(AItems[Result]);
     // Empty position
@@ -914,12 +1022,13 @@ begin
   LHash := FEqualityComparer.GetHashCode(AKey);
 
   i := 0;
-  AHash := LHash or UInt32.GetSignMask;
+  LHash := LHash or UInt32.GetSignMask;
+  AHash := LHash;
 
   if m = 0 then
     Exit(-1);
 
-  Result := AHash and LLengthMask;
+  Result := LHash and LLengthMask;
 
   repeat
     LItem := _TItem(AItems[Result]);
@@ -929,13 +1038,13 @@ begin
       Exit(not Result); // insert!
 
     // Same position?
-    if LItem.Hash = AHash then
+    if LItem.Hash = LHash then
       if FEqualityComparer.Equals(AKey, LItem.Pair.Key) then
         Exit;
 
     Inc(i);
 
-    Result := TProbeSequence.Probe(i, AHash) and LLengthMask;
+    Result := TProbeSequence.Probe(i, LHash) and LLengthMask;
 
   until false;
 end;
@@ -957,16 +1066,18 @@ end;
 
 function TOpenAddressingQP<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndex(const AItems: TArray<TItem>;
   const AKey: TKey; out AHash: UInt32): SizeInt;
+begin
+  AHash := FEqualityComparer.GetHashCode(AKey);
+  AHash := AHash or UInt32.GetSignMask;
+  Result := FindBucketIndexForHash(AItems, AKey, AHash);
+end;
+
+function TOpenAddressingQP<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndexForHash(
+  const AItems: TArray<TItem>; const AKey: TKey; var AHash: UInt32): SizeInt;
 var
   LItem: {TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.}_TItem; // for workaround Lazarus bug #25613
   i: SizeInt;
-  LHash: UInt32;
 begin
-  LHash := FEqualityComparer.GetHashCode(AKey);
-
-  i := 0;
-  AHash := LHash or UInt32.GetSignMask;
-
   if Length(AItems) = 0 then
     Exit(-1);
 
@@ -999,14 +1110,15 @@ begin
   LHash := FEqualityComparer.GetHashCode(AKey);
 
   i := 0;
-  AHash := LHash or UInt32.GetSignMask;
+  LHash := LHash or UInt32.GetSignMask;
+  AHash := LHash;
 
   if Length(AItems) = 0 then
     Exit(-1);
 
   for i := 0 to FPrimaryNumberAsSizeApproximation - 1 do
   begin
-    Result := TProbeSequence.Probe(i, AHash) mod FPrimaryNumberAsSizeApproximation;
+    Result := TProbeSequence.Probe(i, LHash) mod FPrimaryNumberAsSizeApproximation;
     LItem := _TItem(AItems[Result]);
 
     // Empty position or tombstone
@@ -1014,7 +1126,7 @@ begin
       Exit(not Result); // insert!
 
     // Same position?
-    if LItem.Hash = AHash then
+    if LItem.Hash = LHash then
       if FEqualityComparer.Equals(AKey, LItem.Pair.Key) then
         Exit;
   end;
@@ -1151,6 +1263,28 @@ begin
 
     Result := TProbeSequence.Probe(i, AHash, LHash2) and LLengthMask;
   until false;
+end;
+
+function TOpenAddressingDH<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndexForHash(
+  const AItems: TArray<TItem>; const AKey: TKey; var AHash: UInt32): SizeInt;
+var
+  LItem: {TOpenAddressing<OPEN_ADDRESSING_CONSTRAINTS>.}_TItem; // for workaround Lazarus bug #25613
+  LLengthMask: SizeInt;
+  m: SizeInt;
+  LHash: UInt32;
+begin
+  m := Length(AItems);
+  if m = 0 then
+    Exit(-1);
+
+  LLengthMask := m - 1;
+  Result := AHash and LLengthMask;
+  LItem := _TItem(AItems[Result]);
+  // Empty position
+  if LItem.Hash = 0 then
+    Exit(not Result);
+
+  Result := FindBucketIndex(AItems, AKey, LHash);
 end;
 
 function TOpenAddressingDH<OPEN_ADDRESSING_CONSTRAINTS>.FindBucketIndexOrTombstone(const AItems: TArray<TItem>;
@@ -1863,6 +1997,7 @@ begin
   FQueue.FItemsThreshold := 0;
   LOldQueueItems := FQueue.FItems;
   FQueue.FItems := nil;
+  FQueue.FIdx.Clear;
 
   for i := 0 to High(LOldQueueItems) do
   begin

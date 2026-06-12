@@ -8,7 +8,7 @@ uses {$ifdef unix}cthreads,{$endif} fpmkunit;
 procedure add_rtl_extra(const ADirectory: string);
 
 Const
-  // All Unices have full set of KVM+Crt in unix/ except QNX which is not
+  // All Unixes have full set of KVM+Crt in unix/ except QNX which is not
   // in workable state atm.
   UnixLikes = AllUnixOSes -[QNX]; // qnx never was active in 2.x afaik
 
@@ -21,9 +21,9 @@ Const
 
   PrinterOSes   = [go32v2,msdos,os2,win32,win64,atari]+unixlikes-[beos,haiku,morphos];
   SerialOSes    = [android,linux,netbsd,openbsd,win32,win64];
-  UComplexOSes  = [atari,embedded,emx,gba,go32v2,msdos,nativent,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,wince,win32,win64,freertos,wasi]+UnixLikes+AllAmigaLikeOSes;
-  MatrixOSes    = [atari,embedded,emx,gba,go32v2,msdos,nativent,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,win32,win64,wince,freertos,wasi]+UnixLikes+AllAmigaLikeOSes;
-  ObjectsOSes   = [atari,embedded,emx,gba,go32v2,macosclassic,msdos,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,win16,win32,win64,wince,freertos,wasi]+UnixLikes+AllAmigaLikeOSes;
+  UComplexOSes  = [atari,embedded,emx,gba,go32v2,msdos,nativent,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,wince,win32,win64,freertos,wasip1,wasip1threads]+UnixLikes+AllAmigaLikeOSes;
+  MatrixOSes    = [atari,embedded,emx,gba,go32v2,msdos,nativent,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,win32,win64,wince,freertos,wasip1,wasip1threads]+UnixLikes+AllAmigaLikeOSes;
+  ObjectsOSes   = [atari,embedded,emx,gba,go32v2,macosclassic,msdos,nds,netware,netwlibc,os2,sinclairql,human68k,symbian,watcom,wii,win16,win32,win64,wince,freertos,wasip1,wasip1threads]+UnixLikes+AllAmigaLikeOSes;
   WinsockOSes   = [win32,win64,wince,os2,emx,netware,netwlibc];
   WinSock2OSes  = [win32,win64,wince];
   SocketsOSes   = UnixLikes+AllAmigaLikeOSes+[netware,netwlibc,os2,emx,wince,win32,win64];
@@ -95,7 +95,7 @@ begin
     // Add clocale for Android first in order to compile the source file
     // from the 'android' dir, not the 'unix' dir.
     T:=P.Targets.AddUnit('real48utils.pp',AllTargetsextra-[msdos,win16]  { msdos,win16 excluded temporarily, until bitpacked records containing longints on 16-bit targets are fixed }
-                                                         -[wasi]         { internal error on the WebAssembly target }
+                                                         -[wasip1,wasip1threads] { internal error on the WebAssembly target }
                                                          -[embedded]);   { at least avr has no floats }
     if Defaults.CPU<>jvm then
       T:=P.Targets.AddUnit('clocale.pp',[android]);
@@ -144,6 +144,7 @@ begin
        addinclude('stdsock.inc',socklibc);
        addinclude('unixsock.inc',socksyscall);
      end;
+    T:=P.Targets.AddUnit('unixsockets.pp',[linux]);
 
     T:=P.Targets.AddUnit('ipc.pp',IPCOSes);
     with T.Dependencies do
@@ -159,11 +160,10 @@ begin
      begin
        addinclude('clocale.inc',clocaleincOSes);
      end;
-    { sortalgs unit source code uses goto, which is not supported on wasm32 CPU }
-    T:=P.Targets.AddUnit('sortalgs.pp',AllCPUs-[wasm32], AllTargetsextra);
+    T:=P.Targets.AddUnit('sortalgs.pp',AllCPUs, AllTargetsextra);
 
     P.NamespaceMap:='namespaces.lst';
-    
+
   end;
 end;
 

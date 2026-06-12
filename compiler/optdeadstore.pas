@@ -31,12 +31,12 @@ unit optdeadstore;
     uses
       node;
 
-    function do_optdeadstoreelim(var rootnode : tnode;var changed: boolean) : tnode;
+    function do_optdeadstoreelim(var rootnode : tnode;out changed: boolean) : tnode;
 
   implementation
 
     uses
-      verbose,globtype,globals,
+      verbose,globtype,cdynset,globals,
       procinfo,pass_1,
       nutils,
       nbas,nld,
@@ -81,13 +81,13 @@ unit optdeadstore;
                     ((cs_opt_dead_values in current_settings.optimizerswitches) and not(might_have_sideeffects(a.right,[mhs_exceptions])))
                    ) then
                   begin
-                    redundant:=not(assigned(a.successor)) or not(DFASetIn(a.successor.optinfo^.life,a.left.optinfo^.index));
+                    redundant:=not(assigned(a.successor)) or not(DynSetIn(a.successor.optinfo^.life,a.left.optinfo^.index));
 
                     if redundant then
                       begin
 {$ifdef DEBUG_DEADSTORE}
                         writeln('************************** Redundant write *********************************');
-                        printnode(a);
+                        printnode(output,a);
                         writeln('****************************************************************************');
 {$endif DEBUG_DEADSTORE}
                         pboolean(arg)^:=true;
@@ -105,23 +105,23 @@ unit optdeadstore;
       end;
 
 
-    function do_optdeadstoreelim(var rootnode: tnode;var changed: boolean): tnode;
+    function do_optdeadstoreelim(var rootnode: tnode;out changed: boolean): tnode;
       begin
+        changed:=false;
 {$ifdef EXTDEBUG_DEADSTORE}
         writeln('******************* Tree before deadstore elimination **********************');
-        printnode(rootnode);
+        printnode(output,rootnode);
         writeln('****************************************************************************');
 {$endif EXTDEBUG_DEADSTORE}
         if not(pi_dfaavailable in current_procinfo.flags) then
           internalerror(2013110201);
-        changed:=false;
         if not current_procinfo.has_nestedprocs then
           foreachnodestatic(pm_postprocess, rootnode, @deadstoreelim, @changed);
 {$ifdef DEBUG_DEADSTORE}
         if changed then
           begin
             writeln('******************** Tree after deadstore elimination **********************');
-            printnode(rootnode);
+            printnode(output,rootnode);
             writeln('****************************************************************************');
           end;
 {$endif DEBUG_DEADSTORE}

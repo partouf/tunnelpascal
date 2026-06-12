@@ -140,6 +140,7 @@ implementation
                CheckParameters(2);
                resultdef:=voidtype;
              end;
+           in_x86_pause,
            in_x86_cli,
            in_x86_sti:
              resultdef:=voidtype;
@@ -179,6 +180,7 @@ implementation
            in_x86_outportb,
            in_x86_outportw,
            in_x86_outportl,
+           in_x86_pause,
            in_x86_cli,
            in_x86_sti:
              expectloc:=LOC_VOID;
@@ -616,6 +618,8 @@ implementation
              current_asmdata.CurrAsmList.concat(taicpu.op_none(A_CLI));
            in_x86_sti:
              current_asmdata.CurrAsmList.concat(taicpu.op_none(A_STI));
+           in_x86_pause:
+             current_asmdata.CurrAsmList.concat(taicpu.op_none(A_PAUSE));
            in_x86_get_cs:
              get_segreg(NR_CS);
            in_x86_get_ss:
@@ -1832,8 +1836,7 @@ implementation
                  case paraarray[2].location.loc of
                    LOC_REFERENCE,LOC_CREFERENCE:
                      begin
-                       current_asmdata.CurrAsmList.concat(taicpu.op_reg_ref(A_CMP,opsize,
-                         paraarray[1].location.register,paraarray[2].location.reference));
+                       emit_reg_ref(A_CMP,opsize,paraarray[1].location.register,paraarray[2].location.reference);
 
                        emit_ref_reg(A_CMOVcc,opsize,paraarray[2].location.reference,location.register);
                        instr:=TAiCpu(current_asmdata.CurrAsmList.Last); { The instruction just inserted; we need to modify its condition below }

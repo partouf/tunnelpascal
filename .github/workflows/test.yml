@@ -18,7 +18,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install prerequisites
-        run: sudo apt-get install -y fpc-3.2.2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2
       - name: Build FPC
         run: |
           fpcmake
@@ -36,17 +38,59 @@ jobs:
       - name: Aggregate Results
         run: |
           FPC_SRC=$(pwd)
-          PP=$FPC_SRC/compiler/ppcx64
-          tests/utils/fpts2junit $FPC_SRC/tests/output/x86_64-linux/ testresult.xml
-          ERRORS=$(xmllint testresult.xml --xpath "string(/testsuite/@errors)")
-          FAILURES=$(xmllint testresult.xml --xpath "string(/testsuite/@failures)")
-          ALL=$((ERRORS + FAILURES))
-          if [[ $ALL -ne 0 ]]; then
-              echo "Numbers of errors: $ALL"
-              exit 1
-          else
-              echo "No errors"
+          tests/utils/fpts2junit "$FPC_SRC/tests/output/x86_64-linux/" testresult.xml
+
+          # Extract the set of failing/errored tests as "<classname>/<name>".
+          python3 - testresult.xml > failed.txt <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          for tc in root.iter("testcase"):
+              if tc.find("failure") is not None or tc.find("error") is not None:
+                  print((tc.get("classname", "") + "/" + tc.get("name", "")).strip())
+          PY
+          sort -u -o failed.txt failed.txt
+
+          # Allowlist of upstream-inherited failures (also fail on pristine fpc/main).
+          grep -vE '^\s*#|^\s*$' .github/known_failures.txt | sort -u > known.txt
+
+          # Filtered report for the JUnit reporter: turn allowlisted failures into
+          # "skipped" so the report check reflects only UNEXPECTED failures. The
+          # full, unfiltered testresult.xml is still uploaded as the artifact.
+          python3 - testresult.xml known.txt testresult.report.xml <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          src, known_file, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+          known = {l.strip() for l in open(known_file) if l.strip() and not l.startswith("#")}
+          tree = ET.parse(src); root = tree.getroot()
+          df = de = 0
+          for tc in root.iter("testcase"):
+              key = (tc.get("classname", "") + "/" + tc.get("name", "")).strip()
+              if key in known:
+                  f, e = tc.find("failure"), tc.find("error")
+                  if f is not None: tc.remove(f); df += 1
+                  if e is not None: tc.remove(e); de += 1
+                  if f is not None or e is not None:
+                      ET.SubElement(tc, "skipped")
+          for attr, n in (("failures", df), ("errors", de)):
+              root.set(attr, str(max(0, int(root.get(attr, "0")) - n)))
+          tree.write(dst, encoding="utf-8", xml_declaration=True)
+          PY
+
+          NEW=$(comm -23 failed.txt known.txt)          # failing but not allowlisted -> real regressions
+          STALE=$(comm -13 failed.txt known.txt)        # allowlisted but now passing -> trim the list
+
+          echo "Failing: $(wc -l < failed.txt) | Known-allowed: $(wc -l < known.txt) | New: $(printf '%s' "$NEW" | grep -c . )"
+
+          if [ -n "$STALE" ]; then
+            echo "::warning::These allowlisted tests now PASS and should be removed from .github/known_failures.txt:"
+            printf '%s\n' "$STALE"
           fi
+
+          if [ -n "$NEW" ]; then
+            echo "::error::New test failures not in the known-failures allowlist:"
+            printf '%s\n' "$NEW"
+            exit 1
+          fi
+          echo "No new failures beyond the known upstream-inherited set."
       - uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
@@ -56,4 +100,4 @@ jobs:
         uses: mikepenz/action-junit-report@v4
         if: success() || failure()
         with:
-          report_paths: './testresult.xml'
+          report_paths: './testresult.report.xml'

@@ -2,10 +2,10 @@
 {$mode objfpc}{$H+}
 program fpmake;
 
-uses 
+uses
 {$ifdef unix}
   cthreads,
-{$endif} 
+{$endif}
   fpmkunit;
 {$endif ALLPACKAGES}
 
@@ -35,7 +35,7 @@ begin
     P.Directory:=ADirectory;
     P.Version:='3.3.1';
 
-    P.OSes := P.OSes - [embedded,nativent,msdos,go32v2,win16,atari,macosclassic,palmos,symbian,zxspectrum,msxdos,amstradcpc,sinclairql,wasi,human68k];
+    P.OSes := P.OSes - [embedded,nativent,msdos,go32v2,win16,atari,macosclassic,palmos,symbian,zxspectrum,msxdos,amstradcpc,sinclairql,wasip1,wasip1threads,human68k,ps1,wasip2];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 

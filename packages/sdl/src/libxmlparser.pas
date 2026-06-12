@@ -33,7 +33,7 @@ If you like this code, please send a postcard of your city to my above address.
      the XmlSpec are marked with three exclamation marks
 
 -!-  Parts where the parser may be able to detect errors in the document's syntax are
-     marked with the dash-exlamation mark-dash sequence.
+     marked with the dash-exclamation mark-dash sequence.
 ===============================================================================================
 Terminology:
 ------------
@@ -216,7 +216,7 @@ USES
 
 CONST
   CVersion = '1.0.17';  // This variable will be updated for every release
-                        // (I hope, I won't forget to do it everytime ...)
+                        // (I hope, I won't forget to do it every time ...)
 
 TYPE
   TPartType    = // --- Document Part Types
@@ -697,7 +697,7 @@ VAR
   A         : BYTE;     // Current ANSI character value
   U         : WORD;
   Ch        : AnsiChar;     // Dest AnsiChar
-  Len       : INTEGER;  // Current real length of "Result" Sring
+  Len       : INTEGER;  // Current real length of "Result" String
 BEGIN
   SourceLen := Length (Source);
   SetLength (Result, SourceLen);   // Enough room to live
@@ -741,54 +741,6 @@ BEGIN
       END;
     END;
   SetLength (Result, Len);
-END;
-
-
-(*
-===============================================================================================
-"Special" Helper Functions
-
-Don't ask me why. But including these functions makes the parser *DRAMATICALLY* faster
-on my K6-233 machine. You can test it yourself just by commenting them out.
-They do exactly the same as the Assembler routines defined in SysUtils.
-(This is where you can see how great the Delphi compiler really is. The compiled code is
-faster than hand-coded assembler!)
-===============================================================================================
---> Just move this line below the StrScan function -->  *)
-
-
-FUNCTION StrPos (CONST Str, SearchStr : PAnsiChar) : PAnsiChar;
-         // Same functionality as SysUtils.StrPos
-VAR
-  First : AnsiChar;
-  Len   : INTEGER;
-BEGIN
-  First  := SearchStr^;
-  Len    := StrLen (SearchStr);
-  Result := Str;
-  REPEAT
-    IF Result^ = First THEN
-      IF StrLComp (Result, SearchStr, Len) = 0 THEN BREAK;
-    IF Result^ = #0 THEN BEGIN
-      Result := NIL;
-      BREAK;
-      END;
-    INC (Result);
-  UNTIL FALSE;
-END;
-
-
-FUNCTION StrScan (CONST Start : PAnsiChar; CONST Ch : AnsiChar) : PAnsiChar;
-         // Same functionality as SysUtils.StrScan
-BEGIN
-  Result := Start;
-  WHILE Result^ <> Ch DO BEGIN
-    IF Result^ = #0 THEN BEGIN
-      Result := NIL;
-      EXIT;
-      END;
-    INC (Result);
-    END;
 END;
 
 
@@ -933,7 +885,7 @@ TEntityStack
 For nesting of Entities.
 When there is an entity reference found in the data stream, the corresponding entity
 definition is searched and the current position is pushed to this stack.
-From then on, the program scans the entitiy replacement text as if it were normal content.
+From then on, the program scans the entity replacement text as if it were normal content.
 When the parser reaches the end of an entity, the current position is popped off the
 stack again.
 ===============================================================================================
@@ -2056,7 +2008,7 @@ BEGIN
     IF CompareText (Str [PosAmp+2], 'x') = 0          // !!! Can't use "CHR" for Unicode characters > 255
       THEN Str [PosAmp] := CHR (StrToIntDef ('$'+Copy (Str, PosAmp+3, Len-4), 0))
       ELSE Str [PosAmp] := CHR (StrToIntDef (Copy (Str, PosAmp+2, Len-3), 32));
-    Delete (Str, PosAmp+1, Len-1);  
+    Delete (Str, PosAmp+1, Len-1);
     Start := PosAmp + 1;
   UNTIL FALSE;
 END;
@@ -2090,7 +2042,7 @@ PROCEDURE TXmlParser.ReplaceParameterEntities (VAR Str : AnsiString);
         END
       ELSE
         Repl := Copy (Str, PosAmp, Len);
-      Delete (Str, PosAmp, Len);  
+      Delete (Str, PosAmp, Len);
       Insert (Repl, Str, PosAmp);
       Start := PosAmp + Length (Repl);
     UNTIL FALSE;
@@ -2144,7 +2096,7 @@ PROCEDURE TXmlParser.ReplaceGeneralEntities (VAR Str : AnsiString);
         ELSE
           Repl := Copy (Str, PosAmp, Len);
         END;
-      Delete (Str, PosAmp, Len);  
+      Delete (Str, PosAmp, Len);
       Insert (Repl, Str, PosAmp);
       Start := PosAmp + Length (Repl);
     UNTIL FALSE;
@@ -2185,7 +2137,7 @@ FUNCTION  TXmlParser.TranslateEncoding  (CONST Source : AnsiString) : AnsiString
           // This virtual method "TranslateEncoding" is responsible for translating
           // the content passed in the "Source" parameter to the Encoding which
           // is expected by the application.
-          // This instance of "TranlateEncoding" assumes that the Application expects
+          // This instance of "TranslateEncoding" assumes that the Application expects
           // Windows ANSI (Win1252) strings. It is able to transform UTF-8 or ISO-8859-1
           // encodings.
           // If you want your application to understand or create other encodings, you

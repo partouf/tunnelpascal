@@ -25,10 +25,10 @@ interface
 
 {$IFDEF FPC_DOTTEDUNITS}
 uses
-  System.Classes, System.SysUtils, FpWeb.Http.Base, FpWeb.Http.Defs, FpWeb.Http.Protocol, FpWeb.Http.Client;
+  System.Classes, System.SysUtils, FpWeb.Http.Base, FpWeb.Http.Defs, FpWeb.Http.Protocol, FpWeb.Http.Client, XML.HtmlElements;
 {$ELSE FPC_DOTTEDUNITS}
 uses
-  Classes, SysUtils, fphttp, httpdefs, httpprotocol, fphttpclient;
+  Classes, SysUtils, fphttp, httpdefs, httpprotocol, fphttpclient, htmlelements;
 {$ENDIF FPC_DOTTEDUNITS}
 
 Type
@@ -248,7 +248,7 @@ end;
 
 procedure TProxyWebModule.DoLog(const aMethod,aLocation, aFromURL, aToURL: String);
 begin
-  If Assigned(ProxyManager) and Assigned(ProxyManager.OnLog) then;
+  If Assigned(ProxyManager) and Assigned(ProxyManager.OnLog) then
     ProxyManager.OnLog(Self,aMethod,aLocation,aFromURl,aToURL);
 end;
 
@@ -267,7 +267,8 @@ begin
       begin
       V:=Trim(ExtractWord(2,N,[':']));
       {$IFDEF DEBUGPROXY}Writeln('Returning header: ',N);{$ENDIF}
-      AResponse.SetCustomHeader(H,V);
+      if Not SameText(V,'chunked') then
+        AResponse.SetCustomHeader(H,V);
       end;
     end;
   AResponse.Code:=T.ResponseStatusCode;
@@ -322,7 +323,7 @@ begin
   if (L=Nil) or (Not L.Enabled) then
     begin
     AResponse.Code:=404;
-    AResponse.CodeText:='Location not found : '+P;
+    AResponse.CodeText:='Location not found : '+EscapeHTML(P);
     AResponse.SendContent;
     end
   else if L.Redirect then

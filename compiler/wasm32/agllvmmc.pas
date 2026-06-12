@@ -44,6 +44,7 @@ interface
       function sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;override;
     public
       constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
+      procedure WriteFuncTypeDirective(hp:tai_functype);override;
     end;
 
     { TLLVMMachineCodePlaygroundAssemblerV10 }
@@ -73,6 +74,30 @@ interface
     { TLLVMMachineCodePlaygroundAssemblerV14 }
 
     TLLVMMachineCodePlaygroundAssemblerV14=class(TLLVMMachineCodePlaygroundAssembler)
+      constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
+    end;
+
+    { TLLVMMachineCodePlaygroundAssemblerV15 }
+
+    TLLVMMachineCodePlaygroundAssemblerV15=class(TLLVMMachineCodePlaygroundAssembler)
+      constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
+    end;
+
+    { TLLVMMachineCodePlaygroundAssemblerV16 }
+
+    TLLVMMachineCodePlaygroundAssemblerV16=class(TLLVMMachineCodePlaygroundAssembler)
+      constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
+    end;
+
+    { TLLVMMachineCodePlaygroundAssemblerV17 }
+
+    TLLVMMachineCodePlaygroundAssemblerV17=class(TLLVMMachineCodePlaygroundAssembler)
+      constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
+    end;
+
+    { TLLVMMachineCodePlaygroundAssemblerV18 }
+
+    TLLVMMachineCodePlaygroundAssemblerV18=class(TLLVMMachineCodePlaygroundAssembler)
       constructor CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean); override;
     end;
 
@@ -136,6 +161,38 @@ implementation
       inherited CreateWithWriter(info, wr, freewriter, smart);
     end;
 
+  { TLLVMMachineCodePlaygroundAssemblerV15 }
+
+  constructor TLLVMMachineCodePlaygroundAssemblerV15.CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean);
+    begin
+      FLLVMMajorVersion:=15;
+      inherited CreateWithWriter(info, wr, freewriter, smart);
+    end;
+
+  { TLLVMMachineCodePlaygroundAssemblerV16 }
+
+  constructor TLLVMMachineCodePlaygroundAssemblerV16.CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean);
+    begin
+      FLLVMMajorVersion:=16;
+      inherited CreateWithWriter(info, wr, freewriter, smart);
+    end;
+
+  { TLLVMMachineCodePlaygroundAssemblerV17 }
+
+  constructor TLLVMMachineCodePlaygroundAssemblerV17.CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean);
+    begin
+      FLLVMMajorVersion:=17;
+      inherited CreateWithWriter(info, wr, freewriter, smart);
+    end;
+
+  { TLLVMMachineCodePlaygroundAssemblerV18 }
+
+  constructor TLLVMMachineCodePlaygroundAssemblerV18.CreateWithWriter(info: pasminfo; wr: TExternalAssemblerOutputFile; freewriter, smart: boolean);
+    begin
+      FLLVMMajorVersion:=18;
+      inherited CreateWithWriter(info, wr, freewriter, smart);
+    end;
+
 
   { TLLVMMachineCodePlaygroundAssembler }
 
@@ -157,6 +214,19 @@ implementation
       inherited;
       InstrWriter:=TWASM32InstrWriter.create(self);
       TWASM32InstrWriter(InstrWriter).FLLVMMajorVersion:=FLLVMMajorVersion;
+    end;
+
+
+  procedure TLLVMMachineCodePlaygroundAssembler.WriteFuncTypeDirective(hp: tai_functype);
+    begin
+      if not hp.is_forward or (FLLVMMajorVersion>=13) then
+        begin
+          writer.AsmWrite(#9'.functype'#9);
+          writer.AsmWrite(hp.funcname);
+          writer.AsmWrite(' ');
+          WriteFuncType(hp.functype);
+          writer.AsmLn;
+        end;
     end;
 
 
@@ -323,6 +393,33 @@ implementation
         end;
       end;
 
+    procedure WriteCatchClauses(writer: TExternalAssemblerOutputFile; catch_clauses: TAsmList);
+      var
+        hp: taicpu;
+        i: Integer;
+      begin
+        hp:=taicpu(catch_clauses.First);
+        while Assigned(hp) do
+          begin
+            if not (hp.opcode in [a_catch,a_catch_ref,a_catch_all,a_catch_all_ref]) then
+              internalerror(2025100401);
+            writer.AsmWrite(#9'('+gas_op2str[hp.opcode]);
+            if hp.ops<>0 then
+              begin
+                for i:=0 to hp.ops-1 do
+                  begin
+                    writer.AsmWrite(#9);
+                    if hp.oper[i]^.typ=top_functype then
+                      owner.WriteFuncType(hp.oper[i]^.functype)
+                    else
+                      writer.AsmWrite(getopstr(hp.oper[i]^));
+                  end;
+              end;
+            writer.AsmWrite(')');
+            hp:=taicpu(hp.Next);
+          end;
+      end;
+
     var
       cpu : taicpu;
       i   : integer;
@@ -357,31 +454,22 @@ implementation
                   writer.AsmWrite(getopstr(cpu.oper[i]^));
               end;
         end;
+
+      if Assigned(cpu.try_table_catch_clauses) then
+        WriteCatchClauses(writer,cpu.try_table_catch_clauses);
+
       writer.AsmLn;
     end;
 
 
   const
-    as_wasm32_llvm_mc_v10_info : tasminfo =
-       (
-         id     : as_wasm32_llvm_mc_v10;
-         idtxt  : 'LLVM-MC-10';
-         asmbin : 'llvm-mc-10';
-         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics --filetype=obj -o $OBJ $EXTRAOPT $ASM';
-         supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
-         flags : [af_smartlink_sections];
-         labelprefix : '.L';
-         labelmaxlen : -1;
-         comment : '# ';
-         dollarsign : '$';
-       );
     as_wasm32_llvm_mc_v11_info : tasminfo =
        (
          id     : as_wasm32_llvm_mc_v11;
          idtxt  : 'LLVM-MC-11';
          asmbin : 'llvm-mc-11';
          asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj -o $OBJ $EXTRAOPT $ASM';
-         supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
          flags : [af_smartlink_sections];
          labelprefix : '.L';
          labelmaxlen : -1;
@@ -394,34 +482,121 @@ implementation
          idtxt  : 'LLVM-MC-12';
          asmbin : 'llvm-mc-12';
          asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj -o $OBJ $EXTRAOPT $ASM';
-         supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
          flags : [af_smartlink_sections];
          labelprefix : '.L';
          labelmaxlen : -1;
          comment : '# ';
          dollarsign : '$';
        );
+    { LLVM-MC v13 introduces a WebAssembly type checker. Unfortunately, it is
+      broken and produces spurious errors for valid code, such as:
+
+        system.wat:390742:3: error: 19 superfluous return values
+
+      We try to disable it with the '--no-type-check' option. However, this
+      still doesn't work, due to a different LLVM-MC bug, causing a different
+      kind of spurious errors:
+
+        system.wat:396083:3: error: empty stack while popping i32
+
+      This means that LLVM-MC v13 is unusable as an external assembler. }
     as_wasm32_llvm_mc_v13_info : tasminfo =
        (
          id     : as_wasm32_llvm_mc_v13;
          idtxt  : 'LLVM-MC-13';
          asmbin : 'llvm-mc-13';
-         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj -o $OBJ $EXTRAOPT $ASM';
-         supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
+         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj --no-type-check -o $OBJ $EXTRAOPT $ASM';
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
          flags : [af_smartlink_sections];
          labelprefix : '.L';
          labelmaxlen : -1;
          comment : '# ';
          dollarsign : '$';
        );
+    { LLVM-MC v14 still contains a buggy WebAssembly type checker that cannot be
+      disabled completely.
+
+      This means that LLVM-MC v14 is unusable as an external assembler. }
     as_wasm32_llvm_mc_v14_info : tasminfo =
+       (
+         id     : as_wasm32_llvm_mc_v14;
+         idtxt  : 'LLVM-MC-14';
+         asmbin : 'llvm-mc-14';
+         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj --no-type-check -o $OBJ $EXTRAOPT $ASM';
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
+         flags : [af_smartlink_sections];
+         labelprefix : '.L';
+         labelmaxlen : -1;
+         comment : '# ';
+         dollarsign : '$';
+       );
+    { LLVM-MC v15 fixes the bug that causes '--no-type-check' not to disable the
+      still broken WebAssembly type checker.
+
+      This makes LLVM-MC v15 usable as an external assembler. The type checker
+      is still broken, of course, producing the same spurious errors, but at
+      least, we can now safely disable it. }
+    as_wasm32_llvm_mc_v15_info : tasminfo =
+       (
+         id     : as_wasm32_llvm_mc_v15;
+         idtxt  : 'LLVM-MC-15';
+         asmbin : 'llvm-mc-15';
+         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj --no-type-check -o $OBJ $EXTRAOPT $ASM';
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
+         flags : [af_smartlink_sections];
+         labelprefix : '.L';
+         labelmaxlen : -1;
+         comment : '# ';
+         dollarsign : '$';
+       );
+    { LLVM-MC v16 is usable as an external assembler. The type checker is still
+      broken, producing the same spurious errors, but we at least, we can now
+      safely disable it. }
+    as_wasm32_llvm_mc_v16_info : tasminfo =
+       (
+         id     : as_wasm32_llvm_mc_v16;
+         idtxt  : 'LLVM-MC-16';
+         asmbin : 'llvm-mc-16';
+         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj --no-type-check -o $OBJ $EXTRAOPT $ASM';
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
+         flags : [af_smartlink_sections];
+         labelprefix : '.L';
+         labelmaxlen : -1;
+         comment : '# ';
+         dollarsign : '$';
+       );
+    { LLVM-MC v17 features an interesting development. The type checker is still
+      broken, but now produces fewer and different spurious errors, like this:
+
+      system.wat:56092:3: error: br: insufficient values on the type stack
+
+      So, we still disable the type checker, making LLVM-MC v17 usable as an
+      external assembler. The type checker is still useless, though. }
+    as_wasm32_llvm_mc_v17_info : tasminfo =
+       (
+         id     : as_wasm32_llvm_mc_v17;
+         idtxt  : 'LLVM-MC-17';
+         asmbin : 'llvm-mc-17';
+         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj --no-type-check -o $OBJ $EXTRAOPT $ASM';
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
+         flags : [af_smartlink_sections];
+         labelprefix : '.L';
+         labelmaxlen : -1;
+         comment : '# ';
+         dollarsign : '$';
+       );
+    { LLVM-MC v18 contains the same bugs as v17, so we still need to disable the
+      type checker. So far LLVM has shipped 6 major LLVM versions with a broken
+      WebAssembly type checker. }
+    as_wasm32_llvm_mc_v18_info : tasminfo =
        (
          id     : as_wasm32_llvm_mc;
          idtxt  : 'LLVM-MC';
          asmbin : 'llvm-mc';
-         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj -o $OBJ $EXTRAOPT $ASM';
-         supported_targets : [system_wasm32_embedded,system_wasm32_wasi];
-         flags : [af_smartlink_sections];
+         asmcmd : '--assemble --arch=wasm32 -mattr=+sign-ext,+exception-handling,+bulk-memory,+atomics,+reference-types --filetype=obj --no-type-check -o $OBJ $EXTRAOPT $ASM';
+         supported_targets : [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,system_wasm32_wasip2];
+         flags : [af_smartlink_sections, af_llvm];
          labelprefix : '.L';
          labelmaxlen : -1;
          comment : '# ';
@@ -429,10 +604,13 @@ implementation
        );
 
 initialization
-  RegisterAssembler(as_wasm32_llvm_mc_v10_info,TLLVMMachineCodePlaygroundAssemblerV10);
   RegisterAssembler(as_wasm32_llvm_mc_v11_info,TLLVMMachineCodePlaygroundAssemblerV11);
   RegisterAssembler(as_wasm32_llvm_mc_v12_info,TLLVMMachineCodePlaygroundAssemblerV12);
   RegisterAssembler(as_wasm32_llvm_mc_v13_info,TLLVMMachineCodePlaygroundAssemblerV13);
   RegisterAssembler(as_wasm32_llvm_mc_v14_info,TLLVMMachineCodePlaygroundAssemblerV14);
+  RegisterAssembler(as_wasm32_llvm_mc_v15_info,TLLVMMachineCodePlaygroundAssemblerV15);
+  RegisterAssembler(as_wasm32_llvm_mc_v16_info,TLLVMMachineCodePlaygroundAssemblerV16);
+  RegisterAssembler(as_wasm32_llvm_mc_v17_info,TLLVMMachineCodePlaygroundAssemblerV17);
+  RegisterAssembler(as_wasm32_llvm_mc_v18_info,TLLVMMachineCodePlaygroundAssemblerV18);
 end.
 

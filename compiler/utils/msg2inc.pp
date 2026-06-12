@@ -28,6 +28,9 @@ program msg2inc;
 {$ifdef macos}
   {$define EOL_ONE_CHAR}
 {$endif}
+{$ifdef wasi}
+  {$define EOL_ONE_CHAR}
+{$endif}
 
 const
   version='1.00';
@@ -194,8 +197,11 @@ begin
          end
         else if (s='') or (s[1] <> '#') then
          begin
-           move(s[1],ptxt^,length(s));
-           inc(ptxt,length(s));
+           if length(s)>0 then
+             begin
+               move(s[1],ptxt^,length(s));
+               inc(ptxt,length(s));
+             end;
            ptxt^:=#10;
            inc(ptxt);
          end;

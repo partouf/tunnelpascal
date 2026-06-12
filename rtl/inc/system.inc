@@ -50,6 +50,8 @@ const
   STACK_MARGIN_MAX = 64;    { Stack size margin for stack checking }
 {$elseif defined(CPULOONGARCH64)}
   STACK_MARGIN_MAX = 65536;    { Stack size margin for stack checking }
+{$elseif defined(CPUX86_64)}
+  STACK_MARGIN_MAX = 32768;    { Stack size margin for stack checking }
 {$else}
   STACK_MARGIN_MAX = 16384;    { Stack size margin for stack checking }
 {$endif}
@@ -105,7 +107,7 @@ end;
 
 {$if not defined(FPC_SYSTEM_FPU_CUSTOM_CONTROL_WORD) and not defined(FPUNONE) and not defined(FPC_SYSTEM_FPUCW_IMMUTABLE)}
 var
-  { Control word of the fpu that determes which exceptions will be thrown and
+  { Control word of the fpu that determines which exceptions will be thrown and
     potentially other flags (precision, exception-happened flags, ... Used to
     initialise the FPU when starting a new thread (in SysResetFPU).
 
@@ -534,15 +536,15 @@ function aligntoqword(p : pointer) : pointer;inline;
 
 function AlignTypeData(p : pointer) : pointer; inline;
   begin
-{$if defined(CPUM68K) and not defined(VER3_0)}
+{$if defined(CPUM68K)}
     result := aligntoqword(p);
-{$else CPUM68K and not VER3_0}
+{$else CPUM68K}
     result := aligntoptr(p);
-{$endif CPUM68K and not VER3_0}
+{$endif CPUM68K}
   end;
 
 
-{$if not defined(VER3_0) and not defined(VER3_2)}
+{$if not defined(VER3_2)}
 type
   TRttiDataCommon =
 {$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
@@ -551,7 +553,7 @@ type
   record
     Attrs: Pointer;
   end;
-{$endif not VER3_0 and not VER3_2}
+{$endif not VER3_2}
 
 
 {****************************************************************************
@@ -578,8 +580,6 @@ type
   {$i ustrings.inc}
 {$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
-{$i aliases.inc}
-
 {****************************************************************************
                   Run-Time Type Information (RTTI) declarations
 ****************************************************************************}
@@ -587,6 +587,8 @@ type
 {$ifdef FPC_HAS_FEATURE_RTTI}
 {$i rttidecl.inc}
 {$endif FPC_HAS_FEATURE_RTTI}
+
+{$i aliases.inc}
 
 {*****************************************************************************
                         Dynamic Array support
@@ -735,59 +737,92 @@ var
   // so I doubt an additional check like "if (RandSeed <> OldRandSeed) or not RngInitialized" is justified.
 
 function random(l:longint): longint;
+var
+  t: uint32;
+  m: uint64;
 begin
-  { otherwise we can return values = l (JM) }
-  if (l < 0) then
-    inc(l);
-  random := longint((int64(xsr128_32_u32rand)*l) shr 32);
+  result:=l;
+  if l<0 then
+    result:=-result-1; { from now on, uint32(result) is a bound. }
+
+  { https://lemire.me/blog/2019/06/06/nearly-divisionless-random-integer-generation-on-various-systems/ }
+  m:=uint64(xsr128_32_u32rand)*uint32(result);
+  if Lo(m)<uint32(result) then
+    begin
+      t:=uint32(-result) mod uint32(result);
+      while Lo(m)<t do
+        m:=uint64(xsr128_32_u32rand)*uint32(result);
+    end;
+  result:=Hi(m);
+
+  if l<-1 then
+    result:=-result-1;
 end;
 
 function random(l:int64): int64;
 var
- a, b, c, d: cardinal;
- q, bd, ad, bc, ac: qword;
- carry: qword;
+  t, ul, mLo: uint64;
+  a: uint32;
 begin
-  if (l>=Low(int32)) and (l<=High(int32)) then
-    begin
-      { random(longint(l)), inlined. This makes random(NativeType) on 64-bit platforms match 32-bit when possible. }
-      if (l < 0) then
-        inc(l);
-      exit(longint(int64(xsr128_32_u32rand)*l shr 32));
-    end;
+  if l=int32(l) then
+    { This makes random(NativeType) on 64-bit platforms match 32-bit when possible. }
+    exit(random(longint(l)));
 
-  if (l < 0) then
-    begin
-      inc(l);
-      q:=qword(-l)
-    end
-  else
-    q:=qword(l);
+  ul:=l;
+  if l<0 then
+    ul:=-ul-1;
 
   a:=xsr128_32_u32rand;
-  b:=xsr128_32_u32rand;
+  mLo:=UMul64x64_128(uint64(a) shl 32 or xsr128_32_u32rand,ul,uint64(result));
+  if mLo<ul then
+    begin
+      t:=uint64(-ul) mod ul;
+      while mLo<t do
+        begin
+          a:=xsr128_32_u32rand;
+          mLo:=UMul64x64_128(uint64(a) shl 32 or xsr128_32_u32rand,ul,uint64(result));
+        end;
+    end;
 
-  c:=q shr 32;
-  d:=cardinal(q);
-
-  bd:=qword(b)*d;
-  ad:=qword(a)*d;
-  bc:=qword(b)*c;
-  ac:=qword(a)*c;
-
-  // We only need the carry bit
-  carry:=((bd shr 32)+cardinal(ad)+cardinal(bc)) shr 32;
-
-  // Calculate the final result
-  result:=int64(carry+(ad shr 32)+(bc shr 32)+ac);
-  if l<0 then
-    result:=-result;
+  if l<-1 then
+    result:=-result-1;
 end;
 
 {$ifndef FPUNONE}
 function random: extended;
+var
+  res: double;
+  r0, exponent: uint32;
 begin
-  random := xsr128_32_u32rand * (extended(1.0)/(int64(1) shl 32));
+  { There are
+
+    - 2⁵² floats uniformly distributed over the range [0.5; 1): exponent = 2⁻¹, mantissa = (1.)all 52-bit values from 00...0 to 11...1,
+    - another 2⁵² in the range [0.25; 0.5): exponent = 2⁻²,
+    - another 2⁵² in the range [0.125; 0.25): exponent = 2⁻³,
+
+    and so on. Each next range is 0.5× the size of the previous one ⇒ 0.5× probability.
+    So we determine the range by flipping a coin until we get heads (exponent = 2^(−1 − BSF(infinite stream of random bits)),
+    and select one of 2⁵² values in that range.
+
+    Compared to this, random_52_bits / 2⁵² value loses N bits of precision when it falls in the Nth range; as a consequence,
+    minimum of 2^N random values has around N trailing zeros in its mantissa. }
+
+  { 52 bits (double precision) go to mantissa: r0[0:19] + one_more_u32rand[0:31]. }
+  r0:=xsr128_32_u32rand;
+  PUint64(@res)^:=uint64(r0 and (1 shl 20-1)) shl 32 or xsr128_32_u32rand;
+
+  { Exponent = −1 − (count of zeros in the stream of random bits). There are 12 bits left in r0. }
+  exponent:=1023-1-31; { Biased exponent, - 31 for Bsr(r0). }
+  if r0 shr 20=0 then
+    begin
+      inc(exponent,20); { Subtract 12 bits the first time and 32 on subsequent iterations. }
+      repeat
+        dec(exponent,32);
+        r0:=xsr128_32_u32rand;
+      until r0<>0;
+    end;
+  PUint64(@res)^:=PUint64(@res)^ or uint64(exponent+BsrDWord(r0)) shl 52;
+  result:=res;
 end;
 {$endif}
 
@@ -990,7 +1025,7 @@ begin
 end;
 
 
-procedure fpc_invalidpointer; [public,alias:'FPC_INVALIDPOINTER'];
+procedure fpc_invalidpointer; [public,alias:'FPC_INVALIDPOINTER']; compilerproc;
 begin
   HandleErrorAddrFrameInd(216,get_pc_addr,get_frame);
 end;
@@ -1097,12 +1132,13 @@ type
   TInitFinalRec=record
     InitProc,
     FinalProc : TProcedure;
+    {$IFDEF FPC_INITFINAL_HASUNITNAME}
+    unitname : ^shortstring;
+    {$ENDIF}
   end;
   TInitFinalTable = record
     TableCount,
-    InitCount  : {$if defined(VER3_0)}sizeint
-                 {$else}ALUUInt{$endif}
-                 ;
+    InitCount  : ALUUInt;
     Procs      : array[1..maxunits] of TInitFinalRec;
   end;
   PInitFinalTable = ^TInitFinalTable;
@@ -1132,6 +1168,13 @@ begin
       begin
         if assigned(Procs[i].InitProc) then
          Procs[i].InitProc();
+        {$ifdef FPC_INITFINAL_HASUNITNAME}
+        {$ifdef ENABLE_UNIT_INIT_TRACKING}
+        if assigned(UnitInitTrackingProc) then
+          UnitInitTrackingProc(i,Procs[i].unitname^);
+        {$endif ENABLE_UNIT_INIT_TRACKING}
+        {$endif FPC_INITFINAL_HASUNITNAME}
+
         InitCount:=i;
       end;
    end;
@@ -1199,12 +1242,10 @@ end;
 
 Procedure system_exit;forward;{$ifdef FPC_SYSTEM_EXIT_NO_RETURN}noreturn;{$endif}
 
-{$ifdef FPC_HAS_FEATURE_HEAP}
-{$ifndef HAS_MEMORYMANAGER}
+{$if defined(FPC_HAS_FEATURE_HEAP) and not defined(HAS_MEMORYMANAGER)}
 //not needed if independant memory manager
 Procedure FinalizeHeap;forward;
-{$endif HAS_MEMORYMANAGER}
-{$endif FPC_HAS_FEATURE_HEAP}
+{$endif FPC_HAS_FEATURE_HEAP and not HAS_MEMORYMANAGER}
 
 {$ifdef FPC_HAS_FEATURE_CONSOLEIO}
 procedure SysFlushStdIO;
@@ -1300,13 +1341,9 @@ Begin
     sysfreemem(cmdline);
 {$endif}
 
-{$ifdef FPC_HAS_FEATURE_HEAP}
-{$ifndef HAS_MEMORYMANAGER}
-{$ifndef FPC_NO_DEFAULT_HEAP}
+{$if defined(FPC_HAS_FEATURE_HEAP) and not defined(HAS_MEMORYMANAGER)}
   FinalizeHeap;
-{$endif not FPC_NO_DEFAULT_HEAP}
-{$endif not HAS_MEMORYMANAGER}
-{$endif FPC_HAS_FEATURE_HEAP}
+{$endif FPC_HAS_FEATURE_HEAP and not HAS_MEMORYMANAGER}
 End;
 
 
@@ -1743,7 +1780,11 @@ end;
 
 {$i sysheap.inc}
 
+{$IFDEF LEGACYHEAP}
+{$i oldheap.inc}
+{$ELSE}
 {$i heap.inc}
+{$ENDIF LEGACYHEAP}
 
 {*****************************************************************************
                           Thread support
@@ -2196,239 +2237,3 @@ begin
 end;
 {$ENDIF FPC_HAS_SETCTRLBREAKHANDLER}
 
-{$ifdef cpu16}
-function AtomicIncrement (var Target: smallint) : smallint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedIncrement(Target);
-end;
-
-
-function AtomicDecrement (var Target: smallint) : smallint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedDecrement(Target);
-end;
-
-
-function AtomicCmpExchange(var Target: smallint; NewValue, Comperand: smallint): smallint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedCompareExchange(Target,NewValue,Comperand);
-end;
-
-
-function AtomicExchange (var Target: smallint;Source : smallint) : smallint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedExchange(Target,Source);
-end;
-
-function AtomicIncrement (var Target: word) : word; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedIncrement(Target);
-end;
-
-
-function AtomicDecrement (var Target: word) : word; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedDecrement(Target);
-end;
-
-
-function AtomicCmpExchange(var Target: word; NewValue, Comperand: word): word; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedCompareExchange(Target, NewValue, Comperand);
-end;
-
-
-function AtomicExchange (var Target: word;Source : word) : word; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedExchange(Target,Source);
-end;
-{$endif cpu16}
-
-function AtomicIncrement (var Target: longint) : longint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedIncrement(Target);
-end;
-
-
-function AtomicDecrement (var Target: longint) : longint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedDecrement(Target);
-end;
-
-
-function AtomicCmpExchange(var Target: longint; NewValue, Comperand: longint): longint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedCompareExchange(Target,NewValue, Comperand);
-end;
-
-
-function AtomicExchange (var Target: longint;Source : longint) : longint; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedExchange(Target,Source);
-end;
-
-
-{$ifdef cpu64}
-function AtomicIncrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedIncrement64(Target);
-end;
-
-
-function AtomicDecrement (var Target: int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedDecrement64(Target);
-end;
-
-
-function AtomicCmpExchange(var Target: int64; NewValue, Comperand: int64): int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=InterlockedCompareExchange64(Target,NewValue, Comperand);
-end;
-
-
-function AtomicExchange (var Target: int64;Source : int64) : int64; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-
-  Result:=InterlockedExchange64(Target,Source);
-end;
-{$endif cpu64}
-
-
-{ Pointer overloads }
-
-{$ifndef FPC_SYSTEM_DISABLE_INTERLOCK_POINTER_OVERLOAD}
-
-function AtomicIncrement (var Target: pointer) : pointer; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-{$IFDEF CPU64}
-  Result:=Pointer(InterlockedIncrement64(int64(Target)));
-{$ELSE}  
-{$IFDEF CPU16}
-  Result:=Pointer(InterlockedIncrement(smallint(Target)));
-{$ELSE}  
-  Result:=Pointer(InterlockedIncrement(Longint(Target)));
-{$ENDIF}  
-{$ENDIF}  
-end;
-
-
-function AtomicDecrement (var Target: pointer) : pointer; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-{$IFDEF CPU64}
-  Result:=Pointer(InterlockedDecrement64(Int64(Target)));
-{$ELSE}  
-{$IFDEF CPU16}
-  Result:=Pointer(InterlockedDecrement(smallint(Target)));
-{$ELSE}  
-   Result:=Pointer(InterlockedDecrement(Longint(Target)));
-{$ENDIF}
-{$ENDIF}
-end;
-
-
-function AtomicCmpExchange(var Target: pointer; NewValue, Comperand: pointer): pointer; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-{$IFDEF CPU64}
-  Result:=Pointer(InterlockedCompareExchange64(Int64(Target),Int64(NewValue), Int64(Comperand)));
-{$ELSE}  
-{$IFDEF CPU16}
-  Result:=Pointer(InterlockedCompareExchange(smallint(Target),smallint(NewValue),smallint(Comperand)));
-{$ELSE}  
-  Result:=Pointer(InterlockedCompareExchange(LongInt(Target),LongInt(NewValue), LongInt(Comperand)));
-{$ENDIF}  
-{$ENDIF}  
-end;
-
-
-function AtomicExchange(var Target: pointer;Source : pointer) : pointer; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-{$IFDEF CPU64}
-  Result:=Pointer(InterlockedExchange64(Int64(Target),Int64(Source)));
-{$ELSE}  
-{$IFDEF CPU16}
-  Result:=Pointer(InterlockedExchange(smallint(Target),smallint(Source)));
-{$ELSE}  
-  Result:=Pointer(InterlockedExchange(LongInt(Target),LongInt(Source)));
-{$ENDIF}
-{$ENDIF}
-end;
-
-{$endif FPC_SYSTEM_DISABLE_INTERLOCK_POINTER_OVERLOAD}
-
-function AtomicIncrement (var Target: Cardinal) : Cardinal; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=Cardinal(InterlockedIncrement(Longint(Target)));
-end;
-
-
-function AtomicDecrement (var Target: Cardinal) : Cardinal; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=Cardinal(InterlockedIncrement(Longint(Target)));
-end;
-
-
-function AtomicCmpExchange(var Target: Cardinal; NewValue, Comperand: Cardinal): Cardinal; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=Cardinal(InterlockedCompareExchange(Longint(Target),Longint(NewValue), Longint(Comperand)));
-end;
-
-
-function AtomicExchange (var Target: Cardinal;Source : Cardinal) : Cardinal; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=Cardinal(InterlockedExchange(Longint(Target),Longint(Source)));
-end;
-
-
-{$ifdef cpu64}
-function AtomicIncrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=QWord(InterlockedIncrement64(Int64(Target)));
-end;
-
-
-function AtomicDecrement (var Target: qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=QWord(InterlockedDecrement64(int64(Target)));
-end;
-
-
-function AtomicCmpExchange(var Target: qword; NewValue, Comperand: qword): qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=QWord(InterlockedCompareExchange64(Int64(Target),Int64(NewValue), Int64(Comperand)));
-end;
-
-
-function AtomicExchange (var Target: qword;Source : qword) : qword; {$ifdef SYSTEMINLINE}inline;{$endif}
-
-begin
-  Result:=QWord(InterlockedExchange64(Int64(Target),Int64(Source)));
-end;
-{$endif}

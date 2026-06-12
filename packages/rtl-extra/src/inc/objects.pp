@@ -1275,20 +1275,14 @@ END;
 {---------------------------------------------------------------------------}
 FUNCTION TStream.ReadRawByteString: RawByteString;
 VAR
-{$ifdef FPC_HAS_CPSTRING}
   CP: TSystemCodePage;
-{$endif FPC_HAS_CPSTRING}
   L: LongInt;
 BEGIN
-{$ifdef FPC_HAS_CPSTRING}
   Read(CP, SizeOf(CP));
-{$endif FPC_HAS_CPSTRING}
   Read(L, SizeOf(L));
    If (L <= 0) Then ReadRawByteString := '' Else Begin
      SetLength(ReadRawByteString, L);
-{$ifdef FPC_HAS_CPSTRING}
      SetCodePage(ReadRawByteString, CP, False);
-{$endif FPC_HAS_CPSTRING}
      Read(ReadRawByteString[1], L);
    End;
 END;
@@ -1432,15 +1426,11 @@ END;
 {---------------------------------------------------------------------------}
 PROCEDURE TStream.WriteRawByteString (Const S: RawByteString);
 VAR
-{$ifdef FPC_HAS_CPSTRING}
   CP: TSystemCodePage;
-{$endif FPC_HAS_CPSTRING}
   L: LongInt;
 BEGIN
-{$ifdef FPC_HAS_CPSTRING}
    CP := StringCodePage(S);
    Write(CP, SizeOf(CP));
-{$endif FPC_HAS_CPSTRING}
    L := Length(S);
    Write(L, SizeOf(L));
    if L > 0 then
@@ -2229,7 +2219,7 @@ PROCEDURE TCollection.Pack;
 VAR I, J: Sw_Integer;
 BEGIN
    I := 0;                                            { Initialize dest }
-   J := 0;                                            { Intialize test }
+   J := 0;                                            { Initialize test }
    While (I<Count) AND (J<Limit) Do Begin             { Check fully packed }
      If (Items^[J]<>Nil) Then Begin                   { Found a valid item }
        If (I<>J) Then Begin
@@ -2293,7 +2283,7 @@ END;
 PROCEDURE TCollection.AtFree (Index: Sw_Integer);
 VAR Item: Pointer;
 BEGIN
-   Item := At(Index);                                 { Retreive item ptr }
+   Item := At(Index);                                 { Retrieve item ptr }
    AtDelete(Index);                                   { Delete item }
    FreeItem(Item);                                    { Free the item }
 END;

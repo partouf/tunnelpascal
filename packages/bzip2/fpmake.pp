@@ -22,13 +22,13 @@ begin
     P.Version:='3.3.1';
 
     P.Author := 'Library: Julian R. Seward, header: Daniel Mantione';
-    // 3 clause becaue "prominent notice" is not required.
+    // 3 clause because "prominent notice" is not required.
     P.License := 'Library: 3 clause BSD, header: 3 clause BSD ';
     P.HomepageURL := 'www.freepascal.org';
     P.Email := '';
     P.Description := 'BZip2 decompression unit.';
     P.NeedLibC:= true;
-    P.OSes := P.OSes - [embedded,nativent,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,human68k];
+    P.OSes := P.OSes - [embedded,nativent,msdos,win16,macosclassic,palmos,zxspectrum,msxdos,amstradcpc,sinclairql,ps1,wasip2];
     if Defaults.CPU=jvm then
       P.OSes := P.OSes - [java,android];
 

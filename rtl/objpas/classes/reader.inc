@@ -69,6 +69,13 @@ begin
   BeginComponent(Flags,AChildPos,CompClassName, CompName);
 end;
 
+procedure TAbstractObjectReader.ReadPrefix(var Flags: TFilerFlags; var AChildPos: Integer);
+begin
+  // Do nothing
+  Flags:=[];
+  aChildPos:=0;
+end;
+
 function TBinaryObjectReader.ReadWord : word; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
 begin
   Read(Result,2);
@@ -179,14 +186,13 @@ begin
   BeginComponent(Flags, AChildPos, CompUnitName, CompClassName, CompName);
 end;
 
-procedure TBinaryObjectReader.BeginComponent(var Flags: TFilerFlags;
-  var AChildPos: Integer; var CompUnitName, CompClassName, CompName: String);
+procedure TBinaryObjectReader.ReadPrefix(var Flags: TFilerFlags; var AChildPos: Integer);
+
 var
   Prefix: Byte;
   ValueType: TValueType;
-  p: SizeInt;
+
 begin
-  { Every component can start with a special prefix: }
   Flags := [];
   if (Byte(NextValue) and $f0) = $f0 then
   begin
@@ -207,6 +213,16 @@ begin
       end;
     end;
   end;
+end;
+
+procedure TBinaryObjectReader.BeginComponent(var Flags: TFilerFlags;
+  var AChildPos: Integer; var CompUnitName, CompClassName, CompName: String);
+var
+  ValueType: TValueType;
+  p: SizeInt;
+begin
+  { Every component can start with a special prefix: }
+  ReadPrefix(Flags,aChildPos);
 
   CompUnitName:='';
   if Version = TBOVersion.boVersion1 then
@@ -596,69 +612,35 @@ begin
 end;
 
 
-
 {****************************************************************************}
 {*                             TREADER                                      *}
 {****************************************************************************}
-
-type
-  TFieldInfo =
-  {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
-  packed
-  {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
-  record
-    FieldOffset: SizeUInt;
-    ClassTypeIndex: Word; // start at 1
-    Name: ShortString;
-  end;
-  PFieldInfo = ^TFieldInfo;
-
-  PPersistentClass = ^TPersistentClass;
-  PersistentClassRef = PPersistentClass;
-
-  TFieldClassTable =
-  {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
-  packed
-  {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
-  record
-    Count: Word;
-    Entries: array[{$ifdef cpu16}0..16384 div sizeof(PersistentClassRef){$else}Word{$endif}] of PersistentClassRef;
-  end;
-  PFieldClassTable = ^TFieldClassTable;
-
-  TFieldTable =
-  {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
-  packed
-  {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
-  record
-    FieldCount: Word;
-    ClassTable: PFieldClassTable;
-    Fields: array[0..0] of TFieldInfo;
-  end;
-  PFieldTable = ^TFieldTable;
 
 function GetFieldClass(Instance: TObject; const ClassName: string): TPersistentClass;
 var
   ShortClassName: shortstring;
   ClassType: TClass;
-  ClassTable: PFieldClassTable;
   i: Integer;
-  FieldTable: PFieldTable;
+  FieldTable: PVmtFieldTable;
+  ClassTable: PVmtFieldClassTab;
 begin
   // At first, try to locate the class in the class tables
   ShortClassName := ClassName;
   ClassType := Instance.ClassType;
   while ClassType <> TPersistent do
   begin
-    FieldTable := PFieldTable(PVmt(ClassType)^.vFieldTable);
-    if Assigned(FieldTable) then
+    FieldTable := PVmtFieldTable(PVmt(ClassType)^.vFieldTable);
+    if FieldTable<>nil then
     begin
-      ClassTable := FieldTable^.ClassTable;
-      for i := 0 to ClassTable^.Count - 1 do
+      ClassTable := PVmtFieldClassTab(FieldTable^.ClassTab);
+      if ClassTable<>nil then
       begin
-        Result := ClassTable^.Entries[i]{$ifndef VER3_0}^{$endif};
-        if Result.ClassNameIs(ShortClassName) then
-          exit;
+        for i := 0 to ClassTable^.Count - 1 do
+        begin
+          Result := TPersistentClass(Pointer(ClassTable^.ClassRef[i])^);
+          if Result.ClassNameIs(ShortClassName) then
+            exit;
+        end;
       end;
     end;
     // Try again with the parent class type
@@ -676,14 +658,14 @@ begin
   FDriver := CreateDriver(Stream, BufSize);
 {$ifdef FPC_HAS_FEATURE_THREADING}
   InitCriticalSection(FLock);
-{$ENDIF}  
+{$ENDIF}
 end;
 
 destructor TReader.Destroy;
 begin
 {$ifdef FPC_HAS_FEATURE_THREADING}
   DoneCriticalSection(FLock);
-{$ENDIF}  
+{$ENDIF}
   FDriver.Free;
   inherited Destroy;
 end;
@@ -692,14 +674,14 @@ procedure TReader.Lock;
 begin
 {$ifdef FPC_HAS_FEATURE_THREADING}
   EnterCriticalSection(FLock);
-{$ENDIF}  
+{$ENDIF}
 end;
 
 procedure TReader.Unlock;
 begin
 {$ifdef FPC_HAS_FEATURE_THREADING}
   LeaveCriticalSection(FLock);
-{$ENDIF}  
+{$ENDIF}
 end;
 
 procedure TReader.FlushBuffer;
@@ -728,7 +710,7 @@ end;
 procedure TReader.DefineProperty(const Name: string; AReadData: TReaderProc;
   WriteData: TWriterProc; HasData: Boolean);
 begin
-  if Assigned(AReadData) and (UpperCase(Name) = UpperCase(FPropName)) then
+  if Assigned(AReadData) and SameText(Name,FPropName) then
   begin
     AReadData(Self);
     SetLength(FPropName, 0);
@@ -740,7 +722,7 @@ procedure TReader.DefineBinaryProperty(const Name: string; AReadData,
 var
   MemBuffer: TMemoryStream;
 begin
-  if Assigned(AReadData) and (UpperCase(Name) = UpperCase(FPropName)) then
+  if Assigned(AReadData) and SameText(Name,FPropName) then
   begin
     { Check if the next property really is a binary property}
     if FDriver.NextValue <> vaBinary then
@@ -781,8 +763,7 @@ begin
     FOnError(Self, Message, Result);
 end;
 
-function TReader.FindMethod(ARoot: TComponent; const AMethodName: RawBytestring
-  ): CodePointer;
+function TReader.FindMethod(ARoot: TComponent; const AMethodName: rawbytestring): CodePointer;
 var
   ErrorResult: Boolean;
 begin
@@ -808,7 +789,7 @@ Var
   L : TLinkedList;
   RI: Pointer; // raw interface
   IIDStr: ShortString;
-  
+
 begin
   If Assigned(FFixups) then
     begin
@@ -909,7 +890,7 @@ function TReader.ReadWideChar: WideChar;
 
 var
   W: WideString;
-  
+
 begin
   W := ReadWideString;
   if Length(W) = 1 then
@@ -917,12 +898,12 @@ begin
   else
     raise EReadError.Create(SInvalidPropertyValue);
 end;
-            
+
 function TReader.ReadUnicodeChar: UnicodeChar;
 
 var
   U: UnicodeString;
-  
+
 begin
   U := ReadUnicodeString;
   if Length(U) = 1 then
@@ -930,7 +911,7 @@ begin
   else
     raise EReadError.Create(SInvalidPropertyValue);
 end;
-            
+
 procedure TReader.ReadCollection(Collection: TCollection);
 var
   Item: TCollectionItem;
@@ -952,7 +933,7 @@ end;
 procedure TReader.SetName(aComponent: TComponent; var aName : string);
 
 begin
-  if Assigned(FOnSetName) then 
+  if Assigned(FOnSetName) then
     FOnSetName(Self,aComponent,aName);
   aComponent.Name:=aName;
 end;
@@ -1111,13 +1092,12 @@ end;
 procedure TReader.ReadData(Instance: TComponent);
 var
   SavedOwner, SavedParent: TComponent;
-  
+
 begin
   { Read properties }
   while not EndOfList do
     ReadProperty(Instance);
   ReadListEnd;
-
   { Read children }
   SavedOwner := Owner;
   SavedParent := Parent;
@@ -1153,7 +1133,7 @@ end;
 
 function TReader.ReadDouble: Double;
 begin
-  // We have no vaDouble 
+  // We have no vaDouble
   Case FDriver.NextValue of
   vaExtended:
     begin
@@ -1181,13 +1161,29 @@ begin
 end;
 
 function TReader.ReadSingle: Single;
+var
+  vt : TValueType;
 begin
-  if FDriver.NextValue = vaSingle then
-  begin
+  vt:=FDriver.NextValue;
+  Case vt of
+  vaSingle :
+    begin
     FDriver.ReadValue;
     Result := FDriver.ReadSingle;
-  end else
+    end;
+  vaDouble :
+    begin
+    FDriver.ReadValue;
+    Result := FDriver.ReadDouble;
+    end;
+  vaExtended :
+    begin
+    FDriver.ReadValue;
+    Result := FDriver.ReadFloat;
+    end;
+  else
     Result := ReadInteger;
+  end;
 end;
 
 {$endif}
@@ -1250,13 +1246,13 @@ begin
     Result := ReadInteger;
 end;
 
-function TReader.ReadSet(EnumType: Pointer): Integer; 
+function TReader.ReadSet(EnumType: Pointer): Integer;
 begin
   if FDriver.NextValue = vaSet then
     begin
       FDriver.ReadValue;
       Result := FDriver.ReadSet(enumtype);
-    end 
+    end
   else
     Result := ReadInteger;
 end;
@@ -1404,12 +1400,11 @@ begin
           break;
         end;
         DotPos := NextPos + 1;
-
         PropInfo := GetPropInfo(Instance.ClassInfo, FPropName);
         if not Assigned(PropInfo) then begin
-          if not HandleMissingProperty(true) then exit;
+          if not HandleMissingProperty(true) then Exit;
           if not Assigned(PropInfo) then
-            PropertyError;
+            Break; // Defineproperties deserves a shot.
         end;
 
         if PropInfo^.PropType^.Kind = tkClass then
@@ -1434,6 +1429,12 @@ begin
       else
       begin
         FCanHandleExcepts := False;
+        if Instance=aInstance then
+          begin
+          // Use case:
+          // DefineProperty('Size.X',proc1,proc2,True)
+          FPropName:=Path;
+          end;
         Instance.DefineProperties(Self);
         FCanHandleExcepts := True;
         if Length(FPropName) > 0 then begin
@@ -1495,7 +1496,7 @@ begin
     tkChar:
       SetOrdProp(Instance, PropInfo, Ord(ReadChar));
     tkWChar,tkUChar:
-      SetOrdProp(Instance, PropInfo, Ord(ReadWideChar));  
+      SetOrdProp(Instance, PropInfo, Ord(ReadWideChar));
     tkEnumeration:
       begin
         Value := GetEnumValue(PropType, ReadIdent);
@@ -1585,13 +1586,16 @@ begin
   end;
 end;
 
-procedure TReader.ReadPrefix(var aFlags: TFilerFlags; var aChildPos: Integer); 
+procedure TReader.ReadPrefix(var aFlags: TFilerFlags; var aChildPos: Integer);
 
 var
   CompUnitName, CompClassName, CompName : String;
-  
+
 begin
-  Driver.BeginComponent(aFlags,aChildPos, CompUnitName, CompClassName, CompName);
+  if RawMode then
+    Driver.ReadPrefix(aFlags,aChildPos)
+  else
+    Driver.BeginComponent(aFlags,aChildPos, CompUnitName, CompClassName, CompName);
 end;
 
 function TReader.ReadRootComponent(ARoot: TComponent): TComponent;
@@ -1701,10 +1705,16 @@ begin
 end;
 
 
-function TReader.ReadStr : rawbytestring;
+function TReader.ReadStr: RawByteString;
+
+Var
+  Curr : TValueType;
 
 begin
-  Result:=DoReadString(Driver.CurrentValue)
+  Curr:=Driver.CurrentValue;
+  if RawMode then
+    Curr:=vaString;
+  Result:=DoReadString(Curr);
 end;
 
 function TReader.DoReadString(aType : TValueType): rawbytestring;
@@ -1726,7 +1736,7 @@ begin
   end;
 end;
 
-function TReader.ReadString: rawbytestring;
+function TReader.ReadString: RawBytestring;
 
 begin
   Result:=DoReadString(FDriver.ReadValue);
@@ -1875,12 +1885,12 @@ var
 
   function FindInFieldTable(Instance: TComponent): TComponentClass;
   var
-    aClassType: TClass;
-    FieldTable: PFieldTable;
-    ClassTable: PFieldClassTable;
-    i: Integer;
-    FieldInfo: PFieldInfo;
-    PersistenClass: TPersistentClass;
+    aClassType     : TClass;
+    FieldTable     : PVmtFieldTable;
+    ClassTable     : PVmtFieldClassTab;
+    FieldInfo      : PVmtFieldEntry;
+    PersistenClass : TPersistentClass;
+    i              : Integer;
   begin
     //writeln('FindInFieldTable Instance=',Instance.Name,':',Instance.UnitName,'>',Instance.ClassName,' ShortName="',ShortName,'" ShortClassName="',ShortClassName,'"');
     Result:=nil;
@@ -1889,30 +1899,25 @@ var
     aClassType := Instance.ClassType;
     while aClassType <> TPersistent do
     begin
-      FieldTable := PFieldTable(PVmt(aClassType)^.vFieldTable);
-      if Assigned(FieldTable) then
+      FieldTable := PVmtFieldTable(PVmt(aClassType)^.vFieldTable);
+      if FieldTable<>nil then
       begin
-        ClassTable := FieldTable^.ClassTable;
-        FieldInfo := @FieldTable^.Fields[0];
-        for i := 0 to FieldTable^.FieldCount - 1 do
+        ClassTable := PVmtFieldClassTab(FieldTable^.ClassTab);
+        if ClassTable<>nil then
         begin
-          //writeln('FindInFieldTable Instance=',Instance.ClassName,' FieldInfo ',i,'/',FieldTable^.FieldCount,' ',FieldInfo^.Name);
-          if ShortCompareText(FieldInfo^.Name,ShortName)=0 then
+          for i := 0 to FieldTable^.Count - 1 do
           begin
-            PersistenClass := ClassTable^.Entries[FieldInfo^.ClassTypeIndex-1]^;
-            //writeln('FindInFieldTable Found Field "',FieldInfo^.Name,'" Class="',PersistenClass.UnitName,'>',PersistenClass.ClassName,'"');
-            if PersistenClass.ClassNameIs(ShortClassName)
-                and PersistenClass.InheritsFrom(TComponent) then
-              exit(TComponentClass(PersistenClass));
+            FieldInfo := FieldTable^.Field[i];
+            if ShortCompareText(FieldInfo^.Name,ShortName)=0 then
+            begin
+              PersistenClass := TPersistentClass(Pointer(ClassTable^.ClassRef[FieldInfo^.TypeIndex-1])^);
+              if PersistenClass.ClassNameIs(ShortClassName)
+                  and PersistenClass.InheritsFrom(TComponent) then
+                exit(TComponentClass(PersistenClass));
+            end;
           end;
-{$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
-          FieldInfo := PFieldInfo(PByte(@FieldInfo^.Name) + 1 + Length(FieldInfo^.Name));
-{$else FPC_REQUIRES_PROPER_ALIGNMENT}
-          FieldInfo := PFieldInfo(align(PByte(@FieldInfo^.Name) + 1 + Length(FieldInfo^.Name), sizeof(SizeUInt)));
-{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
         end;
       end;
-      // Try again with the parent class type
       aClassType := aClassType.ClassParent;
     end;
 
@@ -1920,19 +1925,22 @@ var
     aClassType := Instance.ClassType;
     while aClassType <> TPersistent do
     begin
-      FieldTable := PFieldTable(PVmt(aClassType)^.vFieldTable);
-      if Assigned(FieldTable) then
+      FieldTable := PVmtFieldTable(PVmt(aClassType)^.vFieldTable);
+      if FieldTable<>nil then
       begin
-        ClassTable := FieldTable^.ClassTable;
-        for i := 0 to ClassTable^.Count - 1 do
+        ClassTable := PVmtFieldClassTab(FieldTable^.ClassTab);
+        if ClassTable<>nil then
         begin
-          PersistenClass := ClassTable^.Entries[i]^;
-          if PersistenClass.ClassNameIs(ShortClassName)
-              and PersistenClass.InheritsFrom(TComponent) then
-            begin
-            if (anUnitName='') or SameText(PersistenClass.UnitName,anUnitName) then
-              exit(TComponentClass(PersistenClass));
-            end;
+          for i := 0 to ClassTable^.Count - 1 do
+          begin
+            PersistenClass := TPersistentClass(Pointer(ClassTable^.ClassRef[i])^);
+            if PersistenClass.ClassNameIs(ShortClassName)
+                and PersistenClass.InheritsFrom(TComponent) then
+              begin
+              if (anUnitName='') or SameText(PersistenClass.UnitName,anUnitName) then
+                exit(TComponentClass(PersistenClass));
+              end;
+          end;
         end;
       end;
       // Try again with the parent class type
@@ -1946,9 +1954,9 @@ begin
   ShortName:=AName;
   ShortClassName:=AClassName;
   Result:=FindInFieldTable(Root);
-  
+
   if (Result=nil) and assigned(LookupRoot) and (LookupRoot<>Root) then
-    FindInFieldTable(LookupRoot);
+    Result:=FindInFieldTable(LookupRoot);
 
   if (Result=nil) and assigned(OnFindComponentClassEx) then
     OnFindComponentClassEx(Self, AName, anUnitName, AClassName, Result);
@@ -1961,7 +1969,7 @@ begin
     if PersistentClass.InheritsFrom(TComponent) then
       Result := TComponentClass(PersistentClass);
   end;
-    
+
   if (Result=nil) and assigned(OnFindComponentClass) then
     OnFindComponentClass(Self, AClassName, Result);
 
@@ -1978,7 +1986,7 @@ var
   ResHandle: THandle;
   RootName, Delta, DeltaName: AnsiString;
   S: TStream;
-  
+
 begin
   if (Instance=nil) or not Assigned(Proc) then
     Raise EArgumentNilException.Create(SArgumentNil);
@@ -1992,12 +2000,12 @@ begin
      if ResHandle<>NilHandle then
        Break;
      end;
-  if ResHandle=NilHandle then 
-    exit;     
-{$ifdef FPC_OS_UNICODE}    
+  if ResHandle=NilHandle then
+    exit;
+{$ifdef FPC_OS_UNICODE}
 // Wince
   S:=TResourceStream.Create(NilHandle,DeltaName, PWideChar(RT_RCDATA));
-{$ELSE}  
+{$ELSE}
   S:=TResourceStream.Create(NilHandle,DeltaName, PAnsiChar(RT_RCDATA));
 {$ENDIF}
   try
@@ -2006,7 +2014,7 @@ begin
     S.Free;
   end;
 end;
-    
+
 { TAbstractObjectReader }
 
 procedure TAbstractObjectReader.FlushBuffer;

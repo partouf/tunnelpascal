@@ -24,7 +24,7 @@ unit cpupara;
 interface
 
     uses
-      globtype,
+      globtype,globals,
       cclasses,
       aasmtai,
       cpubase,cpuinfo,
@@ -56,7 +56,11 @@ interface
       mips_nb_used_registers  : longint = MIPS_NB_REGISTERS_USED_IN_CALL_O32;
 
       { Might need to be changed if we support N64 ABI later }
+{$ifdef MIPS64}
+      mips_sizeof_register_param : longint = 8;
+{$else MIPS64}
       mips_sizeof_register_param : longint = 4;
+{$endif MIPS64}
 
     type
       tparasupregs = array[0..MIPS_MAX_REGISTERS_USED_IN_CALL-1] of tsuperregister;
@@ -200,12 +204,54 @@ implementation
         { Return in FPU register? }
         if result.def.typ=floatdef then
           begin
-            paraloc^.loc:=LOC_FPUREGISTER;
-            paraloc^.register:=NR_FPU_RESULT_REG;
-            if retcgsize=OS_F64 then
-              setsubreg(paraloc^.register,R_SUBFD);
-            paraloc^.size:=retcgsize;
-            paraloc^.def:=result.def;
+            if (p.proccalloption in [pocall_softfloat]) or (cs_fp_emulation in current_settings.moduleswitches) then
+              begin
+                case retcgsize of
+                  OS_64,
+                  OS_F64:
+                    begin
+                      { low }
+                      paraloc^.loc:=LOC_REGISTER;
+                      if side=callerside then
+                        paraloc^.register:=NR_FUNCTION_RESULT64_LOW_REG
+                      else
+                        paraloc^.register:=NR_FUNCTION_RETURN64_LOW_REG;
+                      paraloc^.size:=OS_32;
+                      paraloc^.def:=u32inttype;
+                      { high }
+                      paraloc:=result.add_location;
+                      paraloc^.loc:=LOC_REGISTER;
+                      if side=callerside then
+                        paraloc^.register:=NR_FUNCTION_RESULT64_HIGH_REG
+                      else
+                        paraloc^.register:=NR_FUNCTION_RETURN64_HIGH_REG;
+                      paraloc^.size:=OS_32;
+                      paraloc^.def:=u32inttype;
+                    end;
+                  OS_32,
+                  OS_F32:
+                    begin
+                      paraloc^.loc:=LOC_REGISTER;
+                      if side=callerside then
+                        paraloc^.register:=NR_FUNCTION_RESULT_REG
+                      else
+                        paraloc^.register:=NR_FUNCTION_RETURN_REG;
+                      paraloc^.size:=OS_32;
+                      paraloc^.def:=u32inttype;
+                    end;
+                  else
+                    internalerror(2024092901);
+                end;
+              end
+            else
+              begin
+                paraloc^.loc:=LOC_FPUREGISTER;
+                paraloc^.register:=NR_FPU_RESULT_REG;
+                if retcgsize=OS_F64 then
+                  setsubreg(paraloc^.register,R_SUBFD);
+                paraloc^.size:=retcgsize;
+                paraloc^.def:=result.def;
+              end;
           end
         else
          { Return in register }
@@ -498,7 +544,7 @@ implementation
                 firstparaloc:=false;
               end;
           end;
-        { O32 ABI reqires at least 16 bytes }
+        { O32 ABI requires at least 16 bytes }
         if (intparasize < 16) then
           intparasize := 16;
       end;
@@ -508,7 +554,7 @@ implementation
       begin
         intparareg:=0;
         intparasize:=0;
-        can_use_float := true;
+        can_use_float := not ((p.proccalloption in [pocall_softfloat]) or (cs_fp_emulation in current_settings.moduleswitches));
         { Create Function result paraloc }
         create_funcretloc_info(p,callerside);
         { calculate the registers for the normal parameters }
@@ -536,7 +582,7 @@ implementation
       begin
         intparareg:=0;
         intparasize:=0;
-        can_use_float := true;
+        can_use_float := not ((p.proccalloption in [pocall_softfloat]) or (cs_fp_emulation in current_settings.moduleswitches));
         { Create Function result paraloc }
         create_funcretloc_info(p,side);
         create_paraloc_info_intern(p,side,p.paras);

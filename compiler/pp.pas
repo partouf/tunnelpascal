@@ -32,9 +32,10 @@ program pp;
   I386                generate a compiler for the Intel i386+
   I8086               generate a compiler for the Intel 8086+
   JVM                 generate a compiler for the JVM (Java Virtual Machine)
+  LOONGARCH64         generate a compiler for the LoongArch64 architecture
   M68K                generate a compiler for the M68000
   MIPS                generate a compiler for the MIPS (Big Endian)
-  MIPSEL              generate a compiler for the MIPSEL (Littel Endian)
+  MIPSEL              generate a compiler for the MIPSEL (Little Endian)
   POWERPC             generate a compiler for the PowerPC
   POWERPC64           generate a compiler for the PowerPC64 architecture
   RISCV32             generate a compiler for the RiscV32 architecture
@@ -45,7 +46,6 @@ program pp;
   X86_64              generate a compiler for the AMD x86-64 architecture
   XTENSA              generate a compiler for XTENSA
   Z80                 generate a compiler for Z80
-  LOONGARCH64         generate a compiler for the LoongArch64 architecture
 
   -----------------------------------------------------------------
   Other compiler switches
@@ -60,7 +60,7 @@ program pp;
                       target architecture (not supported for all targets)
 
   -----------------------------------------------------------------
-  ARM specfic switches
+  ARM specific switches
   -----------------------------------------------------------------
   FPC_ARMEL           create an arm eabi compiler
   FPC_ARMEB           create an arm big endian compiler
@@ -69,13 +69,13 @@ program pp;
   FPC_ARMHF           create an armhf (eabi vfp variant) compiler
 
   -----------------------------------------------------------------
-  I386 specfic switches
+  I386 specific switches
   -----------------------------------------------------------------
   SUPPORT_MMX         only i386: releases the compiler switch
                       MMX which allows the compiler to generate
                       MMX instructions
   -----------------------------------------------------------------
-  Switches automatically inside fpcdefs.inc  
+  Switches automatically inside fpcdefs.inc
   -----------------------------------------------------------------
   cpuflags            The target processor has status flags (on by default)
   cpufpemu            The target compiler will also support emitting software
@@ -219,10 +219,7 @@ program pp;
 {$endif support_mmx}
 
 
-{ Don't care about minstacksize or maxstacksize not beeing supported by current OS }
-{$WARN 2077 OFF}
-{$WARN 2078 OFF}
-
+{$ifdef windows}
 {$ifdef win32}
   { 256 MB stack }
   { under windows the stack can't grow }
@@ -238,6 +235,7 @@ program pp;
     {$MINSTACKSIZE 1000000}
   {$endif win64}
 {$endif win32}
+{$endif windows}
 
 uses
 {$ifdef heaptrc}

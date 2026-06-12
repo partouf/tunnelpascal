@@ -21,9 +21,9 @@ const
    INVALID_HANDLE_VALUE = THandle(-1);
 
    IGNORE = 0;               { Ignore signal }
-{$IF NOT DECLARED(INFINITE)}   
+{$IF NOT DECLARED(INFINITE)}
    INFINITE = longint($FFFFFFFF);     { Infinite timeout }
-{$ENDIF}   
+{$ENDIF}
 
    { flags for CreateFile }
    GENERIC_READ=$80000000;
@@ -188,7 +188,7 @@ type
     wMilliseconds: Word;
   end;
 
-  TTlsDirectory=packed record
+  TTlsDirectory = record
     data_start, data_end : pointer;
     index_pointer, callbacks_pointer : pointer;
     zero_fill_size : dword;
@@ -307,8 +307,10 @@ const
     {$ifdef wince}cdecl{$else}stdcall{$endif};external KernelDLL name 'GetProcessHeap';
   function HeapAlloc(hHeap : THandle; dwFlags : DWord; dwBytes : SIZE_T) : pointer;
     {$ifdef wince}cdecl{$else}stdcall{$endif};external KernelDLL name 'HeapAlloc';
-  function HeapFree(hHeap : THandle; dwFlags : dword; lpMem: pointer) : boolean;
+  function HeapFree(hHeap : THandle; dwFlags : dword; lpMem: pointer) : LongBool;
     {$ifdef wince}cdecl{$else}stdcall{$endif};external KernelDLL name 'HeapFree';
+  function HeapReAlloc(hHeap : THandle; dwFlags : dword; lpMem: pointer; dwBytes : SizeUint) : pointer;
+    {$ifdef wince}cdecl{$else}stdcall{$endif};external KernelDLL name 'HeapReAlloc';
 
    { file functions }
    function WriteFile(fh:thandle;buf:pointer;len:longint;var loaded:longint;

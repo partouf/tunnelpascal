@@ -75,14 +75,14 @@ TYPE
 { include /include/asm-<cpu>/posix-types.h                       }
 
 const
-{$if not defined(cpux86_64) and not defined (cpuaarch64)}
+{$if not defined(cpux86_64) and not defined (cpuaarch64) and not defined (cpuriscv64)}
   _STAT_VER_LINUX_OLD = 1;
   _STAT_VER_KERNEL = 1;
   _STAT_VER_SVR4 = 2;
   _STAT_VER_LINUX = 3;
 {$else}
   _STAT_VER_KERNEL = 0;
-{$if defined(cpuaarch64)}
+{$if defined(cpuaarch64) or defined(cpuriscv64)}
   _STAT_VER_LINUX = 0;
 {$else}
   _STAT_VER_LINUX = 1;
@@ -397,7 +397,7 @@ CONST
   S_ISGID = &2000;
   S_ISVTX = &1000;
 
-  { Constansts for MMAP }
+  { Constants for MMAP }
  {$IFDEF FPC_IS_SYSTEM}
   MAP_PRIVATE   =2;
  {$ENDIF}
@@ -464,10 +464,10 @@ const
   RLIMIT_LOCKS = 10;    { maximum file locks held  }
 
 type
-{$ifdef fs32bit}
-  rlim_t = cULong;
-{$else}
+{$ifdef CPU64}
   rlim_t = cULongLong;
+{$else}
+  rlim_t = cULong;
 {$endif}
   PRLimit = ^TRLimit;
   TRLimit = record
@@ -514,7 +514,7 @@ const
   { For 32 bit 2038 safe support, we have to use the kernel_timespec on linux which
     makes all fields 64 bit regardless of the bit size of the CPU.
 
-    I have no idea though how to work around this when libc is used 
+    I have no idea though how to work around this when libc is used
   }
 {$ifndef FPC_USE_LIBC}
   kernel_time64_t = clonglong;
