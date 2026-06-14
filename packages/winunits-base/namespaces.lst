@@ -35,3 +35,4 @@ src/stdole2.pas=namespaced/WinApi.Stdole2.pas
 src/comconst.pp=namespaced/WinApi.Comconst.pp
 src/uxtheme.pp=namespaced/WinApi.Uxtheme.pp
 src/comobj.pp=namespaced/WinApi.Comobj.pp
+src/winmanutf8lfn.pp=namespaced/WinApi.Winmanutf8lfn.pp

@@ -29,7 +29,7 @@ uses
     WinApi.Imagehlp, WinApi.Wininet, WinApi.Uxtheme, WinApi.Dwmapi, WinApi.Multimon, WinApi.Htmlhelp, WinApi.Winutils,
     WinApi.Comserv, WinApi.Winspool, WinApi.Imm, WinApi.ImmDyn, WinApi.Nb30, WinApi.Stdole2,
     WinApi.Eventsink, WinApi.Typelib, WinApi.Libkinect10, WinApi.Urlmon, WinApi.Winhttp,
-    WinApi.Shlwapi, WinApi.Httpapi;
+    WinApi.Shlwapi, WinApi.Httpapi, WinApi.Winmanutf8lfn;
 {$ELSE FPC_DOTTEDUNITS}
 uses
     flatsb, winver, mmsystem, comconst, commctrl, comobj, commdlg,

@@ -113,7 +113,7 @@ begin
     T:=P.Targets.AddImplicitUnit('libkinect10.pp');
     T:=P.Targets.AddImplicitUnit('httpapi.pp');
     T.Dependencies.AddInclude('tmschema.inc');
-    T:=P.Targets.AddImplicitUnit('winmanutf8lfn');
+    T:=P.Targets.AddImplicitUnit('winmanutf8lfn.pp');
 
     P.Sources.AddSrcFiles('src/w32default.*', P.Directory);
     P.InstallFiles.Add('src/w32default.res',AllWindowsOSes,'$(unitinstalldir)');
