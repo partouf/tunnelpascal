@@ -182,12 +182,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   bleeding-edge-windows-x64-build:
-    # Native Windows x64 FPC with the dotted/namespaced RTL (System.SysUtils, ...)
-    # overlaid on the full regular distribution. Built on Linux like the regular
-    # win64 job. Packages stay non-dotted: a handful of Windows packages
-    # (winunits-base) aren't fully migrated to dotted units upstream and can't be
-    # cross-installed dotted, so we ship the namespaced RTL + all (non-dotted)
-    # packages, which is the reliable, fully usable combination.
+    # Native Windows x64 FPC with the dotted/namespaced RTL AND packages
+    # (System.SysUtils, WinApi.Windows, ...) overlaid on the full regular
+    # distribution. Built on Linux like the regular win64 job. The dotted units
+    # are installed alongside the non-dotted ones (different filenames, so both
+    # coexist), giving a distribution usable in either mode.
     runs-on: ubuntu-22.04
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
@@ -201,15 +200,16 @@ jobs:
         run: |
           make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
           make install CPU_TARGET=x86_64 OS_TARGET=win64 "INSTALL_PREFIX=$(pwd)/build-win64"
-      - name: Overlay dotted (namespaced) RTL
+      - name: Overlay dotted (namespaced) RTL + packages
         # The win64 build leaves the win64 cross compiler at compiler/ppcrossx64;
-        # use it to rebuild just the RTL with FPC_DOTTEDUNITS=1 and install it
-        # alongside the non-dotted units (different filenames, so both coexist).
+        # use it to rebuild the RTL and packages with FPC_DOTTEDUNITS=1 and install
+        # them alongside the non-dotted units (different filenames, so both coexist).
         run: |
           PP="$(pwd)/compiler/ppcrossx64"
           LIBDIR="$(pwd)/build-win64/lib/fpc/3.3.1"
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" clean
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
+          make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
       - name: Create zip
         run: |
           cd build-win64
