@@ -180,3 +180,106 @@ jobs:
         env:
           GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-regular.x86_64-win64.zip
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bleeding-edge-windows-x64-build:
+    # Native Windows x64 FPC with the dotted/namespaced RTL (System.SysUtils, ...)
+    # overlaid on the full regular distribution. Built on Linux like the regular
+    # win64 job. Packages stay non-dotted: a handful of Windows packages
+    # (winunits-base) aren't fully migrated to dotted units upstream and can't be
+    # cross-installed dotted, so we ship the namespaced RTL + all (non-dotted)
+    # packages, which is the reliable, fully usable combination.
+    runs-on: ubuntu-22.04
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        run: sudo apt-get install -y fpc-3.2.2
+      - name: Build native win64 FPC (compiler + RTL + packages + utils)
+        run: |
+          make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
+          make install CPU_TARGET=x86_64 OS_TARGET=win64 "INSTALL_PREFIX=$(pwd)/build-win64"
+      - name: Overlay dotted (namespaced) RTL
+        # The win64 build leaves the win64 cross compiler at compiler/ppcrossx64;
+        # use it to rebuild just the RTL with FPC_DOTTEDUNITS=1 and install it
+        # alongside the non-dotted units (different filenames, so both coexist).
+        run: |
+          PP="$(pwd)/compiler/ppcrossx64"
+          LIBDIR="$(pwd)/build-win64/lib/fpc/3.3.1"
+          make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" clean
+          make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
+      - name: Create zip
+        run: |
+          cd build-win64
+          zip -r -q ../tunnel-pascal-bleeding-edge.x86_64-win64.zip .
+      - name: Release
+        uses: fnkr/github-action-ghr@v1
+        env:
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-bleeding-edge.x86_64-win64.zip
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bleeding-edge-cross-arm-build:
+    # Same ARMv6 + VFPv2 + EABIHF cross compiler as cross-arm-build, but with the
+    # dotted/namespaced RTL AND packages (System.SysUtils, etc.). arm-linux uses
+    # the unix package set (no Windows WinApi units), so the full dotted package
+    # set cross-installs cleanly. (The lua package is skipped by fpmake when its
+    # external lib is absent, same as the x86_64-linux bleeding-edge.)
+    runs-on: ubuntu-22.04
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        run: sudo apt-get install -y fpc-3.2.2 binutils-arm-linux-gnueabihf
+      - name: Prepare
+        run: |
+          FPC_SRC="$(pwd)"
+          PACKDIR="$FPC_SRC/build"
+          LIBDIR=$PACKDIR/lib/fpc/3.3.1
+          mkdir "$PACKDIR"
+          echo "PACKDIR=$PACKDIR" >> "$GITHUB_ENV"
+          echo "LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
+      - name: Build Compiler (bootstrap)
+        run: |
+          make -C compiler FPMAKEOPT="-T 4" "OPTS=-O2" "INSTALL_PREFIX=$PACKDIR" all
+          make -C compiler "INSTALL_PREFIX=$PACKDIR" ZIPINSTALL=1 install
+          mv "$PACKDIR/lib/fpc/3.2.2" "$LIBDIR"
+          PP=$LIBDIR/ppcx64
+          echo "PP=$PP" >> "$GITHUB_ENV"
+      - name: Rebuild native RTL with built compiler
+        run: |
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" clean
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" all install
+      - name: Build ARMv6 hard-float cross compiler + RTL + packages (non-dotted)
+        run: |
+          make crossall crossinstall \
+            CPU_TARGET=arm OS_TARGET=linux \
+            BINUTILSPREFIX=arm-linux-gnueabihf- \
+            "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" \
+            "OPT=-dFPC_ARMHF" "CROSSOPT=-CpARMV6 -CfVFPV2"
+      - name: Overlay dotted (namespaced) RTL + packages
+        # crossall leaves the cross compiler at compiler/ppcrossarm; use it to
+        # rebuild the RTL and packages with FPC_DOTTEDUNITS=1 and install them
+        # alongside the non-dotted units (different filenames, so both coexist).
+        # BINUTILSPREFIX is required here too (the RTL assembles arm startup code).
+        run: |
+          PPARM="$(pwd)/compiler/ppcrossarm"
+          make -C rtl FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" clean
+          make -C rtl FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$PACKDIR" all install
+          make -C packages FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$PACKDIR" all install
+      - name: Create tgz
+        run: |
+          pushd build
+          tar -cf ../tunnel-pascal-bleeding-edge-cross-arm.tar *
+          popd
+          gzip tunnel-pascal-bleeding-edge-cross-arm.tar
+          mv tunnel-pascal-bleeding-edge-cross-arm.tar.gz tunnel-pascal-bleeding-edge-armv6hf.arm-linux.x86_64-linux.tar.gz
+      - name: Release
+        uses: fnkr/github-action-ghr@v1
+        env:
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-bleeding-edge-armv6hf.arm-linux.x86_64-linux.tar.gz
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
