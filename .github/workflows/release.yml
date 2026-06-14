@@ -1,4 +1,4 @@
-name: Release (x86_64)
+name: Release
 
 on: [push]
 
@@ -82,4 +82,101 @@ jobs:
         uses: fnkr/github-action-ghr@v1
         env:
           GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-bleeding-edge.x86_64-linux.tar.gz
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cross-arm-build:
+    # Cross compiler that runs on x86_64-linux and targets 32-bit ARM Linux.
+    # Profile: ARMv6 + VFPv2 + EABIHF (hard float) — i.e. Raspberry Pi 1 / Pi Zero
+    # and Raspbian armhf. Newer Pis (2/3/4/5) run these binaries too.
+    runs-on: ubuntu-22.04
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        # binutils-arm-linux-gnueabihf provides the arm-linux-gnueabihf-{as,ld}
+        # the cross compiler shells out to.
+        run: sudo apt-get install -y fpc-3.2.2 binutils-arm-linux-gnueabihf
+      - name: Prepare
+        run: |
+          FPC_SRC="$(pwd)"
+          PACKDIR="$FPC_SRC/build"
+          LIBDIR=$PACKDIR/lib/fpc/3.3.1
+          mkdir "$PACKDIR"
+          echo "PACKDIR=$PACKDIR" >> "$GITHUB_ENV"
+          echo "LIBDIR=$LIBDIR" >> "$GITHUB_ENV"
+      - name: Build Compiler (bootstrap)
+        # Build a current native compiler from source first. The cross build must
+        # bootstrap with a matching PPU version (v208); the apt fpc-3.2.2 is v207
+        # and the aarch64/arm RTL (which uses the generic.inc atomic intrinsics)
+        # fails against a mismatched bootstrap. Same rationale as commit #5.
+        run: |
+          make -C compiler FPMAKEOPT="-T 4" "OPTS=-O2" "INSTALL_PREFIX=$PACKDIR" all
+          make -C compiler "INSTALL_PREFIX=$PACKDIR" ZIPINSTALL=1 install
+          mv "$PACKDIR/lib/fpc/3.2.2" "$LIBDIR"
+          PP=$LIBDIR/ppcx64
+          echo "PP=$PP" >> "$GITHUB_ENV"
+      - name: Rebuild native RTL with built compiler
+        # Replace the v207 RTL (built by apt fpc-3.2.2 during the bootstrap) with
+        # a v208 RTL built by $PP, so the shipped native compiler + RTL match and
+        # so the cross bootstrap finds a consistent system.ppu.
+        run: |
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" clean
+          make -C rtl "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" all install
+      - name: Build ARMv6 hard-float cross compiler + RTL + packages
+        # -dFPC_ARMHF      -> compiler defaults the arm-linux target to abi_eabihf
+        #                     (hard float, matching Raspbian armhf / libc)
+        # -CpARMV6 -CfVFPV2 (CROSSOPT) -> RTL & packages built for ARMv6 + VFPv2
+        # crossinstall installs ppcrossarm + units/arm-linux into $PACKDIR.
+        run: |
+          make crossall crossinstall \
+            CPU_TARGET=arm OS_TARGET=linux \
+            BINUTILSPREFIX=arm-linux-gnueabihf- \
+            "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" \
+            "OPT=-dFPC_ARMHF" "CROSSOPT=-CpARMV6 -CfVFPV2"
+      - name: Create tgz
+        run: |
+          pushd build
+          tar -cf ../tunnel-pascal-cross-arm.tar *
+          popd
+          gzip tunnel-pascal-cross-arm.tar
+          # Name encodes target (arm-linux, armv6 hard-float) and host (x86_64-linux).
+          mv tunnel-pascal-cross-arm.tar.gz tunnel-pascal-cross-armv6hf.arm-linux.x86_64-linux.tar.gz
+      - name: Release
+        uses: fnkr/github-action-ghr@v1
+        env:
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-cross-armv6hf.arm-linux.x86_64-linux.tar.gz
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows-x64-build:
+    # Native Windows x64 FPC, BUILT ON LINUX. The FPC project produces its
+    # Windows releases this way: targeting OS_TARGET=win64 yields a native
+    # Windows compiler (ppcx64.exe) plus win64 RTL/packages/utils — all native
+    # Windows PE binaries. Only the build host is Linux, so this runs on the
+    # same ubuntu runner as the other jobs (no Windows runner needed).
+    runs-on: ubuntu-22.04
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install prerequisites
+        # win64 uses FPC's internal assembler + linker, so no mingw binutils are
+        # needed; the apt fpc-3.2.2 is only the bootstrap starting compiler.
+        run: sudo apt-get install -y fpc-3.2.2
+      - name: Build native win64 FPC (compiler + RTL + packages + utils)
+        run: |
+          make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
+          make install CPU_TARGET=x86_64 OS_TARGET=win64 "INSTALL_PREFIX=$(pwd)/build-win64"
+      - name: Create zip
+        run: |
+          cd build-win64
+          zip -r -q ../tunnel-pascal-regular.x86_64-win64.zip .
+      - name: Release
+        uses: fnkr/github-action-ghr@v1
+        env:
+          GHR_PATH: /home/runner/work/tunnelpascal/tunnelpascal/tunnel-pascal-regular.x86_64-win64.zip
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
