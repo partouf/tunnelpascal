@@ -335,6 +335,8 @@ end;
     function TCachedDirectory.FileExistsCaseAware(const path, fn: TCmdStr; out FoundName: TCmdStr):boolean;
       var
         entry : PCachedDirectoryEntry;
+        i : longint;
+        lfn,ename : TCmdStr;
       begin
         if (tf_files_case_aware in source_info.flags) then
           begin
@@ -353,6 +355,33 @@ end;
               end
             else
               Result:=false;
+          end
+        else if (tf_files_case_sensitive in source_info.flags) and
+                (target_info.system in systems_all_windows) then
+          begin
+            { Cross-compiling from a case-sensitive host (e.g. Linux) to Windows:
+              Windows resolves unit files case-insensitively, but the files on disk
+              keep mixed case (e.g. WinApi.Windows.ppu). The case-sensitive cache is
+              keyed by the real on-disk name, so scan it for a case-insensitive
+              match and return that real name (needed to actually open the file). }
+            if not TryUseCache then
+              begin
+                Result:=FileExistsNonCase(path,fn,false,FoundName);
+                exit;
+              end;
+            lfn:=Lower(ExtractFileName(fn));
+            Result:=false;
+            for i:=0 to DirectoryEntries.Count-1 do
+              begin
+                ename:=DirectoryEntries.NameOfIndex(i);
+                if (Lower(ename)=lfn) and
+                   ((PtrUInt(DirectoryEntries[i]) and faDirectory)=0) then
+                  begin
+                    FoundName:=ExtractFilePath(path+fn)+ename;
+                    Result:=true;
+                    exit;
+                  end;
+              end;
           end
         else
           { should not be called in this case, use plain FileExists }
@@ -637,6 +666,23 @@ end;
                     end;
                   end;
               end;
+{$ifdef usedircache}
+            { Cross-compiling to Windows from a case-sensitive host: dotted unit
+              files keep mixed case (e.g. WinApi.Windows.ppu), which none of the
+              transforms above match if a uses clause spells them differently.
+              Windows is case-insensitive, so as a last resort resolve the unit
+              case-insensitively and use its real on-disk name. Windows targets
+              only, so non-Windows builds are unaffected. }
+            if allowcache and (target_info.system in systems_all_windows) then
+              begin
+                if DirCache.FileExistsCaseAware(path,fn,fn2) then
+                  begin
+                    FoundFile:=fn2;
+                    result:=true;
+                    exit;
+                  end;
+              end;
+{$endif usedircache}
           end
         else
           if tf_files_case_aware in source_info.flags then
