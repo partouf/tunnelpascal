@@ -182,11 +182,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   bleeding-edge-windows-x64-build:
-    # Native Windows x64 FPC with the dotted/namespaced RTL AND packages
-    # (System.SysUtils, WinApi.Windows, ...) overlaid on the full regular
-    # distribution. Built on Linux like the regular win64 job. The dotted units
-    # are installed alongside the non-dotted ones (different filenames, so both
-    # coexist), giving a distribution usable in either mode.
+    # Native Windows x64 FPC with a dotted/namespaced RTL + packages
+    # (System.SysUtils, WinApi.Windows, ...). Built on Linux like the regular
+    # win64 job. Ships dotted-only units (like the x86_64-linux bleeding-edge):
+    # the regular build is used only for the native compiler + driver, then the
+    # non-dotted units are dropped and replaced with the dotted ones. (Both unit
+    # sets can't coexist: same-filename units like system.ppu would collide.)
     runs-on: ubuntu-22.04
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
@@ -196,19 +197,23 @@ jobs:
           fetch-depth: 0
       - name: Install prerequisites
         run: sudo apt-get install -y fpc-3.2.2
-      - name: Build native win64 FPC (compiler + RTL + packages + utils)
+      - name: Build native win64 FPC (for the compiler + driver)
         run: |
           make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
           make install CPU_TARGET=x86_64 OS_TARGET=win64 "INSTALL_PREFIX=$(pwd)/build-win64"
-      - name: Overlay dotted (namespaced) RTL + packages
-        # The win64 build leaves the win64 cross compiler at compiler/ppcrossx64;
-        # use it to rebuild the RTL and packages with FPC_DOTTEDUNITS=1 and install
-        # them alongside the non-dotted units (different filenames, so both coexist).
+      - name: Replace units with dotted (namespaced) RTL + packages
+        # The win64 build leaves the win64 cross compiler at compiler/ppcrossx64.
+        # Drop the non-dotted units (keep the compiler/driver), then rebuild RTL
+        # and packages with FPC_DOTTEDUNITS=1. Clean the in-tree RTL/packages
+        # first so the dotted build doesn't see stale non-dotted PPUs (which
+        # would fail with "checksum changed for system.ppu").
         run: |
           PP="$(pwd)/compiler/ppcrossx64"
           LIBDIR="$(pwd)/build-win64/lib/fpc/3.3.1"
+          rm -rf "$LIBDIR/units/x86_64-win64"
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" clean
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
+          make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" clean
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
       - name: Create zip
         run: |
@@ -261,15 +266,20 @@ jobs:
             BINUTILSPREFIX=arm-linux-gnueabihf- \
             "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" \
             "OPT=-dFPC_ARMHF" "CROSSOPT=-CpARMV6 -CfVFPV2"
-      - name: Overlay dotted (namespaced) RTL + packages
-        # crossall leaves the cross compiler at compiler/ppcrossarm; use it to
-        # rebuild the RTL and packages with FPC_DOTTEDUNITS=1 and install them
-        # alongside the non-dotted units (different filenames, so both coexist).
+      - name: Replace units with dotted (namespaced) RTL + packages
+        # crossall leaves the cross compiler at compiler/ppcrossarm. Drop the
+        # non-dotted arm units (keep ppcrossarm), then rebuild RTL and packages
+        # with FPC_DOTTEDUNITS=1 so the artifact is dotted-only (like the linux
+        # bleeding-edge); same-filename units like system.ppu can't coexist.
+        # Clean the in-tree RTL/packages first so the dotted build doesn't see
+        # stale non-dotted PPUs ("checksum changed for system.ppu").
         # BINUTILSPREFIX is required here too (the RTL assembles arm startup code).
         run: |
           PPARM="$(pwd)/compiler/ppcrossarm"
+          rm -rf "$LIBDIR/units/arm-linux"
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" clean
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$PACKDIR" all install
+          make -C packages FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" clean
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$PACKDIR" all install
       - name: Create tgz
         run: |
