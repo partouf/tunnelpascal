@@ -259,7 +259,32 @@ Both modeswitches exist but are **absent** from `delphimodeswitches`
 
 ## 5. Extended method (and field) RTTI for classes
 
-**Priority: Highest impact (ecosystem unlock).  Effort: M–L.  Risk: Medium.**
+**Priority: Highest impact (ecosystem unlock).  Effort: M–L.  Risk: Medium.  Status: IMPLEMENTED (fork-wide Delphi RTTI).**
+
+> **What this actually turned out to be.** The compiler already emitted the
+> extended method/field tables for classes, and the runtime already read them —
+> the feature worked via an explicit `{$RTTI}` directive + a full
+> `TRttiContext.Create(False)`. The real gap was that it was not the *default*:
+> `TRttiContext.Create` was published-only, gated behind the `ENABLE_DELPHI_RTTI`
+> build define. This item enables Delphi-style RTTI fork-wide:
+> - `rtl/inc/systemh.inc`: define `ENABLE_DELPHI_RTTI` before the RTTI includes, so
+>   `TObject` (and, via RTTI inheritance, all classes) carry public+published
+>   method/property RTTI and all-visibility field RTTI by default. Baked into the
+>   shipped RTL, so downstream units and user programs get it without a build flag.
+> - `packages/rtl-objpas/src/inc/rtti.pp`: the non-dotted `DefaultUsePublishedOnly`
+>   now also respects `SystemHasExtendedRTTI`, so the default context is full in
+>   both dotted and non-dotted unit variants.
+>
+> **Cost / consequence:** larger binaries fork-wide (every type carries RTTI), and
+> `TObject` now has RTTI. Six upstream RTTI tests (`texrtti10/11/12/13/15/16`) plus
+> `webtbs/tw40595` counted *inherited* members and so newly saw `TObject`'s own
+> methods and its `_MonitorData` field; they were updated to count declared-only
+> (`IncludeInherited=False`), which preserves their intent and gives identical
+> results with or without the define.
+>
+> **Limitation:** the FPC default field RTTI visibility is all-visibility, so
+> `TObject._MonitorData` (an FPC-internal field Delphi's TObject lacks) is
+> RTTI-visible on instances; harmless but not identical to Delphi's TObject.
 
 ### Goal
 `TRttiType.GetMethods` / `GetFields` return **non-published** members (with

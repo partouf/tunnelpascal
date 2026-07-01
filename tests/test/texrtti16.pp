@@ -36,7 +36,7 @@ Var
   P: PPropListEx;
 
 begin
-  aCount:=GetMethodList(TMethodClassRTTI,A,[]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[],False);
   AssertEquals('Public method has extended RTTI',1,aCount);
   CheckMethod('Full',0, A^[0],'PublicMethod',vcPublic);
   aCount:=GetPropListEx(TMethodClassRTTI,P);
