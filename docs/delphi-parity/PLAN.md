@@ -128,7 +128,18 @@ Clean slate — zero matches. Closest model is the string-returning ObjC intrins
 
 ## 3. `interface` and `unmanaged` generic constraints — D13
 
-**Priority: Medium.  Effort: M.  Risk: Low–Medium (PPU bump).**
+**Priority: Medium.  Effort: M.  Risk: Low–Medium (PPU bump).  Status: IMPLEMENTED.**
+
+> **Implementation notes:** `interface` reuses the concrete-interface path — it
+> adds the root interface `IInterface` (`interface_iunknown`) to the constraint's
+> interface list, so no new flag/PPU change was needed for it; `T: interface`
+> therefore means "any interface (deriving from IInterface)". `unmanaged` adds a
+> new `gcf_unmanaged` flag (`symconst.pas`), parsed as a contextual identifier in
+> `pgenutil.pas` (Delphi mode only) with a record base for storage, and enforced
+> in `check_generic_constraints` via `is_managed_type` (new message
+> `type_e_unmanaged_type_expected`). It is genuinely stricter than `record` — a
+> record containing a managed field is rejected. PPU version bumped 208→209;
+> `ppudump.pp`'s `genconstrflag` table updated to match the new enum value.
 
 ### Goal
 ```pascal

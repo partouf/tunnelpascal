@@ -2887,7 +2887,8 @@ const
   genconstrflag : array[1..ord(high(tgenericconstraintflag))] of tgenconstrflag=(
      (mask:gcf_constructor; str:'Constructor'),
      (mask:gcf_class;       str:'Class'),
-     (mask:gcf_record;      str:'Record')
+     (mask:gcf_record;      str:'Record'),
+     (mask:gcf_unmanaged;   str:'Unmanaged')
   );
 
 var

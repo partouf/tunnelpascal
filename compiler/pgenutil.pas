@@ -389,6 +389,15 @@ uses
                 { undefineddef is compatible with anything }
                 if formaldef.typ=undefineddef then
                   continue;
+                { Delphi "unmanaged" constraint: the type argument must not be
+                  a managed (reference-counted / finalized) type. }
+                if (gcf_unmanaged in formaldef.genconstraintdata.flags) and
+                    is_managed_type(paradef) then
+                  begin
+                    MessagePos1(filepos,type_e_unmanaged_type_expected,paradef.typename);
+                    result:=false;
+                    continue;
+                  end;
                 if paradef.typ<>formaldef.typ then
                   begin
                     case formaldef.typ of
@@ -2436,11 +2445,46 @@ uses
                           allowconstructor:=false;
                         end;
                     end;
+                  _INTERFACE:
+                    { Delphi "interface" constraint: the type argument must be
+                      an interface type. Handled by constraining to the root
+                      interface IInterface, reusing the concrete-interface path. }
+                    begin
+                      if ([gcf_constructor,gcf_class,gcf_record]*constraintdata.flags<>[])
+                          or (basedef<>generrordef)
+                          or not assigned(interface_iunknown) then
+                        Message(parser_e_illegal_expression)
+                      else
+                        constraintdata.interfaces.add(interface_iunknown);
+                    end;
                   else
                     begin
                       { after single_type "token" is the trailing ",", ";" or
                         ">"! }
                       doconsume:=false;
+                      { Delphi contextual "unmanaged" constraint: the type
+                        argument must have no managed fields. Stored on a record
+                        base (like the "record" constraint) plus a gcf_unmanaged
+                        flag that adds the not-managed check at specialization. }
+                      if (current_scanner.token=_ID) and
+                          (current_scanner.pattern='UNMANAGED') and
+                          (m_delphi in current_settings.modeswitches) then
+                        begin
+                          if ([gcf_constructor,gcf_class,gcf_record,gcf_unmanaged]*constraintdata.flags<>[])
+                              or (constraintdata.interfaces.count>0)
+                              or (basedef<>generrordef) then
+                            Message(parser_e_illegal_expression)
+                          else
+                            begin
+                              srsymtable:=trecordsymtable.create(defname,0,1);
+                              basedef:=crecorddef.create(defname,srsymtable);
+                              include(constraintdata.flags,gcf_unmanaged);
+                              allowconstructor:=false;
+                            end;
+                          consume(_ID);
+                        end
+                      else
+                        begin
                       { def is already set to a class or record }
                       if gcf_record in constraintdata.flags then
                         Message(parser_e_illegal_expression);
@@ -2471,6 +2515,7 @@ uses
                             constraintdata.interfaces.add(def);
                           else
                             ;
+                        end;
                         end;
                     end;
                 end;
