@@ -184,6 +184,17 @@ constructor only.
 
 **Priority: High (cheap, daily ergonomics).  Effort: S (+regression).  Risk: Medium (semantics).**
 
+> **Status: SPLIT.** `m_type_helpers` is now in `delphimodeswitches` (IMPLEMENTED,
+> clean full-suite pass). `m_implicit_function_specialization` is **deferred**:
+> enabling it by default crashes the compiler during overload resolution when a
+> generic function is a candidate that does not match the call — e.g. with a
+> non-generic `Test(RawByteString)` overload plus a generic `Test<T>(TArray<T>)`
+> overload, `Test(someString)` probes the generic candidate and access-violates in
+> `is_generic_param_used` / `is_specialization` (`internalerror 2021020905`, then
+> an AV at `symdef.pas` `is_specialization`). See `tests/webtbs/tw39677`. The
+> implicit-spec overload-probing path must be hardened to reject non-matching
+> generic candidates gracefully before the switch can be flipped by default.
+
 ### Goal
 Make `m_type_helpers` and `m_implicit_function_specialization` active by default in
 Delphi mode, as in real Delphi.
