@@ -79,7 +79,15 @@ and the result type is the unified type of both branches.
 
 ## 2. `NameOf` intrinsic — D13
 
-**Priority: High (small, visible).  Effort: S–M.  Risk: Low.**
+**Priority: High (small, visible).  Effort: S–M.  Risk: Low.  Status: IMPLEMENTED (v1).**
+
+> **v1 status:** implemented as a syssym computed directly in `pexpr.pas`
+> `statement_syssym` (no `ninl.pas` node needed) — folds to a string constant.
+> Supported argument forms: variables (local/global), fields via an instance
+> (`obj.Field` → `'Field'`), type names, and use in constant contexts.
+> Gated to `{$mode delphi}`. **Deferred:** bare routine names (a void call is not
+> a value expression) and enum elements (parsed as ordinal constants) — both need
+> non-evaluating designator parsing; tracked as a follow-up.
 
 ### Goal
 `NameOf(X)` returns the **source identifier name** of X as a string constant at

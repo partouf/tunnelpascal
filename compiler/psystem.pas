@@ -82,6 +82,7 @@ implementation
         systemunit.insertsym(csyssym.create('Continue',in_continue));
         systemunit.insertsym(csyssym.create('Leave',in_leave)); {macpas only}
         systemunit.insertsym(csyssym.create('Cycle',in_cycle)); {macpas only}
+        systemunit.insertsym(csyssym.create('NameOf',in_nameof_x)); {delphi only}
         systemunit.insertsym(csyssym.create('Dec',in_dec_x));
         systemunit.insertsym(csyssym.create('Inc',in_inc_x));
         systemunit.insertsym(csyssym.create('Str',in_str_x_string));
