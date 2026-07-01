@@ -26,7 +26,21 @@ Legend — Effort: S (≤1 day), M (2–4 days), L (1–2 weeks).
 
 ## 1. Inline `if` expression (ternary)  — D13
 
-**Priority: High (flagship D13 syntax).  Effort: M.  Risk: Medium (grammar).**
+**Priority: High (flagship D13 syntax).  Effort: M.  Risk: Medium (grammar).  Status: IMPLEMENTED.**
+
+> **Limitations (v1):**
+> - Gated to `{$mode delphi}` only (no dedicated modeswitch yet); rejected in
+>   `objfpc`/`fpc` modes.
+> - The `else` branch is mandatory (by design — an expression must yield a value).
+> - Branch-type unification handles: identical types, integer widening
+>   (`get_common_intdef`), string/char → ansistring/unicodestring, and one-way
+>   assignment-compatibility. Other combinations (e.g. variants, interfaces,
+>   disjoint enums, class hierarchies) fall back to assignment-compat or error and
+>   are not specially unified.
+> - A constant condition folds to the taken branch at parse time (so it works in
+>   `const` contexts and evaluates only the taken branch).
+> - Unparenthesised embedding inside a larger expression parses at factor level;
+>   parenthesise when in doubt.
 
 ### Goal
 Allow `if`/`then`/`else` in expression position, yielding a value:
@@ -140,6 +154,18 @@ Clean slate — zero matches. Closest model is the string-returning ObjC intrins
 > `type_e_unmanaged_type_expected`). It is genuinely stricter than `record` — a
 > record containing a managed field is rejected. PPU version bumped 208→209;
 > `ppudump.pp`'s `genconstrflag` table updated to match the new enum value.
+>
+> **Limitation (v1):** because storage reuses the `record` constraint's base def,
+> `unmanaged` currently only *accepts* what `record` accepts (ordinals, floats,
+> enums, and records), plus the not-managed check. So it is also **stricter than
+> Delphi in the other direction**: unmanaged-but-non-record types — pointers,
+> sets, static arrays — are rejected (with a "Record type expected" message).
+> Widening `unmanaged` to accept all genuinely-unmanaged types (independent of the
+> record base) is a follow-up.
+>
+> **Limitation (v1):** `interface` means "any interface deriving from IInterface"
+> (COM interfaces); CORBA interfaces (which do not derive from IInterface) are not
+> accepted.
 
 ### Goal
 ```pascal
@@ -194,6 +220,11 @@ constructor only.
 > an AV at `symdef.pas` `is_specialization`). See `tests/webtbs/tw39677`. The
 > implicit-spec overload-probing path must be hardened to reject non-matching
 > generic candidates gracefully before the switch can be flipped by default.
+>
+> **Pre-existing FPC limitation (not introduced here):** a helper method call on
+> a parenthesised rvalue expression, e.g. `(i + 1).IsEven`, is rejected with
+> "Illegal qualifier" even with helpers enabled — helper calls must be on an
+> addressable operand. Delphi allows the rvalue form; FPC does not.
 
 ### Goal
 Make `m_type_helpers` and `m_implicit_function_specialization` active by default in
