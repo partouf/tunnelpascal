@@ -3329,6 +3329,106 @@ implementation
       end;
 
 
+    { Delphi-style inline "if" expression:
+        if <condition> then <a> else <b>
+      Usable in expression (factor) position; yields the value of the taken
+      branch. It is lowered here into a result temp + an if-statement that
+      assigns the taken branch into that temp + a final reference to the temp,
+      so it reuses the existing conditional code generation. Only the taken
+      branch is evaluated. The else-branch is mandatory (an expression must
+      always produce a value). }
+    function parse_inline_if_expr : tnode;
+
+      var
+        condn,thenn,elsen : tnode;
+        restype : tdef;
+        ifblock : tblocknode;
+        stmt : tstatementnode;
+        restemp : ttempcreatenode;
+
+      function unify_branches(td,ed:tdef):tdef;
+        begin
+          if equal_defs(td,ed) then
+            result:=td
+          else if is_integer(td) and is_integer(ed) then
+            result:=get_common_intdef(torddef(td),torddef(ed),false)
+          else if is_stringlike(td) and is_stringlike(ed) then
+            begin
+              if m_default_unicodestring in current_settings.modeswitches then
+                result:=cunicodestringtype
+              else
+                result:=cansistringtype;
+            end
+          else if compare_defs(ed,td,nothingn)<>te_incompatible then
+            result:=td
+          else if compare_defs(td,ed,nothingn)<>te_incompatible then
+            result:=ed
+          else
+            begin
+              Message2(type_e_incompatible_types,td.typename,ed.typename);
+              result:=td;
+            end;
+        end;
+
+      begin
+        consume(_IF);
+        condn:=comp_expr([ef_accept_equal]);
+        consume(_THEN);
+        thenn:=comp_expr([ef_accept_equal]);
+        { for an expression the else-branch is mandatory }
+        consume(_ELSE);
+        elsen:=comp_expr([ef_accept_equal]);
+
+        { we need the branch (and condition) types now: the condition to fold a
+          constant test, the branches to type the result temp }
+        do_typecheckpass(condn);
+        do_typecheckpass(thenn);
+        do_typecheckpass(elsen);
+
+        if not assigned(thenn.resultdef) or not assigned(elsen.resultdef) or
+           is_void(thenn.resultdef) or is_void(elsen.resultdef) then
+          begin
+            Message(type_e_mismatch);
+            condn.free;
+            thenn.free;
+            elsen.free;
+            result:=cerrornode.create;
+            exit;
+          end;
+
+        { constant condition: fold to the taken branch. This lets the inline-if
+          be used in constant contexts and avoids emitting unreachable code. }
+        if (condn.nodetype=ordconstn) and is_boolean(condn.resultdef) then
+          begin
+            if tordconstnode(condn).value<>0 then
+              begin
+                result:=thenn;
+                elsen.free;
+              end
+            else
+              begin
+                result:=elsen;
+                thenn.free;
+              end;
+            condn.free;
+            exit;
+          end;
+
+        restype:=unify_branches(thenn.resultdef,elsen.resultdef);
+
+        ifblock:=internalstatements(stmt);
+        restemp:=ctempcreatenode.create(restype,restype.size,tt_persistent,false);
+        addstatement(stmt,restemp);
+        addstatement(stmt,
+          cifnode.create(condn,
+            cassignmentnode.create(ctemprefnode.create(restemp),thenn),
+            cassignmentnode.create(ctemprefnode.create(restemp),elsen)));
+        addstatement(stmt,ctempdeletenode.create_normal_temp(restemp));
+        addstatement(stmt,ctemprefnode.create(restemp));
+        result:=ifblock;
+      end;
+
+
     function factor(getaddr:boolean;flags:texprflags) : tnode;
 
          {---------------------------------------------
@@ -3817,6 +3917,16 @@ implementation
          begin
            updatefpos:=true;
            case current_scanner.token of
+             _IF :
+                { Delphi-style inline "if" expression (ternary) }
+                if m_delphi in current_settings.modeswitches then
+                  p1:=parse_inline_if_expr
+                else
+                  begin
+                    Message(parser_e_illegal_expression);
+                    consume(_IF);
+                    p1:=cerrornode.create;
+                  end;
              _RETURN :
                 begin
                   consume(_RETURN);
