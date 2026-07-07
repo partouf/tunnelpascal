@@ -1766,6 +1766,13 @@ const
                            RTTI support
 *****************************************************************************}
 
+{ tunnelpascal: enable Delphi-style extended RTTI fork-wide. This makes TObject
+  (and, via RTTI inheritance, all classes) carry public+published method, field
+  and property RTTI by default, and makes the default TRttiContext expose it -
+  matching Delphi. Baked in here so the shipped, prebuilt RTL has it without a
+  build flag; downstream units and user programs inherit it via TObject. }
+{$DEFINE ENABLE_DELPHI_RTTI}
+
 {$i rttih.inc}
 
 {*****************************************************************************

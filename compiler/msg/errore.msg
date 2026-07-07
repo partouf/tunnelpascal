@@ -2080,6 +2080,10 @@ type_e_helper_type_expected=04099_E_Helper type expected
 % The compiler expected a \var{class helper} type.
 type_e_record_type_expected=04100_E_Record type expected
 % The compiler expected a \var{record} type.
+type_e_unmanaged_type_expected=04135_E_Unmanaged type expected, but got "$1"
+% A generic type parameter has an \var{unmanaged} constraint, but the supplied
+% type argument is a managed type (one that requires initialization/finalization,
+% such as \var{AnsiString}, an interface, a dynamic array or a \var{variant}).
 type_e_class_helper_must_extend_subclass=04101_E_Derived class helper must extend a subclass of "$1" or the class itself
 % If a class helper inherits from another class helper the extended class must
 % extend either the same class as the parent class helper or a subclass of it

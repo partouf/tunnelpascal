@@ -142,7 +142,7 @@ Var
   aCount : Integer;
 
 begin
-  aCount:=GetFieldList(TFieldRTTI,A);
+  aCount:=GetFieldList(TFieldRTTI,A,[],False);
   AssertEquals('Count',6,aCount);
   CheckField(0, A^[0],'FPrivateA',tkInteger,vcPrivate);
   CheckField(1, A^[1],'FPrivateB',tkInteger,vcPrivate,True);
@@ -151,22 +151,22 @@ begin
   CheckField(4, A^[4],'FPublishedA',tkInteger,vcPublic);
   CheckField(5, A^[5],'FPublishedB',tkInteger,vcPublic);
   FreeMem(A);
-  aCount:=GetFieldList(TFieldRTTI,A,[vcPrivate]);
+  aCount:=GetFieldList(TFieldRTTI,A,[vcPrivate],False);
   AssertEquals('Count',2,aCount);
   CheckField(0, A^[0],'FPrivateA',tkInteger,vcPrivate);
   CheckField(1, A^[1],'FPrivateB',tkInteger,vcPrivate,True);
   FreeMem(A);
-  aCount:=GetFieldList(TFieldRTTI,A,[vcProtected]);
+  aCount:=GetFieldList(TFieldRTTI,A,[vcProtected],False);
   AssertEquals('Count',0,aCount);
   FreeMem(A);
-  aCount:=GetFieldList(TFieldRTTI,A,[vcPublic]);
+  aCount:=GetFieldList(TFieldRTTI,A,[vcPublic],False);
   AssertEquals('Count',4,aCount);
   CheckField(0, A^[0],'FPublicA',tkInteger,vcPublic);
   CheckField(1, A^[1],'FPublicB',tkInteger,vcPublic);
   CheckField(2, A^[2],'FPublishedA',tkInteger,vcPublic);
   CheckField(3, A^[3],'FPublishedB',tkInteger,vcPublic);
   FreeMem(A);
-  aCount:=GetFieldList(TFieldRTTI,A,[vcPublished]);
+  aCount:=GetFieldList(TFieldRTTI,A,[vcPublished],False);
   AssertEquals('Count',0,aCount);
   FreeMem(A);
 end;
@@ -179,7 +179,7 @@ Var
   aCount : Integer;
 
 begin
-  aCount:=GetMethodList(TMethodClassRTTI,A,[]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[],False);
   AssertEquals('Full Count',6,aCount);
   CheckMethod('Full',0, A^[0],'PrivateMethodA',vcPrivate);
   CheckMethod('Full',1, A^[1],'PrivateMethodB',vcPrivate,True);
@@ -188,21 +188,21 @@ begin
   CheckMethod('Full',4, A^[4],'PublicMethodB',vcPublic);
   CheckMethod('Full',5, A^[5],'PublicMethodC',vcPublic);
   FreeMem(A);
-  aCount:=GetMethodList(TMethodClassRTTI,A,[vcPrivate]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[vcPrivate],False);
   AssertEquals('Private Count',3,aCount);
   CheckMethod('Priv',0, A^[0],'PrivateMethodA',vcPrivate);
   CheckMethod('Priv',1, A^[1],'PrivateMethodB',vcPrivate,True);
   CheckMethod('Priv',2, A^[2],'PrivateMethodC',vcPrivate);
   FreeMem(A);
-  aCount:=GetMethodList(TMethodClassRTTI,A,[vcProtected]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[vcProtected],False);
   AssertEquals('Protected Count',0,aCount);
-  aCount:=GetMethodList(TMethodClassRTTI,A,[vcPublic]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[vcPublic],False);
   AssertEquals('Public Count',3,aCount);
   CheckMethod('Publ',0, A^[0],'PublicMethodA',vcPublic);
   CheckMethod('Publ',1, A^[1],'PublicMethodB',vcPublic);
   CheckMethod('Publ',2, A^[2],'PublicMethodC',vcPublic);
   FreeMem(A);
-  aCount:=GetMethodList(TMethodClassRTTI,A,[vcPublished]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[vcPublished],False);
   AssertEquals('Published Count',0,aCount);
   FreeMem(A);
 end;
