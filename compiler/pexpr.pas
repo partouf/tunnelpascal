@@ -263,6 +263,45 @@ implementation
        end;
 
 
+     { Delphi NameOf intrinsic: extract the *unqualified* declared name of the
+       entity denoted by p and return it as a string constant. The argument is
+       not evaluated - only the trailing identifier's source name is used. p is
+       freed. Returns an error node if p does not denote a named entity. }
+     function make_nameof_node(p:tnode):tnode;
+       var
+         hs : TSymStr;
+       begin
+         hs:='';
+         case p.nodetype of
+           loadn:
+             if assigned(tloadnode(p).symtableentry) then
+               hs:=tloadnode(p).symtableentry.RealName;
+           typen:
+             if assigned(ttypenode(p).typesym) then
+               hs:=ttypenode(p).typesym.RealName;
+           loadvmtaddrn:
+             if tloadvmtaddrnode(p).left.nodetype=typen then
+               hs:=ttypenode(tloadvmtaddrnode(p).left).typesym.RealName;
+           calln:
+             if assigned(tcallnode(p).symtableprocentry) then
+               hs:=tcallnode(p).symtableprocentry.RealName;
+           subscriptn:
+             if assigned(tsubscriptnode(p).vs) then
+               hs:=tsubscriptnode(p).vs.RealName;
+           else
+             ;
+         end;
+         p.free;
+         if hs='' then
+           begin
+             Message(parser_e_illegal_expression);
+             result:=cerrornode.create;
+           end
+         else
+           result:=cstringconstnode.createstr(hs);
+       end;
+
+
      function statement_syssym(l : tinlinenumber) : tnode;
       var
         p1,p2,paras  : tnode;
@@ -400,6 +439,32 @@ implementation
                 begin
                   Message1(sym_e_id_not_found, current_scanner.orgpattern);
                   statement_syssym:=cerrornode.create;
+                end;
+            end;
+
+          in_nameof_x :
+            begin
+              if not(m_delphi in current_settings.modeswitches) then
+                begin
+                  Message1(sym_e_id_not_found,current_scanner.orgpattern);
+                  { recover: skip an optional (argument) }
+                  if try_to_consume(_LKLAMMER) then
+                    begin
+                      p1:=comp_expr([ef_accept_equal]);
+                      consume(_RKLAMMER);
+                      p1.free;
+                    end;
+                  statement_syssym:=cerrornode.create;
+                end
+              else
+                begin
+                  consume(_LKLAMMER);
+                  in_args:=true;
+                  { the argument is not evaluated; we only need its name }
+                  p1:=comp_expr([ef_accept_equal]);
+                  consume(_RKLAMMER);
+                  statement_syssym:=make_nameof_node(p1);
+                  p1:=nil;
                 end;
             end;
 
