@@ -32,7 +32,7 @@ Var
   AInstance : TMethodClassRTTI;
 
 begin
-  aCount:=GetMethodList(TMethodClassRTTI,A,[]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[],False);
   AssertEquals('Generic methods do not generate RTTI',0,aCount);
 //  CheckMethod('Full',0, A^[0],'PublicMethodA',vcPublic);
 end;

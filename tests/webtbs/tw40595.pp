@@ -55,7 +55,7 @@ Var
   Method: PVmtMethodExEntry;
   Methods: PExtendedMethodInfoTable;
 Begin
-  Count := GetMethodList(TUser, Methods, []);
+  Count := GetMethodList(TUser,Methods,[],False);
   If Methods <> nil Then
   Begin
     if Count <> Length(MethodNames) then

@@ -138,7 +138,7 @@ Var
   aCount : Integer;
 
 begin
-  aCount:=GetFieldList(TFieldRTTI,A);
+  aCount:=GetFieldList(TFieldRTTI,A,[],False);
   AssertEquals('Total field Count',0,aCount);
   FreeMem(A);
 end;
@@ -151,7 +151,7 @@ Var
   aCount : Integer;
 
 begin
-  aCount:=GetMethodList(TMethodClassRTTI,A,[]);
+  aCount:=GetMethodList(TMethodClassRTTI,A,[],False);
   AssertEquals('Full method Count',0,aCount);
   FreeMem(A);
 end;
