@@ -26,7 +26,21 @@ Legend — Effort: S (≤1 day), M (2–4 days), L (1–2 weeks).
 
 ## 1. Inline `if` expression (ternary)  — D13
 
-**Priority: High (flagship D13 syntax).  Effort: M.  Risk: Medium (grammar).**
+**Priority: High (flagship D13 syntax).  Effort: M.  Risk: Medium (grammar).  Status: IMPLEMENTED.**
+
+> **Limitations (v1):**
+> - Gated to `{$mode delphi}` only (no dedicated modeswitch yet); rejected in
+>   `objfpc`/`fpc` modes.
+> - The `else` branch is mandatory (by design — an expression must yield a value).
+> - Branch-type unification handles: identical types, integer widening
+>   (`get_common_intdef`), string/char → ansistring/unicodestring, and one-way
+>   assignment-compatibility. Other combinations (e.g. variants, interfaces,
+>   disjoint enums, class hierarchies) fall back to assignment-compat or error and
+>   are not specially unified.
+> - A constant condition folds to the taken branch at parse time (so it works in
+>   `const` contexts and evaluates only the taken branch).
+> - Unparenthesised embedding inside a larger expression parses at factor level;
+>   parenthesise when in doubt.
 
 ### Goal
 Allow `if`/`then`/`else` in expression position, yielding a value:
@@ -140,6 +154,18 @@ Clean slate — zero matches. Closest model is the string-returning ObjC intrins
 > `type_e_unmanaged_type_expected`). It is genuinely stricter than `record` — a
 > record containing a managed field is rejected. PPU version bumped 208→209;
 > `ppudump.pp`'s `genconstrflag` table updated to match the new enum value.
+>
+> **Limitation (v1):** because storage reuses the `record` constraint's base def,
+> `unmanaged` currently only *accepts* what `record` accepts (ordinals, floats,
+> enums, and records), plus the not-managed check. So it is also **stricter than
+> Delphi in the other direction**: unmanaged-but-non-record types — pointers,
+> sets, static arrays — are rejected (with a "Record type expected" message).
+> Widening `unmanaged` to accept all genuinely-unmanaged types (independent of the
+> record base) is a follow-up.
+>
+> **Limitation (v1):** `interface` means "any interface deriving from IInterface"
+> (COM interfaces); CORBA interfaces (which do not derive from IInterface) are not
+> accepted.
 
 ### Goal
 ```pascal
@@ -184,6 +210,22 @@ constructor only.
 
 **Priority: High (cheap, daily ergonomics).  Effort: S (+regression).  Risk: Medium (semantics).**
 
+> **Status: SPLIT.** `m_type_helpers` is now in `delphimodeswitches` (IMPLEMENTED,
+> clean full-suite pass). `m_implicit_function_specialization` is **deferred**:
+> enabling it by default crashes the compiler during overload resolution when a
+> generic function is a candidate that does not match the call — e.g. with a
+> non-generic `Test(RawByteString)` overload plus a generic `Test<T>(TArray<T>)`
+> overload, `Test(someString)` probes the generic candidate and access-violates in
+> `is_generic_param_used` / `is_specialization` (`internalerror 2021020905`, then
+> an AV at `symdef.pas` `is_specialization`). See `tests/webtbs/tw39677`. The
+> implicit-spec overload-probing path must be hardened to reject non-matching
+> generic candidates gracefully before the switch can be flipped by default.
+>
+> **Pre-existing FPC limitation (not introduced here):** a helper method call on
+> a parenthesised rvalue expression, e.g. `(i + 1).IsEven`, is rejected with
+> "Illegal qualifier" even with helpers enabled — helper calls must be on an
+> addressable operand. Delphi allows the rvalue form; FPC does not.
+
 ### Goal
 Make `m_type_helpers` and `m_implicit_function_specialization` active by default in
 Delphi mode, as in real Delphi.
@@ -217,7 +259,32 @@ Both modeswitches exist but are **absent** from `delphimodeswitches`
 
 ## 5. Extended method (and field) RTTI for classes
 
-**Priority: Highest impact (ecosystem unlock).  Effort: M–L.  Risk: Medium.**
+**Priority: Highest impact (ecosystem unlock).  Effort: M–L.  Risk: Medium.  Status: IMPLEMENTED (fork-wide Delphi RTTI).**
+
+> **What this actually turned out to be.** The compiler already emitted the
+> extended method/field tables for classes, and the runtime already read them —
+> the feature worked via an explicit `{$RTTI}` directive + a full
+> `TRttiContext.Create(False)`. The real gap was that it was not the *default*:
+> `TRttiContext.Create` was published-only, gated behind the `ENABLE_DELPHI_RTTI`
+> build define. This item enables Delphi-style RTTI fork-wide:
+> - `rtl/inc/systemh.inc`: define `ENABLE_DELPHI_RTTI` before the RTTI includes, so
+>   `TObject` (and, via RTTI inheritance, all classes) carry public+published
+>   method/property RTTI and all-visibility field RTTI by default. Baked into the
+>   shipped RTL, so downstream units and user programs get it without a build flag.
+> - `packages/rtl-objpas/src/inc/rtti.pp`: the non-dotted `DefaultUsePublishedOnly`
+>   now also respects `SystemHasExtendedRTTI`, so the default context is full in
+>   both dotted and non-dotted unit variants.
+>
+> **Cost / consequence:** larger binaries fork-wide (every type carries RTTI), and
+> `TObject` now has RTTI. Six upstream RTTI tests (`texrtti10/11/12/13/15/16`) plus
+> `webtbs/tw40595` counted *inherited* members and so newly saw `TObject`'s own
+> methods and its `_MonitorData` field; they were updated to count declared-only
+> (`IncludeInherited=False`), which preserves their intent and gives identical
+> results with or without the define.
+>
+> **Limitation:** the FPC default field RTTI visibility is all-visibility, so
+> `TObject._MonitorData` (an FPC-internal field Delphi's TObject lacks) is
+> RTTI-visible on instances; harmless but not identical to Delphi's TObject.
 
 ### Goal
 `TRttiType.GetMethods` / `GetFields` return **non-published** members (with

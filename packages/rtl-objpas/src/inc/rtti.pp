@@ -62,11 +62,9 @@ uses
 {$ENDIF FPC_DOTTEDUNITS}
 
 Const
-{$IFDEF FPC_DOTTEDUNITS}
+  { The default context uses full (extended) RTTI whenever the RTL was built
+    with extended RTTI, in both the dotted and non-dotted unit variants. }
   DefaultUsePublishedOnly = Not TObject.SystemHasExtendedRTTI;
-{$ELSE}
-  DefaultUsePublishedOnly = True;
-{$ENDIF}
 
 Var
   GlobalUsePublishedOnly : Boolean = DefaultUsePublishedOnly;
