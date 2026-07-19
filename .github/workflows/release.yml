@@ -17,7 +17,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install prerequisites
-        run: sudo apt-get install -y fpc-3.2.2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2
       - name: Build FPC
         run: |
           fpcmake
@@ -46,7 +48,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install prerequisites
-        run: sudo apt-get install -y fpc-3.2.2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2
       - name: Prepare
         run: |
           FPC_SRC="$(pwd)"
@@ -109,7 +113,9 @@ jobs:
       - name: Install prerequisites
         # binutils-arm-linux-gnueabihf provides the arm-linux-gnueabihf-{as,ld}
         # the cross compiler shells out to.
-        run: sudo apt-get install -y fpc-3.2.2 binutils-arm-linux-gnueabihf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2 binutils-arm-linux-gnueabihf
       - name: Prepare
         run: |
           FPC_SRC="$(pwd)"
@@ -182,7 +188,9 @@ jobs:
       - name: Install prerequisites
         # win64 uses FPC's internal assembler + linker, so no mingw binutils are
         # needed; the apt fpc-3.2.2 is only the bootstrap starting compiler.
-        run: sudo apt-get install -y fpc-3.2.2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2
       - name: Build native win64 FPC (compiler + RTL + packages + utils)
         run: |
           make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
@@ -214,7 +222,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install prerequisites
-        run: sudo apt-get install -y fpc-3.2.2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2
       - name: Build native win64 FPC (for the compiler + driver)
         run: |
           make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
@@ -259,7 +269,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install prerequisites
-        run: sudo apt-get install -y fpc-3.2.2 binutils-arm-linux-gnueabihf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc-3.2.2 binutils-arm-linux-gnueabihf
       - name: Prepare
         run: |
           FPC_SRC="$(pwd)"
