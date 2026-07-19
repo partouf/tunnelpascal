@@ -22,8 +22,15 @@ jobs:
         run: |
           fpcmake
           make -j 4 zipinstall FPMAKEOPT="-T 4" "OPT=-Oodfa"
-          # Name must match GHR_PATH in the Release step below.
-          mv fpc-*.x86_64-linux.tar.gz tunnel-pascal-regular.x86_64-linux.tar.gz
+      - name: Finalize and verify package
+        # Name must match GHR_PATH in the Release step below.
+        run: |
+          mkdir build
+          tar xzf fpc-*.x86_64-linux.tar.gz -C build
+          rm fpc-*.x86_64-linux.tar.gz
+          .github/packaging/finalize-package.sh build
+          .github/packaging/verify-package.sh build
+          (cd build && tar -czf ../tunnel-pascal-regular.x86_64-linux.tar.gz *)
       - name: Release
         uses: fnkr/github-action-ghr@v1
         env:
@@ -71,6 +78,10 @@ jobs:
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" install
           make -C packages "FPC_DOTTEDUNITS=1" "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" all
           make -C packages "FPC_DOTTEDUNITS=1" "PP=$PP" "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O3" "INSTALL_PREFIX=$PACKDIR" install
+      - name: Finalize and verify package
+        run: |
+          .github/packaging/finalize-package.sh "$PACKDIR"
+          .github/packaging/verify-package.sh "$PACKDIR"
       - name: Create tgz
         run: |
           pushd build
@@ -136,6 +147,11 @@ jobs:
             BINUTILSPREFIX=arm-linux-gnueabihf- \
             "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" \
             "OPT=-dFPC_ARMHF" "CROSSOPT=-CpARMV6 -CfVFPV2"
+      - name: Finalize and verify package
+        run: |
+          .github/packaging/finalize-package.sh "$PACKDIR" 3.3.1 arm-linux-gnueabihf-
+          .github/packaging/verify-package.sh "$PACKDIR"
+          .github/packaging/verify-package.sh "$PACKDIR" -Parm
       - name: Create tgz
         run: |
           pushd build
@@ -171,6 +187,8 @@ jobs:
         run: |
           make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
           make install CPU_TARGET=x86_64 OS_TARGET=win64 "INSTALL_PREFIX=$(pwd)/build-win64"
+      - name: Finalize package
+        run: .github/packaging/finalize-package.sh build-win64
       - name: Create zip
         run: |
           cd build-win64
@@ -215,6 +233,8 @@ jobs:
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" clean
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
+      - name: Finalize package
+        run: .github/packaging/finalize-package.sh build-win64
       - name: Create zip
         run: |
           cd build-win64
@@ -281,6 +301,11 @@ jobs:
           make -C rtl FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$PACKDIR" all install
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" clean
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PPARM" CPU_TARGET=arm OS_TARGET=linux BINUTILSPREFIX=arm-linux-gnueabihf- "FPCDIR=$LIBDIR" "CROSSOPT=-CpARMV6 -CfVFPV2" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$PACKDIR" all install
+      - name: Finalize and verify package
+        run: |
+          .github/packaging/finalize-package.sh "$PACKDIR" 3.3.1 arm-linux-gnueabihf-
+          .github/packaging/verify-package.sh "$PACKDIR"
+          .github/packaging/verify-package.sh "$PACKDIR" -Parm
       - name: Create tgz
         run: |
           pushd build
