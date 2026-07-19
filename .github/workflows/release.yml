@@ -23,9 +23,7 @@ jobs:
           fpcmake
           make -j 4 zipinstall FPMAKEOPT="-T 4" "OPT=-Oodfa"
       - name: Finalize and verify package
-        # zipinstall hands back a finished tarball, so unpack it, make it
-        # relocatable (bin/ppcx64 + fpc.cfg, see the packaging scripts) and
-        # repack. Name must match GHR_PATH in the Release step below.
+        # Name must match GHR_PATH in the Release step below.
         run: |
           mkdir build
           tar xzf fpc-*.x86_64-linux.tar.gz -C build
@@ -150,8 +148,6 @@ jobs:
             "PP=$PP" "FPCDIR=$LIBDIR" "INSTALL_PREFIX=$PACKDIR" \
             "OPT=-dFPC_ARMHF" "CROSSOPT=-CpARMV6 -CfVFPV2"
       - name: Finalize and verify package
-        # The third argument bakes the armhf binutils prefix into fpc.cfg, so
-        # "fpc -Parm" links out of the box instead of falling back to the host ld.
         run: |
           .github/packaging/finalize-package.sh "$PACKDIR" 3.3.1 arm-linux-gnueabihf-
           .github/packaging/verify-package.sh "$PACKDIR"
@@ -192,8 +188,6 @@ jobs:
           make all CPU_TARGET=x86_64 OS_TARGET=win64 FPMAKEOPT="-T 4" "OPT=-O2"
           make install CPU_TARGET=x86_64 OS_TARGET=win64 "INSTALL_PREFIX=$(pwd)/build-win64"
       - name: Finalize package
-        # No verify step: the driver and compiler are Windows binaries and this
-        # is a Linux runner. Verified locally under wine instead.
         run: .github/packaging/finalize-package.sh build-win64
       - name: Create zip
         run: |
@@ -240,8 +234,6 @@ jobs:
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" clean
           make -C packages FPC_DOTTEDUNITS=1 "PP=$PP" CPU_TARGET=x86_64 OS_TARGET=win64 "FPCDIR=$LIBDIR" FPMAKEOPT="-T 4" "OPT=-O2" "INSTALL_PREFIX=$(pwd)/build-win64" all install
       - name: Finalize package
-        # No verify step: the driver and compiler are Windows binaries and this
-        # is a Linux runner. Verified locally under wine instead.
         run: .github/packaging/finalize-package.sh build-win64
       - name: Create zip
         run: |
