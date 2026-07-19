@@ -5,6 +5,8 @@ This is a fork of https://gitlab.com/freepascal.org/fpc/source
 * Includes inline-var support from https://gitlab.com/wFeus/fpc-with-inline-variables/
 * Builds with Dotted unit support
 
+Feature tour: https://godbolt.org/z/b9MPhvPbj
+
 
 ## FPC Source code repository
 
