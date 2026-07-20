@@ -107,6 +107,89 @@ implementation
       end;
     end;
     
+    { Closes the nested block that enter_nested_block opened, and gives any
+      managed inline variables declared directly in it *scope* lifetime:
+      their initialisation is emitted on entry to the block and their
+      finalisation on leaving it, rather than being deferred to procedure
+      entry/exit by the implicit per-procedure passes.
+
+      The finalisation is placed in an implicit try/finally so it also runs
+      when an exception, exit, break or continue leaves the block. Symbols
+      handled here are flagged so the per-procedure passes skip them.
+
+      Must be called while current_proc_block_lvl is still the level of the
+      block being closed; it performs the exit_nested_block itself. }
+    function close_nested_block(body : tnode) : tnode;
+      var
+        ind : Integer;
+        sym : tlocalvarsym;
+        managed : TFPObjectList;
+        loadnode : tnode;
+        initstat, finalstat : tstatementnode;
+        initblock, finalblock : tnode;
+      begin
+        managed := nil;
+        for ind := 0 to current_procinfo.procdef.localst.SymList.Count -1 do
+          if TObject(current_procinfo.procdef.localst.SymList[ind]) is tlocalvarsym then
+            begin
+              sym := tlocalvarsym(current_procinfo.procdef.localst.SymList[ind]);
+              if (sym.scope_lvl = current_proc_block_lvl) and
+                 not sym.has_scope_lifetime and
+                 is_managed_type(sym.vardef) then
+                begin
+                  if not assigned(managed) then
+                    managed := TFPObjectList.Create(False);
+                  managed.Add(sym);
+                end;
+            end;
+
+        exit_nested_block;
+
+        if not assigned(managed) then
+          begin
+            result := body;
+            exit;
+          end;
+
+        initblock := internalstatements(initstat);
+        finalblock := internalstatements(finalstat);
+
+        { initialise in declaration order ... }
+        for ind := 0 to managed.Count -1 do
+          begin
+            sym := tlocalvarsym(managed[ind]);
+            sym.has_scope_lifetime := true;
+            loadnode := cloadnode.create(sym,sym.owner);
+            { do not let a function reference be turned into a call }
+            include(tloadnode(loadnode).flags,nf_load_procvar);
+            addstatement(initstat,cnodeutils.initialize_data_node(loadnode,false));
+          end;
+
+        { ... and finalise in reverse declaration order }
+        for ind := managed.Count -1 downto 0 do
+          begin
+            sym := tlocalvarsym(managed[ind]);
+            loadnode := cloadnode.create(sym,sym.owner);
+            include(tloadnode(loadnode).flags,nf_load_procvar);
+            addstatement(finalstat,cnodeutils.finalize_data_node(loadnode));
+          end;
+
+        managed.Free;
+
+        if (cs_implicit_exceptions in current_settings.moduleswitches) and
+           (f_exceptions in features) then
+          addstatement(initstat,ctryfinallynode.create_implicit(body,finalblock))
+        else
+          begin
+            { without exception support the best we can do is run the
+              finalisation on the normal path out of the block }
+            addstatement(initstat,body);
+            addstatement(initstat,finalblock);
+          end;
+
+        result := initblock;
+      end;
+
     function def_char_typ : tdef;
     begin
       if m_default_unicodestring in current_settings.modeswitches then
@@ -379,7 +462,7 @@ implementation
          begin
            enter_nested_block;
            if_a:=statement;
-           exit_nested_block;
+           if_a:=close_nested_block(if_a);
          end
          else
            if_a:=nil;
@@ -388,7 +471,7 @@ implementation
          begin
            enter_nested_block;
            else_a:=statement;
-           exit_nested_block;
+           else_a:=close_nested_block(else_a);
          end
          else
            else_a:=nil;
@@ -587,7 +670,7 @@ implementation
            { add instruction block }
            enter_nested_block;
            casestatement := statement;
-           exit_nested_block;
+           casestatement := close_nested_block(casestatement);
            casenode.addblock(blockid, casestatement);
 
            { next block }
@@ -603,7 +686,7 @@ implementation
                 consume(_OTHERWISE);
               enter_nested_block;
               casestatement := statements_til_end;
-              exit_nested_block;
+              casestatement := close_nested_block(casestatement);
               casenode.addelseblock(casestatement);
            end
          else
@@ -642,9 +725,8 @@ implementation
            end;
          consume(_UNTIL);
 
-         first:=cblocknode.create(first);
-         exit_nested_block;
-         
+         first:=close_nested_block(cblocknode.create(first));
+
          p_e:=comp_expr([ef_accept_equal]);
          result:=cwhilerepeatnode.create(p_e,first,false,true);
       end;
@@ -661,7 +743,7 @@ implementation
          consume(_DO);
          enter_nested_block;
          p_a:=statement;
-         exit_nested_block;
+         p_a:=close_nested_block(p_a);
          result:=cwhilerepeatnode.create(p_e,p_a,true,false);
       end;
 
@@ -942,8 +1024,8 @@ implementation
              consume(_ASSIGNMENT); // fail
              result:=cerrornode.create;
            end;
-           
-         exit_nested_block;
+
+         result:=close_nested_block(result);
       end;
 
 
@@ -1161,7 +1243,7 @@ implementation
                   p:=statement
                 else
                   p:=cnothingnode.create;
-                exit_nested_block;
+                p:=close_nested_block(p);
               end;
 
             { remove symtables in reverse order from the stack }
@@ -1303,8 +1385,7 @@ implementation
                 break;
               consume_emptystats;
            end;
-         p_try_block:=cblocknode.create(first);
-         exit_nested_block;
+         p_try_block:=close_nested_block(cblocknode.create(first));
 
          if try_to_consume(_FINALLY) then
            begin
@@ -1312,8 +1393,8 @@ implementation
               current_exceptblock := exceptblockcounter;
               enter_nested_block;
               p_finally_block:=statements_til_end;
+              p_finally_block:=close_nested_block(p_finally_block);
               try_statement:=ctryfinallynode.create(p_try_block,p_finally_block);
-              exit_nested_block;
               try_statement.fileinfo:=filepostry;
            end
          else
@@ -1386,8 +1467,7 @@ implementation
                        consume(_ID);
                      consume(_DO);
                      enter_nested_block;
-                     hp:=connode.create(nil,statement);
-                     exit_nested_block;
+                     hp:=connode.create(nil,close_nested_block(statement));
                      if ot.typ=errordef then
                        begin
                           hp.free;
@@ -1430,7 +1510,7 @@ implementation
                        { catch the other exceptions }
                        enter_nested_block;
                        p_default:=statements_til_end;
-                       exit_nested_block;
+                       p_default:=close_nested_block(p_default);
                      end
                    else
                      consume(_END);
@@ -1440,7 +1520,7 @@ implementation
                    { catch all exceptions }
                    enter_nested_block;
                    p_default:=statements_til_end;
-                   exit_nested_block;
+                   p_default:=close_nested_block(p_default);
                 end;
 
               try_statement:=ctryexceptnode.create(p_try_block,p_specific,p_default);
@@ -2012,8 +2092,7 @@ implementation
          if (starttoken<>_INITIALIZATION) or (current_scanner.token<>_FINALIZATION) then
            consume(_END);
            
-         last:=cblocknode.create(first);
-         exit_nested_block;
+         last:=close_nested_block(cblocknode.create(first));
          last.fileinfo:=filepos;
          statement_block:=last;
       end;

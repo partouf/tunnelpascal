@@ -343,6 +343,11 @@ implementation
     var
       hp : tnode;
     begin
+      { inline variables with scope lifetime are initialised around their own
+        block by close_nested_block, so doing it here as well would be wrong }
+      if (tsym(p).typ = localvarsym) and
+         tlocalvarsym(p).has_scope_lifetime then
+        exit;
       if ((tsym(p).typ = localvarsym) or
           { check staticvarsym for record management operators and for objects
             which might contain record with management operators }
@@ -387,6 +392,9 @@ implementation
   class procedure tnodeutils.local_varsyms_finalize(p: TObject; arg: pointer);
     begin
       if (tsym(p).typ=localvarsym) and
+         { see sym_maybe_initialize: scope-lifetime inline variables are
+           finalised around their own block instead }
+         not tlocalvarsym(p).has_scope_lifetime and
          (tlocalvarsym(p).refs>0) and
          not(vo_is_typed_const in tlocalvarsym(p).varoptions) and
          not(vo_is_external in tlocalvarsym(p).varoptions) and

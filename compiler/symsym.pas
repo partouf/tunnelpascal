@@ -271,6 +271,11 @@ interface
           { not stored in PPU! }
           capture_sym : tsym;
           scope_lvl : Integer; //use by inline variables, -1 -> out of scope, 0+ -> level of nesting of block
+          { inline variable whose initialisation/finalisation is emitted around
+            its enclosing block (scope lifetime) instead of at procedure
+            entry/exit; such symbols must be skipped by the implicit
+            per-procedure init/final passes to avoid doing it twice }
+          has_scope_lifetime : boolean;
           constructor create(st:tsymtyp;const n : TSymStr;vsp:tvarspez;def:tdef;vopts:tvaroptions);
           constructor ppuload(st:tsymtyp;ppufile:tcompilerppufile);
           function globalasmsym: boolean;
@@ -2208,6 +2213,7 @@ implementation
          defaultconstsym:=nil;
          defaultconstsymderef.reset;
          scope_lvl:=0;
+         has_scope_lifetime:=false;
       end;
 
 
@@ -2217,6 +2223,10 @@ implementation
          fillchar(localloc,sizeof(localloc),0);
          fillchar(initialloc,sizeof(initialloc),0);
          ppufile.getderef(defaultconstsymderef);
+         { neither field is stored in the ppu, so give them defined values
+           rather than leaving them holding whatever the allocation contained }
+         scope_lvl:=0;
+         has_scope_lifetime:=false;
       end;
 
     function tabstractnormalvarsym.globalasmsym: boolean;
