@@ -1,8 +1,42 @@
 # Delphi 12/13 Language-Parity Plan (tunnelpascal)
 
-Status: **planning / scoping only — nothing implemented yet.**
-Baseline surveyed against `tunnel-main`. All file:line anchors below were captured
-from the current tree and should be re-verified before editing (line numbers drift).
+Status: **items 1–5 landed; 6–8 outstanding.**
+All file:line anchors below were captured when this plan was written and should be
+re-verified before editing (line numbers drift — several already have).
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Inline `if` expression | ✅ landed (`tests/test/tinlineif1-3.pp`) |
+| 2 | `NameOf` intrinsic | ✅ landed (`tnameof1-3.pp`) — vars/fields/types; routines & enum elements unverified |
+| 3 | `interface` / `unmanaged` constraints | ✅ landed (`tgenconstr1-4.pp`) — see deviation note below |
+| 4 | Default-mode switch flips | 🟡 partial — `m_type_helpers` on by default; implicit function specialization still opt-in (now item 8) |
+| 5 | Extended method/field RTTI | ✅ landed (`textrtti1.pp`), on by default fork-wide |
+| 6 | Compiler directive polish | ❌ not started |
+| 7 | `System.Net.HttpClient` | ❌ not started |
+| 8 | Implicit function specialization by default | ❌ blocked on a compiler crash in overload probing |
+| 9 | Inline variable **scope lifetime** | ✅ landed (PR #22, `tinlinevarscope1-2.pp`) — not in the original plan |
+
+**Deviations from what was planned below, worth knowing before trusting the detail:**
+
+- **Item 3** was implemented without adding `gcf_interface`. The enum in
+  `compiler/symconst.pas` gained only `gcf_unmanaged`; the `interface` constraint
+  is expressed as "any interface" via `IInterface` rather than a new flag. The
+  PPU version *was* bumped as anticipated (`CurrentPPUVersion = 209`).
+- **Item 4** was split. Type helpers are in `delphimodeswitches`
+  (`compiler/globals.pas`); implicit function specialization is not, because it
+  trips a compiler crash in overload probing. That half is tracked as item 8.
+- **Item 9** was not foreseen at all. It surfaced from a crash report (issue #21)
+  and turned out to be a lifetime-model gap rather than the local fix the issue
+  implied. See the section at the end.
+
+Two limitations found while validating the landed work, both documented in
+`FEATURE-COMPARISON.md` rather than tracked as plan items:
+
+- `TRttiMethod.Invoke` raises `ENotImplemented` unless `ffi.manager` (from the
+  shipped `libffi` package) is in `uses`. Delphi needs no such step.
+- The dotted-units build does not predefine `FPC_DOTTEDUNITS`, so
+  `{$IFDEF FPC_DOTTEDUNITS}` cannot detect the RTL variant without
+  `-dFPC_DOTTEDUNITS` being passed by hand.
 
 ## Context
 
@@ -13,9 +47,15 @@ literals, digit separators, inline `var` declarations with type inference, and
 custom managed records. That covers essentially everything from Delphi 2009
 through **Delphi 12 Athens**.
 
-What remains for **Delphi 13 Florence** language parity is a small, contained set
-of features, plus two pre-existing gaps (default-mode flips, extended method RTTI)
-that matter more in practice than anything Florence itself added.
+Since this plan was written the Florence syntax items (1–3) and the two
+pre-existing gaps that mattered more in practice (4, 5) have landed. What remains
+is directive polish (6), a library item (7), one blocked mode-switch flip (8),
+and whatever falls out of the inline-variable work (9).
+
+The per-item sections below are kept as originally written, with a status line
+added at the top of each. Treat the "Current state" and "Implementation" text in
+a landed item as a record of the plan, **not** a description of the tree — item 3
+in particular was implemented differently from its plan.
 
 This document orders the work **language features first, library utilities last**,
 as requested. Priority (impact) is called out per item separately from ordering.
@@ -25,6 +65,8 @@ Legend — Effort: S (≤1 day), M (2–4 days), L (1–2 weeks).
 ---
 
 ## 1. Inline `if` expression (ternary)  — D13
+
+**Status: ✅ landed.** Tests: `tests/test/tinlineif1.pp`–`tinlineif3.pp`.
 
 **Priority: High (flagship D13 syntax).  Effort: M.  Risk: Medium (grammar).**
 
@@ -79,6 +121,9 @@ and the result type is the unified type of both branches.
 
 ## 2. `NameOf` intrinsic — D13
 
+**Status: ✅ landed.** Tests: `tnameof1.pp`–`tnameof3.pp`. Verified for vars, fields and
+type names; routines and enum elements are not covered by those tests.
+
 **Priority: High (small, visible).  Effort: S–M.  Risk: Low.**
 
 ### Goal
@@ -119,6 +164,10 @@ Clean slate — zero matches. Closest model is the string-returning ObjC intrins
 ---
 
 ## 3. `interface` and `unmanaged` generic constraints — D13
+
+**Status: ✅ landed**, but not as designed below — no `gcf_interface` flag was added;
+the `interface` constraint is "any interface" via `IInterface`. Only `gcf_unmanaged`
+exists in the enum. PPU bumped to 209 as planned. Tests: `tgenconstr1.pp`–`tgenconstr4.pp`.
 
 **Priority: Medium.  Effort: M.  Risk: Low–Medium (PPU bump).**
 
@@ -163,6 +212,9 @@ constructor only.
 
 ## 4. Enable type helpers + implicit function specialization in default Delphi mode
 
+**Status: 🟡 half landed.** `m_type_helpers` is in `delphimodeswitches`; test
+`ttypehelperdef1.pp`. `m_implicit_function_specialization` is **not** — see item 8.
+
 **Priority: High (cheap, daily ergonomics).  Effort: S (+regression).  Risk: Medium (semantics).**
 
 ### Goal
@@ -197,6 +249,10 @@ Both modeswitches exist but are **absent** from `delphimodeswitches`
 ---
 
 ## 5. Extended method (and field) RTTI for classes
+
+**Status: ✅ landed** and enabled fork-wide by default (not gated on `{$RTTI EXPLICIT}`).
+Test: `textrtti1.pp`. Caveat: `TRttiMethod.Invoke` still needs `ffi.manager` — reading
+metadata works, calling through it does not without that unit.
 
 **Priority: Highest impact (ecosystem unlock).  Effort: M–L.  Risk: Medium.**
 
@@ -253,6 +309,8 @@ This unblocks Spring4D, DI containers, ORMs, and JSON/REST serializers.
 
 ## 6. Compiler directive polish — D13
 
+**Status: ❌ not started.** `compiler/scandir.pas` still has no `IFOPT` handling.
+
 **Priority: Low.  Effort: S.  Risk: Low.**
 
 ### Goal
@@ -280,6 +338,8 @@ Match D13 directive refinements:
 ---
 
 ## 7. `System.Net.HttpClient` — library (lowest in ordering)
+
+**Status: ❌ not started.** Only `fcl-web`'s `fphttpclient` exists; no `System.Net.HttpClient`.
 
 **Priority: Medium (most-felt library gap).  Effort: L.  Risk: Medium.**
 
@@ -315,17 +375,87 @@ not language parity. Track separately if ever pursued.
 
 ---
 
+---
+
+## 8. Implicit function specialization in default Delphi mode
+
+**Priority: Medium.  Effort: unknown until the crash is diagnosed.  Risk: Medium.**
+
+**Status: ❌ blocked.** Split out of item 4.
+
+`m_implicit_function_specialization` works when requested explicitly with
+`{$modeswitch implicitfunctionspecialization}`, but is deliberately absent from
+`delphimodeswitches` (`compiler/globals.pas`) because enabling it by default
+trips a compiler crash in overload probing. Diagnose and fix that crash first;
+the flip itself is then a one-line change plus a full suite run.
+
+---
+
+## 9. Inline variable scope lifetime
+
+**Priority: High (was a crash).  Effort: M.  Risk: Medium (touches every block).**
+
+**Status: ✅ landed** — PR #22, issue #21. Not part of the original plan.
+
+Inline variables had **procedure** lifetime rather than scope lifetime:
+`exit_nested_block` (`compiler/pstatmnt.pas`) only set `scope_lvl := -1` and
+renamed the symbol, which controls name visibility, not storage or lifetime.
+
+Two consequences:
+
+- **Crash.** Initialisation and finalisation came from the implicit
+  per-procedure passes in `ngenutil.pas`, which dispatch on `proctypeoption`.
+  `potype_proginit` (a program's main block) and `potype_unitfinalize` (a unit's
+  `finalization`) have empty arms there, so a managed inline var in either was
+  never initialised; assigning to it made `fpc_ansistr_assign` decrement the
+  refcount of stack garbage — `Runtime error 216`. It only appeared to work when
+  the slot happened to be zero, which is why it survived so long.
+- **Wrong lifetime.** Where the passes did run, a managed inline var in a nested
+  block lived until the enclosing routine returned, so two "scoped" guards in
+  sibling blocks overlapped. Delphi releases at block exit.
+
+`close_nested_block()` now emits initialisation on entry to the declaring block
+and finalisation on leaving it, in reverse declaration order, wrapped in an
+implicit `try/finally` (`ctryfinallynode.create_implicit`) so exceptions, `exit`,
+`break` and `continue` all finalise. All 13 `enter_nested_block` sites pair with
+it — a missed site leaves variables uninitialised and only crashes
+intermittently. Handled symbols are flagged `has_scope_lifetime` (transient, not
+in the PPU, so no CRC change or version bump) and skipped by the per-procedure
+passes.
+
+Fixing the lifetime subsumed the crash fix: initialisation now comes from the
+statement stream rather than the `proctypeoption` dispatch.
+
+Tests: `tinlinevarscope1.pp` (block scopes, plus a classic-var contrast) and
+`tinlinevarscope2.pp` (branch statements with no begin/end). The pre-existing
+`tinlinevars.pp` never declared an inline var in its own main block.
+
+### Follow-on work not done
+- **Stack slot reuse.** Sibling scopes still burn a distinct slot each for the
+  whole procedure; lifetime is now correct but storage is not shared. A size
+  inefficiency, not a correctness bug.
+- **`goto` into or out of a scoped block** is untested against the implicit
+  try/finally; `exit`/`break`/`continue` are covered.
+
+---
+
 ## Suggested execution order
 
-By **impact** (independent of the language-first document ordering above):
+Remaining work, by impact:
 
-1. **#5 Extended method/field RTTI** — biggest ecosystem unlock; mostly localized.
-2. **#4 Mode-switch flips** — cheap, high daily value (do the semantics check first).
-3. **#2 NameOf** — small, self-contained, visibly "D13".
-4. **#1 Inline `if` expression** — flagship D13 syntax; budget for grammar work.
-5. **#3 interface/unmanaged constraints** — needs a PPU bump; batch with other PPU changes.
-6. **#6 Directive polish** — minor.
-7. **#7 System.Net.HttpClient** — large, but library-level and independent of the compiler.
+1. **#8 Implicit function specialization** — diagnose the overload-probing crash;
+   the mode flip is trivial once it is fixed.
+2. **#7 System.Net.HttpClient** — largest remaining gap for porting real code;
+   library-level and independent of the compiler.
+3. **#6 Directive polish** — minor.
+
+Non-plan items worth folding in at some point: predefining `FPC_DOTTEDUNITS` in
+the dotted build, and either shipping a default function-call manager or
+documenting `ffi.manager` prominently for `TRttiMethod.Invoke`.
+
+For the record, the landed items were executed in roughly this order:
+#5 extended RTTI, #4 type helpers, #2 NameOf, #1 inline `if`,
+#3 constraints, then #9 scope lifetime (unplanned, from a bug report).
 
 ## Cross-cutting notes
 - Any change touching PPU layout (#3, possibly #5) requires a `CurrentPPUVersion`
