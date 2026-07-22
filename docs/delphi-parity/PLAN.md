@@ -1,6 +1,6 @@
 # Delphi 12/13 Language-Parity Plan (tunnelpascal)
 
-Status: **items 1–5 landed; 6–8 outstanding.**
+Status: **items 1–5, 8, 9 landed; 6–7 outstanding.**
 All file:line anchors below were captured when this plan was written and should be
 re-verified before editing (line numbers drift — several already have).
 
@@ -9,11 +9,11 @@ re-verified before editing (line numbers drift — several already have).
 | 1 | Inline `if` expression | ✅ landed (`tests/test/tinlineif1-3.pp`) |
 | 2 | `NameOf` intrinsic | ✅ landed (`tnameof1-3.pp`) — vars/fields/types; routines & enum elements unverified |
 | 3 | `interface` / `unmanaged` constraints | ✅ landed (`tgenconstr1-4.pp`) — see deviation note below |
-| 4 | Default-mode switch flips | 🟡 partial — `m_type_helpers` on by default; implicit function specialization still opt-in (now item 8) |
+| 4 | Default-mode switch flips | ✅ landed — `m_type_helpers` and (via item 8) `m_implicit_function_specialization` both on by default in Delphi mode |
 | 5 | Extended method/field RTTI | ✅ landed (`textrtti1.pp`), on by default fork-wide |
 | 6 | Compiler directive polish | ❌ not started |
 | 7 | `System.Net.HttpClient` | ❌ not started |
-| 8 | Implicit function specialization by default | ❌ blocked on a compiler crash in overload probing |
+| 8 | Implicit function specialization by default | ✅ landed — overload-probing crash fixed, switch added to `delphimodeswitches` |
 | 9 | Inline variable **scope lifetime** | ✅ landed (PR #22, `tinlinevarscope1-2.pp`) — not in the original plan |
 
 **Deviations from what was planned below, worth knowing before trusting the detail:**
@@ -22,9 +22,10 @@ re-verified before editing (line numbers drift — several already have).
   `compiler/symconst.pas` gained only `gcf_unmanaged`; the `interface` constraint
   is expressed as "any interface" via `IInterface` rather than a new flag. The
   PPU version *was* bumped as anticipated (`CurrentPPUVersion = 209`).
-- **Item 4** was split. Type helpers are in `delphimodeswitches`
-  (`compiler/globals.pas`); implicit function specialization is not, because it
-  trips a compiler crash in overload probing. That half is tracked as item 8.
+- **Item 4** was split. Type helpers landed first; implicit function
+  specialization was held back by a compiler crash in overload probing and
+  tracked as item 8. Both are now in `delphimodeswitches` (`compiler/globals.pas`)
+  and item 8 has landed.
 - **Item 9** was not foreseen at all. It surfaced from a crash report (issue #21)
   and turned out to be a lifetime-model gap rather than the local fix the issue
   implied. See the section at the end.
@@ -47,10 +48,10 @@ literals, digit separators, inline `var` declarations with type inference, and
 custom managed records. That covers essentially everything from Delphi 2009
 through **Delphi 12 Athens**.
 
-Since this plan was written the Florence syntax items (1–3) and the two
-pre-existing gaps that mattered more in practice (4, 5) have landed. What remains
-is directive polish (6), a library item (7), one blocked mode-switch flip (8),
-and whatever falls out of the inline-variable work (9).
+Since this plan was written the Florence syntax items (1–3), the two
+pre-existing gaps that mattered more in practice (4, 5), the mode-switch flip
+for implicit function specialization (8), and the inline-variable scope work (9)
+have all landed. What remains is directive polish (6) and a library item (7).
 
 The per-item sections below are kept as originally written, with a status line
 added at the top of each. Treat the "Current state" and "Implementation" text in
@@ -379,15 +380,32 @@ not language parity. Track separately if ever pursued.
 
 ## 8. Implicit function specialization in default Delphi mode
 
-**Priority: Medium.  Effort: unknown until the crash is diagnosed.  Risk: Medium.**
+**Priority: Medium.  Effort: M.  Risk: Medium.**
 
-**Status: ❌ blocked.** Split out of item 4.
+**Status: ✅ landed.** Split out of item 4.
 
-`m_implicit_function_specialization` works when requested explicitly with
-`{$modeswitch implicitfunctionspecialization}`, but is deliberately absent from
-`delphimodeswitches` (`compiler/globals.pas`) because enabling it by default
-trips a compiler crash in overload probing. Diagnose and fix that crash first;
-the flip itself is then a one-line change plus a full suite run.
+`m_implicit_function_specialization` is now in `delphimodeswitches`
+(`compiler/globals.pas`), so implicit specialization is active by default in
+Delphi mode, matching Delphi.
+
+The blocking crash was a dangling generic-**parameter** def, not an overload-logic
+bug. A generic function whose parameter is an inline specialization
+(`function Test<T>(const A: TArray<T>)`) stores that partial specialization in the
+generic procdef's **local** symtable. `free_localsymtables` (`compiler/pmodules.pas`)
+freed every non-inline procdef's local symtable at end of unit — including generic
+ones — leaving the parameter def dangling while the exported procdef survived. Any
+consumer compiled later in the same invocation then dereferenced freed memory;
+implicit-spec probing (`is_generic_param_used`) does exactly that, crashing with
+Internal error 2021020905. Disk-PPU reload rebuilt the def in a valid scope, so it
+only surfaced when the defining unit and its user were compiled together.
+
+Fix: exempt generic procdefs from local-symtable release, as inline routines
+already are (their local symtable holds specializations referenced by the
+signature and must outlive it). A `gs_para` **placement** change was tried first
+and rejected — it split one specialization across the para and local symtables,
+breaking specialization reuse and the RTL build (`objpas.inc` `TMarshal.FixArray<T>`,
+duplicate identifier). Verified with a full `make clean cycle` (ppc2/ppc3 identical)
+and CI. Regression test: `tests/test/timpfuncspez38.pp` (+ `uimpfuncspez38a/b`).
 
 ---
 
@@ -443,11 +461,9 @@ Tests: `tinlinevarscope1.pp` (block scopes, plus a classic-var contrast) and
 
 Remaining work, by impact:
 
-1. **#8 Implicit function specialization** — diagnose the overload-probing crash;
-   the mode flip is trivial once it is fixed.
-2. **#7 System.Net.HttpClient** — largest remaining gap for porting real code;
+1. **#7 System.Net.HttpClient** — largest remaining gap for porting real code;
    library-level and independent of the compiler.
-3. **#6 Directive polish** — minor.
+2. **#6 Directive polish** — minor.
 
 Non-plan items worth folding in at some point: predefining `FPC_DOTTEDUNITS` in
 the dotted build, and either shipping a default function-call manager or

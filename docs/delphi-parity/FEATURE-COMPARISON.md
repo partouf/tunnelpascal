@@ -80,7 +80,7 @@ structural (absent). Treat this as a snapshot, not a certified checklist.
 ### Known gaps / not implemented
 | Feature | Delphi | tunnelpascal |
 |---|---|---|
-| Implicit function specialization by default | ✅ | 🟡 works with `{$modeswitch implicitfunctionspecialization}`; not default — a compiler crash in overload probing must be fixed first (item #8) |
+| Implicit function specialization by default | ✅ | ✅ on by default in Delphi mode (item #8); the blocking overload-probing crash — a dangling generic-parameter def for inline-specialization params — was fixed by keeping generic procdefs' local symtables alive |
 | Nullable value **types** (language-level) | ❌ (not in 13 either) | ❌ (RTL `System.Nullable<T>` record exists) |
 | ARC / weak refs (`[weak]`, `[unsafe]`) | mobile-era only, removed | ❌ (FPC is not ARC; N/A) |
 
