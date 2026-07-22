@@ -893,9 +893,17 @@ implementation
             if def.typ=procdef then
               begin
                 pd:=tprocdef(def);
+                { A generic procdef's local symtable holds the partial
+                  specializations referenced by its own signature (e.g. the
+                  parameter type in "function F<T>(a: TArray<T>)"). Freeing it
+                  here dangles those parameter defs for any consumer compiled
+                  later in the same invocation - which crashes implicit function
+                  specialization probing (it walks the imported generic's
+                  parameters). Keep it, like inline routines. }
                 if assigned(pd.localst) and
                    (pd.localst.symtabletype<>staticsymtable) and
-                   not(po_inline in pd.procoptions) then
+                   not(po_inline in pd.procoptions) and
+                   not(df_generic in pd.defoptions) then
                   begin
                     free_localsymtables(pd.localst);
                     pd.localst.free;
